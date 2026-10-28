@@ -112,7 +112,7 @@ function Conversation() {
           <InputGroup className="rounded-3xl">
             <InputGroupTextarea
               aria-label="Message Roomie"
-              placeholder="Message Roomie"
+              placeholder="Message Roomie…"
               rows={1}
               value={draft}
               onChange={(e) => setDraft(e.target.value)}

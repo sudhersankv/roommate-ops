@@ -27,6 +27,11 @@ export function MoneyScreen({ initialTab = "balances" }: { initialTab?: Tab }) {
   const { you } = useMoney()
   const [tab, setTab] = useState<Tab>(initialTab)
   const [adding, setAdding] = useState(false)
+  // Keep the tab in the URL so it survives reloads and can be linked to.
+  const show = (t: Tab) => {
+    setTab(t)
+    window.history.replaceState(null, "", t === "balances" ? window.location.pathname : `?tab=${t}`)
+  }
 
   return (
     <>
@@ -48,7 +53,7 @@ export function MoneyScreen({ initialTab = "balances" }: { initialTab?: Tab }) {
       </PageHeader>
 
       <div className="px-4 pb-4">
-        <ToggleGroup variant="segmented" spacing={1} value={[tab]} onValueChange={(v) => v[0] && setTab(v[0] as Tab)} aria-label="Show">
+        <ToggleGroup variant="segmented" spacing={1} value={[tab]} onValueChange={(v) => v[0] && show(v[0] as Tab)} aria-label="Show">
           <ToggleGroupItem value="balances">Balances</ToggleGroupItem>
           <ToggleGroupItem value="expenses">Expenses</ToggleGroupItem>
           <ToggleGroupItem value="activity">Activity</ToggleGroupItem>
@@ -63,7 +68,7 @@ export function MoneyScreen({ initialTab = "balances" }: { initialTab?: Tab }) {
           Add expense
         </Button>
       </div>
-      <ExpenseDrawer open={adding} onOpenChange={setAdding} onSaved={() => setTab("expenses")} />
+      <ExpenseDrawer open={adding} onOpenChange={setAdding} onSaved={() => show("expenses")} />
     </>
   )
 }
@@ -161,7 +166,7 @@ function Expenses({ onAdd }: { onAdd: () => void }) {
             <ReceiptText />
           </EmptyMedia>
           <EmptyTitle>No expenses yet</EmptyTitle>
-          <EmptyDescription>Add one here, or tell Roomie in the chat: &quot;roomie I paid $40 for groceries&quot;.</EmptyDescription>
+          <EmptyDescription>Add one here, or tell Roomie in the chat: “roomie I paid $40 for groceries”.</EmptyDescription>
         </EmptyHeader>
         <EmptyContent>
           <Button onClick={onAdd}>Add expense</Button>

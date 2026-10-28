@@ -172,6 +172,7 @@
   html {
     @apply font-sans;
     -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
   }
   body {
     @apply bg-background text-foreground antialiased;

@@ -155,7 +155,7 @@ export function DesignSystem() {
           ))}
         </div>
         <p className="type-body max-w-[60ch]">
-          Roomie talks like a groupmate: brief, a little witty, exact about money. Copy is written from your side (&quot;Settle up&quot;, &quot;Mark done&quot;), and empty screens say what to do next. Amounts like <span className="money font-semibold">$1,204.37</span> line up in columns.
+          Roomie talks like a groupmate: brief, a little witty, exact about money. Copy is written from your side (“Settle up”, “Mark done”), and empty screens say what to do next. Amounts like <span className="money font-semibold">$1,204.37</span> line up in columns.
         </p>
       </Section>
 
@@ -205,7 +205,7 @@ export function DesignSystem() {
           </Button>
           <Button disabled>
             <Spinner data-icon="inline-start" />
-            Saving
+            Saving…
           </Button>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -312,7 +312,7 @@ export function DesignSystem() {
                 <ShoppingCart />
               </EmptyMedia>
               <EmptyTitle>The Cart is empty</EmptyTitle>
-              <EmptyDescription>Add something, or say &quot;roomie add oat milk&quot; in the chat.</EmptyDescription>
+              <EmptyDescription>Add something, or say “roomie add oat milk” in the chat.</EmptyDescription>
             </EmptyHeader>
             <EmptyContent>
               <Button size="sm">Add to the Cart</Button>
@@ -433,7 +433,7 @@ export function DesignSystem() {
             </MessageContent>
           </Message>
           <InputGroup className="rounded-3xl">
-            <InputGroupTextarea aria-label="Message Roomie" placeholder="Message Roomie" rows={1} className="min-h-11 py-3 pl-4" />
+            <InputGroupTextarea aria-label="Message Roomie" placeholder="Message Roomie…" rows={1} className="min-h-11 py-3 pl-4" />
             <InputGroupAddon align="inline-end">
               <InputGroupButton variant="default" size="icon-sm" aria-label="Send">
                 <ArrowUpIcon />

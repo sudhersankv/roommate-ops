@@ -60,7 +60,7 @@ export function CartScreen() {
           }}
         >
           <InputGroup>
-            <InputGroupInput aria-label="Add to the Cart" placeholder="Add to the Cart" value={name} onChange={(e) => setName(e.target.value)} />
+            <InputGroupInput aria-label="Add to the Cart" placeholder="Add to the Cart…" autoComplete="off" value={name} onChange={(e) => setName(e.target.value)} />
             <InputGroupAddon align="inline-end">
               <InputGroupButton type="submit" variant="default" size="sm" disabled={!name.trim()}>
                 Add
@@ -83,7 +83,7 @@ export function CartScreen() {
                 <ShoppingCart />
               </EmptyMedia>
               <EmptyTitle>The Cart is empty</EmptyTitle>
-              <EmptyDescription>Add something above, or say &quot;roomie add oat milk&quot; in the chat.</EmptyDescription>
+              <EmptyDescription>Add something above, or say “roomie add oat milk” in the chat.</EmptyDescription>
             </EmptyHeader>
           </Empty>
         ) : (

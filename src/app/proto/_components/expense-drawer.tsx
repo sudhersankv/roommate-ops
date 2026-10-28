@@ -204,7 +204,7 @@ function ExpenseForm({ expense, onDone, onSaved }: { expense?: Expense; onDone: 
             <FieldLabel htmlFor="description">What was it for?</FieldLabel>
             <Input
               id="description"
-              placeholder="Groceries, internet, pizza"
+              placeholder="Groceries, internet, pizza…" autoComplete="off"
               value={d.description}
               aria-invalid={tried && !descriptionOk ? true : undefined}
               onChange={(e) => set({ description: e.target.value })}
@@ -377,7 +377,7 @@ function ExpenseForm({ expense, onDone, onSaved }: { expense?: Expense; onDone: 
 
           <Field>
             <FieldLabel htmlFor="note">Note</FieldLabel>
-            <Textarea id="note" placeholder="Optional. Anything the group should know." value={d.note} onChange={(e) => set({ note: e.target.value })} />
+            <Textarea id="note" placeholder="Anything the group should know…" value={d.note} onChange={(e) => set({ note: e.target.value })} />
           </Field>
         </FieldGroup>
       </form>

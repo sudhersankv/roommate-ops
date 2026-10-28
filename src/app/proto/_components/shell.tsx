@@ -29,7 +29,15 @@ export const base = "/proto/g/apt-4b"
 export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="mx-auto flex min-h-dvh w-full max-w-md flex-col bg-background md:border-x">
-      <main className="flex flex-1 flex-col pb-32">{children}</main>
+      <a
+        href="#main"
+        className="sr-only rounded-full bg-primary px-5 font-semibold text-primary-foreground focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50 focus:inline-flex focus:h-11 focus:items-center"
+      >
+        Skip to content
+      </a>
+      <main id="main" className="flex flex-1 flex-col pb-32">
+        {children}
+      </main>
       <BottomNav />
       <AskRoomie />
     </div>
