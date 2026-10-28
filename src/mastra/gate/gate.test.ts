@@ -1,0 +1,245 @@
+// Pure tests for the Gate: decideGate with Jev answers recorded from the real gateway (2026-10-28, jev-1.14.0,
+// QUESTIONS in jev.ts), the follow-up window, parseSilent and parseJev. No DB, no network.
+// Run: npx tsx --test src/mastra/gate/gate.test.ts
+import { describe, test } from "node:test";
+import assert from "node:assert/strict";
+import {
+  decideGate,
+  FOLLOW_UP_MAX,
+  FOLLOW_UP_WINDOW_MS,
+  inFollowUpWindow,
+  parseSilent,
+  saysRoomie,
+  THRESHOLDS,
+  type Chattiness,
+  type JevAnswers,
+} from "./policy";
+import { parseJev } from "./jev";
+
+const jev = (act: number, clarify: number, chat: number, ignore: number, addressed: number, choice: JevAnswers["toolkit"]["choice"], p: number): JevAnswers => ({
+  intent: { act, clarify, chat, ignore },
+  addressed,
+  toolkit: { choice, p },
+});
+
+/** Recorded answers. Members Maya, Dev, Sam; `inWindow` = Roomie had just spoken. */
+const REC = {
+  pizza: jev(0.81, 0.19, 0, 0, 0.21, "splitting", 0.99), // "[Maya] I paid 40 for pizza"
+  game: jev(0, 0, 0.02, 0.98, 0.06, "none", 1), // "[Dev] did you see the game last night"
+  milk: jev(0.92, 0.08, 0, 0, 0.83, "groceries", 1), // "[Sam] add milk and eggs"
+  thanks: jev(0, 0, 0.99, 0.01, 0.95, "splitting", 0.89), // "[Maya] thanks roomie" (in window)
+  owesNamed: jev(0.92, 0.08, 0, 0, 0.96, "splitting", 1), // "[Dev] roomie who owes what"
+  owes: jev(0.94, 0.06, 0, 0, 0.58, "splitting", 1), // "[Sam] who owes what?"
+  lol: jev(0.01, 0, 0.12, 0.87, 0.1, "groceries", 0.92), // "[Maya] lol same" (in window)
+  chipsToo: jev(0.78, 0.21, 0, 0.01, 0.66, "groceries", 1), // "[Dev] and 2 bags of chips too" (in window)
+  dishes: jev(0.93, 0.04, 0.01, 0.02, 0.1, "chores", 1), // "[Sam] I did the dishes"
+  vague: jev(0.02, 0.97, 0, 0.01, 0.17, "splitting", 1), // "[Maya] someone paid for something yesterday"
+  trash: jev(0.99, 0.01, 0, 0, 0.58, "chores", 0.48), // "[Dev] remind everyone trash goes out tuesday 8pm"
+  uber: jev(0.76, 0.24, 0, 0, 0.16, "splitting", 1), // "[Maya] pagué 30 por el uber"
+  seeYou: jev(0.01, 0.03, 0.01, 0.95, 0.04, "reminders", 0.79), // "[Sam] ok see you at 7"
+};
+
+const gate = (j: JevAnswers | null, o: { hardTrigger?: boolean; inWindow?: boolean; chattiness?: Chattiness } = {}) =>
+  decideGate({ hardTrigger: o.hardTrigger ?? false, inWindow: o.inWindow ?? false, jev: j, chattiness: o.chattiness ?? "normal" });
+
+describe("decideGate with recorded Jev answers (normal chattiness)", () => {
+  test("logging statements nobody addressed: act, unprompted (ask before logging), narrowed", () => {
+    for (const [j, tk] of [
+      [REC.pizza, "splitting"],
+      [REC.dishes, "chores"],
+      [REC.uber, "splitting"],
+    ] as const) {
+      const d = gate(j);
+      assert.equal(d.speak, true);
+      assert.equal(d.decision, "act");
+      assert.equal(d.unprompted, true);
+      assert.equal(d.toolkit, tk);
+      assert.equal(d.mayStaySilent, false);
+    }
+  });
+
+  test("requests and questions that sound addressed: act, prompted", () => {
+    for (const j of [REC.milk, REC.owes]) {
+      const d = gate(j);
+      assert.equal(d.decision, "act");
+      assert.equal(d.unprompted, false);
+    }
+    assert.equal(gate(REC.milk).toolkit, "groceries");
+  });
+
+  test("chatter between people is ignored", () => {
+    for (const j of [REC.game, REC.seeYou]) {
+      const d = gate(j);
+      assert.equal(d.speak, false);
+      assert.equal(d.reason, "jev-ignore");
+    }
+  });
+
+  test("something to log with details missing: clarify", () => {
+    const d = gate(REC.vague);
+    assert.equal(d.decision, "clarify");
+    assert.equal(d.unprompted, true);
+  });
+
+  test("toolkit narrowing only when Jev is sure enough", () => {
+    assert.equal(gate(REC.trash).toolkit, undefined, "chores at .48 is below TOOLKIT_MIN: every tool");
+    assert.equal(gate(REC.game, { hardTrigger: true }).toolkit, undefined, "'none' never narrows");
+  });
+});
+
+describe("hard triggers and fallback", () => {
+  test("a hard trigger always speaks, even when Jev says ignore or is down", () => {
+    for (const j of [REC.game, REC.owesNamed, null]) {
+      const d = gate(j, { hardTrigger: true });
+      assert.equal(d.speak, true);
+      assert.equal(d.reason, "hard-trigger");
+      assert.equal(d.unprompted, false);
+      assert.equal(d.mayStaySilent, false);
+    }
+    assert.equal(gate(REC.owesNamed, { hardTrigger: true }).toolkit, "splitting");
+  });
+
+  test("Jev unavailable: hard triggers only, so everything else stays quiet (window too)", () => {
+    for (const o of [{}, { inWindow: true }, { chattiness: "chatty" as const }]) {
+      const d = gate(null, o);
+      assert.equal(d.speak, false);
+      assert.equal(d.reason, "jev-unavailable");
+    }
+  });
+});
+
+describe("follow-up window", () => {
+  test("a follow-up Jev wants to act on: act, not unprompted", () => {
+    const d = gate(REC.chipsToo, { inWindow: true });
+    assert.equal(d.decision, "act");
+    assert.equal(d.unprompted, false);
+    assert.equal(d.toolkit, "groceries");
+  });
+
+  test("addressed small talk in the window: the agent may answer or stay [silent]", () => {
+    const d = gate(REC.thanks, { inWindow: true });
+    assert.equal(d.decision, "maybe");
+    assert.equal(d.mayStaySilent, true);
+    assert.equal(gate(REC.thanks).speak, false, "outside the window, no reply (the word roomie is a hard trigger anyway)");
+  });
+
+  test("chatter in the window Jev is sure about skips the agent", () => {
+    assert.equal(gate(REC.lol, { inWindow: true }).speak, false);
+  });
+});
+
+describe("Chattiness", () => {
+  test("thresholds", () => {
+    assert.deepEqual(THRESHOLDS, { quiet: { act: 0.9, clarify: 0.8 }, normal: { act: 0.75, clarify: 0.6 }, chatty: { act: 0.6, clarify: 0.45 } });
+  });
+
+  test("quiet stays out of borderline logging, chatty jumps in", () => {
+    assert.equal(gate(REC.pizza, { chattiness: "quiet" }).speak, false, "act .81 < .9");
+    assert.equal(gate(REC.dishes, { chattiness: "quiet" }).decision, "act", "act .93 >= .9");
+    assert.equal(gate(REC.vague, { chattiness: "quiet" }).decision, "clarify", "clarify .97 >= .8");
+    const borderline = jev(0.5, 0.48, 0, 0.02, 0.3, "splitting", 1);
+    assert.equal(gate(borderline).speak, false);
+    assert.equal(gate(borderline, { chattiness: "chatty" }).decision, "clarify", "clarify .48 >= .45");
+    assert.equal(gate(jev(0.65, 0.3, 0, 0.05, 0.3, "groceries", 1), { chattiness: "chatty" }).decision, "act");
+  });
+
+  test("an unknown chattiness value falls back to normal", () => {
+    assert.equal(gate(REC.pizza, { chattiness: "loud" as Chattiness }).decision, "act");
+  });
+});
+
+describe("parseJev", () => {
+  test("the gateway's shape", () => {
+    const parsed = parseJev({
+      answers: {
+        intent: { type: "choice", choice: "act", confidence: 0.81, probabilities: { act: 0.81, clarify: 0.19, chat: 0, ignore: 0 } },
+        addressed: { type: "noul", noul: 0.21 },
+        toolkit: { type: "choice", choice: "splitting", confidence: 0.99, probabilities: { splitting: 0.99, groceries: 0.01 } },
+      },
+    });
+    assert.deepEqual(parsed, REC.pizza);
+  });
+
+  test("missing or unknown answers -> null (the Gate treats it as Jev unavailable)", () => {
+    assert.equal(parseJev({}), null);
+    assert.equal(parseJev({ answers: { intent: { type: "choice", choice: "act" } } }), null);
+    assert.equal(
+      parseJev({
+        answers: {
+          intent: { type: "choice", choice: "act", probabilities: { act: 1 } },
+          addressed: { type: "noul", noul: 0.5 },
+          toolkit: { type: "choice", choice: "recipes", probabilities: { recipes: 1 } },
+        },
+      }),
+      null,
+    );
+  });
+});
+
+/* ---------- carried over from router.test.ts ---------- */
+
+const now = new Date("2026-10-04T12:00:00Z");
+const ago = (ms: number) => new Date(now.getTime() - ms);
+const min = 60_000;
+
+describe("saysRoomie", () => {
+  test("the word roomie, any case, anywhere", () => {
+    for (const t of ["roomie add milk", "Roomie, who owes what?", "ok ROOMIE", "thanks roomie!"]) assert.equal(saysRoomie(t), true, t);
+  });
+
+  test("not inside other words", () => {
+    for (const t of ["my roomies are out", "roomiebot", "add milk", ""]) assert.equal(saysRoomie(t), false, t);
+  });
+});
+
+describe("inFollowUpWindow", () => {
+  test("defaults: 3 minutes, 4 messages", () => {
+    assert.equal(FOLLOW_UP_WINDOW_MS, 3 * min);
+    assert.equal(FOLLOW_UP_MAX, 4);
+  });
+
+  test("no Roomie reply ever -> no window", () => {
+    assert.equal(inFollowUpWindow({ lastRoomieAt: null, humanSinceRoomie: 1, now }), false);
+  });
+
+  test("within 3 min and fewer than 4 human messages (including this one) -> window", () => {
+    assert.equal(inFollowUpWindow({ lastRoomieAt: ago(5_000), humanSinceRoomie: 1, now }), true);
+    assert.equal(inFollowUpWindow({ lastRoomieAt: ago(2 * min), humanSinceRoomie: 2, now }), true);
+    assert.equal(inFollowUpWindow({ lastRoomieAt: ago(3 * min), humanSinceRoomie: 3, now }), true); // edges inclusive
+  });
+
+  test("4th follow-up, a stale reply, or clock skew closes it", () => {
+    assert.equal(inFollowUpWindow({ lastRoomieAt: ago(5_000), humanSinceRoomie: 4, now }), false);
+    assert.equal(inFollowUpWindow({ lastRoomieAt: ago(3 * min + 1), humanSinceRoomie: 1, now }), false);
+    assert.equal(inFollowUpWindow({ lastRoomieAt: ago(-5_000), humanSinceRoomie: 1, now }), false);
+  });
+
+  test("windowMs and maxFollowUps are tunable", () => {
+    assert.equal(inFollowUpWindow({ lastRoomieAt: ago(9 * min), humanSinceRoomie: 1, now, windowMs: 10 * min }), true);
+    assert.equal(inFollowUpWindow({ lastRoomieAt: ago(5_000), humanSinceRoomie: 2, now, maxFollowUps: 2 }), false);
+  });
+});
+
+describe("parseSilent", () => {
+  test("[silent] variants mean no reply", () => {
+    for (const t of ["[silent]", "[SILENT]", "  [Silent]  ", "[silent].", "[silent]!!", "*[silent]*", "\"[silent]\"", "([silent])", "\n[silent]\n"]) {
+      assert.equal(parseSilent(t), null, JSON.stringify(t));
+    }
+  });
+
+  test("normal text passes through (trimmed)", () => {
+    assert.equal(parseSilent("Bet. Chips added 🛒"), "Bet. Chips added 🛒");
+    assert.equal(parseSilent("  two lines\nhere  "), "two lines\nhere");
+  });
+
+  test("the word silent without brackets, or mid-text, is a normal reply", () => {
+    assert.equal(parseSilent("silent"), "silent");
+    assert.equal(parseSilent("ok staying [silent] on that one"), "ok staying [silent] on that one");
+  });
+
+  test("a leading [silent] followed by real text is stripped and sent", () => {
+    assert.equal(parseSilent("[silent] actually wait, chips are already in the cart"), "actually wait, chips are already in the cart");
+    assert.equal(parseSilent("[silent]\n\nLogged it anyway 👍"), "Logged it anyway 👍");
+    assert.equal(parseSilent("[silent] - Ryan owes $20 btw"), "Ryan owes $20 btw");
+  });
+});
