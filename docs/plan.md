@@ -98,7 +98,7 @@ Each step gets its own branch and PR, and you test locally before it's merged.
 ### 3. Mastra agent rebuild (`step/3-agent`)
 - [x] `src/mastra/` with a `roomie` agent built once: `RequestContext` with a schema, dynamic instructions (persona, Group style, Members, time zone) and dynamic tools from the Toolkit registry.
 - [x] Memory: Postgres storage, a thread per Group, semantic recall with pgvector embeddings (`qwen3-embedding-0-6b` on the gateway), and Member notes plus the Group style in working memory (refreshed by Haiku every 50 chat lines).
-- [x] The Gate (Jev, with a hard-trigger fallback) and Chattiness (`households.chattiness`).
+- [x] The Gate (Jev, with a hard-trigger fallback) and Chattiness (`groups.chattiness`).
 - [x] Observability: platform and storage exporters, a sensitive-data filter, `requestContextKeys`, and trace tags. The platform exporter switches on when its token and project id are in `.env`.
 - [x] Scorers sampled on live traffic, and a scenario set of about 30 cases with `npm run evals` ([baseline](./evals-baseline.md)). Mastra Studio via `npm run mastra:dev` with request-context presets.
 - [x] Move today's tools into the Toolkit shape: core, splitting (basic), groceries (basic), chores, upkeep.
@@ -106,11 +106,13 @@ Each step gets its own branch and PR, and you test locally before it's merged.
   - [x] Studio chats work · [ ] traces on the Mastra platform (waiting for `MASTRA_PLATFORM_ACCESS_TOKEN` / `MASTRA_PROJECT_ID`; traces are in Postgres and Studio today) · [x] Gate unit tests · [x] eval baseline
 
 ### 4. Identity, Groups and dashboard shell (`step/4-identity`)
-- Fresh schema with migrations. Neon Auth with Google. Claim links, roles, Pending members, and the approval flow in both chat and dashboard. Permission checks in services.
-- Onboarding: Roomie joins, waits 1–3 minutes, then introduces itself, creates the Group, makes the adder Admin, reads the members, and asks the Group's purpose, currency, time zone and Toolkits. Claim links are **not** sent in a burst. A Member gets theirs privately when they ask for the dashboard or the first time they do something with a dashboard view, spaced apart and only after they've messaged Roomie ([ADR 0001](./adr/0001-baileys-for-whatsapp-groups.md)).
-- Dashboard rebuilt on Tailwind + shadcn: sign in, group switcher, a personal home ("you owe / you're owed", your Cart items, your chores), and Members and Settings for Admins.
-- The 30-day retention job, "forget me", and "delete group data".
+- [x] Fresh schema with migrations (`drizzle/`, `npm run db:migrate`). Neon Auth with Google. Claim links, roles, Pending members, and the approval flow in both chat and dashboard. Permission checks in services (`services/authz.ts`).
+- [x] Onboarding: Roomie joins, introduces itself, creates the Group, makes the adder Admin, reads the members, and asks the Group's purpose, currency, time zone and Toolkits in one message (`src/onboarding.ts`; the 1–3 minute wait belongs to the WhatsApp adapter). Claim links are **not** sent in a burst. A Member gets theirs privately when they ask for the dashboard ([ADR 0001](./adr/0001-baileys-for-whatsapp-groups.md)). People already in the Chat are active; later joiners are Pending ([ADR 0008](./adr/0008-who-is-pending.md)).
+- [x] Dashboard rebuilt on Tailwind + shadcn from the prototype: sign in, group switcher, a personal home ("you owe / you're owed", your Cart items, your chores), and Members and Settings for Admins.
+- [x] The 30-day retention job, "forget me", and "delete group data".
+- [x] `npm run dev-chat` stands in for WhatsApp until step 2 ([walkthrough](./dev-chat.md)).
 - **Done when:** a new person in the test group goes from Pending to approved to claimed to seeing their own dashboard, and a non-Admin can't change Members or settings anywhere.
+  - [x] Pending -> approved -> claimed -> own dashboard (dev-chat + browser, with the dev sign-in bypass for the Google step) · [x] non-Admins see no admin controls and every admin service refuses them · [ ] the same in a real WhatsApp group (step 2)
 
 ### 5. Splitting Toolkit (`step/5-splitting`)
 - Split equally, by exact amounts, by percentages or by shares. Multiple Payers. Categories (picked by Roomie), notes, dates, recurring Expenses, edit/delete/undo, Activity, a simplify-debts toggle, and a Settle plan with Venmo, PayPal and Cash App links.
@@ -140,7 +142,7 @@ Each step gets its own branch and PR, and you test locally before it's merged.
 - [ ] Roomie's WhatsApp number: a real prepaid eSIM or SIM you **keep** (for example Tello, about $5/month). Not Google Voice and not a rented SMS-verification number. Use the WhatsApp Business app, turn on two-step verification, warm it up for a few days, and open it at least weekly.
 - [ ] Mastra platform: `MASTRA_PLATFORM_ACCESS_TOKEN` and `MASTRA_PROJECT_ID` in `.env`.
 - [ ] Composio: `COMPOSIO_API_KEY` in `.env`. I'll test the Instacart call.
-- [ ] Google Cloud OAuth client for Neon Auth. Steps will come in step 4.
+- [ ] Google Cloud OAuth client for Neon Auth, before anyone outside the dev team signs in (dev uses Neon's shared Google keys; the consent screen shows Neon). Add it under the branch's Auth -> OAuth providers.
 
 ## Environment
 
@@ -153,6 +155,8 @@ GATE_MODEL=typesafeai-jev-1-14-0 Gate
 EMBED_MODEL=qwen3-embedding-0-6b semantic recall
 MASTRA_PLATFORM_ACCESS_TOKEN, MASTRA_PROJECT_ID
 COMPOSIO_API_KEY
-NEON_AUTH_*                      (step 4)
+NEON_AUTH_BASE_URL               Neon Auth URL (branch -> Auth)
+NEON_AUTH_COOKIE_SECRET          32+ chars, ours
+DEV_AUTH_EMAIL                   dev-only sign-in bypass for browser automation
 APP_URL=http://localhost:3000    links Roomie sends
 ```
