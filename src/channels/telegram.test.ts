@@ -1,0 +1,347 @@
+// The Telegram adapter offline: a Bot with a fake token and preset identity, fake updates through handleUpdate, and
+// every Bot API call captured by a transformer. The app side (pipeline, onboarding, DB) is stubbed via TelegramDeps.
+// Run: npx tsx --test src/channels/telegram.test.ts
+import { describe, test } from "node:test";
+import assert from "node:assert/strict";
+import type { Update } from "grammy/types";
+import { CantMessagePrivatelyError, type IncomingMessage } from "./types";
+import { TokenBucket } from "./rate-limit";
+import {
+  botInfoFromToken,
+  botWasAdded,
+  chunkText,
+  createTelegramBot,
+  isButtonUrl,
+  keyboardFor,
+  readAddress,
+  telegramLimiter,
+  type TelegramDeps,
+} from "./telegram";
+
+const TOKEN = "123456:fake-token";
+const ME = botInfoFromToken(TOKEN, "roomie_test_bot");
+const GROUP = { id: -1001, type: "supergroup" as const, title: "Apt 4B" };
+const MAYA = { id: 11, is_bot: false, first_name: "Maya", last_name: "Lee" };
+const SAM = { id: 12, is_bot: false, first_name: "Sam" };
+const DEV = { id: 13, is_bot: false, first_name: "Dev" };
+const OTHER_BOT = { id: 77, is_bot: true, first_name: "Spam", username: "spam_bot" };
+const BOT_USER = { id: ME.id, is_bot: true, first_name: "Roomie", username: ME.username };
+
+type Call = { method: string; payload: Record<string, unknown> };
+let updateId = 1;
+let messageId = 1;
+
+function harness(opts: { deps?: Partial<TelegramDeps>; joinDelayMs?: number; failSend?: { error_code: number; description: string } } = {}) {
+  const calls: Call[] = [];
+  const seen = { incoming: [] as IncomingMessage[], joined: [] as unknown[][], participants: [] as unknown[][], moved: [] as string[][], saved: [] as string[] };
+  const deps: TelegramDeps = {
+    handleIncoming: async (msg) => {
+      seen.incoming.push(msg);
+      return { text: `ok ${msg.text}` };
+    },
+    onGroupJoined: async (...args) => {
+      seen.joined.push(args);
+      return { intro: { text: "intro" } };
+    },
+    onParticipantJoined: async (...args) => {
+      seen.participants.push(args);
+      return { announce: { text: `approve ${args[1].name}?` } };
+    },
+    groupIdOfChat: async () => "g1",
+    chatsOfUser: async () => [String(GROUP.id)],
+    moveChat: async (from, to) => void seen.moved.push([from, to]),
+    saveImage: async (chat, fileUniqueId) => {
+      seen.saved.push(fileUniqueId);
+      return `/uploads/tg/${chat}/${fileUniqueId}.jpg`;
+    },
+    ...opts.deps,
+  };
+  let now = 0;
+  const clock = () => now;
+  const sleep = async (ms: number) => void (now += ms);
+  const tg = createTelegramBot({
+    token: TOKEN,
+    botInfo: ME,
+    deps,
+    joinDelayMs: opts.joinDelayMs ?? 0,
+    replyDelayMs: 0,
+    sleep,
+    limiter: telegramLimiter({ clock, sleep }),
+    download: async () => new Uint8Array([1, 2, 3]).buffer,
+  });
+  tg.bot.api.config.use(async (_prev, method, payload) => {
+    calls.push({ method, payload: payload as Record<string, unknown> });
+    if (method === "sendMessage" && opts.failSend) return { ok: false, ...opts.failSend } as never;
+    const result =
+      method === "getChatAdministrators"
+        ? [
+            { status: "creator", user: DEV, is_anonymous: false },
+            { status: "administrator", user: OTHER_BOT },
+          ]
+        : method === "getFile"
+          ? { file_id: "f", file_unique_id: "u", file_path: "voice/file_1.oga" }
+          : method === "sendMessage"
+            ? { message_id: messageId++, date: 0, chat: { id: (payload as { chat_id: number }).chat_id, type: "supergroup" } }
+            : true;
+    return { ok: true, result } as never;
+  });
+  const feed = async (u: object) => {
+    await tg.bot.handleUpdate({ update_id: updateId++, ...u } as Update);
+    await tg.idle();
+  };
+  const sent = () => calls.filter((c) => c.method === "sendMessage");
+  return { tg, calls, sent, seen, feed, clock };
+}
+
+const message = (from: object, extra: object, chat: object = GROUP) => ({ message: { message_id: messageId++, date: 0, chat, from, ...extra } });
+
+describe("group join", () => {
+  test("Roomie added -> onGroupJoined with the adder as Admin, the chat's human admins, and the intro after the delay", async () => {
+    const h = harness();
+    await h.feed({
+      my_chat_member: { chat: GROUP, from: MAYA, date: 0, old_chat_member: { status: "left", user: BOT_USER }, new_chat_member: { status: "member", user: BOT_USER } },
+    } as never);
+    assert.equal(h.seen.joined.length, 1);
+    const [chat, participants, addedBy, opts] = h.seen.joined[0];
+    assert.deepEqual(chat, { channel: "telegram", externalId: "-1001", title: "Apt 4B" });
+    assert.deepEqual(addedBy, { userExternalId: "11", name: "Maya Lee" });
+    assert.deepEqual(participants, [
+      { userExternalId: "11", name: "Maya Lee" },
+      { userExternalId: "13", name: "Dev" },
+    ]);
+    assert.deepEqual(opts, { dmHandle: "roomie_test_bot" });
+    const [intro] = h.sent();
+    assert.equal(intro.payload.text, "intro");
+    assert.equal(intro.payload.chat_id, "-1001");
+    assert.deepEqual(intro.payload.link_preview_options, { is_disabled: true });
+    assert.equal(h.calls.findIndex((c) => c.method === "sendChatAction") < h.calls.indexOf(intro), true, "typing first");
+  });
+
+  test("promotions and leaving aren't joins", () => {
+    const c = { type: "supergroup" };
+    assert.equal(botWasAdded({ chat: c, old_chat_member: { status: "member", user: BOT_USER }, new_chat_member: { status: "administrator", user: BOT_USER } as never }), false);
+    assert.equal(botWasAdded({ chat: c, old_chat_member: { status: "member", user: BOT_USER }, new_chat_member: { status: "left", user: BOT_USER } }), false);
+    assert.equal(botWasAdded({ chat: { type: "private" }, old_chat_member: { status: "kicked", user: BOT_USER } as never, new_chat_member: { status: "member", user: BOT_USER } }), false);
+  });
+
+  test("a message before the join delay is over gets the intro first", async () => {
+    const h = harness({ joinDelayMs: 60_000 });
+    await h.tg.bot.handleUpdate({
+      update_id: updateId++,
+      my_chat_member: { chat: GROUP, from: MAYA, date: 0, old_chat_member: { status: "left", user: BOT_USER }, new_chat_member: { status: "member", user: BOT_USER } },
+    } as never);
+    await h.feed(message(MAYA, { text: "roomie hi" }));
+    assert.deepEqual(h.sent().map((c) => c.payload.text), ["intro", "ok roomie hi"]);
+  });
+
+  test("new_chat_members -> each person through onParticipantJoined (Pending), and the approval ask is posted", async () => {
+    const h = harness();
+    await h.feed(message(MAYA, { new_chat_members: [SAM, OTHER_BOT] }));
+    assert.deepEqual(h.seen.participants, [["g1", { userExternalId: "12", name: "Sam" }]]);
+    assert.deepEqual(h.sent().map((c) => c.payload.text), ["approve Sam?"]);
+  });
+
+  test("new_chat_members with Roomie in it, for a Chat not known yet, is the join (the others came with Roomie)", async () => {
+    const h = harness({ deps: { groupIdOfChat: async () => undefined } });
+    await h.feed(message(MAYA, { new_chat_members: [BOT_USER, SAM] }));
+    assert.equal(h.seen.participants.length, 0);
+    assert.equal(h.seen.joined.length, 1);
+    assert.deepEqual((h.seen.joined[0][1] as { name: string }[]).map((p) => p.name), ["Maya Lee", "Sam", "Dev"]);
+  });
+
+  test("a group upgraded to a supergroup moves the Chat", async () => {
+    const h = harness();
+    await h.feed(message(MAYA, { migrate_to_chat_id: -100999 }, { id: -55, type: "group", title: "Apt 4B" }));
+    assert.deepEqual(h.seen.moved, [["-55", "-100999"]]);
+  });
+});
+
+describe("incoming messages", () => {
+  test("text -> IncomingMessage: name, @mention read as Roomie", async () => {
+    const h = harness();
+    await h.feed(message(MAYA, { text: "@roomie_test_bot who's here", entities: [{ type: "mention", offset: 0, length: 16 }] }));
+    assert.deepEqual(h.seen.incoming, [
+      { channel: "telegram", chatExternalId: "-1001", chatTitle: "Apt 4B", userExternalId: "11", userName: "Maya Lee", text: "Roomie who's here", mentionsRoomie: true, isReplyToRoomie: false },
+    ]);
+    assert.equal(h.sent().at(-1)?.payload.text, "ok Roomie who's here");
+  });
+
+  test("a reply to Roomie is flagged; one to someone else isn't", () => {
+    const toRoomie = readAddress(ME, { text: "yes", reply_to_message: { from: BOT_USER } as never });
+    const toSam = readAddress(ME, { text: "yes", reply_to_message: { from: SAM } as never });
+    assert.equal(toRoomie.isReplyToRoomie, true);
+    assert.equal(toSam.isReplyToRoomie, false);
+    assert.equal(toSam.mentionsRoomie, false);
+    assert.equal(readAddress(ME, { text: "hi", entities: [{ type: "text_mention", offset: 0, length: 2, user: BOT_USER }] }).mentionsRoomie, true);
+  });
+
+  test("other bots, channel/anonymous-admin posts, edits and /start in a group are ignored", async () => {
+    const h = harness();
+    await h.feed(message(OTHER_BOT, { text: "buy crypto" }));
+    await h.feed(message(MAYA, { text: "hi", sender_chat: { id: -1001, type: "supergroup", title: "Apt 4B" } }));
+    await h.feed({ edited_message: { message_id: 1, date: 0, edit_date: 1, chat: GROUP, from: MAYA, text: "edited" } } as never);
+    await h.feed(message(MAYA, { text: "/start@roomie_test_bot" }));
+    assert.equal(h.seen.incoming.length, 0);
+    assert.equal(h.sent().length, 0);
+  });
+
+  test("photo -> largest size stored, imageUrl + caption passed on", async () => {
+    const h = harness();
+    await h.feed(
+      message(SAM, {
+        caption: "split this",
+        photo: [
+          { file_id: "small", file_unique_id: "s1", width: 90, height: 90 },
+          { file_id: "big", file_unique_id: "b1", width: 1280, height: 1280 },
+        ],
+      }),
+    );
+    assert.deepEqual(h.seen.saved, ["b1"]);
+    assert.equal(h.calls.find((c) => c.method === "getFile")?.payload.file_id, "big");
+    assert.equal(h.seen.incoming[0].imageUrl, "/uploads/tg/-1001/b1.jpg");
+    assert.equal(h.seen.incoming[0].text, "split this");
+  });
+
+  test("voice without a transcriber: says so once per Chat, passes nothing on", async () => {
+    const h = harness();
+    const voice = { voice: { file_id: "v", file_unique_id: "v1", duration: 3, mime_type: "audio/ogg" } };
+    await h.feed(message(SAM, voice));
+    await h.feed(message(SAM, voice));
+    assert.equal(h.seen.incoming.length, 0);
+    assert.deepEqual(h.sent().map((c) => c.payload.text), ["I can't hear voice notes yet, mind typing that?"]);
+  });
+
+  test("voice with a transcriber: the transcript goes through as a voice note", async () => {
+    const h = harness({ deps: { transcribe: async (_a, o) => `transcript of ${o.mime}` } });
+    await h.feed(message(SAM, { voice: { file_id: "v", file_unique_id: "v1", duration: 3, mime_type: "audio/ogg" } }));
+    assert.equal(h.seen.incoming[0].text, "transcript of audio/ogg");
+    assert.equal(h.seen.incoming[0].isVoice, true);
+  });
+});
+
+describe("private messages", () => {
+  const PRIVATE = { id: 12, type: "private" as const, first_name: "Sam" };
+
+  test("a Member of one Group: routed to that Group's Chat as private, reply in the DM", async () => {
+    const h = harness();
+    await h.feed(message(SAM, { text: "send me the dashboard" }, PRIVATE));
+    assert.equal(h.seen.incoming[0].chatExternalId, "-1001");
+    assert.equal(h.seen.incoming[0].isPrivate, true);
+    assert.equal(h.sent()[0].payload.chat_id, "12");
+  });
+
+  test("no Group (or several): asked to use the group chat, nothing reaches the pipeline", async () => {
+    const none = harness({ deps: { chatsOfUser: async () => [] } });
+    await none.feed(message(SAM, { text: "hi" }, PRIVATE));
+    assert.match(String(none.sent()[0].payload.text), /Add me to your group chat first/);
+    const many = harness({ deps: { chatsOfUser: async () => ["-1", "-2"] } });
+    await many.feed(message(SAM, { text: "hi" }, PRIVATE));
+    assert.match(String(many.sent()[0].payload.text), /ask me in the group chat you mean/);
+    assert.equal(none.seen.incoming.length + many.seen.incoming.length, 0);
+  });
+
+  test("/start: a greeting that says DMs work now", async () => {
+    const h = harness();
+    await h.feed(message(SAM, { text: "/start" }, PRIVATE));
+    assert.match(String(h.sent()[0].payload.text), /Now I can DM you/);
+    assert.equal(h.seen.incoming.length, 0);
+  });
+});
+
+describe("outgoing", () => {
+  test("buttons become an inline keyboard of URL buttons on the message", async () => {
+    const h = harness();
+    await h.tg.channel.sendToChat("-1001", {
+      text: "Here you go",
+      buttons: [
+        { text: "Open dashboard", url: "https://roomie.example/g/1" },
+        { text: "Cart", url: "https://roomie.example/g/1/cart" },
+      ],
+    });
+    const [m] = h.sent();
+    assert.deepEqual((m.payload.reply_markup as { inline_keyboard: unknown }).inline_keyboard, [
+      [{ text: "Open dashboard", url: "https://roomie.example/g/1" }],
+      [{ text: "Cart", url: "https://roomie.example/g/1/cart" }],
+    ]);
+    assert.equal(m.payload.parse_mode, undefined, "plain text");
+    assert.equal(keyboardFor([]), undefined);
+  });
+
+  test("localhost links (dev APP_URL) go as text, since Telegram refuses them as buttons", async () => {
+    const h = harness();
+    await h.tg.channel.sendToChat("-1001", { text: "Here", buttons: [{ text: "Open dashboard", url: "http://localhost:3000/g/1" }] });
+    const [m] = h.sent();
+    assert.equal(m.payload.text, "Here\nOpen dashboard: http://localhost:3000/g/1");
+    assert.equal(m.payload.reply_markup, undefined);
+    assert.equal(isButtonUrl("https://roomie.example/x"), true);
+    assert.equal(isButtonUrl("http://127.0.0.1:3000/x"), false);
+  });
+
+  test("long replies are chunked under 4096; buttons only on the last piece", async () => {
+    const long = Array.from({ length: 300 }, (_, i) => `line ${i} ${"x".repeat(25)}`).join("\n");
+    const chunks = chunkText(long);
+    assert.ok(chunks.length >= 3);
+    assert.ok(chunks.every((c) => c.length <= 4096));
+    assert.equal(chunks.join("\n"), long, "nothing lost at the cuts");
+    assert.deepEqual(chunkText("short"), ["short"]);
+    assert.ok(chunkText("y".repeat(5000)).every((c) => c.length <= 4096));
+
+    const h = harness();
+    await h.tg.channel.sendToChat("-1001", { text: long, buttons: [{ text: "Open", url: "https://roomie.example" }] });
+    const sent = h.sent();
+    assert.equal(sent.length, chunks.length);
+    assert.deepEqual(sent.map((c) => c.payload.reply_markup !== undefined), [...chunks.slice(1).map(() => false), true]);
+  });
+
+  test("rate limits: about 1 message a second per Chat, others not held up; groups 20 a minute", async () => {
+    let now = 0;
+    const clock = () => now;
+    const sleep = async (ms: number) => void (now += ms);
+    const limiter = telegramLimiter({ clock, sleep });
+    const at: Record<string, number[]> = { a: [], b: [] };
+    await Promise.all([1, 2, 3].map(() => limiter.acquire("-1").then(() => at.a.push(now))));
+    assert.deepEqual(at.a, [0, 1000, 2000]);
+    now = 0;
+    const fresh = telegramLimiter({ clock, sleep });
+    await fresh.acquire("-1");
+    await fresh.acquire("-2");
+    assert.equal(now, 0, "another Chat doesn't wait");
+
+    const group = new TokenBucket({ capacity: 20, perSecond: 20 / 60 }, 0);
+    for (let i = 0; i < 20; i++) group.take(0);
+    assert.equal(group.waitMs(0), 3000);
+  });
+
+  test("a private send Telegram refuses (never pressed Start) surfaces as 'DM me first'", async () => {
+    const h = harness({ failSend: { error_code: 403, description: "Forbidden: bot can't initiate conversation with a user" } });
+    await assert.rejects(
+      () => h.tg.channel.sendPrivate("12", { text: "your link", buttons: [{ text: "Open dashboard", url: "https://roomie.example/claim/x" }] }),
+      (err: unknown) => err instanceof CantMessagePrivatelyError && /tap @roomie_test_bot and press Start/.test(err.message),
+    );
+  });
+
+  test("a group send that fails is not dressed up as a DM problem", async () => {
+    const h = harness({ failSend: { error_code: 403, description: "Forbidden: bot was kicked from the supergroup chat" } });
+    await assert.rejects(() => h.tg.channel.sendToChat("-1001", { text: "hi" }), (err: unknown) => !(err instanceof CantMessagePrivatelyError));
+  });
+});
+
+describe("webhook route", () => {
+  const update = JSON.stringify({ update_id: 1, message: { message_id: 1, date: 0, chat: GROUP, from: MAYA, text: "hi" } });
+  const post = (headers: Record<string, string>) => new Request("http://localhost/api/telegram", { method: "POST", headers: { "content-type": "application/json", ...headers }, body: update });
+
+  test("401 without the secret, with a wrong one, and while TELEGRAM_WEBHOOK_SECRET is unset", async () => {
+    const { POST } = await import("@/app/api/telegram/route");
+    const before = process.env.TELEGRAM_WEBHOOK_SECRET;
+    try {
+      process.env.TELEGRAM_WEBHOOK_SECRET = "right-secret";
+      assert.equal((await POST(post({}))).status, 401);
+      assert.equal((await POST(post({ "x-telegram-bot-api-secret-token": "wrong-secret" }))).status, 401);
+      delete process.env.TELEGRAM_WEBHOOK_SECRET;
+      assert.equal((await POST(post({ "x-telegram-bot-api-secret-token": "" }))).status, 401);
+    } finally {
+      if (before === undefined) delete process.env.TELEGRAM_WEBHOOK_SECRET;
+      else process.env.TELEGRAM_WEBHOOK_SECRET = before;
+    }
+  });
+});
