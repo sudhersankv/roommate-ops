@@ -1,3 +1,9 @@
+# Kevin → Roomie (rebuild in progress)
+
+> **Read first:** this project is being rebuilt as **Roomie**, an AI groupmate on WhatsApp with per-Group Toolkits.
+> The plan is in `docs/plan.md`, the vocabulary in `GLOSSARY.md`, and the decisions in `docs/adr/`. Where they conflict
+> with the description below, they win. Everything below describes the old Kevin code, which step 1 replaces.
+
 # Kevin
 
 Kevin is a roommate assistant that lives in the house group chat (Telegram first) and a dashboard. He splits bills, keeps the grocery cart, tracks chores, reminds about rent, and emails the leasing office. Persona: Kevin from Home Alone, left in charge of the house. Brief, cheeky, never mean. "Nobody cheats Kevin."

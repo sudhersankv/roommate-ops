@@ -1,6 +1,11 @@
 node_modules
 .next
 .env
+.env.*
+!.env.example
+*.env
+*.env.txt
+spikes/**/auth/
 *.tsbuildinfo
 next-env.d.ts
 plans/

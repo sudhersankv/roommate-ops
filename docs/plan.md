@@ -1,0 +1,157 @@
+# Roomie: rebuild plan
+
+Status: **draft, waiting for sign-off.** Vocabulary is in [`GLOSSARY.md`](../GLOSSARY.md); the big decisions are in [`docs/adr/`](./adr).
+
+## What Roomie is
+
+Roomie is an AI groupmate. You add it to a WhatsApp group and it becomes part of the chat: it splits costs like a mini Splitwise, keeps the group's grocery cart, writes recipes, tracks chores, and later does research, makes PDFs, plans trips and makes stickers. Each of these is a **Toolkit** that a Group switches on. Everyone in the group signs in with Google to see their own view of that group's dashboard.
+
+Roomie is a groupmate, not a platform: brief, witty, exact about facts, and it slowly picks up each group's slang and languages.
+
+## Decisions
+
+| Area | Decision |
+|---|---|
+| Channel | WhatsApp only, through **Baileys** on a dedicated carrier number, behind a Channel adapter ([ADR 0001](./adr/0001-baileys-for-whatsapp-groups.md)). Telegram is deleted. |
+| Agent | One **Mastra** agent (`roomie`), built once. Per-request context goes through `RequestContext`, and tools come from the Group's Toolkits ([ADR 0005](./adr/0005-toolkits-and-one-agent.md)). |
+| Models (Neon AI Gateway) | `claude-sonnet-5-5` for the agent and recipes. `claude-haiku-5-5` for background summaries and Group style. `typesafeai-jev-1-14-0` for the Gate ([ADR 0002](./adr/0002-jev-gate-before-the-agent.md)). `qwen3-embedding-0-6b` for semantic recall. |
+| Observability | Mastra tracing to the **Mastra platform** (`MastraPlatformExporter`) and to local storage for Studio. About 10% of live replies are scored. `npm run evals` runs a fixed scenario set. |
+| When Roomie speaks | Hard triggers ("roomie", @-mention, a reply to Roomie, a voice note); the follow-up window after it speaks; or the Gate says act or clarify above the Group's Chattiness thresholds (default: normal). Roomie asks before logging anything it wasn't asked to log. |
+| Identity | **Neon Auth** with Google. Members are linked to Accounts by **Claim links** sent in private messages ([ADR 0003](./adr/0003-neon-auth-and-claim-links.md)). Whoever adds Roomie is the first Admin. New Members are Pending until an Admin approves them in the chat or on the dashboard. |
+| Integrations | Instacart and Splitwise through **Composio**, wrapped in Roomie's own tools ([ADR 0004](./adr/0004-composio-for-instacart-and-splitwise.md)). |
+| Money | Integer cents, computed in code ([ADR 0007](./adr/0007-money-is-integer-cents-computed-in-code.md)). One currency per Group. |
+| Privacy | Raw chat is kept for 30 days. "roomie forget me" and an Admin "delete group data" are available ([ADR 0006](./adr/0006-chat-retention.md)). |
+| Dashboard | Next.js 16, mobile-first, **Tailwind + shadcn/ui**. One dashboard per Group, with a group switcher. |
+| Data | Fresh schema, using Drizzle **migrations** (`drizzle-kit generate` + `migrate`) instead of `push`. The new Neon database starts empty. |
+| Hosting | Local only for now: `npm run dev` (dashboard and API) and `npm run wa` (WhatsApp). Fly and the deploy workflow are removed. CI runs typecheck and tests. |
+
+## How a message flows
+
+```
+WhatsApp ─▶ Channel adapter (Baileys) ─▶ normalize to IncomingMessage
+   ─▶ resolve Group + Member (create on first contact; Pending if new)
+   ─▶ store chat line (30-day retention)
+   ─▶ Gate: hard trigger? follow-up window? else Jev {intent, addressed, toolkit}
+   ─▶ ignore ──▶ done
+   ─▶ act / clarify ──▶ roomie.generate(text, { requestContext: {groupId, memberId, role, toolkit}, memory })
+          tools = enabled Toolkits ∩ Gate's toolkit (+ core tools)
+          services enforce permissions (Pending, Admin, ownership)
+   ─▶ reply text + attachments/links ─▶ Channel adapter ─▶ WhatsApp
+Every step is one Mastra trace tagged with groupId, memberId, toolkit, and the Gate's decision.
+```
+
+The dashboard's "Ask Roomie" panel and Mastra Studio use the same path without the Channel adapter.
+
+## Target layout
+
+```
+src/
+  mastra/
+    index.ts              new Mastra({ agents, storage, observability, scorers })
+    agents/roomie.ts      instructions(fn of requestContext), tools(fn), memory
+    gate/                 Jev Gate + fallback, Chattiness thresholds
+    memory.ts             PostgresStore + PgVector, Group style, Member notes
+    scorers/              brevity/tone + built-ins
+    evals/                scenarios + runner
+  toolkits/
+    registry.ts           the list of Toolkits
+    core/                 members, onboarding, approvals, reminders, settings
+    splitting/            manifest, tools, service, schema, page
+    groceries/
+    chores/
+    upkeep/
+  channels/
+    types.ts              IncomingMessage, Outgoing, Channel
+    whatsapp/             Baileys adapter + session store
+  pipeline.ts             the flow above, channel-agnostic
+  db/                     schema barrel (imports each Toolkit's tables), client, migrations/
+  auth/                   Neon Auth setup, session → Member for a Group
+  integrations/composio.ts
+  app/                    dashboard (per-Group routes), api/
+scripts/                  wa.ts, seed.ts, evals.ts
+```
+
+## Data model (sketch, finalized in step 4)
+
+- **Core:** `groups` (name, currency, timezone, chattiness, purpose); `chats` (group, channel, external id); `members` (group, account?, channel identity, display name, role admin|member, status pending|active|removed); `claim_tokens`; `group_toolkits` (group, toolkit, enabled, settings); `chat_messages` (30-day retention); `member_notes`; `activity`.
+- **Splitting:** `expenses` (group, description, category, note, date, currency, cents, recurring?, created_by, deleted_at); `expense_payers` (expense, member, cents); `expense_shares` (expense, member, cents, method); `settlements`; `payment_handles` (member, venmo|paypal|cashapp, handle); `splitwise_links` (group, splitwise group id, mode import|mirror, last sync).
+- **Groceries:** `cart_items` (group, name, qty, added_by, shared, est_cents, status); `recipes` (group, title, servings, ingredients, steps, instacart_url).
+- **Chores / Upkeep / Reminders:** carried over from today's tables, re-keyed to `groups`.
+
+## Steps
+
+Each step gets its own branch and PR, and you test locally before it's merged.
+
+### 1. Rename and clean slate (`step/1-roomie`)
+- Rename Kevin to Roomie everywhere: package, code identifiers, UI text, docs. "roomie" becomes the trigger word, with a fresh neutral-witty persona. The full persona work happens in step 3.
+- Delete Telegram, AgentMail/leasing, rent reminders, the fake "Kevin's Market", Fly (`fly.toml`, `.github/workflows/fly-deploy.yml`) and the smoke scripts that write to real data.
+- Rewrite `.env.example`, `README.md` and `CLAUDE.md`. Add CI (typecheck + `npm test`).
+- **Done when:** typecheck and tests pass, `git grep -i kevin` finds only ADRs and history notes, and the dashboard boots against the empty database.
+
+### 2. WhatsApp channel (`step/2-whatsapp`), needs Roomie's number
+- Baileys adapter: QR pairing with the session stored in Postgres, inbound text, voice notes (transcribed by a Gemini model on the gateway if it accepts audio, otherwise OpenRouter as today), images, group join/leave events, and outbound text, images, documents and stickers, plus private 1:1 messages.
+- Anti-ban behaviour: join delay, typing indicators and human-like pauses, per-Chat and global send rate limits, and no bulk links.
+- `npm run wa` process, with reconnects and a health log. A channel-agnostic `pipeline.ts`, using today's agent for now.
+- **Done when:** Roomie in a test group answers "roomie hi", transcribes a voice note, and can send a private message to a Member.
+- If the number isn't ready, steps 2 and 3 swap.
+
+### 3. Mastra agent rebuild (`step/3-agent`)
+- `src/mastra/` with a `roomie` agent built once: `RequestContext` with a schema, dynamic instructions (persona, Group style, Members, time zone) and dynamic tools from the Toolkit registry.
+- Memory: Postgres storage, a thread per Group, semantic recall with pgvector embeddings, and Member notes.
+- The Gate (Jev, with a hard-trigger fallback) and Chattiness.
+- Observability: platform and storage exporters, a sensitive-data filter, `requestContextKeys`, and trace tags.
+- Scorers sampled on live traffic, and a scenario set of about 30 cases with `npm run evals`. Mastra Studio via `npm run mastra:dev` with request-context presets.
+- Move today's tools into the Toolkit shape: core, splitting (basic), groceries (basic), chores, upkeep.
+- **Done when:** Studio chats work, traces show up on the Mastra platform, the Gate has unit tests, and the eval baseline is recorded.
+
+### 4. Identity, Groups and dashboard shell (`step/4-identity`)
+- Fresh schema with migrations. Neon Auth with Google. Claim links, roles, Pending members, and the approval flow in both chat and dashboard. Permission checks in services.
+- Onboarding: Roomie joins, waits 1–3 minutes, then introduces itself, creates the Group, makes the adder Admin, reads the members, and asks the Group's purpose, currency, time zone and Toolkits. Claim links are **not** sent in a burst. A Member gets theirs privately when they ask for the dashboard or the first time they do something with a dashboard view, spaced apart and only after they've messaged Roomie ([ADR 0001](./adr/0001-baileys-for-whatsapp-groups.md)).
+- Dashboard rebuilt on Tailwind + shadcn: sign in, group switcher, a personal home ("you owe / you're owed", your Cart items, your chores), and Members and Settings for Admins.
+- The 30-day retention job, "forget me", and "delete group data".
+- **Done when:** a new person in the test group goes from Pending to approved to claimed to seeing their own dashboard, and a non-Admin can't change Members or settings anywhere.
+
+### 5. Splitting Toolkit (`step/5-splitting`)
+- Split equally, by exact amounts, by percentages or by shares. Multiple Payers. Categories (picked by Roomie), notes, dates, recurring Expenses, edit/delete/undo, Activity, a simplify-debts toggle, and a Settle plan with Venmo, PayPal and Cash App links.
+- Receipt photo to Expense (vision model), with per-item assignment ("I had the steak").
+- Splitwise through Composio: connect, import a group (people plus full history), and export as a one-time copy or a live mirror.
+- A Splitwise-style money page: a balances header, an Expense list with Shares visible, and add/edit sheets.
+- **Done when:** the "$90 dinner, 50/25/25" scenario, multi-payer, edit and undo all match to the cent between chat and dashboard, and a Splitwise import and export round-trips on a test group.
+
+### 6. Groceries Toolkit (`step/6-groceries`)
+- Cart (personal vs shared items, estimated prices) and an Instacart shopping-list link through Composio. "I paid $84" becomes an Expense split by who wanted what.
+- Recipes: "tacos for 5 friday" gives a scaled Recipe and an Instacart recipe link. Ingredients go into the Cart only when someone asks or clearly means it.
+- **Done when:** a recipe, a cart, the checkout link and the paid-to-Expense step all work end to end in the test group.
+
+### 7. Chores and Upkeep Toolkits (`step/7-household`)
+- Move chores, rotation, streaks and upkeep onto Groups and the new UI. Reminders live in core, with each Group's time zone.
+- **Done when:** the chores and upkeep scenarios pass in evals and show up on the dashboard.
+
+## Parked (v2 / v3)
+
+- **v2:** Research (web search), PDF generation (itineraries, receipts, summaries), and Trip planning, which builds on Research, PDF and Splitting.
+- **v3:** Stickers from Members' photos (the gateway lists no image-generation model yet, so check again when we get there).
+- **Gmail through Composio:** rent and leasing-office email.
+- **Before a public launch:** an official WhatsApp or Photon adapter, a Splitwise licence decision, and hosting.
+
+## Your to-dos
+
+- [ ] Roomie's WhatsApp number: a real prepaid eSIM or SIM you **keep** (for example Tello, about $5/month). Not Google Voice and not a rented SMS-verification number. Use the WhatsApp Business app, turn on two-step verification, warm it up for a few days, and open it at least weekly.
+- [ ] Mastra platform: `MASTRA_PLATFORM_ACCESS_TOKEN` and `MASTRA_PROJECT_ID` in `.env`.
+- [ ] Composio: `COMPOSIO_API_KEY` in `.env`. I'll test the Instacart call.
+- [ ] Google Cloud OAuth client for Neon Auth. Steps will come in step 4.
+
+## Environment
+
+```
+DATABASE_URL                     Neon Postgres (app + Mastra memory)
+NEON_AI_GATEWAY_BASE_URL/TOKEN   models
+LLM_MODEL=claude-sonnet-5-5      agent
+SMALL_MODEL=claude-haiku-5-5     background jobs
+GATE_MODEL=typesafeai-jev-1-14-0 Gate
+EMBED_MODEL=qwen3-embedding-0-6b semantic recall
+MASTRA_PLATFORM_ACCESS_TOKEN, MASTRA_PROJECT_ID
+COMPOSIO_API_KEY
+NEON_AUTH_*                      (step 4)
+APP_URL=http://localhost:3000    links Roomie sends
+```
