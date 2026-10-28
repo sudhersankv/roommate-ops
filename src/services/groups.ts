@@ -168,11 +168,11 @@ export async function setToolkit(ctx: Ctx, input: { toolkit: ToolkitId; enabled:
   return enabledToolkits(ctx);
 }
 
-const DATA_TABLES = [schema.expenses, schema.settlements, schema.cartItems, schema.chores, schema.reminders, schema.maintenance, schema.chatMessages, schema.activity] as const;
+const DATA_TABLES = [schema.outboxJobs, schema.splitwiseLinks, schema.expenses, schema.settlements, schema.cartItems, schema.chores, schema.reminders, schema.maintenance, schema.chatMessages, schema.activity] as const;
 
 /**
  * Admin "delete group data" (ADR 0006): every Expense, Settlement, Cart item, chore, reminder, upkeep item, chat
- * line, Activity row, Member note and Roomie's memory for the Group. The Group, its Chat, Members and settings
+ * line, Activity row, Member note, Splitwise link and Roomie's memory for the Group. The Group, its Chat, Members and settings
  * stay, so Roomie keeps working from the next message.
  */
 export async function deleteGroupData(ctx: Ctx): Promise<void> {

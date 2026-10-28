@@ -2,7 +2,8 @@
 // Money is always integer cents. Accounts point at Neon Auth users (schema neon_auth) by id, as text; we never
 // write to neon_auth.
 import { sql } from "drizzle-orm";
-import { boolean, char, index, integer, jsonb, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { EXPENSE_CATEGORIES, EXPENSE_SOURCES, RECURRENCES, SPLIT_METHODS } from "./enums";
+import { boolean, char, date, index, integer, jsonb, numeric, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid, type AnyPgColumn } from "drizzle-orm/pg-core";
 
 const id = () => uuid("id").primaryKey().defaultRandom();
 const createdAt = () => timestamp("created_at", { withTimezone: true }).notNull().defaultNow();
@@ -141,28 +142,56 @@ export const activity = pgTable(
 
 /* ---------- splitting ---------- */
 
+export * from "./enums";
+
 export const expenses = pgTable(
   "expenses",
   {
     id: id(),
     groupId: uuid("group_id").notNull().references(() => groups.id, { onDelete: "cascade" }),
+    // The primary Payer (the one who paid the most), kept in sync with expense_payers for display and old readers.
     payerId: uuid("payer_id").notNull().references(() => members.id),
     cents: integer("cents").notNull(),
     description: text("description").notNull(),
-    source: text("source", { enum: ["chat", "ui", "cart"] }).notNull().default("chat"),
+    category: text("category", { enum: EXPENSE_CATEGORIES }).notNull().default("other"),
+    note: text("note"),
+    // The day it happened, in the Group's time zone (services set it; the column default is only a fallback).
+    occurredOn: date("occurred_on").notNull().default(sql`current_date`),
+    splitMethod: text("split_method", { enum: SPLIT_METHODS }).notNull().default("equal"),
+    recurring: text("recurring", { enum: RECURRENCES }),
+    // Set on the copies the scheduler makes of a recurring Expense; unique per (parent, day) so a copy is made once.
+    recurringParentId: uuid("recurring_parent_id").references((): AnyPgColumn => expenses.id, { onDelete: "set null" }),
+    receiptUrl: text("receipt_url"),
+    source: text("source", { enum: EXPENSE_SOURCES }).notNull().default("chat"),
     createdBy: uuid("created_by").references(() => members.id),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
     createdAt: createdAt(),
   },
-  (t) => [index("expenses_group_live").on(t.groupId).where(sql`${t.deletedAt} is null`)],
+  (t) => [
+    index("expenses_group_live").on(t.groupId).where(sql`${t.deletedAt} is null`),
+    uniqueIndex("expenses_recurring_copy").on(t.recurringParentId, t.occurredOn).where(sql`${t.recurringParentId} is not null`),
+  ],
 );
 
+/** Who paid how much of an Expense. Sums to expenses.cents. */
+export const expensePayers = pgTable(
+  "expense_payers",
+  {
+    expenseId: uuid("expense_id").notNull().references(() => expenses.id, { onDelete: "cascade" }),
+    memberId: uuid("member_id").notNull().references(() => members.id),
+    cents: integer("cents").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.expenseId, t.memberId] })],
+);
+
+/** Shares. `weight` is what was typed for percent/shares splits (50, 2), so an edit shows the original method. */
 export const expenseSplits = pgTable(
   "expense_splits",
   {
     expenseId: uuid("expense_id").notNull().references(() => expenses.id, { onDelete: "cascade" }),
     memberId: uuid("member_id").notNull().references(() => members.id),
     cents: integer("cents").notNull(),
+    weight: numeric("weight"),
   },
   (t) => [primaryKey({ columns: [t.expenseId, t.memberId] })],
 );
@@ -175,6 +204,68 @@ export const settlements = pgTable("settlements", {
   cents: integer("cents").notNull(),
   createdAt: createdAt(),
 });
+
+/* ---------- Splitwise (through Composio, ADR 0004) ---------- */
+
+export const SPLITWISE_MODES = ["import", "mirror"] as const;
+
+/** One Splitwise connection per Group, made by an Admin with their own Splitwise. */
+export const splitwiseLinks = pgTable("splitwise_links", {
+  groupId: uuid("group_id")
+    .primaryKey()
+    .references(() => groups.id, { onDelete: "cascade" }),
+  connectedBy: uuid("connected_by").references(() => members.id, { onDelete: "set null" }),
+  splitwiseGroupId: text("splitwise_group_id"),
+  splitwiseGroupName: text("splitwise_group_name"),
+  mode: text("mode", { enum: SPLITWISE_MODES }),
+  // Our member id -> Splitwise user id, filled when a Splitwise group is linked.
+  memberMap: jsonb("member_map").$type<Record<string, string>>().notNull().default({}),
+  lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+  createdAt: createdAt(),
+});
+
+/** Our Expense <-> its copy elsewhere, so imports don't duplicate and mirror pushes update instead of re-creating. */
+export const expenseExternalRefs = pgTable(
+  "expense_external_refs",
+  {
+    expenseId: uuid("expense_id").notNull().references(() => expenses.id, { onDelete: "cascade" }),
+    provider: text("provider", { enum: ["splitwise"] }).notNull(),
+    externalId: text("external_id").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("expense_external_refs_external").on(t.provider, t.externalId), uniqueIndex("expense_external_refs_expense").on(t.expenseId, t.provider)],
+);
+
+/** Splitwise "payments" come in as Settlements; same idea as expense_external_refs. */
+export const settlementExternalRefs = pgTable(
+  "settlement_external_refs",
+  {
+    settlementId: uuid("settlement_id").notNull().references(() => settlements.id, { onDelete: "cascade" }),
+    provider: text("provider", { enum: ["splitwise"] }).notNull(),
+    externalId: text("external_id").notNull(),
+  },
+  (t) => [uniqueIndex("settlement_external_refs_external").on(t.provider, t.externalId)],
+);
+
+/**
+ * Work to do outside the request (ADR 0009): today only Splitwise mirror pushes. The scheduler tick runs due jobs,
+ * and a failure is retried with backoff on a later tick.
+ */
+export const outboxJobs = pgTable(
+  "outbox_jobs",
+  {
+    id: id(),
+    groupId: uuid("group_id").notNull().references(() => groups.id, { onDelete: "cascade" }),
+    kind: text("kind", { enum: ["splitwise.push"] }).notNull(),
+    payload: jsonb("payload").$type<{ expenseId: string; op: "upsert" | "delete" }>().notNull(),
+    attempts: integer("attempts").notNull().default(0),
+    lastError: text("last_error"),
+    runAfter: timestamp("run_after", { withTimezone: true }).notNull().defaultNow(),
+    doneAt: timestamp("done_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [index("outbox_jobs_due").on(t.runAfter).where(sql`${t.doneAt} is null`)],
+);
 
 /* ---------- groceries ---------- */
 
