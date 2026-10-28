@@ -7,11 +7,13 @@
 // else creates "Apt 4B" with Sudhersan, Ryan and Alex. --reset keeps the household row and members (and their
 // chat links); everything else for this house is rebuilt.
 // SEED_CHAT_ID binds the chat: always on create, and on an existing house when --reset or it has no chat yet.
+import "../src/lib/env";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { db, schema } from "../src/db";
 import { estimate } from "../src/lib/prices";
 import { money, chores as choresSvc, reminders as remindersSvc, upkeep } from "../src/services";
 import { dollars, type Ctx } from "../src/services/types";
+import { PRESETS_FILE, writeStudioPresets } from "./lib/presets";
 
 const { households, members, expenses, expenseSplits, settlements, chores, choreLogs, reminders, maintenance, cartItems, chatLog } = schema;
 
@@ -139,9 +141,17 @@ const who = await resolveMembers(hid);
 const { Sudhersan: S, Ryan: R, Alex: A } = who;
 const ctx: Ctx = { householdId: hid, actorId: S, source: "ui" };
 
+/** The household id and a requestContext to paste into Studio (also written to .mastra-presets.json). */
+async function printStudioContext() {
+  await writeStudioPresets();
+  const studio = { householdId: hid, actorId: S, actorName: "Sudhersan", source: "chat" };
+  console.log(`\nStudio (npm run mastra:dev): household ${hid}; presets in ${PRESETS_FILE}. requestContext:\n${JSON.stringify(studio)}`);
+}
+
 const [{ n: existing }] = await db.select({ n: sql<number>`count(*)::int` }).from(expenses).where(eq(expenses.householdId, hid));
 if (Number(existing) > 0 && !RESET) {
   console.log(`"${house.name}" (${hid}) already seeded; pass --reset to rebuild`);
+  await printStudioContext();
   process.exit(0);
 }
 
@@ -308,4 +318,5 @@ console.log("  shame:   ", shame.map((s) => `${s.name} (${s.choresThisWeek} this
 console.log("  chores:  ", status.map((c) => `${c.name}${c.overdue ? " OVERDUE" : ""} [${c.whoseTurn}'s turn]`).join(", "));
 console.log("  upkeep:  ", due.map((m) => `${m.item} (${m.status})`).join(", "));
 console.log("  reminders:", (await remindersSvc.listReminders(ctx)).map((r) => `${fmt(r.dueAt)} ${r.text}${r.memberName ? ` (${r.memberName})` : ""}`).join(" | "));
+await printStudioContext();
 process.exit(0);
