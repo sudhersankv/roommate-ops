@@ -1,12 +1,15 @@
 // npm run seed: the demo Group "Apt 4B" with Maya (Admin), Dev and Sam (active) and Priya (Pending), three weeks of
-// Expenses, Settlements, a Cart, chores, upkeep, reminders and some chat. The numbers match the UI prototype: Maya is
-// owed $42.50, Dev owes $30.00 and Sam owes $12.50. Prints the Group id, a Claim link for Maya and a Studio
+// Expenses (equal splits, plus one percent, one shares, one multi-payer and one recurring Expense), Settlements, a
+// Cart, chores, upkeep, reminders and some chat. The numbers match the UI prototype: Maya is owed $42.50, Dev owes
+// $30.00 and Sam owes $12.50. Prints the Group id, a Claim link for Maya and a Studio
 // requestContext. `npm run seed:demo` (--reset) deletes Apt 4B first and rebuilds it.
 // The Chat is a dev Channel chat ("dev-apt-4b"), so `npm run dev-chat -- --chat dev-apt-4b` talks to it.
 import "../src/lib/env";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db, schema } from "../src/db";
 import { devUserId } from "../src/channels/dev";
+import { localDay } from "../src/lib/dates";
+import { guessCategory } from "../src/services/categories";
 import { claims, groups, money, chores as choresSvc, upkeep as upkeepSvc } from "../src/services";
 import { dollars } from "../src/services/types";
 import { PRESETS_FILE, writeStudioPresets } from "./lib/presets";
@@ -29,9 +32,37 @@ async function printAccess(groupId: string) {
   console.log(`Studio (npm run mastra:dev): presets in ${PRESETS_FILE}. requestContext:\n${JSON.stringify(studio)}`);
 }
 
+/**
+ * Step 5's split methods on the Money page: a percent, a shares, a multi-payer and a recurring Expense, logged
+ * through the services as their Payers. Settlements then put every Balance back where it was, so the totals still
+ * match the prototype. Skipped when the Group already has them (older seeds get them on the next `npm run seed`).
+ */
+async function addSplitDemos(groupId: string) {
+  const [has] = await db.select({ id: schema.expenses.id }).from(schema.expenses).where(and(eq(schema.expenses.groupId, groupId), eq(schema.expenses.splitMethod, "percent"))).limit(1);
+  if (has) return false;
+  const people = await db.select().from(schema.members).where(eq(schema.members.groupId, groupId));
+  const id = (name: string) => people.find((p) => p.displayName === name)!.id;
+  const [m, d, s] = [id("Maya"), id("Dev"), id("Sam")];
+  const as = (memberId: string) => ({ groupId, memberId, source: "chat" as const });
+  const [g] = await db.select().from(schema.groups).where(eq(schema.groups.id, groupId));
+  const day = (n: number) => localDay(ago(n), g.timezone);
+  const before = new Map((await money.getBalances({ groupId })).map((b) => [b.memberId, b.cents]));
+
+  await money.logExpense(as(m), { cents: 9000, description: "Dinner at Nopa", category: "food", occurredOn: day(3), note: "Maya had the steak", percents: [{ memberId: m, percent: 50 }, { memberId: d, percent: 25 }, { memberId: s, percent: 25 }] });
+  await money.logExpense(as(d), { cents: 4125, description: "Wine and cheese", category: "food", occurredOn: day(6), shares: [{ memberId: m, shares: 2 }, { memberId: d, shares: 2 }, { memberId: s, shares: 1 }] });
+  await money.logExpense(as(s), { cents: 10000, description: "Costco restock", category: "groceries", occurredOn: day(4), note: "Two cards at the register", payers: [{ memberId: s, cents: 6000 }, { memberId: m, cents: 4000 }] });
+  await money.logExpense(as(m), { cents: 1549, description: "Netflix", category: "entertainment", occurredOn: day(12), recurring: "monthly" });
+
+  const after = await money.getBalances({ groupId });
+  const delta = after.map((b) => ({ ...b, cents: b.cents - (before.get(b.memberId) ?? 0) }));
+  for (const t of money.computeSettlePlan(delta)) await money.settleUp(as(t.fromId), { toId: t.toId, cents: t.cents });
+  return true;
+}
+
 const existing = await groups.chatFor("dev", CHAT);
 if (existing && !RESET) {
-  console.log(`"${existing.group.name}" (${existing.group.id}) already seeded; pass --reset (npm run seed:demo) to rebuild`);
+  const added = await addSplitDemos(existing.group.id);
+  console.log(`"${existing.group.name}" (${existing.group.id}) already seeded${added ? "; added the step-5 split examples" : ""}; pass --reset (npm run seed:demo) to rebuild`);
   await printAccess(existing.group.id);
   process.exit(0);
 }
@@ -75,7 +106,12 @@ const activity: (typeof schema.activity.$inferInsert)[] = [
 
 /* ----- money: 12 Expenses (equal splits) and 2 Settlements over three weeks ----- */
 const expense = async (daysAgo: number, payerId: string, cents: number, description: string, among = all, source: "chat" | "ui" | "cart" = "chat") => {
-  const [e] = await db.insert(schema.expenses).values({ groupId: gid, payerId, cents, description, source, createdBy: payerId, createdAt: ago(daysAgo, 3) }).returning();
+  const occurredOn = localDay(ago(daysAgo, 3), group.timezone);
+  const [e] = await db
+    .insert(schema.expenses)
+    .values({ groupId: gid, payerId, cents, description, category: guessCategory(description, source), occurredOn, source, createdBy: payerId, createdAt: ago(daysAgo, 3) })
+    .returning();
+  await db.insert(schema.expensePayers).values({ expenseId: e.id, memberId: payerId, cents });
   await db.insert(schema.expenseSplits).values(money.splitEvenly(cents, among, payerId).map((r) => ({ expenseId: e.id, ...r })));
   activity.push({ groupId: gid, actorMemberId: payerId, kind: "expense.added", summary: `added ${description}, ${dollars(cents)}`, refTable: "expenses", refId: e.id, createdAt: ago(daysAgo, 3) });
 };
@@ -169,6 +205,7 @@ const chat: [string | null, number, number, string][] = [
 ];
 await db.insert(schema.chatMessages).values(chat.map(([memberId, d, h, text]) => ({ groupId: gid, memberId, text, createdAt: ago(d, h) })));
 await db.insert(schema.activity).values(activity);
+await addSplitDemos(gid);
 
 /* ---------- summary ---------- */
 const ctx = { groupId: gid };
