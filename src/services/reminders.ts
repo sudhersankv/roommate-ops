@@ -1,13 +1,14 @@
-// P4 · Reminders. One-off and monthly nudges; the scheduler (src/jobs/scheduler.ts) delivers them.
+// Reminders. One-off and monthly nudges; the scheduler (src/jobs/scheduler.ts) delivers them.
 import { and, asc, eq, isNull, lte } from "drizzle-orm";
 import { db, schema } from "@/db";
-import type { Ctx } from "./types";
+import { requireActive } from "./authz";
+import type { Ctx, GroupCtx } from "./types";
 
 const { reminders, members } = schema;
 
 export type Reminder = {
   id: string;
-  householdId: string;
+  groupId: string;
   text: string;
   dueAt: Date;
   memberId: string | null;
@@ -36,11 +37,11 @@ export function addOneMonth(d: Date): Date {
 
 const selectShape = {
   id: reminders.id,
-  householdId: reminders.householdId,
+  groupId: reminders.groupId,
   text: reminders.text,
   dueAt: reminders.dueAt,
   memberId: reminders.memberId,
-  memberName: members.name,
+  memberName: members.displayName,
   recurring: reminders.recurring,
 };
 
@@ -56,6 +57,7 @@ export async function setReminder(
   ctx: Ctx,
   input: { text: string; dueAt: Date; memberId?: string; recurring?: "monthly" },
 ): Promise<Reminder> {
+  await requireActive(ctx);
   const text = input.text.trim();
   if (!text) throw new Error("Reminder needs some text.");
   if (Number.isNaN(input.dueAt.getTime())) throw new Error("That's not a real date.");
@@ -63,9 +65,9 @@ export async function setReminder(
   let memberName: string | null = null;
   if (input.memberId) {
     const [m] = await db
-      .select({ name: members.name })
+      .select({ name: members.displayName })
       .from(members)
-      .where(and(eq(members.id, input.memberId), eq(members.householdId, ctx.householdId)));
+      .where(and(eq(members.id, input.memberId), eq(members.groupId, ctx.groupId)));
     if (!m) throw new Error("That person isn't in this group.");
     memberName = m.name;
   }
@@ -73,7 +75,7 @@ export async function setReminder(
   const [row] = await db
     .insert(reminders)
     .values({
-      householdId: ctx.householdId,
+      groupId: ctx.groupId,
       text,
       dueAt: input.dueAt,
       memberId: input.memberId ?? null,
@@ -84,18 +86,19 @@ export async function setReminder(
   return toReminder({ ...row, memberName });
 }
 
-export async function listReminders(ctx: Pick<Ctx, "householdId">): Promise<Reminder[]> {
+export async function listReminders(ctx: GroupCtx): Promise<Reminder[]> {
   const rows = await baseQuery()
-    .where(and(eq(reminders.householdId, ctx.householdId), isNull(reminders.sentAt)))
+    .where(and(eq(reminders.groupId, ctx.groupId), isNull(reminders.sentAt)))
     .orderBy(asc(reminders.dueAt));
   return rows.map(toReminder);
 }
 
 export async function cancelReminder(ctx: Ctx, input: { reminderId: string }): Promise<void> {
-  await db.delete(reminders).where(and(eq(reminders.id, input.reminderId), eq(reminders.householdId, ctx.householdId)));
+  await requireActive(ctx);
+  await db.delete(reminders).where(and(eq(reminders.id, input.reminderId), eq(reminders.groupId, ctx.groupId)));
 }
 
-/** Scheduler only: all households' unsent reminders with dueAt <= now. */
+/** Scheduler only: all groups' unsent reminders with dueAt <= now. */
 export async function dueReminders(now = new Date()): Promise<Reminder[]> {
   const rows = await baseQuery()
     .where(and(isNull(reminders.sentAt), lte(reminders.dueAt, now)))
@@ -112,7 +115,7 @@ export async function markSent(reminderId: string): Promise<void> {
     .returning();
   if (!row || row.recurring !== "monthly") return;
   await db.insert(reminders).values({
-    householdId: row.householdId,
+    groupId: row.groupId,
     text: row.text,
     memberId: row.memberId,
     recurring: "monthly",

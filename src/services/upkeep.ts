@@ -1,7 +1,8 @@
 // P8 · Recurring home upkeep: filters, smoke alarms, the dryer vent nobody thinks about.
 import { and, eq } from "drizzle-orm";
 import { db, schema } from "@/db";
-import type { Ctx } from "./types";
+import { requireActive } from "./authz";
+import type { Ctx, GroupCtx } from "./types";
 
 const { maintenance } = schema;
 
@@ -20,7 +21,7 @@ export type MaintenanceItem = {
 export const DUE_SOON_DAYS = 7;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/** The usual suspects, offered when a house has no battle plan yet. */
+/** The usual suspects, offered when a Group has no battle plan yet. */
 export const DEFAULT_ITEMS: ReadonlyArray<{ item: string; everyDays: number }> = [
   { item: "Replace HVAC filter", everyDays: 90 },
   { item: "Test smoke alarms", everyDays: 180 },
@@ -81,27 +82,29 @@ export function pickByName<T extends { item: string }>(items: readonly T[], quer
 
 // ---------- DB-backed services ----------
 
-async function rows(householdId: string) {
-  return db.select().from(maintenance).where(eq(maintenance.householdId, householdId));
+async function rows(groupId: string) {
+  return db.select().from(maintenance).where(eq(maintenance.groupId, groupId));
 }
 
 /** Add an upkeep item. Same name (case-insensitive) already tracked -> just update its cadence. */
 export async function addMaintenance(ctx: Ctx, input: { item: string; everyDays: number }): Promise<void> {
+  await requireActive(ctx);
   const item = input.item.trim();
   const everyDays = Math.max(1, Math.round(input.everyDays));
   if (!item) throw new Error("Upkeep item needs a name.");
-  const existing = (await rows(ctx.householdId)).find((m) => norm(m.item) === norm(item));
+  const existing = (await rows(ctx.groupId)).find((m) => norm(m.item) === norm(item));
   if (existing) {
     await db.update(maintenance).set({ everyDays }).where(eq(maintenance.id, existing.id));
     return;
   }
-  await db.insert(maintenance).values({ householdId: ctx.householdId, item, everyDays });
+  await db.insert(maintenance).values({ groupId: ctx.groupId, item, everyDays });
 }
 
 /** Mark an item done now. Fuzzy name match; unknown names throw with the list of known items so Roomie can ask. */
-export async function markDone(ctx: Ctx, input: { item: string }): Promise<void> {
-  const all = await rows(ctx.householdId);
-  const match = pickByName(all, input.item);
+export async function markDone(ctx: Ctx, input: { item: string; id?: string }): Promise<void> {
+  await requireActive(ctx);
+  const all = await rows(ctx.groupId);
+  const match = (input.id ? all.find((m) => m.id === input.id) : undefined) ?? pickByName(all, input.item);
   if (!match) {
     const known = all.map((m) => `"${m.item}"`).join(", ");
     throw new Error(
@@ -113,28 +116,29 @@ export async function markDone(ctx: Ctx, input: { item: string }): Promise<void>
   await db
     .update(maintenance)
     .set({ lastDone: new Date() })
-    .where(and(eq(maintenance.id, match.id), eq(maintenance.householdId, ctx.householdId)));
+    .where(and(eq(maintenance.id, match.id), eq(maintenance.groupId, ctx.groupId)));
 }
 
 /** Every item with nextDue + status, soonest first (never-done first). */
-export async function listMaintenance(ctx: Pick<Ctx, "householdId">): Promise<MaintenanceItem[]> {
+export async function listMaintenance(ctx: GroupCtx): Promise<MaintenanceItem[]> {
   const now = new Date();
-  return (await rows(ctx.householdId))
+  return (await rows(ctx.groupId))
     .map((r) => withSchedule({ id: r.id, item: r.item, everyDays: r.everyDays, lastDone: r.lastDone }, now))
     .sort(compareByNextDue);
 }
 
 /** Items overdue or due within the next 7 days, soonest first. Home card + Group Report read this. */
-export async function dueMaintenance(ctx: Pick<Ctx, "householdId">): Promise<MaintenanceItem[]> {
+export async function dueMaintenance(ctx: GroupCtx): Promise<MaintenanceItem[]> {
   return (await listMaintenance(ctx)).filter((m) => m.status !== "ok");
 }
 
-/** Seed the usual suspects, skipping any the house already tracks. Returns how many were added. */
+/** Seed the usual suspects, skipping any the Group already tracks. Returns how many were added. */
 export async function addDefaults(ctx: Ctx): Promise<number> {
-  const have = new Set((await rows(ctx.householdId)).map((m) => norm(m.item)));
+  await requireActive(ctx);
+  const have = new Set((await rows(ctx.groupId)).map((m) => norm(m.item)));
   const missing = DEFAULT_ITEMS.filter((d) => !have.has(norm(d.item)));
   if (missing.length) {
-    await db.insert(maintenance).values(missing.map((d) => ({ householdId: ctx.householdId, ...d })));
+    await db.insert(maintenance).values(missing.map((d) => ({ groupId: ctx.groupId, ...d })));
   }
   return missing.length;
 }

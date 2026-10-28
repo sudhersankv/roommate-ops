@@ -1,12 +1,12 @@
 // P3 · Sudhersan. The Group Report: chat tool, home page cards, and the weekly scheduled post all use this.
 // formatGroupReport / shouldPostWeeklyReport are pure (no DB, no randomness) so report.test.ts can run them.
-import { dollars, type Ctx } from "./types";
+import { dollars, type GroupCtx } from "./types";
 import { getBalances, getSettlePlan } from "./money";
 import { choreStatus, hallOfShame } from "./chores";
 import { listReminders } from "./reminders";
 import { dueMaintenance } from "./upkeep";
 
-export async function groupReport(ctx: Pick<Ctx, "householdId">) {
+export async function groupReport(ctx: GroupCtx) {
   const [balances, settlePlan, chores, shame, upcoming, upkeep] = await Promise.all([
     getBalances(ctx),
     getSettlePlan(ctx),
@@ -24,7 +24,7 @@ export const DEFAULT_TZ = "America/Chicago";
 
 /* ---------- pure formatting ---------- */
 
-/** "Fri Oct 10" in the house's timezone. */
+/** "Fri Oct 10" in the Group's time zone. */
 export function shortDate(d: Date, tz = DEFAULT_TZ): string {
   return new Intl.DateTimeFormat("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: tz }).format(d).replace(",", "");
 }
@@ -46,9 +46,9 @@ export function shameJab(top: GroupReport["shame"][number]): string {
  * overdue chores with whose turn, who's behind on chores (Hall of Shame top 1–2 with a jab), next 3 reminders, overdue upkeep.
  * Stays around a dozen lines. Pure and deterministic.
  */
-export function formatGroupReport(r: GroupReport, opts: { houseName?: string; tz?: string } = {}): string {
+export function formatGroupReport(r: GroupReport, opts: { groupName?: string; tz?: string } = {}): string {
   const tz = opts.tz ?? DEFAULT_TZ;
-  const lines: string[] = [`📣 Group report${opts.houseName ? ` — ${opts.houseName}` : ""}`];
+  const lines: string[] = [`📣 Group report${opts.groupName ? ` — ${opts.groupName}` : ""}`];
 
   // Money
   if (r.settlePlan.length === 0) lines.push("💸 All square. Love that for us.");

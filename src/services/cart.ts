@@ -6,7 +6,8 @@ import { db, schema } from "@/db";
 import { estimate } from "@/lib/prices";
 import { listMembers } from "./members";
 import { logExpense, type Expense, type SplitRow } from "./money";
-import type { Ctx } from "./types";
+import { requireActive } from "./authz";
+import type { Ctx, GroupCtx } from "./types";
 
 const { cartItems, members } = schema;
 
@@ -83,9 +84,9 @@ export function computeCartSplits(items: SplitItem[], activeMemberIds: string[],
 
 type Row = typeof cartItems.$inferSelect;
 
-async function namesFor(householdId: string): Promise<Map<string, string>> {
-  // Every member of the house, including anyone who moved out, so old items still show a name.
-  const rows = await db.select({ id: members.id, name: members.name }).from(members).where(eq(members.householdId, householdId));
+async function namesFor(groupId: string): Promise<Map<string, string>> {
+  // Every Member of the Group, including anyone who moved out, so old items still show a name.
+  const rows = await db.select({ id: members.id, name: members.displayName }).from(members).where(eq(members.groupId, groupId));
   return new Map(rows.map((r) => [r.id, r.name]));
 }
 
@@ -100,22 +101,23 @@ const toItem = (r: Row, names: Map<string, string>): CartItem => ({
   createdAt: r.createdAt,
 });
 
-async function openRows(householdId: string): Promise<Row[]> {
+async function openRows(groupId: string): Promise<Row[]> {
   return db
     .select()
     .from(cartItems)
-    .where(and(eq(cartItems.householdId, householdId), eq(cartItems.status, "open")))
+    .where(and(eq(cartItems.groupId, groupId), eq(cartItems.status, "open")))
     .orderBy(asc(cartItems.createdAt), asc(cartItems.id));
 }
 
 /** Open items with adder names, oldest first. */
-export async function listOpenItems(ctx: Pick<Ctx, "householdId">): Promise<CartItem[]> {
-  const [rows, names] = await Promise.all([openRows(ctx.householdId), namesFor(ctx.householdId)]);
+export async function listOpenItems(ctx: GroupCtx): Promise<CartItem[]> {
+  const [rows, names] = await Promise.all([openRows(ctx.groupId), namesFor(ctx.groupId)]);
   return rows.map((r) => toItem(r, names));
 }
 
-/** Items are attributed to ctx.actorId. estCents comes from lib/prices (catalog), not the LLM. */
+/** Items are attributed to ctx.memberId. estCents comes from lib/prices (catalog), not the LLM. */
 export async function addItems(ctx: Ctx, input: { items: { name: string; qty?: string }[]; shared?: boolean }): Promise<CartItem[]> {
+  await requireActive(ctx);
   const items = input.items
     .map((i) => ({ name: i.name.trim().replace(/\s+/g, " "), qty: (i.qty ?? "").trim() || "1" }))
     .filter((i) => i.name);
@@ -124,27 +126,28 @@ export async function addItems(ctx: Ctx, input: { items: { name: string; qty?: s
     .insert(cartItems)
     .values(
       items.map((i) => ({
-        householdId: ctx.householdId,
+        groupId: ctx.groupId,
         name: i.name,
         qty: i.qty,
-        addedBy: ctx.actorId,
+        addedBy: ctx.memberId,
         shared: !!input.shared,
         estCents: estimate(i.name, i.qty),
       })),
     )
     .returning();
-  const names = await namesFor(ctx.householdId);
+  const names = await namesFor(ctx.groupId);
   return rows.map((r) => toItem(r, names));
 }
 
 /** Remove the newest open item whose name matches: exact (case-insensitive) first, then contains. */
 export async function removeItem(ctx: Ctx, input: { name: string }): Promise<boolean> {
+  await requireActive(ctx);
   const q = input.name.trim().toLowerCase().replace(/\s+/g, " ");
   if (!q) return false;
   const rows = await db
     .select({ id: cartItems.id, name: cartItems.name })
     .from(cartItems)
-    .where(and(eq(cartItems.householdId, ctx.householdId), eq(cartItems.status, "open")))
+    .where(and(eq(cartItems.groupId, ctx.groupId), eq(cartItems.status, "open")))
     .orderBy(desc(cartItems.createdAt), desc(cartItems.id));
   const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
   const hit = rows.find((r) => norm(r.name) === q) ?? rows.find((r) => norm(r.name).includes(q) || q.includes(norm(r.name)));
@@ -153,19 +156,20 @@ export async function removeItem(ctx: Ctx, input: { name: string }): Promise<boo
   return true;
 }
 
-/** Remove one open item by id. Household-scoped, so a stale or foreign id can't touch another house's cart. */
-export async function removeItemById(ctx: Pick<Ctx, "householdId">, input: { id: string }): Promise<boolean> {
+/** Remove one open item by id. Group-scoped, so a stale or foreign id can't touch another Group's Cart. */
+export async function removeItemById(ctx: Ctx, input: { id: string }): Promise<boolean> {
+  await requireActive(ctx);
   const id = input.id.trim();
   if (!id) return false;
   const gone = await db
     .delete(cartItems)
-    .where(and(eq(cartItems.id, id), eq(cartItems.householdId, ctx.householdId), eq(cartItems.status, "open")))
+    .where(and(eq(cartItems.id, id), eq(cartItems.groupId, ctx.groupId), eq(cartItems.status, "open")))
     .returning({ id: cartItems.id });
   return gone.length > 0;
 }
 
 /** Open items grouped by who added them ("Shared" for shared items). Shared group last. */
-export async function viewCart(ctx: Pick<Ctx, "householdId">): Promise<Record<string, CartItem[]>> {
+export async function viewCart(ctx: GroupCtx): Promise<Record<string, CartItem[]>> {
   const items = await listOpenItems(ctx);
   const groups: Record<string, CartItem[]> = {};
   for (const i of items.filter((x) => !x.shared)) (groups[i.addedByName] ??= []).push(i);
@@ -190,15 +194,16 @@ export async function viewCart(ctx: Pick<Ctx, "householdId">): Promise<Record<st
  * fixable, unlike the old double charge.
  */
 export async function markPurchased(ctx: Ctx, input: { totalCents: number; payerId?: string }): Promise<Expense> {
+  await requireActive(ctx);
   if (!Number.isInteger(input.totalCents) || input.totalCents <= 0) {
     throw new Error("The grocery total has to be more than $0.00 (whole cents).");
   }
-  const payerId = input.payerId ?? ctx.actorId;
+  const payerId = input.payerId ?? ctx.memberId;
   return db.transaction(async (tx) => {
     const items = await tx
       .update(cartItems)
       .set({ status: "purchased" })
-      .where(and(eq(cartItems.householdId, ctx.householdId), eq(cartItems.status, "open")))
+      .where(and(eq(cartItems.groupId, ctx.groupId), eq(cartItems.status, "open")))
       .returning();
     if (items.length === 0) {
       throw new Error("The cart is empty, so there's nothing to mark purchased. Add items first ('roomie, add milk').");

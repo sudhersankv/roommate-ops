@@ -1,12 +1,12 @@
 // Group style, grown in the background (memory.ts explains where it lives). Run from the scheduler tick: once a
-// household has logged STYLE_EVERY chat lines since households.style_note_at, Haiku rewrites the "## Group style"
+// Group has logged STYLE_EVERY chat lines since groups.style_note_at, Haiku rewrites the "## Group style"
 // section of working memory from the latest lines, and the agent reads it on its next reply.
-import { and, count, eq, gt } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { Agent } from "@mastra/core/agent";
 import { db, schema } from "@/db";
 import { smallModel } from "@/lib/llm";
 import { readSection, replaceSection, shouldRefreshStyle, STYLE_EVERY } from "@/lib/style-note";
-import { recentChatter } from "@/services/chatlog";
+import { linesSince, recentChatter } from "@/services/chatlog";
 import { memory, STYLE_HEADING, threadFor, WORKING_MEMORY_TEMPLATE } from "@/mastra/memory";
 
 const styleWriter = new Agent({
@@ -22,21 +22,17 @@ Given the current note and recent messages, return ONLY the updated note as exac
 Keep what still holds, change what the messages contradict. No names of private facts, no money amounts.`,
 });
 
-export async function linesSinceStyleNote(householdId: string, since: Date | null): Promise<number> {
-  const where = since ? and(eq(schema.chatLog.householdId, householdId), gt(schema.chatLog.createdAt, since)) : eq(schema.chatLog.householdId, householdId);
-  const [row] = await db.select({ n: count() }).from(schema.chatLog).where(where);
-  return Number(row?.n ?? 0);
-}
+export const linesSinceStyleNote = linesSince;
 
-/** Refresh one household's Group style if it's due. Returns true when the note was rewritten. */
-export async function refreshStyleNote(householdId: string, styleNoteAt: Date | null, now = new Date(), force = false): Promise<boolean> {
-  if (!force && !shouldRefreshStyle(await linesSinceStyleNote(householdId, styleNoteAt))) return false;
-  const lines = await recentChatter(householdId, 60 * 24 * 30, STYLE_EVERY);
-  const { thread, resource } = threadFor(householdId);
+/** Refresh one Group's style if it's due. Returns true when the note was rewritten. */
+export async function refreshStyleNote(groupId: string, styleNoteAt: Date | null, now = new Date(), force = false): Promise<boolean> {
+  if (!force && !shouldRefreshStyle(await linesSince(groupId, styleNoteAt))) return false;
+  const lines = await recentChatter(groupId, 60 * 24 * 30, STYLE_EVERY);
+  const { thread, resource } = threadFor(groupId);
   const current = (await memory.getWorkingMemory({ threadId: thread, resourceId: resource })) || WORKING_MEMORY_TEMPLATE;
   const res = await styleWriter.generate(`Current note:\n${readSection(current, STYLE_HEADING)}\n\nRecent messages:\n${lines.join("\n")}`);
   const note = res.text.trim();
   if (note) await memory.updateWorkingMemory({ threadId: thread, resourceId: resource, workingMemory: replaceSection(current, STYLE_HEADING, note) });
-  await db.update(schema.households).set({ styleNoteAt: now }).where(eq(schema.households.id, householdId));
+  await db.update(schema.groups).set({ styleNoteAt: now }).where(eq(schema.groups.id, groupId));
   return !!note;
 }
