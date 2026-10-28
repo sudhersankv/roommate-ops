@@ -12,7 +12,7 @@ export const choreTools = (ctx: Ctx) => ({
       "Record a chore someone did ('I did the dishes', 'took out trash', 'mark the trash as done for Alex'). Free-text chore name; it's fuzzy-matched to the chart and added if new. Default doer = sender.",
     inputSchema: z.object({
       chore: z.string().min(1).describe("Free text, e.g. 'the dishes', 'trash'"),
-      who: z.string().optional().describe("Roommate name if not the sender"),
+      who: z.string().optional().describe("Member name if not the sender"),
     }),
     execute: async ({ chore, who }) =>
       chores.logChore(ctx, { chore, memberId: who ? await memberIdByName(ctx, who) : undefined }),
@@ -35,11 +35,11 @@ export const choreTools = (ctx: Ctx) => ({
     inputSchema: z.object({}),
     execute: async () => ({ chores: await chores.choreStatus(ctx), shame: await chores.hallOfShame(ctx) }),
   }),
-  kevin_report: createTool({
-    id: "kevin_report",
+  group_report: createTool({
+    id: "group_report",
     description:
-      "The full Kevin Report: balances, settle plan, chores, Hall of Shame, upcoming reminders, upkeep. Returns ready-to-post text; reply with it verbatim.",
+      "The full Group Report: balances, settle plan, chores, Hall of Shame, upcoming reminders, upkeep. Returns ready-to-post text; reply with it verbatim.",
     inputSchema: z.object({}),
-    execute: async () => ({ text: report.formatKevinReport(await report.kevinReport(ctx)) }),
+    execute: async () => ({ text: report.formatGroupReport(await report.groupReport(ctx)) }),
   }),
 });

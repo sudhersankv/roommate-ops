@@ -1,5 +1,5 @@
 "use client";
-// P7 · "Ask Kevin" drawer. Same agent as Telegram, acting as the dashboard's selected member (POST /api/chat).
+// P7 · "Ask Roomie" drawer. Same agent as the group chat, acting as the dashboard's selected member (POST /api/chat).
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent } from "react";
 import { useRouter } from "next/navigation";
@@ -7,18 +7,18 @@ import { useRouter } from "next/navigation";
 type Button = { text: string; url: string };
 type Msg = {
   id: string;
-  role: "me" | "kevin";
+  role: "me" | "roomie";
   text: string;
   buttons?: Button[];
-  /** Server-side error detail shown under a Kevin bubble (from a non-OK { error } JSON). */
+  /** Server-side error detail shown under a Roomie bubble (from a non-OK { error } JSON). */
   detail?: string;
 };
 type Saved = { open: boolean; log: Msg[] };
 
-const STORAGE_KEY = "kevin:ask-kevin";
+const STORAGE_KEY = "roomie:ask-roomie";
 const MAX_LOG = 50;
-const GREETING = "Nobody cheats Kevin. What do you need, bestie? 😜";
-const BUSY = "Kevin's line is busy, probably setting a trap. Try again in a sec 🙈";
+const GREETING = "Hey! What do you need? 👋";
+const BUSY = "Couldn't reach Roomie just now. Try again in a sec 🙈";
 
 const uid = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 
@@ -51,7 +51,7 @@ function save(state: Saved) {
   }
 }
 
-export function AskKevin({ actorName }: { actorName?: string }) {
+export function AskRoomie({ actorName }: { actorName?: string }) {
   const [open, setOpen] = useState(false);
   const [log, setLog] = useState<Msg[]>([]);
   const [draft, setDraft] = useState("");
@@ -112,16 +112,16 @@ export function AskKevin({ actorName }: { actorName?: string }) {
       const data = await parseReply(res);
       if (!res.ok || !data || typeof data.text !== "string") {
         const detail = data?.error ?? `HTTP ${res.status}`;
-        if (process.env.NODE_ENV !== "production") console.error("[ask-kevin]", res.status, detail);
-        push({ id: uid(), role: "kevin", text: BUSY, detail });
+        if (process.env.NODE_ENV !== "production") console.error("[ask-roomie]", res.status, detail);
+        push({ id: uid(), role: "roomie", text: BUSY, detail });
         return;
       }
-      push({ id: uid(), role: "kevin", text: data.text, buttons: data.buttons?.length ? data.buttons : undefined });
-      // Kevin may have logged an expense or chore: re-render the server cards on this page.
+      push({ id: uid(), role: "roomie", text: data.text, buttons: data.buttons?.length ? data.buttons : undefined });
+      // Roomie may have logged an expense or chore: re-render the server cards on this page.
       router.refresh();
     } catch (err) {
-      if (process.env.NODE_ENV !== "production") console.error("[ask-kevin]", err);
-      push({ id: uid(), role: "kevin", text: BUSY });
+      if (process.env.NODE_ENV !== "production") console.error("[ask-roomie]", err);
+      push({ id: uid(), role: "roomie", text: BUSY });
     } finally {
       setBusy(false);
       inputRef.current?.focus();
@@ -145,46 +145,46 @@ export function AskKevin({ actorName }: { actorName?: string }) {
     }
   }
 
-  const transcript: Msg[] = log.length ? log : [{ id: "greeting", role: "kevin", text: GREETING }];
+  const transcript: Msg[] = log.length ? log : [{ id: "greeting", role: "roomie", text: GREETING }];
 
   return (
     <>
       <button
         type="button"
-        className="ak-launcher"
+        className="ar-launcher"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        aria-controls="ask-kevin-panel"
+        aria-controls="ask-roomie-panel"
       >
-        Ask Kevin 😜
+        Ask Roomie 💬
       </button>
 
       {open && (
         <section
-          id="ask-kevin-panel"
-          className="ak-panel"
+          id="ask-roomie-panel"
+          className="ar-panel"
           role="dialog"
-          aria-label="Ask Kevin"
+          aria-label="Ask Roomie"
           onKeyDown={(e) => {
             if (e.key === "Escape") setOpen(false);
           }}
         >
-          <header className="ak-head">
+          <header className="ar-head">
             <div>
-              <div className="ak-title">Kevin</div>
-              {actorName && <small className="muted">talking as {actorName} · this is my house, I have to defend it</small>}
+              <div className="ar-title">Roomie</div>
+              {actorName && <small className="muted">talking as {actorName}</small>}
             </div>
-            <button type="button" className="btn-ghost ak-close" onClick={() => setOpen(false)} aria-label="Close">
+            <button type="button" className="btn-ghost ar-close" onClick={() => setOpen(false)} aria-label="Close">
               ×
             </button>
           </header>
 
-          <div className="ak-log" ref={logRef} aria-live="polite">
+          <div className="ar-log" ref={logRef} aria-live="polite">
             {transcript.map((m) => (
-              <div key={m.id} className={`ak-msg ${m.role}`}>
-                <div className="ak-bubble">{m.text}</div>
+              <div key={m.id} className={`ar-msg ${m.role}`}>
+                <div className="ar-bubble">{m.text}</div>
                 {m.buttons && (
-                  <div className="ak-buttons">
+                  <div className="ar-buttons">
                     {m.buttons.map((b, i) => (
                       <a key={`${m.id}-${i}`} className="btn btn-ghost" href={b.url} target="_blank" rel="noopener noreferrer">
                         {b.text}
@@ -192,24 +192,24 @@ export function AskKevin({ actorName }: { actorName?: string }) {
                     ))}
                   </div>
                 )}
-                {m.detail && <small className="ak-detail muted">{m.detail}</small>}
+                {m.detail && <small className="ar-detail muted">{m.detail}</small>}
               </div>
             ))}
             {busy && (
-              <div className="ak-msg kevin">
-                <div className="ak-bubble ak-thinking">Kevin is scheming</div>
+              <div className="ar-msg roomie">
+                <div className="ar-bubble ar-thinking">Roomie is typing</div>
               </div>
             )}
           </div>
 
-          <form className="ak-form" onSubmit={onSubmit}>
+          <form className="ar-form" onSubmit={onSubmit}>
             <textarea
               ref={inputRef}
-              className="ak-input"
+              className="ar-input"
               rows={1}
               value={draft}
-              placeholder="Ask Kevin anything, ya filthy animal…"
-              aria-label="Message Kevin"
+              placeholder="Ask Roomie anything…"
+              aria-label="Message Roomie"
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={onKey}
               disabled={busy}

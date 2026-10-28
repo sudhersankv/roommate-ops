@@ -3,23 +3,22 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-// [href, label, tooltip, emoji, accent]. The tooltips are Kevin being Kevin; the labels stay boring so people can
-// find things. The emoji shows only on the active tab (CSS ::before), and the accent recolours it to match its page.
+// [href, label, tooltip, emoji, accent]. The emoji shows only on the active tab (CSS ::before), and the accent
+// recolours it to match its page.
 const NAV = [
-  ["/", "Home", "This is my house. I have to defend it.", "😜", "red"],
-  ["/money", "Money", "Keep the change, ya filthy animal.", "💸", "green"],
-  ["/cart", "Cart", "A lovely cheese pizza, just for me.", "🍕", "gold"],
-  ["/chores", "Chores", "Buzz, your girlfriend… woof.", "🧹", "red"],
-  ["/reminders", "Reminders", "KEVIN!!!", "⏰", "ice"],
-  ["/inbox", "Inbox", "Mail from the Wet Bandits?", "📬", "candy"],
-  ["/upkeep", "Upkeep", "Trap check.", "🪣", "green"],
-  ["/members", "Roommates", "The McCallisters.", "🧦", "gold"],
+  ["/", "Home", "The group at a glance.", "🏠", "red"],
+  ["/money", "Money", "Who paid, who owes.", "💸", "green"],
+  ["/cart", "Cart", "The shared grocery list.", "🛒", "gold"],
+  ["/chores", "Chores", "Whose turn is it?", "🧹", "red"],
+  ["/reminders", "Reminders", "Nobody forgets.", "⏰", "ice"],
+  ["/upkeep", "Upkeep", "Filters, alarms and the rest.", "🔧", "green"],
+  ["/members", "Members", "Who's in the group.", "👋", "gold"],
 ] as const;
 
-// "/cart/checkout" still lights up Cart.
+// Sub-pages ("/cart/...") still light up their tab.
 const isActive = (href: string, path: string) => path === href || (href !== "/" && path.startsWith(`${href}/`));
 
-export function NavLinks({ unread = 0 }: { unread?: number }) {
+export function NavLinks() {
   const path = usePathname();
   const current = NAV.find(([href]) => isActive(href, path));
   return (
@@ -27,7 +26,6 @@ export function NavLinks({ unread = 0 }: { unread?: number }) {
       {NAV.map(([href, label, tip, emoji]) => (
         <Link key={href} href={href} title={tip} data-emoji={emoji} aria-current={isActive(href, path) ? "page" : undefined}>
           {label}
-          {href === "/inbox" && unread > 0 && <span className="badge" aria-label={`${unread} unread`}>{unread}</span>}
         </Link>
       ))}
     </nav>

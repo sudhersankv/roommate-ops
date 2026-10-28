@@ -1,47 +1,41 @@
-// P4 · Sudhersan. Started once from instrumentation.ts; fine because the Fly Machine never sleeps.
-// Every 60 s: due reminders (Kevin-voiced), the weekly Kevin Report (Sun 18:00 Chicago), a 9 AM upkeep nudge, and a poll of the
-// leasing inbox (new office mail -> group).
-// The tick never rejects: every send is wrapped, and with no TELEGRAM_BOT_TOKEN it skips sending entirely.
+// P4 · Sudhersan. Started once from instrumentation.ts (one long-running process; DISABLE_SCHEDULER=1 skips it).
+// Every 60 s: due reminders, the weekly Group Report (Sun 18:00 Chicago) and a 9 AM upkeep nudge, all through deliver().
+// The tick never rejects: every send is wrapped.
 import { isNotNull } from "drizzle-orm";
 import { db, schema } from "@/db";
-import { telegram } from "@/channels/telegram";
+import { deliver } from "@/channels";
 import { dueReminders, markSent, type Reminder } from "@/services/reminders";
 import { dueMaintenance } from "@/services/upkeep";
-import { formatKevinReport, kevinReport, localParts, shouldPostUpkeepNudge, shouldPostWeeklyReport } from "@/services/report";
-import { pollInbox } from "@/services/leasing";
-import { inboxUrl } from "@/agent/tools/util";
+import { formatGroupReport, groupReport, localParts, shouldPostUpkeepNudge, shouldPostWeeklyReport } from "@/services/report";
 
 const TICK_MS = 60_000;
 const MAX_SEND_ATTEMPTS = 3;
 
-/* ---------- in-memory state (one Machine, so globalThis is enough; survives Next HMR) ---------- */
+/* ---------- in-memory state (one process, so globalThis is enough; survives Next HMR) ---------- */
 
 type State = {
   weeklyPostedAt: Map<string, Date>; // householdId -> last weekly report
   upkeepPostedDay: Map<string, string>; // householdId -> "YYYY-MM-DD" (Chicago) of last nudge
   reminderFailures: Map<string, number>; // reminderId -> failed send attempts
-  warnedNotConfigured: boolean;
 };
 function state(): State {
-  const g = globalThis as { __kevinSchedulerState?: State };
-  return (g.__kevinSchedulerState ??= {
+  const g = globalThis as { __roomieSchedulerState?: State };
+  return (g.__roomieSchedulerState ??= {
     weeklyPostedAt: new Map(),
     upkeepPostedDay: new Map(),
     reminderFailures: new Map(),
-    warnedNotConfigured: false,
   });
 }
 
-/* ---------- Kevin's voice for reminders (pure, deterministic by reminder id) ---------- */
+/* ---------- reminder lines (pure, deterministic by reminder id) ---------- */
 
 const REMINDER_LINES = [
-  "⏰ {text}. Don't make me come over there, {who} 😤",
-  "⏰ Hey {who}: {text}. Kevin's watching, no cap 👀",
-  "⏰ {text}. This is my house, I have to defend it. {who}, you're up 🫡",
-  "⏰ Reminder for {who}: {text}. Nobody cheats Kevin 😜",
-  "⏰ {text}. Keep the change, ya filthy animal. (Kidding. Do it fr, {who}) ✨",
-  "⏰ {who}, {text}. Say less, I already set the paint cans 🙈",
-]
+  "⏰ {text}. You're up, {who}",
+  "⏰ Hey {who}: {text} 👀",
+  "⏰ Reminder for {who}: {text}",
+  "⏰ {who}, quick one: {text} ✨",
+  "⏰ {text}. Just saying, {who}",
+];
 
 /** Small stable string hash so the same reminder always gets the same line. */
 export function hashId(s: string): number {
@@ -57,32 +51,17 @@ export function reminderLine(r: Pick<Reminder, "id" | "text" | "memberName">): s
 
 /* ---------- helpers ---------- */
 
-export function telegramConfigured(): boolean {
-  return !!process.env.TELEGRAM_BOT_TOKEN;
-}
-
-/** Households that have a Telegram group linked (the only ones Kevin can post to unprompted). */
+/** Households that have a chat linked (the only ones Roomie can post to unprompted). */
 export async function householdsWithChat(): Promise<{ id: string; name: string }[]> {
   return db
     .select({ id: schema.households.id, name: schema.households.name })
     .from(schema.households)
-    .where(isNotNull(schema.households.telegramChatId));
-}
-
-function warnNotConfigured(): void {
-  const s = state();
-  if (s.warnedNotConfigured) return;
-  console.log("scheduler: telegram not configured (TELEGRAM_BOT_TOKEN empty); skipping sends");
-  s.warnedNotConfigured = true;
+    .where(isNotNull(schema.households.chatId));
 }
 
 async function safeSend(householdId: string, text: string, what: string): Promise<boolean> {
-  if (!telegramConfigured()) {
-    warnNotConfigured();
-    return false;
-  }
   try {
-    await telegram.send(householdId, { text });
+    await deliver(householdId, { text });
     return true;
   } catch (e) {
     console.error(`scheduler: ${what} send failed for household ${householdId}`, e);
@@ -119,9 +98,9 @@ async function sendDueReminders(now: Date) {
   }
 }
 
-/** Post the Kevin Report to a household's chat now. Returns the text (also used by smoke scripts). */
+/** Post the Group Report to a household's chat now. Returns the text. */
 export async function postWeeklyReport(householdId: string, houseName?: string): Promise<string> {
-  const text = formatKevinReport(await kevinReport({ householdId }), { houseName });
+  const text = formatGroupReport(await groupReport({ householdId }), { houseName });
   if (await safeSend(householdId, text, "weekly report")) state().weeklyPostedAt.set(householdId, new Date());
   return text;
 }
@@ -130,29 +109,9 @@ export async function postWeeklyReport(householdId: string, houseName?: string):
 export async function postUpkeepNudge(householdId: string, now = new Date()): Promise<string | null> {
   const overdue = (await dueMaintenance({ householdId })).filter((m) => m.status === "overdue");
   if (overdue.length === 0) return null;
-  const text = `🔧 Overdue: ${overdue.map((m) => m.item).join(", ")}. Somebody adult today, bestie. Even Kevin did the laundry 🧦`;
+  const text = `🔧 Overdue: ${overdue.map((m) => m.item).join(", ")}. Anyone free today?`;
   if (await safeSend(householdId, text, "upkeep nudge")) state().upkeepPostedDay.set(householdId, localParts(now).day);
   return text;
-}
-
-/** Poll the house's AgentMail inbox once and post every new office message to the group. Returns what was posted. */
-export async function pollMailOnce(householdId: string): Promise<{ summary: string; threadId: string }[]> {
-  if (!process.env.AGENTMAIL_API_KEY) return [];
-  const fresh = await pollInbox(householdId);
-  for (const m of fresh) {
-    if (!telegramConfigured()) {
-      warnNotConfigured();
-      break;
-    }
-    try {
-      // Button only with an absolute APP_URL: Telegram rejects relative button URLs and drops the whole message.
-      const url = inboxUrl(m.threadId);
-      await telegram.send(householdId, { text: m.summary, ...(url ? { buttons: [{ text: "📬 Open inbox", url }] } : {}) });
-    } catch (e) {
-      console.error(`scheduler: mail notification send failed for household ${householdId}`, e);
-    }
-  }
-  return fresh;
 }
 
 async function runHouseholdJobs(now: Date) {
@@ -179,21 +138,12 @@ async function runHouseholdJobs(now: Date) {
     } catch (e) {
       console.error(`scheduler: upkeep nudge failed for ${h.name}`, e);
     }
-    try {
-      await pollMailOnce(h.id);
-    } catch (e) {
-      console.error(`scheduler: mail poll failed for ${h.name}`, e);
-    }
   }
 }
 
-/** One scheduler pass. Never rejects. Exported for smoke tests. */
+/** One scheduler pass. Never rejects. */
 export async function tick(now = new Date()): Promise<void> {
   try {
-    if (!telegramConfigured()) {
-      warnNotConfigured();
-      return;
-    }
     await sendDueReminders(now);
     await runHouseholdJobs(now);
   } catch (e) {
@@ -202,8 +152,8 @@ export async function tick(now = new Date()): Promise<void> {
 }
 
 export function startScheduler() {
-  const g = globalThis as { __kevinScheduler?: NodeJS.Timeout };
-  if (g.__kevinScheduler) return;
-  g.__kevinScheduler = setInterval(() => tick().catch((e) => console.error("scheduler", e)), TICK_MS);
+  const g = globalThis as { __roomieScheduler?: NodeJS.Timeout };
+  if (g.__roomieScheduler) return;
+  g.__roomieScheduler = setInterval(() => tick().catch((e) => console.error("scheduler", e)), TICK_MS);
   console.log("scheduler started");
 }

@@ -1,4 +1,4 @@
-// P6 · Sudhersan. Telegram voice note -> transcript, via an audio-capable chat model on OpenRouter
+// P6 · Sudhersan. Voice note -> transcript, via an audio-capable chat model on OpenRouter
 // (no Whisper endpoint needed). Feed the result through the normal text path.
 // Docs: https://openrouter.ai/docs/features/multimodal/audio — input_audio formats include wav, mp3, ogg, m4a, aac, flac.
 
@@ -10,7 +10,7 @@ export const TRANSCRIBE_PROMPT =
 
 export type AudioFormat = "ogg" | "mp3" | "wav" | "m4a" | "aac" | "flac";
 
-/** Map a MIME type (or file extension-ish string) to OpenRouter's input_audio.format. Telegram voice notes are ogg/opus. */
+/** Map a MIME type (or file extension-ish string) to OpenRouter's input_audio.format. Chat-app voice notes are usually ogg/opus. */
 export function formatFromMime(mime?: string | null): AudioFormat {
   const m = (mime ?? "").toLowerCase().split(";")[0].trim();
   if (!m) return "ogg";
@@ -78,7 +78,7 @@ export async function transcribe(audio: ArrayBuffer, opts: { mime?: string; file
   const headers: Record<string, string> = {
     Authorization: `Bearer ${apiKey}`,
     "Content-Type": "application/json",
-    "X-Title": "Kevin",
+    "X-Title": "Roomie",
   };
   if (process.env.APP_URL) headers["HTTP-Referer"] = process.env.APP_URL;
 

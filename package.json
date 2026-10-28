@@ -1,28 +1,23 @@
 {
-  "name": "kevin",
+  "name": "roomie",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start -p ${PORT:-3000}",
-    "poll": "tsx --env-file=.env scripts/poll.ts",
     "seed": "tsx --env-file=.env scripts/seed.ts",
     "seed:demo": "tsx --env-file=.env scripts/seed.ts --reset",
-    "telegram:webhook": "tsx --env-file=.env scripts/telegram-webhook.ts",
     "db:push": "drizzle-kit push",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/**/*.test.ts",
-    "test:tools": "tsx --env-file=.env --test src/agent/tools/tools.dbtest.ts",
-    "kevin:smoke": "tsx --env-file=.env scripts/kevin-smoke.ts"
+    "test": "tsx --test \"src/**/*.test.ts\"",
+    "test:tools": "tsx --env-file=.env --test src/agent/tools/tools.dbtest.ts"
   },
   "dependencies": {
     "@mastra/core": "^1.74.0",
     "@mastra/memory": "^1.35.0",
     "@mastra/pg": "^1.29.0",
-    "agentmail": "^0.5.35",
     "drizzle-orm": "^0.45.0",
-    "grammy": "^1.46.0",
     "next": "^16.3.8",
     "pg": "^8.13.0",
     "react": "^19.2.0",

@@ -5,10 +5,9 @@ import { moneyTools } from "./money";
 import { cartTools } from "./cart";
 import { choreTools } from "./chores";
 import { reminderTools } from "./reminders";
-import { leasingTools } from "./leasing";
 import { upkeepTools } from "./upkeep";
 
-/** Side channel for tools to attach things to Kevin's reply (e.g. the Instacart button). */
+/** Side channel for tools to attach things to Roomie's reply (e.g. the View-cart button). */
 export type ToolOutbox = { buttons: Button[] };
 
 export function makeTools(ctx: Ctx, outbox: ToolOutbox) {
@@ -18,7 +17,6 @@ export function makeTools(ctx: Ctx, outbox: ToolOutbox) {
     ...cartTools(ctx, outbox),
     ...choreTools(ctx),
     ...reminderTools(ctx),
-    ...leasingTools(ctx, outbox),
     ...upkeepTools(ctx),
   };
 }

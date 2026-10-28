@@ -1,9 +1,7 @@
 // P4 · Reminders. One-off and monthly nudges; the scheduler (src/jobs/scheduler.ts) delivers them.
-import { and, asc, eq, isNull, like, lte } from "drizzle-orm";
+import { and, asc, eq, isNull, lte } from "drizzle-orm";
 import { db, schema } from "@/db";
 import type { Ctx } from "./types";
-import { dollars } from "./types";
-import { getHousehold } from "./members";
 
 const { reminders, members } = schema;
 
@@ -16,24 +14,6 @@ export type Reminder = {
   memberName: string | null; // null = for everyone
   recurring: "monthly" | null;
 };
-
-/** Hour (UTC) the rent reminder fires: 14:00Z ≈ 9–10am US Eastern/Central, i.e. morning on rent day. */
-export const RENT_HOUR_UTC = 14;
-
-/**
- * Convention: the household's rent reminder is the row with
- *   recurring = 'monthly' AND member_id IS NULL AND text LIKE 'Rent $%' (i.e. starts with an amount, as we write it).
- * There is no dedicated column; syncRentReminder() keeps exactly one unsent row matching this.
- */
-const RENT_TEXT_PREFIX = "Rent ";
-const rentReminderFilter = (householdId: string) =>
-  and(
-    eq(reminders.householdId, householdId),
-    isNull(reminders.sentAt),
-    eq(reminders.recurring, "monthly"),
-    isNull(reminders.memberId),
-    like(reminders.text, `${RENT_TEXT_PREFIX}$%`),
-  );
 
 // ---------- pure date math (unit tested, no DB) ----------
 
@@ -50,14 +30,6 @@ export function addOneMonth(d: Date): Date {
       d.getUTCMilliseconds(),
     ),
   );
-}
-
-/** Next `dueDay` (1-28) at RENT_HOUR_UTC strictly after `now`; if this month's moment already passed, next month's. */
-export function nextRentDue(now: Date, dueDay: number): Date {
-  const day = Math.min(28, Math.max(1, Math.round(dueDay)));
-  const thisMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), day, RENT_HOUR_UTC, 0, 0, 0));
-  if (thisMonth.getTime() > now.getTime()) return thisMonth;
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, day, RENT_HOUR_UTC, 0, 0, 0));
 }
 
 // ---------- queries ----------
@@ -94,7 +66,7 @@ export async function setReminder(
       .select({ name: members.name })
       .from(members)
       .where(and(eq(members.id, input.memberId), eq(members.householdId, ctx.householdId)));
-    if (!m) throw new Error("That roommate doesn't live here.");
+    if (!m) throw new Error("That person isn't in this group.");
     memberName = m.name;
   }
 
@@ -148,17 +120,3 @@ export async function markSent(reminderId: string): Promise<void> {
   });
 }
 
-/** Creates/refreshes the monthly rent reminder from house settings. Call after settings change. */
-export async function syncRentReminder(ctx: Pick<Ctx, "householdId">): Promise<void> {
-  const house = await getHousehold(ctx.householdId);
-  // Always clear first so there is never more than one (and none when rent is unset).
-  await db.delete(reminders).where(rentReminderFilter(ctx.householdId));
-  if (!house || house.rentCents == null || house.rentDueDay == null) return;
-  await db.insert(reminders).values({
-    householdId: ctx.householdId,
-    text: `${RENT_TEXT_PREFIX}${dollars(house.rentCents)} due today. Pay up.`,
-    dueAt: nextRentDue(new Date(), house.rentDueDay),
-    memberId: null,
-    recurring: "monthly",
-  });
-}

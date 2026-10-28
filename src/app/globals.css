@@ -1,4 +1,4 @@
-/* Kevin theme: McCallister house at Christmas. Cream paper, house red, evergreen, a little gold. */
+/* Dashboard theme: cream paper, warm red, evergreen, a little gold. */
 :root {
   --bg: #faf6ef;
   --surface: #ffffff;
@@ -83,7 +83,7 @@ body {
   line-height: 1.5;
 }
 
-/* The plaid ribbon across the top of the house. */
+/* The plaid ribbon across the top of the page. */
 .plaid {
   height: 8px;
   background:
@@ -101,7 +101,7 @@ code { background: var(--surface-2); padding: 1px 6px; border-radius: 6px; font-
 /* Layout */
 .shell { max-width: 1040px; margin: 0 auto; padding: 0 16px 48px; }
 .topbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 20px; padding: 16px 0; border-bottom: 1px solid var(--line); margin-bottom: 28px; }
-/* Wordmark: "Kevin" over a rotating one-liner (picked per minute on the server, see layout.tsx). */
+/* Wordmark: "Roomie" over a rotating one-liner (picked per minute on the server, see layout.tsx). */
 .brand { display: flex; flex-direction: column; align-items: flex-start; gap: 0; text-decoration: none; line-height: 1.1; }
 .brand b { display: inline-block; font-family: var(--font-display), Georgia, serif; font-size: 24px; color: var(--red); letter-spacing: -0.01em; transform-origin: left bottom; transition: transform 180ms cubic-bezier(.34,1.56,.64,1); }
 .brand:hover b { transform: rotate(-4deg) scale(1.04); }
@@ -128,7 +128,7 @@ code { background: var(--surface-2); padding: 1px 6px; border-radius: 6px; font-
 .page-head h1 { overflow-wrap: anywhere; }
 .page-head h1::after { content: ""; display: block; width: 56px; height: 4px; margin-top: 6px; border-radius: 2px; background: linear-gradient(90deg, var(--accent), var(--gold)); }
 .head-badge { font-size: 12px; letter-spacing: 0.02em; text-transform: uppercase; animation-delay: 300ms; }
-/* Kevin's sticker: pops in, then breathes slowly; wiggles when poked. */
+/* Page sticker: pops in, then breathes slowly; wiggles when poked. */
 .head-emoji { font-size: 44px; line-height: 1; display: inline-block; transform-origin: 50% 80%; animation: k-stat-pop 500ms cubic-bezier(.34,1.56,.64,1) 200ms backwards, k-idle 4s ease-in-out 1.2s infinite; cursor: default; user-select: none; filter: drop-shadow(0 2px 0 var(--accent-soft)); }
 .head-emoji:hover { animation: k-wiggle 600ms ease-in-out; }
 /* The quip is a movie subtitle: a little bigger, italic, a thin rule down the left in the page's accent. */
@@ -248,7 +248,7 @@ button:disabled { cursor: default; transform: none; }
 .btn-danger { background: transparent; color: var(--red); border-color: transparent; }
 .btn-danger:hover { background: var(--red-soft); filter: none; }
 
-/* Empty states get a line from Kevin. Hover the title and it shrugs. */
+/* Empty states get a friendly line. Hover the title and it shrugs. */
 .empty { text-align: center; padding: 28px 16px; color: var(--muted); }
 .empty b { display: block; font-family: var(--font-display), Georgia, serif; font-size: 17px; color: var(--ink); margin-bottom: 4px; transform-origin: 50% 100%; }
 .empty:hover b { animation: k-shrug 550ms ease-in-out; }
@@ -273,37 +273,21 @@ button:disabled { cursor: default; transform: none; }
   .head-emoji { font-size: 36px; }
 }
 
-/* Inbox */
-.inbox { display: grid; gap: 16px; grid-template-columns: minmax(260px, 340px) minmax(0, 1fr); align-items: start; }
-.inbox > * { min-width: 0; }
-.threads .list > li { padding: 0; flex-wrap: nowrap; }
-.thread { display: flex; flex-direction: column; gap: 2px; width: 100%; padding: 10px 8px; margin: 0 -8px; border-radius: 8px; text-decoration: none; min-width: 0; }
-.thread { transition: background 150ms ease; }
-.thread:hover { background: var(--surface-2); }
-.thread.active { background: var(--red-soft); }
-.clip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--red); flex: none; }
-.msg { border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; background: var(--surface-2); }
-.msg.sent { background: var(--green-soft); border-color: transparent; }
-.msg p { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
-.msg .row > b { min-width: 0; overflow-wrap: anywhere; }
-.badge { display: inline-block; min-width: 18px; margin-left: 4px; padding: 0 5px; border-radius: 999px; background: var(--red); color: var(--red-ink); font-size: 11px; line-height: 18px; text-align: center; }
 textarea { resize: vertical; }
-@media (max-width: 760px) { .inbox { grid-template-columns: 1fr; } }
 
-/* Ask Kevin panel */
-.ak-launcher {
+/* Ask Roomie panel */
+.ar-launcher {
   position: fixed; right: 20px; bottom: 20px; z-index: 50;
   padding: 10px 18px; border-radius: 999px;
   background: var(--red); color: var(--red-ink); border-color: transparent;
   box-shadow: var(--shadow), 0 8px 24px rgb(0 0 0 / 0.12);
-  /* A little bob every ~8s so you notice Kevin's there. Stops while the panel is open. */
+  /* A little bob every ~8s so you notice Roomie's there. Stops while the panel is open. */
   animation: k-bob 8s ease-in-out 3s infinite;
 }
-.ak-launcher:hover { box-shadow: var(--shadow-lift); }
-.ak-launcher:active { animation: none; transform: scale(0.97); }
-.ak-launcher[aria-expanded="true"] { filter: brightness(0.95); animation: none; }
-.ak-panel {
+.ar-launcher:hover { box-shadow: var(--shadow-lift); }
+.ar-launcher:active { animation: none; transform: scale(0.97); }
+.ar-launcher[aria-expanded="true"] { filter: brightness(0.95); animation: none; }
+.ar-panel {
   position: fixed; right: 20px; bottom: 72px; z-index: 50;
   width: 360px; max-width: calc(100vw - 40px); max-height: 70vh;
   display: flex; flex-direction: column;
@@ -313,30 +297,30 @@ textarea { resize: vertical; }
   transform-origin: bottom right;
   animation: k-slide-up 220ms cubic-bezier(.2,.8,.2,1);
 }
-.ak-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line); background: var(--surface); }
-.ak-head > div { display: flex; flex-direction: column; line-height: 1.2; }
-.ak-title { font-family: var(--font-display), Georgia, serif; font-size: 19px; font-weight: 600; color: var(--red); }
-.ak-close { padding: 2px 10px; font-size: 18px; line-height: 1.2; }
-.ak-log { flex: 1; min-height: 160px; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; background: var(--bg); }
-.ak-msg { display: flex; flex-direction: column; gap: 6px; max-width: 85%; animation: k-fade-up 180ms ease-out; }
-.ak-msg.me { align-self: flex-end; align-items: flex-end; }
-.ak-msg.kevin { align-self: flex-start; align-items: flex-start; }
-.ak-bubble { padding: 8px 12px; border-radius: var(--radius); white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid transparent; }
-.ak-msg.me .ak-bubble { background: var(--red-soft); border-bottom-right-radius: 4px; }
-.ak-msg.kevin .ak-bubble { background: var(--surface-2); border-color: var(--line); border-bottom-left-radius: 4px; }
-.ak-thinking { color: var(--muted); font-style: italic; animation: k-breathe 1.4s ease-in-out infinite; }
+.ar-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.ar-head > div { display: flex; flex-direction: column; line-height: 1.2; }
+.ar-title { font-family: var(--font-display), Georgia, serif; font-size: 19px; font-weight: 600; color: var(--red); }
+.ar-close { padding: 2px 10px; font-size: 18px; line-height: 1.2; }
+.ar-log { flex: 1; min-height: 160px; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; background: var(--bg); }
+.ar-msg { display: flex; flex-direction: column; gap: 6px; max-width: 85%; animation: k-fade-up 180ms ease-out; }
+.ar-msg.me { align-self: flex-end; align-items: flex-end; }
+.ar-msg.roomie { align-self: flex-start; align-items: flex-start; }
+.ar-bubble { padding: 8px 12px; border-radius: var(--radius); white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid transparent; }
+.ar-msg.me .ar-bubble { background: var(--red-soft); border-bottom-right-radius: 4px; }
+.ar-msg.roomie .ar-bubble { background: var(--surface-2); border-color: var(--line); border-bottom-left-radius: 4px; }
+.ar-thinking { color: var(--muted); font-style: italic; animation: k-breathe 1.4s ease-in-out infinite; }
 /* Animated ellipsis: the dots grow one at a time after "thinking". */
-.ak-thinking::after { content: ""; display: inline-block; width: 1.2em; text-align: left; animation: k-dots 1.2s steps(1, end) infinite; }
-.ak-buttons { display: flex; flex-wrap: wrap; gap: 6px; }
-.ak-buttons .btn { padding: 5px 10px; font-size: 13px; }
-.ak-detail { font-size: 12px; }
-.ak-form { display: flex; align-items: flex-end; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--line); background: var(--surface); }
-.ak-input { flex: 1; resize: none; line-height: 22px; max-height: 90px; }
-.ak-form button:disabled { opacity: 0.6; cursor: default; filter: none; }
+.ar-thinking::after { content: ""; display: inline-block; width: 1.2em; text-align: left; animation: k-dots 1.2s steps(1, end) infinite; }
+.ar-buttons { display: flex; flex-wrap: wrap; gap: 6px; }
+.ar-buttons .btn { padding: 5px 10px; font-size: 13px; }
+.ar-detail { font-size: 12px; }
+.ar-form { display: flex; align-items: flex-end; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--line); background: var(--surface); }
+.ar-input { flex: 1; resize: none; line-height: 22px; max-height: 90px; }
+.ar-form button:disabled { opacity: 0.6; cursor: default; filter: none; }
 @media (max-width: 640px) {
-  .ak-launcher { right: 12px; bottom: 12px; }
-  .ak-panel { left: 0; right: 0; bottom: 0; width: auto; max-width: none; max-height: 85vh; border-radius: var(--radius) var(--radius) 0 0; }
-  .ak-launcher[aria-expanded="true"] { display: none; }
+  .ar-launcher { right: 12px; bottom: 12px; }
+  .ar-panel { left: 0; right: 0; bottom: 0; width: auto; max-width: none; max-height: 85vh; border-radius: var(--radius) var(--radius) 0 0; }
+  .ar-launcher[aria-expanded="true"] { display: none; }
 }
 
 /* Motion. All decorative: opacity/transform only, nothing reflows, nothing blocks input.
@@ -368,7 +352,7 @@ textarea { resize: vertical; }
     animation-delay: 0ms !important;
     transition-duration: 0.01ms !important;
   }
-  .plaid, .ak-launcher, .scream, .loading-traps > span, .ak-thinking, .ak-thinking::after,
+  .plaid, .ar-launcher, .scream, .loading-traps > span, .ar-thinking, .ar-thinking::after,
   .head-emoji, .pill.overdue, .empty.socks::after { animation: none !important; }
   .card:hover, .brand:hover b, button:active, .btn:active { transform: none; }
 }

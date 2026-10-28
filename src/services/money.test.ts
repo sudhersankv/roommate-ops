@@ -21,24 +21,24 @@ test("settle plan: empty input -> empty plan", () => {
 });
 
 test("settle plan: everyone square -> empty plan", () => {
-  assert.deepEqual(computeSettlePlan([b("Kevin", 0), b("Buzz", 0), b("Marv", 0)]), []);
+  assert.deepEqual(computeSettlePlan([b("Maya", 0), b("Dev", 0), b("Sam", 0)]), []);
 });
 
 test("settle plan: 3-person classic", () => {
-  // Kevin paid 90 for everyone (30 each): Kevin +60, Buzz -30, Marv -30.
-  const plan = computeSettlePlan([b("Kevin", 6000), b("Buzz", -3000), b("Marv", -3000)]);
+  // Maya paid 90 for everyone (30 each): Maya +60, Dev -30, Sam -30.
+  const plan = computeSettlePlan([b("Maya", 6000), b("Dev", -3000), b("Sam", -3000)]);
   assert.equal(plan.length, 2);
   for (const t of plan) {
-    assert.equal(t.toName, "Kevin");
+    assert.equal(t.toName, "Maya");
     assert.equal(t.cents, 3000);
   }
-  assert.deepEqual(plan.map((t) => t.fromName).sort(), ["Buzz", "Marv"]);
+  assert.deepEqual(plan.map((t) => t.fromName).sort(), ["Dev", "Sam"]);
 });
 
 test("settle plan: biggest debtor pays biggest creditor first", () => {
-  const plan = computeSettlePlan([b("Harry", -7000), b("Kate", 5000), b("Peter", 2000), b("Marv", -1000), b("Kevin", 1000)]);
-  assert.deepEqual(plan[0], { fromId: "harry", fromName: "Harry", toId: "kate", toName: "Kate", cents: 5000 });
-  const net = applyPlan([b("Harry", -7000), b("Kate", 5000), b("Peter", 2000), b("Marv", -1000), b("Kevin", 1000)], plan);
+  const plan = computeSettlePlan([b("Priya", -7000), b("Leo", 5000), b("Noor", 2000), b("Sam", -1000), b("Maya", 1000)]);
+  assert.deepEqual(plan[0], { fromId: "priya", fromName: "Priya", toId: "leo", toName: "Leo", cents: 5000 });
+  const net = applyPlan([b("Priya", -7000), b("Leo", 5000), b("Noor", 2000), b("Sam", -1000), b("Maya", 1000)], plan);
   for (const v of net.values()) assert.equal(v, 0);
   // Never more transfers than people minus one for a connected set of balances.
   assert.ok(plan.length <= 4);

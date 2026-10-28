@@ -1,4 +1,4 @@
-// P8 · Upkeep: the recurring battle plan. Reads via services/upkeep, writes via server actions + revalidatePath.
+// P8 · Upkeep: recurring home maintenance. Reads via services/upkeep, writes via server actions + revalidatePath.
 import { revalidatePath } from "next/cache";
 import { dashboardCtx } from "@/lib/dashboard";
 import { upkeep } from "@/services";
@@ -49,10 +49,10 @@ export default async function UpkeepPage() {
 
   return (
     <main data-accent="green">
-      <PageHead title="Upkeep" quip="Kevin's battle plan for the house." emoji="🪣" />
+      <PageHead title="Upkeep" quip="Filters, alarms and the rest." emoji="🔧" />
       <div className="grid">
         <section className="card card-wide">
-          <h2>🪣 Battle plan · paint cans, icicles, the attic</h2>
+          <h2>🔧 Upkeep plan</h2>
           {items.length ? (
             <>
               <div className="table-wrap">
@@ -88,28 +88,28 @@ export default async function UpkeepPage() {
               </div>
               {items.length < 3 && (
                 <form action={seedDefaults} className="row" style={{ marginTop: 16 }}>
-                  <span className="muted">Thin plan. The Wet Bandits would walk right in.</span>
+                  <span className="muted">Thin plan. Want the usual items?</span>
                   <span className="spacer" />
-                  <button className="btn-ghost">Load the paint cans 🪣 (add the usual suspects)</button>
+                  <button className="btn-ghost">Add the usual items</button>
                 </form>
               )}
             </>
           ) : (
-            <Empty title="No battle plan yet. The house is wide open.">
+            <Empty title="No upkeep items yet.">
               Filters, smoke alarms and other recurring upkeep go here.
               <form action={seedDefaults} style={{ marginTop: 16 }}>
-                <button>Load the paint cans 🪣 (add the usual suspects)</button>
+                <button>Add the usual items</button>
               </form>
             </Empty>
           )}
         </section>
 
         <section className="card">
-          <h2>🧼 Set a trap · add an upkeep item</h2>
+          <h2>➕ Add an upkeep item</h2>
           <form action={add} className="stack">
             <div className="field">
               <label htmlFor="item">What needs doing</label>
-              <input id="item" name="item" placeholder="Replace HVAC filter, test the smoke alarms, check the attic" required />
+              <input id="item" name="item" placeholder="Replace HVAC filter, test the smoke alarms" required />
             </div>
             <div className="form-grid">
               <div className="field">
@@ -118,7 +118,7 @@ export default async function UpkeepPage() {
               </div>
               <div><button>Add to the plan</button></div>
             </div>
-            <small className="muted">Kevin nudges the group chat when a trap needs resetting. Mark it Done and the clock restarts.</small>
+            <small className="muted">Roomie nudges the group chat when something is overdue. Mark it Done and the clock restarts.</small>
           </form>
         </section>
       </div>
