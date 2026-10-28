@@ -13,6 +13,8 @@ export type IncomingMessage = {
   userName: string;
   text: string; // for voice notes: the transcript
   isVoice?: boolean;
+  /** A photo sent with the message (stored by the adapter where the server can read it), e.g. a receipt. */
+  imageUrl?: string;
   isReplyToRoomie?: boolean;
   mentionsRoomie?: boolean; // @-mention (the pipeline also checks the word "roomie")
 };

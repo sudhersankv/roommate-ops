@@ -156,6 +156,14 @@ export async function updateGroupSettings(ctx: Ctx, patch: SettingsPatch & { too
   return { group, toolkits: await enabledToolkits(ctx) };
 }
 
+/** Admin: the "simplify debts" switch (getSettlePlan follows it). Unlike updateGroupSettings it never ends Onboarding. */
+export async function setSimplifyDebts(ctx: Ctx, input: { on: boolean }): Promise<boolean> {
+  await requireAdmin(ctx);
+  await db.update(groups).set({ simplifyDebts: input.on }).where(eq(groups.id, ctx.groupId));
+  await record(ctx.groupId, ctx.memberId, "group.settings", `turned simplify debts ${input.on ? "on" : "off"}`, { table: "groups", id: ctx.groupId });
+  return input.on;
+}
+
 /** Admin: switch one Toolkit on or off. Nothing is deleted when it's off. */
 export async function setToolkit(ctx: Ctx, input: { toolkit: ToolkitId; enabled: boolean }): Promise<ToolkitId[]> {
   await requireAdmin(ctx);

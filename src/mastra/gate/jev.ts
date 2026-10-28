@@ -28,7 +28,7 @@ export const QUESTIONS = {
     type: "choice",
     instructions: "Which of Roomie's areas does the latest message relate to?",
     criteria: {
-      splitting: "Money other than the grocery run: shared expenses, who paid, balances, who owes what, paying someone back.",
+      splitting: "Money other than the grocery run: shared expenses, who paid, balances, who owes what, paying someone back, receipts, Venmo/PayPal/Cash App, Splitwise.",
       groceries: "The shared grocery cart: adding or removing items, shopping, checking out, or what the grocery shop cost.",
       chores: "Chores: dishes, trash, cleaning, whose turn it is.",
       upkeep: "Home maintenance on a schedule: filters, smoke alarms, gutters, repairs.",
