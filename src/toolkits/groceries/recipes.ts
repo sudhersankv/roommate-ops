@@ -11,14 +11,14 @@ import { ctxOf, dashboardLinks } from "../util";
 
 const cartLink = (groupId: string) => dashboardLinks("🛒 View cart", `/g/${groupId}/cart`);
 
-/** The recipe as chat text: title, servings, have / need, steps. Ready to post. */
+/** The recipe as chat text: title, servings, need / have and how many steps (the steps are on the dashboard). */
 export function recipeText(r: Pick<Recipe, "title" | "servings" | "cookingTimeMinutes" | "steps">, have: { display_text: string }[], need: { display_text: string }[]): string {
   const time = r.cookingTimeMinutes ? `, ${r.cookingTimeMinutes} min` : "";
   return [
     `${r.title} (serves ${r.servings}${time})`,
     need.length ? `Need: ${need.map((i) => i.display_text).join(", ")}` : "Need: nothing, you have it all",
     have.length ? `Have: ${have.map((i) => i.display_text).join(", ")}` : "",
-    `${r.steps.length} steps: ${r.steps.map((s, k) => `${k + 1}. ${s}`).join(" ")}`,
+    `${r.steps.length} steps, all on the Cart page.`,
   ]
     .filter(Boolean)
     .join("\n");
@@ -28,7 +28,7 @@ export const recipeTools = {
   recipe_draft: createTool({
     id: "recipe_draft",
     description:
-      "Write and save a Recipe for the group ('tacos for 5 friday', 'something vegetarian for dinner'). Servings default to the group's size. Returns `text` (title, servings, need / have, steps), ready to post, and `askToAdd`. It does NOT touch the cart: post the text, then ask `askToAdd` unless they explicitly asked to add the ingredients in the same message (then call recipe_add_to_cart).",
+      "Write and save a Recipe for the group ('tacos for 5 friday', 'something vegetarian for dinner'). Servings default to the group's size. Returns `text` (title, servings, need / have, how many steps), ready to post as is (no lists, don't write out the steps unless asked), and `askToAdd`. It does NOT touch the cart: post the text, then ask `askToAdd` unless they explicitly asked to add the ingredients in the same message (then call recipe_add_to_cart).",
     inputSchema: z.object({
       request: z.string().min(1).describe("The dish and anything that matters, in their words"),
       servings: z.number().int().positive().max(100).optional().describe("How many people; omit for everyone in the group"),
@@ -48,7 +48,7 @@ export const recipeTools = {
         haveCount: have.length,
         missingCount: need.length,
         askToAdd: need.length ? `Add the ${need.length} missing ingredient${need.length === 1 ? "" : "s"} to the cart?` : null,
-        ...cartLink(ctx.groupId),
+        ...dashboardLinks("🥘 See the recipe", `/g/${ctx.groupId}/cart?recipe=${saved.id}`),
       };
     },
   }),

@@ -7,9 +7,11 @@ import { writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import path from "node:path";
 
-// Receipts use the sample receipt (the vision call is covered by dev-chat); Splitwise uses the in-memory fake.
+// Receipts use the sample receipt (the vision call is covered by dev-chat); Splitwise and Instacart use their fakes.
+// Recipes are written by the real model.
 process.env.RECEIPT_FAKE = "1";
 process.env.SPLITWISE_FAKE = "1";
+process.env.INSTACART_FAKE = "1";
 
 import { db, schema } from "../src/db";
 import { respond, type PipelineResult } from "../src/pipeline";

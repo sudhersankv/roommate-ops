@@ -746,7 +746,7 @@ describe("Roomie tools against the dev DB", () => {
     assert.match(r.text, /^Tacos for 5 \(serves 5, 30 min\)/);
     assert.match(r.text, /Need: 20 corn tortillas, 2 lb ground turkey/);
     assert.match(r.text, /Have: 1 tbsp oil, 1 tsp salt/);
-    assert.match(r.text, /5 steps: 1\. Brown/);
+    assert.match(r.text, /5 steps, all on the Cart page/);
     assert.equal((await cart.listOpenItems(ctx)).length, openBefore, "a Recipe never touches the Cart by itself");
     const [row] = await db.select().from(schema.recipes).where(eq(schema.recipes.id, tacosId));
     assert.equal(row.createdBy, member.Sudhersan);
