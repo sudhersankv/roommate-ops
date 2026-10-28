@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { CATALOG, CATALOG_SIZE, DEFAULT_UNIT_CENTS, estimate, lookupPrice, parseQty } from "../lib/prices";
-import { cartTotal, computeCartSplits, type SplitItem } from "./cart";
+import { cartTotal, computeCartSplits, lineItemFor, type SplitItem } from "./cart";
 
 const sum = (rows: { cents: number }[]) => rows.reduce((s, r) => s + r.cents, 0);
 const by = (rows: { memberId: string; cents: number }[]) => Object.fromEntries(rows.map((r) => [r.memberId, r.cents]));
@@ -159,6 +159,22 @@ test("splits: zero-weight members are omitted; items from inactive adders count 
 test("splits: no estimates at all -> split by item count", () => {
   const rows = computeCartSplits([item("a", null), item("a", null), item("b", 0)], ACTIVE, 300, "b");
   assert.deepEqual(by(rows), { a: 200, b: 100 });
+});
+
+test("splits: a Recipe's shared ingredients split evenly next to personal items, scaled to the real total", () => {
+  // Tacos for 3 (shared, est 3000) + a's oat milk 500 + b's yogurt 1000, receipt says 5400 (est 4500 x 1.2).
+  const recipe = [item("a", 1200, true), item("a", 900, true), item("a", 900, true)];
+  const rows = computeCartSplits([...recipe, item("a", 500), item("b", 1000)], ACTIVE, 5400, "a");
+  // weights: a 1000 + 500, b 1000 + 1000, c 1000 (of 4500) -> 1800, 2400, 1200.
+  assert.deepEqual(by(rows), { a: 1800, b: 2400, c: 1200 });
+  assert.equal(sum(rows), 5400);
+});
+
+test("lineItemFor: a Cart item -> an Instacart line (structured amount, else parsed qty, else 1 each)", () => {
+  assert.deepEqual(lineItemFor({ name: "Ground turkey", qty: "2 lb", quantity: 2, unit: "pound" }), { name: "ground turkey", displayText: "Ground turkey (2 lb)", measurements: [{ quantity: 2, unit: "pound" }] });
+  assert.deepEqual(lineItemFor({ name: "Oat milk", qty: "2 cartons", quantity: null, unit: null }).measurements, [{ quantity: 2, unit: "package" }]);
+  assert.deepEqual(lineItemFor({ name: "Dish soap", qty: "1", quantity: null, unit: null }), { name: "dish soap", displayText: "Dish soap", measurements: [{ quantity: 1, unit: "each" }] });
+  assert.deepEqual(lineItemFor({ name: "Salsa", qty: "a jar", quantity: null, unit: null }).measurements, [{ quantity: 1, unit: "each" }]);
 });
 
 test("splits: empty cart or no active members -> no rows", () => {

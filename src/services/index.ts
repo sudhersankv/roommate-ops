@@ -5,6 +5,8 @@ export * as claims from "./claims";
 export * as activity from "./activity";
 export * as money from "./money";
 export * as cart from "./cart";
+export * as recipes from "./recipes";
+export * as pantry from "./pantry";
 export * as chores from "./chores";
 export * as reminders from "./reminders";
 export * as upkeep from "./upkeep";

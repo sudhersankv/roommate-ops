@@ -270,17 +270,69 @@ export const outboxJobs = pgTable(
 
 /* ---------- groceries ---------- */
 
+/** One ingredient of a Recipe. `unit` is from Instacart's list (lib/units.ts); display_text is what people read. */
+export type RecipeIngredient = { name: string; quantity: number; unit: string; display_text: string; shared?: boolean };
+
+/** A dish Roomie (or a Member) wrote for the Group. It never touches the Cart by itself. */
+export const recipes = pgTable(
+  "recipes",
+  {
+    id: id(),
+    groupId: uuid("group_id").notNull().references(() => groups.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    servings: integer("servings").notNull(),
+    cookingTimeMinutes: integer("cooking_time_minutes"),
+    ingredients: jsonb("ingredients").$type<RecipeIngredient[]>().notNull().default([]),
+    steps: jsonb("steps").$type<string[]>().notNull().default([]),
+    source: text("source", { enum: ["roomie", "member"] }).notNull().default("roomie"),
+    createdBy: uuid("created_by").references(() => members.id, { onDelete: "set null" }),
+    // The day it's planned for ("tacos friday"), in the Group's time zone.
+    plannedFor: date("planned_for"),
+    instacartUrl: text("instacart_url"),
+    instacartUrlAt: timestamp("instacart_url_at", { withTimezone: true }),
+    // Fingerprint of what the link was made from (title, servings, ingredients); a different one means a new link.
+    instacartKey: text("instacart_key"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("recipes_group_created_at").on(t.groupId, t.createdAt)],
+);
+
 export const cartItems = pgTable("cart_items", {
   id: id(),
   groupId: uuid("group_id").notNull().references(() => groups.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
-  qty: text("qty").notNull().default("1"), // free text: "2", "3 gallons"
+  qty: text("qty").notNull().default("1"), // free text for display: "2", "3 gallons"
+  // Structured amount (from a Recipe, or parsed from qty) for the Instacart list; unit from lib/units.ts.
+  quantity: numeric("quantity"),
+  unit: text("unit"),
   addedBy: uuid("added_by").notNull().references(() => members.id),
   shared: boolean("shared").notNull().default(false),
   estCents: integer("est_cents"),
   status: text("status", { enum: ["open", "purchased"] }).notNull().default("open"),
+  // Set when the item came from a Recipe ("From Tacos for 5" on the Cart page).
+  recipeId: uuid("recipe_id").references(() => recipes.id, { onDelete: "set null" }),
   createdAt: createdAt(),
 });
+
+export type CheckoutItem = { id: string; name: string; qty: string; quantity: number | null; unit: string | null; shared: boolean; addedBy: string; estCents: number | null; recipeId: string | null };
+
+/** A Checkout: the open Cart as it was when someone asked for the Instacart list, so "I paid" can point at it. */
+export const cartCheckouts = pgTable(
+  "cart_checkouts",
+  {
+    id: id(),
+    groupId: uuid("group_id").notNull().references(() => groups.id, { onDelete: "cascade" }),
+    createdBy: uuid("created_by").references(() => members.id, { onDelete: "set null" }),
+    itemsSnapshot: jsonb("items_snapshot").$type<CheckoutItem[]>().notNull(),
+    estCents: integer("est_cents").notNull().default(0),
+    // Null when Instacart couldn't be reached; the Checkout still records what was in the Cart.
+    instacartUrl: text("instacart_url"),
+    expenseId: uuid("expense_id").references(() => expenses.id, { onDelete: "set null" }),
+    paidAt: timestamp("paid_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [index("cart_checkouts_group_created_at").on(t.groupId, t.createdAt)],
+);
 
 /* ---------- chores, reminders, upkeep ---------- */
 
