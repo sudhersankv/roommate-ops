@@ -96,13 +96,14 @@ Each step gets its own branch and PR, and you test locally before it's merged.
 - If the number isn't ready, steps 2 and 3 swap.
 
 ### 3. Mastra agent rebuild (`step/3-agent`)
-- `src/mastra/` with a `roomie` agent built once: `RequestContext` with a schema, dynamic instructions (persona, Group style, Members, time zone) and dynamic tools from the Toolkit registry.
-- Memory: Postgres storage, a thread per Group, semantic recall with pgvector embeddings, and Member notes.
-- The Gate (Jev, with a hard-trigger fallback) and Chattiness.
-- Observability: platform and storage exporters, a sensitive-data filter, `requestContextKeys`, and trace tags.
-- Scorers sampled on live traffic, and a scenario set of about 30 cases with `npm run evals`. Mastra Studio via `npm run mastra:dev` with request-context presets.
-- Move today's tools into the Toolkit shape: core, splitting (basic), groceries (basic), chores, upkeep.
+- [x] `src/mastra/` with a `roomie` agent built once: `RequestContext` with a schema, dynamic instructions (persona, Group style, Members, time zone) and dynamic tools from the Toolkit registry.
+- [x] Memory: Postgres storage, a thread per Group, semantic recall with pgvector embeddings (`qwen3-embedding-0-6b` on the gateway), and Member notes plus the Group style in working memory (refreshed by Haiku every 50 chat lines).
+- [x] The Gate (Jev, with a hard-trigger fallback) and Chattiness (`households.chattiness`).
+- [x] Observability: platform and storage exporters, a sensitive-data filter, `requestContextKeys`, and trace tags. The platform exporter switches on when its token and project id are in `.env`.
+- [x] Scorers sampled on live traffic, and a scenario set of about 30 cases with `npm run evals` ([baseline](./evals-baseline.md)). Mastra Studio via `npm run mastra:dev` with request-context presets.
+- [x] Move today's tools into the Toolkit shape: core, splitting (basic), groceries (basic), chores, upkeep.
 - **Done when:** Studio chats work, traces show up on the Mastra platform, the Gate has unit tests, and the eval baseline is recorded.
+  - [x] Studio chats work · [ ] traces on the Mastra platform (waiting for `MASTRA_PLATFORM_ACCESS_TOKEN` / `MASTRA_PROJECT_ID`; traces are in Postgres and Studio today) · [x] Gate unit tests · [x] eval baseline
 
 ### 4. Identity, Groups and dashboard shell (`step/4-identity`)
 - Fresh schema with migrations. Neon Auth with Google. Claim links, roles, Pending members, and the approval flow in both chat and dashboard. Permission checks in services.
