@@ -37,6 +37,11 @@ const REC = {
   trash: jev(0.99, 0.01, 0, 0, 0.58, "chores", 0.48), // "[Dev] remind everyone trash goes out tuesday 8pm"
   uber: jev(0.76, 0.24, 0, 0, 0.16, "splitting", 1), // "[Maya] pagué 30 por el uber"
   seeYou: jev(0.01, 0.03, 0.01, 0.95, 0.04, "reminders", 0.79), // "[Sam] ok see you at 7"
+  // Recorded with step 6's groceries wording (recipes, cooking, meal planning, pantry).
+  tacosNamed: jev(0.35, 0.61, 0.01, 0.03, 0.6, "groceries", 0.99), // "[Maya] roomie tacos for 5 on friday"
+  tacos: jev(0.22, 0.73, 0, 0.05, 0.25, "groceries", 0.99), // "[Dev] tacos for 5 friday"
+  addThem: jev(0.96, 0.04, 0, 0, 0.95, "groceries", 1), // "[Maya] yes add them, we have onions" (in window, after a recipe)
+  outOfSoap: jev(0.86, 0.13, 0, 0.01, 0.17, "groceries", 0.98), // "[Sam] we're out of dish soap"
 };
 
 const gate = (j: JevAnswers | null, o: { hardTrigger?: boolean; inWindow?: boolean; chattiness?: Chattiness } = {}) =>
@@ -79,6 +84,22 @@ describe("decideGate with recorded Jev answers (normal chattiness)", () => {
     const d = gate(REC.vague);
     assert.equal(d.decision, "clarify");
     assert.equal(d.unprompted, true);
+  });
+
+  test("recipes and meal plans route to groceries, never to ignore", () => {
+    const named = gate(REC.tacosNamed, { hardTrigger: true });
+    assert.equal(named.speak, true);
+    assert.equal(named.toolkit, "groceries", "the recipe tools are in groceries");
+    const unaddressed = gate(REC.tacos);
+    assert.equal(unaddressed.speak, true, "a meal plan nobody addressed is worth a question");
+    assert.equal(unaddressed.decision, "clarify");
+    assert.equal(unaddressed.toolkit, "groceries");
+    const add = gate(REC.addThem, { inWindow: true });
+    assert.equal(add.decision, "act");
+    assert.equal(add.toolkit, "groceries");
+    const soap = gate(REC.outOfSoap);
+    assert.equal(soap.decision, "act");
+    assert.equal(soap.unprompted, true, "'we're out of dish soap' unaddressed: ask before adding");
   });
 
   test("toolkit narrowing only when Jev is sure enough", () => {

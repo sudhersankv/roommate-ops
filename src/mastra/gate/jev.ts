@@ -7,14 +7,14 @@ export const JEV_TIMEOUT_MS = 2_500;
 export const gateModel = () => process.env.GATE_MODEL ?? "typesafeai-jev-1-14-0";
 
 const ROOMIE =
-  "Roomie is an assistant member of this group chat that logs shared expenses, keeps a grocery cart, tracks chores, home upkeep and reminders.";
+  "Roomie is an assistant member of this group chat that logs shared expenses, keeps a grocery cart, writes recipes, tracks chores, home upkeep and reminders.";
 
 export const QUESTIONS = {
   intent: {
     type: "choice",
     instructions: "What should Roomie do about the latest message?",
     criteria: {
-      act: "Roomie should do something with its tools: log an expense, a payment, a chore or a reminder, change the cart, or answer a question about the group's money, cart, chores, upkeep or reminders. Questions Roomie can answer with its tools are act.",
+      act: "Roomie should do something with its tools: log an expense, a payment, a chore or a reminder, change the cart, write a recipe, or answer a question about the group's money, cart, pantry, chores, upkeep or reminders. Questions Roomie can answer with its tools are act.",
       clarify: "The message is for Roomie or has something worth logging, but a key detail (amount, who, which item, when) is missing or ambiguous, so Roomie should ask one short question first.",
       chat: "Small talk aimed at Roomie (thanks, greetings, a joke) that deserves a brief reply but no action.",
       ignore: "Chatter between the people in the group that doesn't need Roomie.",
@@ -29,7 +29,7 @@ export const QUESTIONS = {
     instructions: "Which of Roomie's areas does the latest message relate to?",
     criteria: {
       splitting: "Money other than the grocery run: shared expenses, who paid, balances, who owes what, paying someone back, receipts, Venmo/PayPal/Cash App, Splitwise.",
-      groceries: "The shared grocery cart: adding or removing items, shopping, checking out, or what the grocery shop cost.",
+      groceries: "Groceries and food at home: the shared grocery cart (adding or removing items, being out of something, shopping, checking out, what the grocery shop cost), recipes, cooking, meal planning ('tacos for 5 friday'), and the pantry of things the group always has.",
       chores: "Chores: dishes, trash, cleaning, whose turn it is.",
       upkeep: "Home maintenance on a schedule: filters, smoke alarms, gutters, repairs.",
       reminders: "Reminders at a time or date.",
