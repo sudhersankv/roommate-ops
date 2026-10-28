@@ -6,7 +6,7 @@ import { revalidatePath } from "next/cache"
 
 import type { PaymentApp } from "@/db/schema"
 import { memberSession } from "@/lib/session"
-import { cart, chores, groups, isNotAllowed, members, money, upkeep, type Ctx } from "@/services"
+import { cart, chores, groups, isNotAllowed, members, money, splitwise, upkeep, type Ctx } from "@/services"
 import type { SettingsPatch } from "@/services/groups"
 import type { ToolkitId } from "@/toolkits/types"
 import type { ActionResult } from "./_components/group-context"
@@ -25,14 +25,38 @@ async function act<T>(groupId: string, fn: (ctx: Ctx) => Promise<T>): Promise<Ac
   }
 }
 
-type ExpenseForm = { cents: number; description: string; payerId: string; splitAmong: string[] }
+/** What the drawer sends: the intent per method (percents, shares, exact cents typed per person), never derived cents. */
+export type ExpenseForm = Pick<
+  money.ExpenseInput,
+  "cents" | "description" | "method" | "splitAmong" | "splits" | "percents" | "shares" | "payers" | "category" | "note" | "occurredOn" | "recurring" | "receiptUrl"
+>
+
+const clean = (input: ExpenseForm): ExpenseForm => ({
+  cents: input.cents,
+  description: input.description,
+  method: input.method,
+  ...(input.method === "equal" ? { splitAmong: input.splitAmong } : {}),
+  ...(input.method === "exact" ? { splits: input.splits } : {}),
+  ...(input.method === "percent" ? { percents: input.percents } : {}),
+  ...(input.method === "shares" ? { shares: input.shares } : {}),
+  payers: input.payers,
+  category: input.category,
+  note: input.note ?? null,
+  occurredOn: input.occurredOn,
+  recurring: input.recurring ?? null,
+  // Only our own uploads can be attached from the dashboard.
+  receiptUrl: input.receiptUrl && /^\/uploads\/[a-z0-9-]+\/[a-z0-9-]+\.[a-z]+$/i.test(input.receiptUrl) ? input.receiptUrl : null,
+})
 
 export async function addExpense(groupId: string, input: ExpenseForm) {
-  return act(groupId, async (ctx) => (await money.logExpense(ctx, { ...input, source: "ui" })).id)
+  return act(groupId, async (ctx) => (await money.logExpense(ctx, { ...clean(input), source: "ui" })).id)
 }
 
 export async function updateExpense(groupId: string, expenseId: string, input: ExpenseForm) {
-  return act(groupId, async (ctx) => (await money.updateExpense(ctx, { expenseId, ...input })).id)
+  return act(groupId, async (ctx) => {
+    const { receiptUrl, ...rest } = clean(input)
+    return (await money.updateExpense(ctx, { expenseId, ...rest, ...(receiptUrl ? { receiptUrl } : {}) })).id
+  })
 }
 
 export async function deleteExpense(groupId: string, expenseId: string) {
@@ -88,4 +112,46 @@ export async function setToolkit(groupId: string, toolkit: ToolkitId, enabled: b
 
 export async function deleteGroupData(groupId: string) {
   return act(groupId, (ctx) => groups.deleteGroupData(ctx))
+}
+
+export async function setSimplifyDebts(groupId: string, on: boolean) {
+  return act(groupId, (ctx) => groups.setSimplifyDebts(ctx, { on }))
+}
+
+/* ---------- Splitwise (Admins; services/splitwise.ts checks) ---------- */
+
+/** "Not connected" is a normal answer here, not a crash: it comes back as the error text. */
+async function sw<T>(groupId: string, fn: (ctx: Ctx) => Promise<T>) {
+  return act(groupId, async (ctx) => {
+    try {
+      return await fn(ctx)
+    } catch (e) {
+      if (e instanceof splitwise.SplitwiseNotConnectedError) throw new Error(e.message)
+      throw e
+    }
+  })
+}
+
+export async function connectSplitwise(groupId: string) {
+  return sw(groupId, (ctx) => splitwise.connectSplitwise(ctx))
+}
+
+export async function listSplitwiseGroups(groupId: string) {
+  return sw(groupId, (ctx) => splitwise.listSplitwiseGroups(ctx))
+}
+
+export async function importSplitwise(groupId: string, splitwiseGroupId: string) {
+  return sw(groupId, (ctx) => splitwise.importSplitwiseGroup(ctx, { splitwiseGroupId }))
+}
+
+export async function exportSplitwise(groupId: string, splitwiseGroupId?: string) {
+  return sw(groupId, (ctx) => splitwise.exportToSplitwise(ctx, { splitwiseGroupId }))
+}
+
+export async function setSplitwiseMirror(groupId: string, on: boolean, splitwiseGroupId?: string) {
+  return sw(groupId, (ctx) => splitwise.setSplitwiseMirror(ctx, { on, splitwiseGroupId }))
+}
+
+export async function disconnectSplitwise(groupId: string) {
+  return sw(groupId, (ctx) => splitwise.disconnectSplitwise(ctx))
 }

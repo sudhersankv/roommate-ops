@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { useState } from "react"
-import { PlusIcon, ReceiptText } from "lucide-react"
+import { PlusIcon, ReceiptText, RepeatIcon } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -91,7 +91,7 @@ export function MoneyScreen({
 }
 
 function Balances({ balances, plan }: { balances: Record<string, number>; plan: Transfer[] }) {
-  const { me, active, name } = useGroup()
+  const { group, me, active, name } = useGroup()
   const money = useFormatMoney()
   const [settling, setSettling] = useState<Transfer | null>(null)
   const others = active.filter((m) => m.id !== me.id)
@@ -141,7 +141,11 @@ function Balances({ balances, plan }: { balances: Record<string, number>; plan: 
           <h2 id="plan" className="type-heading">
             Settle plan
           </h2>
-          <p className="type-caption text-muted-foreground">The fewest payments that get everyone to zero.</p>
+          <p className="type-caption text-muted-foreground">
+            {group.simplifyDebts
+              ? "The fewest payments that get everyone to zero (simplify debts is on)."
+              : "Who owes whom from the expenses they shared (simplify debts is off)."}
+          </p>
         </div>
         {plan.length === 0 ? (
           <Empty className="rounded-3xl bg-card">
@@ -217,7 +221,7 @@ function Expenses({ expenses, onAdd }: { expenses: ExpenseView[]; onAdd: () => v
 
 function ExpenseRow({ expense: e }: { expense: ExpenseView }) {
   const { me, base, name } = useGroup()
-  const payers = e.payers.map((p) => name(p.memberId))
+  const payers = e.payers.map((p, i) => (i > 0 && name(p.memberId) === "You" ? "you" : name(p.memberId)))
   const paidBy = payers.length > 1 ? `${payers.slice(0, -1).join(", ")} and ${payers.at(-1)} paid` : `${payers[0]} paid`
   const inIt = e.shares.some((s) => s.memberId === me.id)
   return (
@@ -226,9 +230,13 @@ function ExpenseRow({ expense: e }: { expense: ExpenseView }) {
         <CategoryIcon category={e.category} />
       </ItemMedia>
       <ItemContent className="min-w-0">
-        <ItemTitle className="truncate">{e.description}</ItemTitle>
+        <ItemTitle className="truncate">
+          {e.description}
+          {e.recurring || e.repeated ? <RepeatIcon aria-label="Repeats" className="size-3.5 shrink-0 text-muted-foreground" /> : null}
+        </ItemTitle>
         <ItemDescription>
           {paidBy} <Amount cents={e.cents} />
+          {e.method !== "equal" && e.source !== "cart" ? ` · split by ${e.method === "exact" ? "amount" : e.method}` : ""}
         </ItemDescription>
       </ItemContent>
       <ItemActions className="flex-col items-end gap-0.5">

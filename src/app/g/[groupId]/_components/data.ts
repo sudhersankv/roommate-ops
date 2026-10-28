@@ -1,14 +1,14 @@
 // Server-side: services -> the plain shapes the screens render. No business rules here; the numbers come from
 // services (balances, settle plan, shares, chores) and are only reshaped and dated in the Group's time zone.
-import { categoryFor } from "@/components/app/categories"
 import { localDay } from "@/lib/dates"
 import type { GroupSession } from "@/lib/session"
-import { activity, cart, chatlog, chores, groups, members, money, upkeep } from "@/services"
+import { activity, cart, chatlog, chores, groups, members, money, splitwise, upkeep } from "@/services"
 import { canChangeExpense } from "@/services/authz"
+import { guessCategory } from "@/services/categories"
 import type { Expense } from "@/services/money"
 import { TOOLKIT_IDS, type ToolkitId } from "@/toolkits/types"
 import type { GroupView, MemberView } from "./group-context"
-import type { ActivityView, CartItemView, ChoreView, ExpenseView, NarrationView, Transfer, UpkeepView } from "./types"
+import type { ActivityView, CartItemView, ChoreView, ExpenseView, NarrationView, SplitwiseView, Transfer, UpkeepView } from "./types"
 
 export async function groupView(s: GroupSession): Promise<GroupView> {
   const [people, toolkits] = await Promise.all([members.listMembersWithHandles({ groupId: s.group.id }), groups.listToolkits({ groupId: s.group.id })])
@@ -51,23 +51,51 @@ export async function balancesView(s: GroupSession) {
   }
 }
 
+/** Our own uploads render from this server, whatever APP_URL says. */
+const localPath = (url: string | null | undefined) => {
+  if (!url) return null
+  const m = /\/uploads\/[a-z0-9-]+\/[a-z0-9-]+\.[a-z]+$/i.exec(url)
+  return m ? m[0] : url
+}
+
 export function expenseView(s: GroupSession, e: Expense): ExpenseView {
-  const shares = (e.splits ?? []).map((x) => ({ memberId: x.memberId, cents: x.cents }))
-  const payerId = e.payerId ?? ""
-  const min = Math.min(...shares.map((x) => x.cents))
+  const shares = (e.splits ?? []).map((x) => ({ memberId: x.memberId, cents: x.cents, weight: x.weight ?? null }))
+  const payers = (e.payers ?? []).map((p) => ({ memberId: p.memberId, cents: p.cents }))
+  const participantIds = shares.map((x) => x.memberId)
   return {
     id: e.id,
     description: e.description,
-    category: categoryFor(e.description, e.source),
-    date: localDay(e.createdAt, s.group.timezone),
+    category: e.category ?? guessCategory(e.description, e.source),
+    date: e.occurredOn ?? localDay(e.createdAt, s.group.timezone),
     cents: e.cents,
-    payers: [{ memberId: payerId, cents: e.cents }],
+    method: e.method ?? "equal",
+    payers,
     shares,
     yourShare: shares.find((x) => x.memberId === s.member.id)?.cents ?? 0,
-    youPaid: payerId === s.member.id ? e.cents : 0,
+    youPaid: payers.find((p) => p.memberId === s.member.id)?.cents ?? 0,
     addedBy: e.createdBy ?? null,
-    uneven: shares.some((x) => x.cents - min > 1),
-    canChange: canChangeExpense(s.member, { createdBy: e.createdBy ?? null, payerId, participantIds: shares.map((x) => x.memberId) }),
+    note: e.note ?? null,
+    recurring: e.recurring ?? null,
+    repeated: !!e.recurringParentId,
+    receiptUrl: localPath(e.receiptUrl),
+    inSplitwise: !!e.splitwiseId,
+    source: e.source ?? "chat",
+    canChange: payers.some((p) => canChangeExpense(s.member, { createdBy: e.createdBy ?? null, payerId: p.memberId, participantIds })),
+  }
+}
+
+export async function splitwiseView(s: GroupSession): Promise<SplitwiseView> {
+  const st = await splitwise.splitwiseState(s.ctx)
+  return {
+    ready: st.availability.ready,
+    hint: st.availability.hint ?? null,
+    fake: st.availability.kind === "fake",
+    connected: st.connected,
+    connectedBy: st.connectedByName,
+    group: st.splitwiseGroup,
+    mirror: st.mode === "mirror",
+    lastSynced: st.lastSyncedAt ? localDay(st.lastSyncedAt, s.group.timezone) : null,
+    pendingPushes: st.pendingPushes,
   }
 }
 

@@ -18,5 +18,5 @@ export default async function ExpensePage({ params }: Props) {
   const s = await currentMember(groupId)
   if (s.member.status !== "active") return null
   const e = await money.getExpense(s.ctx, expenseId)
-  return <ExpenseDetailScreen expense={e ? expenseView(s, e) : null} />
+  return <ExpenseDetailScreen expense={e && !e.deletedAt ? expenseView(s, e) : null} />
 }

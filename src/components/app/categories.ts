@@ -1,30 +1,20 @@
-import { Car, Popcorn, ReceiptText, ShoppingBasket, SprayCan, UtensilsCrossed, Zap, type LucideIcon } from "lucide-react"
+import { Car, HeartPulse, House, Plane, Popcorn, ReceiptText, ShoppingBasket, SprayCan, UtensilsCrossed, Zap, type LucideIcon } from "lucide-react"
 
-export type Category = "groceries" | "utilities" | "dining" | "home" | "fun" | "transport" | "other"
+import type { ExpenseCategory } from "@/db/enums"
+
+export type Category = ExpenseCategory
 
 export const categories: { value: Category; label: string; icon: LucideIcon }[] = [
+  { value: "food", label: "Eating out", icon: UtensilsCrossed },
   { value: "groceries", label: "Groceries", icon: ShoppingBasket },
+  { value: "rent", label: "Rent", icon: House },
   { value: "utilities", label: "Utilities", icon: Zap },
-  { value: "dining", label: "Eating out", icon: UtensilsCrossed },
-  { value: "home", label: "Around the house", icon: SprayCan },
-  { value: "fun", label: "Fun", icon: Popcorn },
+  { value: "household", label: "Around the house", icon: SprayCan },
   { value: "transport", label: "Getting around", icon: Car },
-  { value: "other", label: "Expense", icon: ReceiptText },
+  { value: "entertainment", label: "Fun", icon: Popcorn },
+  { value: "travel", label: "Travel", icon: Plane },
+  { value: "health", label: "Health", icon: HeartPulse },
+  { value: "other", label: "Other", icon: ReceiptText },
 ]
 
 export const categoryOf = (c: Category) => categories.find((x) => x.value === c) ?? categories[categories.length - 1]
-
-// Categories are picked by Roomie in step 5; until then the icon is a guess from the description, display only.
-const hints: [Category, RegExp][] = [
-  ["groceries", /grocer|costco|trader|market|food|ingredient|milk|eggs/i],
-  ["utilities", /internet|wifi|electric|power|water|utility|bill|rent/i],
-  ["dining", /pizza|brunch|dinner|lunch|breakfast|restaurant|taco|sushi|takeout|coffee/i],
-  ["home", /clean|towel|soap|toilet|detergent|supplies|trash bag/i],
-  ["fun", /ticket|movie|concert|game|snack|party|bar\b/i],
-  ["transport", /uber|lyft|taxi|cab|train|bus|gas|parking|flight/i],
-]
-
-export function categoryFor(description: string, source?: string): Category {
-  if (source === "cart") return "groceries"
-  return hints.find(([, re]) => re.test(description))?.[0] ?? "other"
-}
