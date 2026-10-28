@@ -193,9 +193,18 @@ export async function importSplitwiseGroup(ctx: Ctx, input: { splitwiseGroupId: 
   }
 
   const result: ImportResult = { expenses: 0, settlements: 0, skipped: { duplicate: 0, deleted: history.length - live.length, otherCurrency: 0, unreadable: 0 }, newMembers: created, splitwiseGroup: sw.name };
+  // Already in this Group (deleted ones too, so a deleted import stays deleted).
   const [knownE, knownS] = await Promise.all([
-    db.select({ id: expenseExternalRefs.externalId }).from(expenseExternalRefs).where(eq(expenseExternalRefs.provider, "splitwise")),
-    db.select({ id: settlementExternalRefs.externalId }).from(settlementExternalRefs).where(eq(settlementExternalRefs.provider, "splitwise")),
+    db
+      .select({ id: expenseExternalRefs.externalId })
+      .from(expenseExternalRefs)
+      .innerJoin(expenses, eq(expenses.id, expenseExternalRefs.expenseId))
+      .where(and(eq(expenseExternalRefs.provider, "splitwise"), eq(expenses.groupId, ctx.groupId))),
+    db
+      .select({ id: settlementExternalRefs.externalId })
+      .from(settlementExternalRefs)
+      .innerJoin(settlements, eq(settlements.id, settlementExternalRefs.settlementId))
+      .where(and(eq(settlementExternalRefs.provider, "splitwise"), eq(settlements.groupId, ctx.groupId))),
   ]);
   const known = new Set([...knownE, ...knownS].map((r) => r.id));
 

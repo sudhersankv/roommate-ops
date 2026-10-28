@@ -233,7 +233,8 @@ export const expenseExternalRefs = pgTable(
     externalId: text("external_id").notNull(),
     createdAt: createdAt(),
   },
-  (t) => [uniqueIndex("expense_external_refs_external").on(t.provider, t.externalId), uniqueIndex("expense_external_refs_expense").on(t.expenseId, t.provider)],
+  // Not unique by external id: the same Splitwise group may be imported into two Groups; imports dedupe per Group.
+  (t) => [index("expense_external_refs_external").on(t.provider, t.externalId), uniqueIndex("expense_external_refs_expense").on(t.expenseId, t.provider)],
 );
 
 /** Splitwise "payments" come in as Settlements; same idea as expense_external_refs. */
@@ -244,7 +245,7 @@ export const settlementExternalRefs = pgTable(
     provider: text("provider", { enum: ["splitwise"] }).notNull(),
     externalId: text("external_id").notNull(),
   },
-  (t) => [uniqueIndex("settlement_external_refs_external").on(t.provider, t.externalId)],
+  (t) => [index("settlement_external_refs_external").on(t.provider, t.externalId), uniqueIndex("settlement_external_refs_settlement").on(t.settlementId, t.provider)],
 );
 
 /**

@@ -215,7 +215,9 @@ describe("Roomie tools against the dev DB", () => {
   });
 
   test("settle_up paid=false: 'settle up with Ryan' records nothing and returns pay links to the payee's handles", async () => {
-    await members.setPaymentHandles(ctx, { venmo: "@sudhersan-k", cashapp: "$sudk" });
+    // Two handles in one message become two parallel tool calls; both must stick.
+    await Promise.all([run("set_payment_handle", { app: "venmo", handle: "@sudhersan-k" }), run("set_payment_handle", { app: "cashapp", handle: "$sudk" })]);
+    assert.deepEqual((await members.getNote(member.Sudhersan)).handles, { venmo: "@sudhersan-k", cashapp: "$sudk" });
     const before = await count(schema.settlements);
     const r = await run("settle_up", { with: "Ryan", paid: false });
     assert.equal(r.recorded, false);

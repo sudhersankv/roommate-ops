@@ -1,5 +1,5 @@
 // Members: who is in a Group, approvals (Pending -> active), roles, payment handles and "forget me".
-import { and, asc, eq, inArray, ne } from "drizzle-orm";
+import { and, asc, eq, inArray, ne, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import type { MemberNote, PaymentApp } from "@/db/schema";
 import { record } from "./activity";
@@ -125,20 +125,22 @@ export async function getNote(memberId: string): Promise<MemberNote> {
 export async function setPaymentHandles(ctx: Ctx, input: Partial<Record<PaymentApp, string>>): Promise<MemberNote> {
   const me = await getMember(ctx, ctx.memberId);
   if (!me || me.status === "removed") throw new NotAllowedError("You're not in this group anymore.", "removed");
-  const note = await getNote(ctx.memberId);
-  const handles = { ...(note.handles ?? {}) };
+  const set: Partial<Record<PaymentApp, string>> = {};
+  const clear: PaymentApp[] = [];
   for (const app of PAYMENT_APPS) {
     if (!(app in input)) continue;
     const v = input[app]?.trim();
-    if (v) handles[app] = v.slice(0, 80);
-    else delete handles[app];
+    if (v) set[app] = v.slice(0, 80);
+    else clear.push(app);
   }
-  const next: MemberNote = { ...note, handles };
-  await db
+  // One statement, merged in SQL: two handles saved at the same moment ("my venmo is X and my paypal is Y") both stick.
+  const merged = sql`(coalesce(${memberNotes.note}->'handles', '{}'::jsonb) || ${JSON.stringify(set)}::jsonb) - ${`{${clear.join(",")}}`}::text[]`;
+  const [row] = await db
     .insert(memberNotes)
-    .values({ memberId: ctx.memberId, note: next })
-    .onConflictDoUpdate({ target: memberNotes.memberId, set: { note: next, updatedAt: new Date() } });
-  return next;
+    .values({ memberId: ctx.memberId, note: { handles: set } })
+    .onConflictDoUpdate({ target: memberNotes.memberId, set: { note: sql`jsonb_set(${memberNotes.note}, '{handles}', ${merged})`, updatedAt: new Date() } })
+    .returning({ note: memberNotes.note });
+  return row.note;
 }
 
 /* ---------- forget me (ADR 0006) ---------- */

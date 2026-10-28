@@ -154,13 +154,16 @@ export const gatewayReceiptReader: ReceiptReader = {
       headers: { "content-type": "application/json", authorization: `Bearer ${process.env.NEON_AI_GATEWAY_TOKEN}` },
       body: JSON.stringify({
         model: process.env.RECEIPT_MODEL ?? process.env.LLM_MODEL ?? "claude-sonnet-5-5",
+        // No temperature: claude-sonnet-5-5 on the gateway rejects the parameter.
         max_tokens: 1500,
-        temperature: 0,
         messages: [{ role: "user", content: [{ type: "text", text: PROMPT }, { type: "image_url", image_url: { url: dataUrl } }] }],
       }),
       signal: AbortSignal.timeout(60_000),
     });
-    if (!res.ok) throw new Error(`Couldn't read the receipt (gateway ${res.status}).`);
+    if (!res.ok) {
+      console.warn(`[receipts] gateway ${res.status}: ${(await res.text().catch(() => "")).slice(0, 300)}`);
+      throw new Error(`Couldn't read the receipt (gateway ${res.status}).`);
+    }
     const body = (await res.json()) as { choices?: { message?: { content?: string } }[] };
     return parseModelJson(body.choices?.[0]?.message?.content ?? "");
   },
