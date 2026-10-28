@@ -3,7 +3,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { CATALOG, CATALOG_SIZE, DEFAULT_UNIT_CENTS, estimate, lookupPrice, parseQty } from "../lib/prices";
-import { createShoppingList } from "../lib/instacart";
 import { cartTotal, computeCartSplits, type SplitItem } from "./cart";
 
 const sum = (rows: { cents: number }[]) => rows.reduce((s, r) => s + r.cents, 0);
@@ -97,19 +96,6 @@ test("estimate: unit price x count; unknown items default to 499; sizes don't mu
   assert.equal(estimate("rice", "500 g"), CATALOG.rice);
   assert.equal(estimate("eggs", "1 dozen"), CATALOG.eggs);
   assert.ok(Number.isInteger(estimate("milk", "1.5")));
-});
-
-test("createShoppingList points at our simulated checkout page", () => {
-  const saved = process.env.APP_URL;
-  try {
-    process.env.APP_URL = "https://kevin.example/";
-    assert.equal(createShoppingList([{ name: "milk", qty: "1" }], "x"), "https://kevin.example/cart/checkout");
-    delete process.env.APP_URL;
-    assert.equal(createShoppingList([], "x"), "/cart/checkout");
-  } finally {
-    if (saved === undefined) delete process.env.APP_URL;
-    else process.env.APP_URL = saved;
-  }
 });
 
 /* ---------- cartTotal ---------- */

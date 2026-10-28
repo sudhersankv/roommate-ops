@@ -1,12 +1,12 @@
-// Demo history for "Apt 4B": three weeks of roommate life so the dashboard and Kevin's context look lived-in.
+// Demo history for "Apt 4B": three weeks of group life so the dashboard and Roomie's context look lived-in.
 //
 //   npm run seed          first time (no-op if the house already has expenses)
 //   npm run seed:demo     --reset: wipe this house's history and rebuild it (re-runnable, identical counts)
 //
-// Resolves the house: KEVIN_HOUSEHOLD_ID, else the household named "Apt 4B", else the first by created_at,
-// else creates "Apt 4B" with Sudhersan, Ryan and Alex. --reset keeps the household row, members (and their
-// Telegram links) and the `emails` table (real AgentMail history); everything else for this house is rebuilt.
-// TELEGRAM_CHAT_ID binds the group: always on create, and on an existing house when --reset or it has no chat yet.
+// Resolves the house: SEED_HOUSEHOLD_ID, else the household named "Apt 4B", else the first by created_at,
+// else creates "Apt 4B" with Sudhersan, Ryan and Alex. --reset keeps the household row and members (and their
+// chat links); everything else for this house is rebuilt.
+// SEED_CHAT_ID binds the chat: always on create, and on an existing house when --reset or it has no chat yet.
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { db, schema } from "../src/db";
 import { estimate } from "../src/lib/prices";
@@ -76,24 +76,24 @@ function nextWeekday(weekday: number, h: number, mi = 0): Date {
 
 type House = typeof households.$inferSelect;
 
-/** Bind TELEGRAM_CHAT_ID to an existing house when --reset, or when it has no group yet. Unchanged otherwise. */
+/** Bind SEED_CHAT_ID to an existing house when --reset, or when it has no chat yet. Unchanged otherwise. */
 async function bindChat(h: House): Promise<House> {
-  const chatId = process.env.TELEGRAM_CHAT_ID?.trim();
-  if (!chatId || h.telegramChatId === chatId) return h;
-  if (!RESET && h.telegramChatId) {
-    console.log(`"${h.name}" keeps telegram chat ${h.telegramChatId} (pass --reset to rebind to TELEGRAM_CHAT_ID)`);
+  const chatId = process.env.SEED_CHAT_ID?.trim();
+  if (!chatId || h.chatId === chatId) return h;
+  if (!RESET && h.chatId) {
+    console.log(`"${h.name}" keeps chat ${h.chatId} (pass --reset to rebind to SEED_CHAT_ID)`);
     return h;
   }
-  const [updated] = await db.update(households).set({ telegramChatId: chatId }).where(eq(households.id, h.id)).returning();
-  console.log(`bound "${h.name}" to telegram chat ${chatId}${h.telegramChatId ? ` (was ${h.telegramChatId})` : ""}`);
+  const [updated] = await db.update(households).set({ chatId }).where(eq(households.id, h.id)).returning();
+  console.log(`bound "${h.name}" to chat ${chatId}${h.chatId ? ` (was ${h.chatId})` : ""}`);
   return updated;
 }
 
 async function resolveHouse(): Promise<House> {
-  const envId = process.env.KEVIN_HOUSEHOLD_ID;
+  const envId = process.env.SEED_HOUSEHOLD_ID;
   if (envId) {
     const [h] = await db.select().from(households).where(eq(households.id, envId));
-    if (!h) throw new Error(`KEVIN_HOUSEHOLD_ID=${envId} does not exist.`);
+    if (!h) throw new Error(`SEED_HOUSEHOLD_ID=${envId} does not exist.`);
     return bindChat(h);
   }
   const [named] = await db.select().from(households).where(eq(households.name, HOUSE_NAME)).orderBy(asc(households.createdAt)).limit(1);
@@ -102,22 +102,15 @@ async function resolveHouse(): Promise<House> {
   if (first) return bindChat(first);
   const [created] = await db
     .insert(households)
-    .values({
-      name: HOUSE_NAME,
-      rentCents: 250_000,
-      rentDueDay: 1,
-      leasingEmail: "leasingoffice@agentmail.to",
-      inboxAddress: "kevin-4b@agentmail.to",
-      telegramChatId: process.env.TELEGRAM_CHAT_ID || null,
-    })
+    .values({ name: HOUSE_NAME, chatId: process.env.SEED_CHAT_ID || null })
     .returning();
-  console.log(`created household "${HOUSE_NAME}" ${created.id}${process.env.TELEGRAM_CHAT_ID ? "" : " (set TELEGRAM_CHAT_ID to bind your group)"}`);
+  console.log(`created household "${HOUSE_NAME}" ${created.id}${process.env.SEED_CHAT_ID ? "" : " (set SEED_CHAT_ID to bind a chat)"}`);
   return created;
 }
 
 /**
  * Sudhersan, Ryan, Alex by name (case-insensitive, active or not). A missing one is added; an inactive one is reactivated
- * rather than duplicated. Existing rows (and telegram links) are otherwise untouched.
+ * rather than duplicated. Existing rows (and chat links) are otherwise untouched.
  */
 async function resolveMembers(householdId: string) {
   const want = ["Sudhersan", "Ryan", "Alex"] as const;
@@ -229,7 +222,7 @@ await db.transaction(async (tx) => {
   ];
   await tx.insert(choreLogs).values(logs.map(([choreId, memberId, d, h]) => ({ choreId, memberId, doneAt: ago(d, h) })));
 
-  /* ----- reminders (unsent). The monthly rent one is synced from house settings after commit. ----- */
+  /* ----- reminders (unsent) ----- */
   await tx.insert(reminders).values([
     { householdId: hid, text: "Trash goes out tonight", dueAt: nextWeekday(2, 20, 0), memberId: null },
     { householdId: hid, text: "Landlord inspection — tidy up", dueAt: localAt(5, 9, 0), memberId: null },
@@ -244,32 +237,31 @@ await db.transaction(async (tx) => {
     { householdId: hid, name: "eggs", qty: "1 dozen", addedBy: A, shared: false, estCents: estimate("eggs", "1 dozen"), createdAt: ago(0, 6) },
   ]);
 
-  /* ----- group chatter, last 48h. memberId null = Kevin. ----- */
-  const KEVIN = null;
+  /* ----- group chatter, last 48h. memberId null = Roomie. ----- */
+  const ROOMIE = null;
   const chat: [string | null, number, string][] = [
     [R, 46, "did the electric bill come yet"],
-    [A, 45.5, "paid it, $138.90. kevin split electricity 138.90"],
-    [KEVIN, 45.4, "Electricity $138.90 logged, $46.30 each. Nobody cheats Kevin. 💡"],
+    [A, 45.5, "paid it, $138.90. roomie split electricity 138.90"],
+    [ROOMIE, 45.4, "Electricity $138.90 logged, Alex paid, $46.30 each 💡"],
     [S, 44, "thanks alex. bathroom's getting scary btw"],
     [R, 43.5, "that's you alex"],
     [A, 43, "lol it's on the list"],
     [S, 30, "landlord inspection friday morning, let's not look like animals"],
     [R, 29, "anyone need anything from Trader Joe's"],
     [S, 28.5, "chips, like 3 bags. we're out again"],
-    [A, 28, "kevin add oat milk"],
-    [KEVIN, 27.9, "Oat milk's in the cart. 🛒 Nobody cheats Kevin."],
+    [A, 28, "roomie add oat milk"],
+    [ROOMIE, 27.9, "Oat milk's in the cart 🛒"],
     [R, 27.5, "paper towels too, shared"],
     [S, 22, "dishes done. you're welcome"],
     [R, 20, "trash is out"],
-    [A, 5, "kevin who owes what"],
-    [KEVIN, 4.9, "Ryan pays Sudhersan $747.23. Alex pays Sudhersan $421.93. I've got a list and I'm checking it twice."],
+    [A, 5, "roomie who owes what"],
+    [ROOMIE, 4.9, "Ryan pays Sudhersan $747.23. Alex pays Sudhersan $421.93."],
     [A, 4.5, "ok ok, venmo tomorrow after work"],
   ];
   await tx.insert(chatLog).values(chat.map(([memberId, h, text]) => ({ householdId: hid, memberId, text, createdAt: ago(0, h) })));
 });
 
 /* ----- after commit: service calls (they use the shared db connection, so they must see committed rows) ----- */
-await remindersSvc.syncRentReminder(ctx); // exactly one monthly rent reminder from house settings
 await upkeep.addDefaults(ctx);
 const lastDone: Record<string, Date | null> = {
   "Replace HVAC filter": ago(85), // due in 5d -> due-soon
@@ -298,7 +290,6 @@ const counts = {
   maintenance: await count(maintenance, eq(maintenance.householdId, hid)),
   cart_items: await count(cartItems, eq(cartItems.householdId, hid)),
   chat_log: await count(chatLog, eq(chatLog.householdId, hid)),
-  emails: await count(schema.emails, eq(schema.emails.householdId, hid)),
 };
 const [balances, plan, shame, status, due] = await Promise.all([
   money.getBalances(ctx),

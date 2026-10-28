@@ -1,4 +1,4 @@
-# Never ship local secrets or build output into the image; secrets come from `fly secrets`.
+# Never ship local secrets or build output into the image; secrets come from the runtime environment.
 .env
 .env.*
 !.env.example

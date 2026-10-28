@@ -8,11 +8,7 @@ const createdAt = () => timestamp("created_at", { withTimezone: true }).notNull(
 export const households = pgTable("households", {
   id: id(),
   name: text("name").notNull(),
-  telegramChatId: text("telegram_chat_id").unique(),
-  rentCents: integer("rent_cents"),
-  rentDueDay: integer("rent_due_day"), // 1-28
-  leasingEmail: text("leasing_email"),
-  inboxAddress: text("inbox_address"), // AgentMail inbox for this house
+  chatId: text("chat_id").unique(), // the linked Chat's id on its Channel
   createdAt: createdAt(),
 });
 
@@ -20,7 +16,7 @@ export const members = pgTable("members", {
   id: id(),
   householdId: uuid("household_id").notNull().references(() => households.id),
   name: text("name").notNull(),
-  telegramUserId: text("telegram_user_id"),
+  channelUserId: text("channel_user_id"), // the person's id on the Channel
   active: boolean("active").notNull().default(true),
   createdAt: createdAt(),
 });
@@ -90,16 +86,6 @@ export const reminders = pgTable("reminders", {
   sentAt: timestamp("sent_at", { withTimezone: true }),
 });
 
-export const emails = pgTable("emails", {
-  id: id(),
-  householdId: uuid("household_id").notNull().references(() => households.id),
-  direction: text("direction", { enum: ["in", "out"] }).notNull(),
-  subject: text("subject").notNull(),
-  body: text("body").notNull(),
-  threadId: text("thread_id"),
-  createdAt: createdAt(),
-});
-
 export const maintenance = pgTable("maintenance", {
   id: id(),
   householdId: uuid("household_id").notNull().references(() => households.id),
@@ -108,11 +94,11 @@ export const maintenance = pgTable("maintenance", {
   lastDone: timestamp("last_done", { withTimezone: true }),
 });
 
-// Every group message, addressed to Kevin or not, so he has the house context when he does reply.
+// Every group message, addressed to Roomie or not, so it has the group context when it does reply.
 export const chatLog = pgTable("chat_log", {
   id: id(),
   householdId: uuid("household_id").notNull().references(() => households.id),
-  memberId: uuid("member_id").references(() => members.id), // null = Kevin
+  memberId: uuid("member_id").references(() => members.id), // null = Roomie
   text: text("text").notNull(),
   createdAt: createdAt(),
 });
