@@ -9,7 +9,7 @@
 import "@/lib/env";
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { and, eq, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import type { PgColumn, PgTable } from "drizzle-orm/pg-core";
 import { isValidationError } from "@mastra/core/tools";
 import { RequestContext } from "@mastra/core/request-context";
@@ -23,9 +23,10 @@ import type { CartItem } from "@/services/cart";
 import { devUserId } from "@/channels/dev";
 import { onGroupJoined, onParticipantJoined } from "@/onboarding";
 import { deleteGroup } from "@/services/groups";
-import { members, money, receipts, recurring, splitwise } from "@/services";
+import { cart, members, money, receipts, recipes, recurring, splitwise } from "@/services";
 import { composioHealth } from "@/integrations/composio";
 import { FakeSplitwise, setSplitwiseClient } from "@/integrations/splitwise";
+import { ComposioInstacart, FakeInstacart, setInstacartClient } from "@/integrations/instacart";
 import { rm } from "node:fs/promises";
 import { allTools } from "./registry";
 import { expenseSummary } from "./splitting/money";
@@ -43,6 +44,8 @@ let ctx: Ctx;
 let requestContext: RequestContext;
 let tools: Tools;
 const covered = new Set<string>();
+// Groceries run against the Instacart fake and the sample recipe (no model call).
+const instacart = new FakeInstacart();
 
 const contextFor = (memberId: string, name: string, role: "admin" | "member", status: "active" | "pending"): RequestContext =>
   new RequestContext<unknown>([
@@ -78,6 +81,8 @@ describe("Roomie tools against the dev DB", () => {
     ctx = { groupId, memberId: member.Sudhersan, source: "chat" };
     requestContext = contextFor(member.Sudhersan, "Sudhersan", "admin", "active");
     tools = allTools();
+    setInstacartClient(instacart);
+    recipes.setRecipeWriter({ write: async () => recipes.SAMPLE_RECIPE_JSON });
   });
 
   after(async () => {
@@ -91,6 +96,8 @@ describe("Roomie tools against the dev DB", () => {
         ["reminders", schema.reminders],
         ["maintenance", schema.maintenance],
         ["cart_items", schema.cartItems],
+        ["cart_checkouts", schema.cartCheckouts],
+        ["recipes", schema.recipes],
         ["chat_messages", schema.chatMessages],
         ["activity", schema.activity],
         ["members", schema.members],
@@ -109,6 +116,8 @@ describe("Roomie tools against the dev DB", () => {
       assert.equal(left.length, 0, "test Group still exists");
     } finally {
       receipts.setReceiptReader(null);
+      recipes.setRecipeWriter(null);
+      setInstacartClient(null);
     }
   });
 
@@ -601,14 +610,50 @@ describe("Roomie tools against the dev DB", () => {
     assert.deepEqual(open.filter((r) => r.status === "open").map((r) => r.name).sort(), ["chips", "dish soap"]);
   });
 
-  test("cart_checkout says Instacart checkout is coming soon, with the cart summary and no button", async () => {
-    const r: { available: boolean; message: string; itemCount: number; estTotalCents: number; url?: unknown } = await run("cart_checkout", {});
-    assert.equal(r.available, false);
-    assert.match(r.message, /coming soon/i);
+  test("cart_checkout: an Instacart shopping list of the open cart (fake), recorded as a Checkout; same cart reuses it", async () => {
+    const calls = instacart.calls.length;
+    const r: { available: boolean; checkoutId: string; itemCount: number; estTotalCents: number; estTotal: string; links: Link[] } = await run("cart_checkout", {});
+    assert.equal(r.available, true);
     assert.equal(r.itemCount, 2);
     assert.equal(r.estTotalCents, 1347 + 349);
-    assert.ok(!("url" in r), "no checkout link");
-    assert.ok(!("links" in r), "no checkout button");
+    assert.equal(r.estTotal, "$16.96");
+    assert.equal(r.links.length, 1);
+    assert.match(r.links[0].url, /^https:\/\/instacart\.example\/lists\//);
+    assert.match(r.links[0].text, /instacart/i);
+    const sent = instacart.calls.at(-1)!;
+    assert.equal(sent.slug, "INSTACART_CREATE_SHOPPING_LIST_PAGE");
+    assert.equal(sent.args.link_type, "shopping_list");
+    assert.deepEqual(
+      (sent.args.line_items as { name: string; line_item_measurements: unknown[] }[]).map((l) => [l.name, l.line_item_measurements]),
+      [["chips", [{ quantity: 3, unit: "package" }]], ["dish soap", [{ quantity: 1, unit: "each" }]]],
+    );
+    const [row] = await db.select().from(schema.cartCheckouts).where(eq(schema.cartCheckouts.id, r.checkoutId));
+    assert.equal(row.itemsSnapshot.length, 2);
+    assert.equal(row.instacartUrl, r.links[0].url);
+    assert.equal(row.paidAt, null);
+    const again = await run("cart_checkout", {});
+    assert.equal(again.checkoutId, r.checkoutId, "nothing changed: the same Checkout");
+    assert.equal(instacart.calls.length, calls + 1, "and no second Instacart call");
+  });
+
+  test("cart_checkout: Instacart unavailable -> the Checkout is still recorded and Roomie says so; empty cart throws", async () => {
+    setInstacartClient(new ComposioInstacart());
+    const key = process.env.COMPOSIO_API_KEY;
+    delete process.env.COMPOSIO_API_KEY;
+    try {
+      await run("cart_add", { items: [{ name: "limes", qty: "4" }] });
+      const r = await run("cart_checkout", {});
+      assert.equal(r.available, false);
+      assert.match(r.message, /isn't available yet/);
+      assert.ok(!("links" in r));
+      const [row] = await db.select().from(schema.cartCheckouts).where(eq(schema.cartCheckouts.id, r.checkoutId));
+      assert.equal(row.instacartUrl, null);
+      assert.equal(row.itemsSnapshot.length, 3);
+      assert.equal(await run("cart_remove", { name: "limes" }).then((x) => x.removed), true);
+    } finally {
+      if (key !== undefined) process.env.COMPOSIO_API_KEY = key;
+      setInstacartClient(instacart);
+    }
   });
 
   test("cart_purchased: one expense split by who added what (shared split evenly), items marked purchased", async () => {
@@ -633,6 +678,11 @@ describe("Roomie tools against the dev DB", () => {
     const view: CartView = await run("cart_view", {});
     assert.deepEqual(view.groups, {});
     assert.equal(view.estTotalCents, 0);
+    assert.equal(row.splitMethod, "exact");
+    assert.equal(row.category, "groceries");
+    const [paid] = await db.select().from(schema.cartCheckouts).where(eq(schema.cartCheckouts.groupId, groupId)).orderBy(desc(schema.cartCheckouts.createdAt)).limit(1);
+    assert.equal(paid.expenseId, e.id, "the newest Checkout points at the Expense that paid it");
+    assert.ok(paid.paidAt);
   });
 
   test("cart_purchased: payer by name; people with nothing in the cart are left out of the split; empty cart throws", async () => {
@@ -667,6 +717,112 @@ describe("Roomie tools against the dev DB", () => {
     assert.deepEqual(open.filter((r) => r.status === "open").map((r) => r.name), ["bagels"], "items stay open after a failed purchase");
     assert.equal(await count(schema.expenses), before + 1);
     await run("cart_purchased", { total: 4 });
+  });
+
+  // ---------- recipes and the Pantry ----------
+
+  const ryanRc = () => contextFor(member.Ryan, "Ryan", "member", "active");
+
+  test("pantry_set / pantry_list: normalized, deduped, A to Z; add and remove", async () => {
+    assert.deepEqual((await run("pantry_list", {})).pantry, []);
+    assert.deepEqual((await run("pantry_set", { add: ["Salt", "oil", "rice", "salt "] })).pantry, ["oil", "rice", "salt"]);
+    assert.deepEqual((await run("pantry_set", { remove: ["Rice"] }, ryanRc())).pantry, ["oil", "salt"], "any active Member can edit it");
+    assert.deepEqual((await run("pantry_list", {})).pantry, ["oil", "salt"]);
+    await assert.rejects(run("pantry_set", {}), /What should go in/);
+  });
+
+  let tacosId: string;
+
+  test("recipe_draft: writes and saves a Recipe for 5 (fake writer), have/need from the Pantry, cart untouched", async () => {
+    const openBefore = (await cart.listOpenItems(ctx)).length;
+    const r = await run("recipe_draft", { request: "tacos for 5 on friday", servings: 5, plannedFor: "2026-10-30" });
+    tacosId = r.recipeId;
+    assert.equal(r.title, "Tacos for 5");
+    assert.equal(r.servings, 5);
+    assert.equal(r.plannedFor, "2026-10-30");
+    assert.equal(r.haveCount, 2, "salt and the oil are in the Pantry");
+    assert.equal(r.missingCount, 9);
+    assert.equal(r.askToAdd, "Add the 9 missing ingredients to the cart?");
+    assert.match(r.text, /^Tacos for 5 \(serves 5, 30 min\)/);
+    assert.match(r.text, /Need: 20 corn tortillas, 2 lb ground turkey/);
+    assert.match(r.text, /Have: 1 tbsp oil, 1 tsp salt/);
+    assert.match(r.text, /5 steps, all on the Cart page/);
+    assert.equal((await cart.listOpenItems(ctx)).length, openBefore, "a Recipe never touches the Cart by itself");
+    const [row] = await db.select().from(schema.recipes).where(eq(schema.recipes.id, tacosId));
+    assert.equal(row.createdBy, member.Sudhersan);
+    assert.equal(row.ingredients.find((i) => i.name === "ground turkey")?.unit, "pound");
+  });
+
+  test("recipe_add_to_cart: the missing ingredients minus 'we have onions', shared, with recipe_id; twice adds nothing", async () => {
+    const r = await run("recipe_add_to_cart", { skip: ["onions"] });
+    assert.equal(r.recipe, "Tacos for 5");
+    assert.equal(r.addedCount, 8);
+    assert.deepEqual(r.skippedHave.sort(), ["red onion", "salt", "vegetable oil"]);
+    assert.ok(r.added.includes("Ground turkey (2 lb)"));
+    const rows = await db.select().from(schema.cartItems).where(and(eq(schema.cartItems.groupId, groupId), eq(schema.cartItems.recipeId, tacosId)));
+    assert.equal(rows.length, 8);
+    assert.ok(rows.every((x) => x.shared && x.status === "open" && x.addedBy === member.Sudhersan));
+    const turkey = rows.find((x) => x.name === "Ground turkey")!;
+    assert.deepEqual([turkey.qty, Number(turkey.quantity), turkey.unit, turkey.estCents], ["2 lb", 2, "pound", 699]);
+    assert.equal(rows.find((x) => x.name === "Limes")?.estCents, 4 * 79);
+    assert.equal(rows.find((x) => x.name === "Corn tortillas")?.estCents, 349, "20 tortillas is one pack");
+    const view: CartView = await run("cart_view", {});
+    assert.ok(view.groups.Shared.every((i) => i.recipeTitle === "Tacos for 5"));
+    const again = await run("recipe_add_to_cart", { recipe: "the tacos", skip: ["onions"] });
+    assert.equal(again.addedCount, 0);
+    assert.equal(again.alreadyInCart.length, 8);
+    await assert.rejects(run("recipe_add_to_cart", { recipe: "lasagna" }), /No recipe like "lasagna"/);
+  });
+
+  test("recipe_link: an Instacart recipe page (fake) with every ingredient, cached until the ingredients change", async () => {
+    const calls = instacart.calls.length;
+    const r = await run("recipe_link", { recipe: "tacos" });
+    assert.equal(r.available, true);
+    assert.match(r.links[0].url, /^https:\/\/instacart\.example\/recipes\//);
+    const sent = instacart.calls.at(-1)!;
+    assert.equal(sent.slug, "INSTACART_CREATE_RECIPE_PAGE");
+    assert.equal((sent.args.ingredients as unknown[]).length, 11);
+    assert.equal(sent.args.servings, 5);
+    assert.deepEqual(sent.args.landing_page_configuration, { partner_linkback_url: `${appUrl}/g/${groupId}/cart`, enable_pantry_items: true });
+    assert.equal((await run("recipe_link", {})).links[0].url, r.links[0].url);
+    assert.equal(instacart.calls.length, calls + 1, "cached");
+    const [row] = await db.select().from(schema.recipes).where(eq(schema.recipes.id, tacosId));
+    await db.update(schema.recipes).set({ servings: 6 }).where(eq(schema.recipes.id, tacosId));
+    const changed = await run("recipe_link", {});
+    assert.notEqual(changed.links[0].url, r.links[0].url, "a changed recipe gets a new link");
+    await db.update(schema.recipes).set({ servings: row.servings }).where(eq(schema.recipes.id, tacosId));
+  });
+
+  test("cart_remove: Members remove their own items, Admins anyone's", async () => {
+    await run("cart_add", { items: [{ name: "kombucha" }] }, ryanRc());
+    const refused = await run("cart_remove", { name: "ground turkey" }, ryanRc());
+    assert.equal(refused.notAllowed, true);
+    assert.match(refused.message, /Only Sudhersan .* or an admin/);
+    assert.deepEqual(await run("cart_remove", { name: "kombucha" }, ryanRc()), { removed: true });
+    await run("cart_add", { items: [{ name: "kombucha" }] }, ryanRc());
+    const [k] = await db.select().from(schema.cartItems).where(and(eq(schema.cartItems.groupId, groupId), eq(schema.cartItems.name, "kombucha"), eq(schema.cartItems.status, "open")));
+    assert.equal(await cart.removeItemById(ctx, { id: k.id }), true, "the Admin removes Ryan's");
+  });
+
+  test("cart_purchased after a checkout: exact Shares from the estimates, recipe items shared, personal to the adder", async () => {
+    await run("cart_add", { items: [{ name: "greek yogurt" }] }, ryanRc());
+    const checkout = await run("cart_checkout", {});
+    assert.equal(checkout.itemCount, 9);
+    const open = await cart.listOpenItems(ctx);
+    const expected = cart.computeCartSplits(open.map((i) => ({ addedBy: i.addedBy!, shared: i.shared, estCents: i.estCents })), (await members.listMembers(ctx)).map((m) => m.id), 8400, member.Sudhersan);
+    const r = await run("cart_purchased", { total: 84 });
+    assert.equal(r.total, "$84.00");
+    assert.equal(r.method, "exact");
+    assert.equal(r.category, "groceries");
+    assert.equal(r.description, "Groceries (9 items)");
+    assert.deepEqual(Object.fromEntries((r.splits as { memberId: string; cents: number }[]).map((s) => [s.memberId, s.cents])), Object.fromEntries(expected.map((s) => [s.memberId, s.cents])));
+    assert.ok(r.shares.every((s: { owes: string }) => /^\$\d+\.\d{2}$/.test(s.owes)), "ready-to-say amounts");
+    const ryan = expected.find((s) => s.memberId === member.Ryan)!.cents;
+    const alex = expected.find((s) => s.memberId === member.Alex)!.cents;
+    assert.ok(ryan > alex, "Ryan's yogurt is on Ryan");
+    const [c] = await db.select().from(schema.cartCheckouts).where(eq(schema.cartCheckouts.id, checkout.checkoutId));
+    assert.equal(c.expenseId, r.id);
+    assert.equal((await cart.listOpenItems(ctx)).length, 0);
   });
 
   // ---------- identity: Pending members, Admins, settings, Claim links, forget me ----------

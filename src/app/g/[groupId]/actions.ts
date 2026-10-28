@@ -5,11 +5,13 @@
 import { revalidatePath } from "next/cache"
 
 import type { PaymentApp } from "@/db/schema"
+import { InstacartUnavailableError } from "@/integrations/instacart"
 import { memberSession } from "@/lib/session"
-import { cart, chores, groups, isNotAllowed, members, money, splitwise, upkeep, type Ctx } from "@/services"
+import { cart, chores, groups, isNotAllowed, members, money, pantry, recipes, splitwise, upkeep, type Ctx } from "@/services"
 import type { SettingsPatch } from "@/services/groups"
 import type { ToolkitId } from "@/toolkits/types"
 import type { ActionResult } from "./_components/group-context"
+import type { RecipeDraftView } from "./_components/types"
 
 async function act<T>(groupId: string, fn: (ctx: Ctx) => Promise<T>): Promise<ActionResult<T>> {
   const session = await memberSession(groupId)
@@ -71,8 +73,8 @@ export async function recordSettlement(groupId: string, input: { fromId: string;
   return act(groupId, (ctx) => money.settleUp(ctx, input))
 }
 
-export async function addCartItem(groupId: string, input: { name: string; shared: boolean }) {
-  return act(groupId, async (ctx) => (await cart.addItems(ctx, { items: [{ name: input.name }], shared: input.shared }))[0])
+export async function addCartItem(groupId: string, input: { name: string; qty?: string; shared: boolean }) {
+  return act(groupId, async (ctx) => (await cart.addItems(ctx, { items: [{ name: input.name, qty: input.qty }], shared: input.shared }))[0].id)
 }
 
 export async function removeCartItem(groupId: string, itemId: string) {
@@ -81,6 +83,51 @@ export async function removeCartItem(groupId: string, itemId: string) {
 
 export async function purchaseCart(groupId: string, totalCents: number) {
   return act(groupId, async (ctx) => (await cart.markPurchased(ctx, { totalCents })).id)
+}
+
+/** The Instacart shopping list for the open Cart; `url` is null (with `unavailable`) when Instacart can't be reached. */
+export async function checkoutCart(groupId: string) {
+  return act(groupId, async (ctx) => {
+    const c = await cart.checkout(ctx)
+    return { url: c.url, unavailable: c.unavailable ?? null, itemCount: c.itemCount }
+  })
+}
+
+/* ---------- Recipes and the Pantry ---------- */
+
+export async function draftRecipe(groupId: string, input: { request: string; servings?: number }): Promise<ActionResult<RecipeDraftView>> {
+  return act(groupId, async (ctx) => {
+    const { draft, have, need } = await recipes.draftRecipe(ctx, input)
+    return { ...draft, have: have.map((i) => i.name), need: need.map((i) => i.name) }
+  })
+}
+
+/** Save a drafted Recipe, and optionally put its missing ingredients in the Cart. Returns the Recipe id. */
+export async function saveRecipe(groupId: string, draft: RecipeDraftView, opts: { addToCart?: boolean } = {}) {
+  return act(groupId, async (ctx) => {
+    const saved = await recipes.saveRecipe(ctx, { title: draft.title, servings: draft.servings, cookingTimeMinutes: draft.cookingTimeMinutes, ingredients: draft.ingredients, steps: draft.steps, source: "roomie" })
+    const added = opts.addToCart ? (await recipes.addRecipeToCart(ctx, saved.id)).added.length : 0
+    return { id: saved.id, added }
+  })
+}
+
+export async function addRecipeToCart(groupId: string, recipeId: string, skip: string[] = []) {
+  return act(groupId, async (ctx) => (await recipes.addRecipeToCart(ctx, recipeId, { skip })).added.length)
+}
+
+export async function recipeInstacartLink(groupId: string, recipeId: string) {
+  return act(groupId, async (ctx) => {
+    try {
+      return { url: (await recipes.recipeLink(ctx, recipeId)).url as string | null, unavailable: null as string | null }
+    } catch (e) {
+      if (e instanceof InstacartUnavailableError) return { url: null, unavailable: e.message }
+      throw e
+    }
+  })
+}
+
+export async function updatePantry(groupId: string, change: { add?: string[]; remove?: string[] }) {
+  return act(groupId, (ctx) => pantry.updatePantry(ctx, change))
 }
 
 export async function markChoreDone(groupId: string, choreId: string) {

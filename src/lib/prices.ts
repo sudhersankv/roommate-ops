@@ -45,10 +45,15 @@ export const CATALOG: Record<string, number> = {
   broccoli: 249,
   lemons: 99,
   limes: 79,
+  cilantro: 129,
+  jalapenos: 99,
+  "bell peppers": 149,
+  "red onion": 149,
   // protein
   "chicken breast": 899,
   chicken: 899,
   "ground beef": 799,
+  "ground turkey": 699,
   bacon: 749,
   salmon: 1199,
   tofu: 299,
@@ -90,6 +95,12 @@ export const CATALOG: Record<string, number> = {
   "hot sauce": 399,
   salt: 199,
   pepper: 399,
+  "taco seasoning": 149,
+  cumin: 399,
+  "chili powder": 399,
+  "sour cream": 299,
+  "corn tortillas": 349,
+  "vegetable oil": 449,
   ramen: 99,
   // around the house
   "toilet paper": 1299,
@@ -171,6 +182,19 @@ export function parseQty(qty: string | undefined | null): number {
   const unit = m[2];
   if (unit && !COUNT_UNITS.has(unit)) return 1;
   return n;
+}
+
+/** Recipe units that count store items ("3 each" limes, "2 packet" seasoning); anything else (lb, cup, oz) is one. */
+const COUNTED_UNITS = new Set(["each", "can", "head", "bunch", "ears", "package", "packet", "large", "medium", "small"]);
+/** Above this, a count is a pack of something ("20 tortillas" is one pack), not twenty store items. */
+const MAX_COUNTED = 6;
+
+/** Estimated cents for a Recipe ingredient: unit price x a small item count for countable units, else one item. */
+export function estimateMeasured(name: string, quantity: number | null | undefined, unit: string | null | undefined): number {
+  const unitCents = lookupPrice(name)?.unitCents ?? DEFAULT_UNIT_CENTS;
+  const q = Number(quantity ?? 1);
+  const count = unit && COUNTED_UNITS.has(unit) && q > 0 && q <= MAX_COUNTED ? Math.ceil(q - 1e-9) : 1;
+  return unitCents * count;
 }
 
 /** Estimated cents for `qty` of `name`: unit price (catalog or 499 default) x item count from parseQty. */

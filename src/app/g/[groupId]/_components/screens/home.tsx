@@ -29,12 +29,14 @@ export function HomeScreen({
   chores,
   cart,
   narration,
+  nextRecipe,
 }: {
   you: number
   plan: Transfer[]
   chores: ChoreView[]
   cart: CartItemView[]
   narration: NarrationView[]
+  nextRecipe: { title: string; plannedFor: string } | null
 }) {
   const { me, base, cheers } = useGroup()
   const [settleOpen, setSettleOpen] = useState(false)
@@ -64,7 +66,7 @@ export function HomeScreen({
         ) : null}
       </section>
 
-      <Today chores={chores} cart={cart} />
+      <Today chores={chores} cart={cart} nextRecipe={nextRecipe} />
 
       <section aria-labelledby="activity-title" className="flex flex-col gap-4 px-4 pt-8">
         <div className="flex items-baseline justify-between px-1">
@@ -109,11 +111,13 @@ function Breakdown({ plan }: { plan: Transfer[] }) {
   return <>{sentence.charAt(0).toUpperCase() + sentence.slice(1)}.</>
 }
 
-function Today({ chores, cart }: { chores: ChoreView[]; cart: CartItemView[] }) {
+function Today({ chores, cart, nextRecipe }: { chores: ChoreView[]; cart: CartItemView[]; nextRecipe: { title: string; plannedFor: string } | null }) {
   const { group, me, base, name, dates, cheer } = useGroup()
   const [pending, start] = useTransition()
   const mineToday = chores.filter((c) => c.turn === me.id && c.due <= dates.today)
   const yourCart = cart.filter((c) => c.addedBy === me.id && !c.shared).length
+  const yours = cart.length === 0 ? "Nothing to buy right now." : yourCart ? `${yourCart} of them ${yourCart === 1 ? "is" : "are"} just for you.` : "None of them are just for you."
+  const recipeHint = nextRecipe ? `${nextRecipe.title} is ${dates.dueLabel(nextRecipe.plannedFor)}.` : null
 
   const done = (c: ChoreView) =>
     start(async () => {
@@ -168,7 +172,7 @@ function Today({ chores, cart }: { chores: ChoreView[]; cart: CartItemView[] }) 
             <ItemTitle>
               {cart.length} {cart.length === 1 ? "thing" : "things"} in the Cart
             </ItemTitle>
-            <ItemDescription>{yourCart ? `${yourCart} of them ${yourCart === 1 ? "is" : "are"} just for you.` : "None of them are just for you."}</ItemDescription>
+            <ItemDescription>{recipeHint ? `${recipeHint} ${yours}` : yours}</ItemDescription>
           </ItemContent>
           <ItemActions>
             <ChevronRightIcon className="size-4 text-muted-foreground" aria-hidden />

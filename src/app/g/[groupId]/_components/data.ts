@@ -2,13 +2,16 @@
 // services (balances, settle plan, shares, chores) and are only reshaped and dated in the Group's time zone.
 import { localDay } from "@/lib/dates"
 import type { GroupSession } from "@/lib/session"
-import { activity, cart, chatlog, chores, groups, members, money, splitwise, upkeep } from "@/services"
+import { instacartAvailability } from "@/integrations/instacart"
+import { activity, cart, chatlog, chores, groups, members, money, pantry, recipes, splitwise, upkeep } from "@/services"
 import { canChangeExpense } from "@/services/authz"
 import { guessCategory } from "@/services/categories"
 import type { Expense } from "@/services/money"
+import { haveNeed } from "@/services/recipe-math"
+import type { Recipe } from "@/services/recipes"
 import { TOOLKIT_IDS, type ToolkitId } from "@/toolkits/types"
 import type { GroupView, MemberView } from "./group-context"
-import type { ActivityView, CartItemView, ChoreView, ExpenseView, NarrationView, SplitwiseView, Transfer, UpkeepView } from "./types"
+import type { ActivityView, CartItemView, CartPageView, ChoreView, ExpenseView, NarrationView, RecipeView, SplitwiseView, Transfer, UpkeepView } from "./types"
 
 export async function groupView(s: GroupSession): Promise<GroupView> {
   const [people, toolkits] = await Promise.all([members.listMembersWithHandles({ groupId: s.group.id }), groups.listToolkits({ groupId: s.group.id })])
@@ -131,7 +134,43 @@ export async function cartView(s: GroupSession): Promise<CartItemView[]> {
     addedBy: i.addedBy ?? "",
     shared: i.shared,
     estCents: i.estCents ?? 0,
+    recipeId: i.recipeId ?? null,
+    recipeTitle: i.recipeTitle ?? null,
+    canRemove: cart.canRemoveItem(s.member, { addedBy: i.addedBy ?? "" }),
   }))
+}
+
+function recipeView(r: Recipe, pantryList: string[], items: CartItemView[]): RecipeView {
+  const { have } = haveNeed(r.ingredients, pantryList)
+  const haveSet = new Set(have)
+  return {
+    id: r.id,
+    title: r.title,
+    servings: r.servings,
+    cookingTimeMinutes: r.cookingTimeMinutes,
+    plannedFor: r.plannedFor,
+    ingredients: r.ingredients.map((i) => ({ name: i.name, text: i.display_text, quantity: i.quantity, unit: i.unit, have: haveSet.has(i) })),
+    steps: r.steps,
+    createdBy: r.createdBy,
+    inCart: items.filter((c) => c.recipeId === r.id).length,
+  }
+}
+
+export async function cartPageView(s: GroupSession): Promise<CartPageView> {
+  const [items, list, pantryList, people, ic] = await Promise.all([cartView(s), recipes.listRecipes(s.ctx, 12), pantry.getPantry(s.ctx), members.listMembers(s.ctx), instacartAvailability()])
+  return {
+    items,
+    recipes: list.map((r) => recipeView(r, pantryList, items)),
+    pantry: pantryList,
+    splitMemberIds: people.map((m) => m.id),
+    instacart: { ready: ic.ready, hint: ic.hint ?? null },
+  }
+}
+
+/** The next planned Recipe from today on, for Home ("Tacos for 5 is Friday"). */
+export async function nextRecipeView(s: GroupSession): Promise<{ title: string; plannedFor: string } | null> {
+  const [next] = await recipes.upcomingRecipes(s.ctx, localDay(new Date(), s.group.timezone))
+  return next ? { title: next.title, plannedFor: next.plannedFor! } : null
 }
 
 const every = (days: number) =>

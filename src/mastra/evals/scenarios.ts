@@ -1,7 +1,7 @@
 // The fixed scenario set for `npm run evals` (scripts/evals.ts). Each scenario runs through the real pipeline
 // (Gate + Sonnet + tools) in its own throwaway Group with Maya (Admin), Dev and Sam; the sender is Maya unless set.
 // A scenario passes when every check in `expect` holds, or every check in `alt` does (two acceptable behaviours).
-import { cart, chores, groups, members, money, receipts, reminders, upkeep } from "@/services";
+import { cart, chores, groups, members, money, pantry, receipts, recipes, reminders, upkeep } from "@/services";
 import type { Ctx } from "@/services/types";
 
 export const EVAL_MEMBERS = ["Maya", "Dev", "Sam"] as const;
@@ -53,6 +53,8 @@ export const READ_ONLY_TOOLS = new Set([
   "get_balances",
   "list_expenses",
   "cart_view",
+  "pantry_list",
+  "recipe_link",
   "chore_status",
   "list_reminders",
   "maintenance_status",
@@ -286,11 +288,128 @@ export const SCENARIOS: Scenario[] = [
     expect: { tools: ["cart_remove"], check: async (e) => fail(!(await cart.listOpenItems(e.ctx)).some((i) => i.name === "milk"), "milk removed") },
   },
   {
-    id: "checkout-coming-soon",
+    id: "checkout-link",
     area: "groceries",
-    seed: async (e) => void (await cart.addItems(e.ctx, { items: [{ name: "milk" }] })),
-    turn: { text: "roomie order the groceries" },
-    expect: { tools: ["cart_checkout"], replyIncludes: [/soon|not (live|ready|available|wired)|can't .* yet|yet/i] },
+    seed: async (e) => void (await cart.addItems(e.ctx, { items: [{ name: "milk" }, { name: "eggs", qty: "1 dozen" }], shared: true })),
+    turn: { text: "roomie checkout" },
+    expect: {
+      tools: ["cart_checkout"],
+      replyIncludes: [/\b(2|two)\b/i],
+      check: async (e) => fail(!!(await cart.lastUnpaidCheckout(e.ctx))?.url?.startsWith("https://instacart.example/lists/"), "a Checkout with the (fake) Instacart list link"),
+    },
+  },
+  {
+    id: "paid-84-after-checkout",
+    area: "groceries",
+    seed: async (e) => {
+      await cart.addItems(e.ctx, { items: [{ name: "oat milk" }] });
+      await cart.addItems(e.as("Dev"), { items: [{ name: "greek yogurt" }] });
+      await cart.addItems(e.as("Sam"), { items: [{ name: "coffee" }, { name: "dish soap" }], shared: true });
+      await cart.checkout(e.ctx);
+    },
+    turn: { text: "roomie I paid 84 for the groceries" },
+    expect: {
+      tools: ["cart_purchased"],
+      noTools: ["log_expense"],
+      replyIncludes: ["Dev", "Sam"],
+      check: async (e) => {
+        const x = await lastExpense(e);
+        const paid = await cart.lastUnpaidCheckout(e.ctx);
+        return fail(x?.cents === 8400 && x.method === "exact" && x.category === "groceries" && x.payerName === "Maya" && !paid && (await cart.listOpenItems(e.ctx)).length === 0, `one $84 exact groceries Expense paid by Maya and the Checkout paid, got ${x?.cents} ${x?.method} ${x?.category}`);
+      },
+    },
+  },
+  {
+    id: "add-chicken-for-house",
+    area: "groceries",
+    turn: { text: "roomie add 2 lb chicken for the house", from: "Dev" },
+    expect: {
+      tools: ["cart_add"],
+      check: async (e) => {
+        const c = (await cart.listOpenItems(e.ctx)).find((i) => /chicken/i.test(i.name));
+        return fail(!!c && c.shared && c.quantity === 2 && c.unit === "pound", `shared chicken, 2 pound, got ${JSON.stringify(c ?? null)}`);
+      },
+    },
+  },
+  {
+    id: "out-of-dish-soap",
+    area: "groceries",
+    turn: { text: "roomie we're out of dish soap", from: "Sam" },
+    expect: { tools: ["cart_add"], check: async (e) => fail((await cart.listOpenItems(e.ctx)).some((i) => /soap/i.test(i.name) && i.shared), "dish soap, shared") },
+    alt: { asks: true, noTools: "actions" },
+  },
+  {
+    id: "recipe-tacos-friday",
+    area: "groceries",
+    turn: { text: "roomie tacos for 5 on friday" },
+    expect: {
+      tools: ["recipe_draft"],
+      noTools: ["cart_add", "recipe_add_to_cart"],
+      asks: true,
+      long: true,
+      check: async (e) => {
+        const [r] = await recipes.listRecipes(e.ctx, 1);
+        const friday = !!r?.plannedFor && new Date(`${r.plannedFor}T12:00:00Z`).getUTCDay() === 5;
+        return fail(!!r && r.servings === 5 && friday && (await cart.listOpenItems(e.ctx)).length === 0, `a Recipe for 5 planned on a Friday and an empty Cart, got ${r?.servings} ${r?.plannedFor}`);
+      },
+    },
+  },
+  {
+    id: "recipe-yes-add-them",
+    area: "groceries",
+    setup: [{ text: "roomie tacos for 5 on friday" }],
+    turn: { text: "yes add them, we have onions" },
+    expect: {
+      tools: ["recipe_add_to_cart"],
+      check: async (e) => {
+        const open = await cart.listOpenItems(e.ctx);
+        const fromRecipe = open.filter((i) => i.recipeId);
+        return fail(fromRecipe.length >= 3 && fromRecipe.every((i) => i.shared) && !open.some((i) => /onion/i.test(i.name)), `the Recipe's ingredients, shared, minus onions; got ${open.map((i) => i.name).join(", ")}`);
+      },
+    },
+  },
+  {
+    id: "recipe-explicit-add",
+    area: "groceries",
+    turn: { text: "roomie make us a pasta recipe for 3 and put the ingredients in the cart", from: "Sam" },
+    expect: { tools: ["recipe_draft", "recipe_add_to_cart"], long: true, check: async (e) => fail((await cart.listOpenItems(e.ctx)).filter((i) => i.recipeId).length >= 3, "ingredients in the cart") },
+  },
+  {
+    id: "recipe-instacart-link",
+    area: "groceries",
+    seed: async (e) => void (await recipes.saveRecipe(e.ctx, recipes.parseRecipeJson(recipes.SAMPLE_RECIPE_JSON))),
+    turn: { text: "roomie send me the instacart link for the tacos", from: "Dev" },
+    expect: { tools: ["recipe_link"], noTools: ["recipe_add_to_cart", "cart_add"] },
+  },
+  {
+    id: "view-cart-recipe",
+    area: "groceries",
+    seed: async (e) => {
+      const r = await recipes.saveRecipe(e.ctx, recipes.parseRecipeJson(recipes.SAMPLE_RECIPE_JSON));
+      await recipes.addRecipeToCart(e.ctx, r.id);
+      await cart.addItems(e.as("Dev"), { items: [{ name: "oat milk" }] });
+    },
+    turn: { text: "roomie what's in the cart?", from: "Sam" },
+    expect: { tools: ["cart_view"], replyIncludes: ["oat milk", /taco|tortilla/i], long: true },
+  },
+  {
+    id: "pantry-set",
+    area: "groceries",
+    turn: { text: "roomie we always have salt and oil" },
+    expect: {
+      tools: ["pantry_set"],
+      check: async (e) => {
+        const p = await pantry.getPantry(e.ctx);
+        return fail(p.includes("salt") && p.some((x) => /oil/.test(x)), `salt and oil in the Pantry, got ${p.join(", ")}`);
+      },
+    },
+  },
+  {
+    id: "pantry-list",
+    area: "groceries",
+    seed: async (e) => void (await pantry.updatePantry(e.ctx, { add: ["salt", "oil", "rice"] })),
+    turn: { text: "roomie what do we always have?", from: "Dev" },
+    expect: { tools: ["pantry_list"], replyIncludes: ["salt", "oil", "rice"] },
   },
   {
     id: "cart-purchased",

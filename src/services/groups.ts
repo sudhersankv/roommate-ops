@@ -192,7 +192,7 @@ export async function setToolkit(ctx: Ctx, input: { toolkit: ToolkitId; enabled:
   return enabledToolkits(ctx);
 }
 
-const DATA_TABLES = [schema.outboxJobs, schema.splitwiseLinks, schema.expenses, schema.settlements, schema.cartItems, schema.chores, schema.reminders, schema.maintenance, schema.chatMessages, schema.activity] as const;
+const DATA_TABLES = [schema.outboxJobs, schema.splitwiseLinks, schema.cartCheckouts, schema.expenses, schema.settlements, schema.cartItems, schema.recipes, schema.chores, schema.reminders, schema.maintenance, schema.chatMessages, schema.activity] as const;
 
 /**
  * Admin "delete group data" (ADR 0006): every Expense, Settlement, Cart item, chore, reminder, upkeep item, chat

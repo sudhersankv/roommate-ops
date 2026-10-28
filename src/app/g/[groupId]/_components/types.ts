@@ -59,7 +59,55 @@ export type ActivityView = { id: string; date: string; actor: string | "roomie";
 
 export type NarrationView = { id: string; date: string; text: string; href?: string }
 
-export type CartItemView = { id: string; name: string; qty?: string; addedBy: string; shared: boolean; estCents: number }
+export type CartItemView = {
+  id: string
+  name: string
+  qty?: string
+  addedBy: string
+  shared: boolean
+  estCents: number
+  /** The Recipe it came from ("From Tacos for 5"). */
+  recipeId: string | null
+  recipeTitle: string | null
+  /** Whoever added it, or an Admin (services/cart.ts enforces it). */
+  canRemove: boolean
+}
+
+export type IngredientView = { name: string; text: string; quantity: number; unit: string; have: boolean }
+
+export type RecipeView = {
+  id: string
+  title: string
+  servings: number
+  cookingTimeMinutes: number | null
+  /** "YYYY-MM-DD" in the Group's time zone. */
+  plannedFor: string | null
+  ingredients: IngredientView[]
+  steps: string[]
+  createdBy: string | null
+  /** Open Cart items that came from it. */
+  inCart: number
+}
+
+/** A Recipe Roomie wrote on the "New recipe" sheet, not saved yet. */
+export type RecipeDraftView = {
+  title: string
+  servings: number
+  cookingTimeMinutes: number | null
+  ingredients: { name: string; quantity: number; unit: string; display_text: string }[]
+  steps: string[]
+  have: string[]
+  need: string[]
+}
+
+export type CartPageView = {
+  items: CartItemView[]
+  recipes: RecipeView[]
+  pantry: string[]
+  /** Active Members in the order services/cart.ts splits with, so the "I paid" preview matches to the cent. */
+  splitMemberIds: string[]
+  instacart: { ready: boolean; hint: string | null }
+}
 
 export type ChoreView = {
   id: string
