@@ -48,7 +48,7 @@ export default async function ChoresPage() {
 
   return (
     <main data-accent="red">
-      <PageHead title="Chores" quip="You guys give up? Or are you thirsty for more?" emoji="🧹">
+      <PageHead title="Chores" quip="Whose turn is it, really?" emoji="🧹">
         {board.length > 0 && (
           <span className={`pill ${overdue ? "red overdue" : "green"}`}>{overdue ? `${overdue} overdue 😤` : "All on track ✨"}</span>
         )}
@@ -56,7 +56,7 @@ export default async function ChoresPage() {
 
       <div className="stack">
         <section className="card">
-          <h2>🧹 Chore board · the chart</h2>
+          <h2>🧹 Chore board</h2>
           {board.length ? (
             <div className="table-wrap">
               <table className="table">
@@ -102,18 +102,18 @@ export default async function ChoresPage() {
               </table>
             </div>
           ) : (
-            <Empty title="No chore chart yet.">Somebody has to take out the trash. The Wet Bandits aren&apos;t going to do it.</Empty>
+            <Empty title="No chore chart yet.">Somebody has to take out the trash. Add the first chore below.</Empty>
           )}
         </section>
 
         <div className="grid">
           <section className="card">
-            <h2>🕷️ Hall of Shame · Buzz&apos;s tarantula award</h2>
+            <h2>🏆 Hall of Shame · fewest chores first</h2>
             {shame.length ? (
               <ul className="list">
                 {shame.map((s, i) => (
                   <li key={s.memberId} className={i === 0 ? "wanted" : undefined}>
-                    <span style={{ width: 24, textAlign: "center" }}>{i === 0 ? "🕷️" : `${i + 1}.`}</span>
+                    <span style={{ width: 24, textAlign: "center" }}>{i === 0 ? "🐢" : `${i + 1}.`}</span>
                     <b>{s.name}</b>
                     <span className="spacer" />
                     <small>
@@ -123,17 +123,17 @@ export default async function ChoresPage() {
                 ))}
               </ul>
             ) : (
-              <Empty title="Nobody to shame.">Yet. The tarantula is patient.</Empty>
+              <Empty title="Nobody to shame.">Yet.</Empty>
             )}
           </section>
 
           <section className="card">
-            <h2>🪣 Set a new trap · add a chore</h2>
+            <h2>➕ Add a chore</h2>
             <form action={add} className="stack">
               <div className="form-grid">
                 <div className="field">
                   <label htmlFor="chore-name">Chore</label>
-                  <input id="chore-name" name="name" placeholder="Vacuum the living room, de-ice the front steps" required />
+                  <input id="chore-name" name="name" placeholder="Vacuum the living room, water the plants" required />
                 </div>
                 <div className="field">
                   <label htmlFor="chore-every">Every N days</label>
@@ -141,7 +141,7 @@ export default async function ChoresPage() {
                 </div>
               </div>
               <div><button>Add to chart</button></div>
-              <small className="muted">Same name again just changes how often. Skip it and the tarantula finds you. Nobody cheats Kevin.</small>
+              <small className="muted">Same name again just changes how often.</small>
             </form>
           </section>
         </div>

@@ -57,10 +57,10 @@ export default async function MoneyPage() {
 
   return (
     <main data-accent="green">
-      <PageHead title="Money" quip="Keep the change, ya filthy animal." emoji="💸" />
+      <PageHead title="Money" quip="Exact to the cent." emoji="💸" />
       <div className="grid">
         <section className="card">
-          <h2>💸 Balances · who&apos;s a filthy animal</h2>
+          <h2>💸 Balances</h2>
           {balances.length ? (
             <ul className="list">
               {balances.map((b) => (
@@ -78,12 +78,12 @@ export default async function MoneyPage() {
               ))}
             </ul>
           ) : (
-            <Empty title="Nobody's here.">Add roommates first, then start splitting. You can&apos;t split a cheese pizza with nobody.</Empty>
+            <Empty title="Nobody's here.">Add members first, then start splitting.</Empty>
           )}
         </section>
 
         <section className="card">
-          <h2>🫡 Who pays whom · Wet Bandits, settle up</h2>
+          <h2>🤝 Who pays whom</h2>
           {plan.length ? (
             <ul className="list">
               {plan.map((t, i) => (
@@ -97,17 +97,17 @@ export default async function MoneyPage() {
                     <input type="hidden" name="fromId" value={t.fromId} />
                     <input type="hidden" name="toId" value={t.toId} />
                     <input type="hidden" name="cents" value={t.cents} />
-                    <button className="btn-ghost" title="Keep the change, ya filthy animal.">Mark paid</button>
+                    <button className="btn-ghost">Mark paid</button>
                   </form>
                 </li>
               ))}
             </ul>
           ) : (
-            <Empty title="All square. No filthy animals today." className="socks">Nobody owes anybody. Keep it that way, ya filthy animals.</Empty>
+            <Empty title="All square." className="socks">Nobody owes anybody. Keep it that way.</Empty>
           )}
           {others.length > 0 && (
             <form action={settle} className="row" style={{ marginTop: 16 }}>
-              <span className="muted">Settle up (keep the change):</span>
+              <span className="muted">Settle up:</span>
               <span>I paid</span>
               <select name="toId" aria-label="Paid to" required>
                 {others.map((m) => (
@@ -121,7 +121,7 @@ export default async function MoneyPage() {
         </section>
 
         <section className="card">
-          <h2>🍕 Add expense · who paid for the Plaza Hotel room service?</h2>
+          <h2>🧾 Add expense</h2>
           <form action={addExpense} className="stack">
             <div className="form-grid">
               <div className="field">
@@ -139,7 +139,7 @@ export default async function MoneyPage() {
             </div>
             <div className="field">
               <label htmlFor="description">What for</label>
-              <input id="description" name="description" placeholder="Room service, cheese pizza, the window Buzz broke" required />
+              <input id="description" name="description" placeholder="Internet, pizza night, cleaning supplies" required />
             </div>
             <div className="field">
               <label>Split among</label>
@@ -153,12 +153,12 @@ export default async function MoneyPage() {
               </div>
             </div>
             <div><button>Add expense</button></div>
-            <small className="muted">Kevin does the math so nobody has to. Nobody cheats Kevin.</small>
+            <small className="muted">Roomie does the math so nobody has to.</small>
           </form>
         </section>
 
         <section className="card card-wide">
-          <h2>👀 The receipts · recent expenses</h2>
+          <h2>👀 Recent expenses</h2>
           {recent.length ? (
             <div className="table-wrap">
               <table className="table">
@@ -183,7 +183,7 @@ export default async function MoneyPage() {
               </table>
             </div>
           ) : (
-            <Empty title="Nothing logged yet.">The first cheese pizza is on somebody. Just for me.</Empty>
+            <Empty title="Nothing logged yet.">Add the first expense above, or tell Roomie in the chat.</Empty>
           )}
         </section>
       </div>
