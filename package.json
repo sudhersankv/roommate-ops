@@ -14,9 +14,12 @@
     "test:tools": "tsx --env-file=.env --test src/agent/tools/tools.dbtest.ts"
   },
   "dependencies": {
-    "@mastra/core": "^1.74.0",
-    "@mastra/memory": "^1.35.0",
-    "@mastra/pg": "^1.29.0",
+    "@mastra/core": "^1.79.0",
+    "@mastra/evals": "^1.10.8",
+    "@mastra/memory": "^1.39.0",
+    "@mastra/observability": "^1.21.0",
+    "@mastra/pg": "^1.32.0",
+    "dotenv": "^18.0.9",
     "drizzle-orm": "^0.45.0",
     "next": "^16.3.8",
     "pg": "^8.13.0",
@@ -29,6 +32,7 @@
     "@types/pg": "^8.11.0",
     "@types/react": "^19.0.0",
     "drizzle-kit": "^0.31.0",
+    "mastra": "^1.35.0",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0"
   }
