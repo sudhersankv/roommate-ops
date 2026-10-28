@@ -5,10 +5,11 @@
 //   1. Hard trigger (voice note, reply to Roomie, @mention, the word "roomie", the dashboard): always speak.
 //   2. Jev unavailable (error or > 2.5 s): hard triggers only, so stay quiet. Roomie never goes silent on a direct
 //      call and never spams on an outage.
-//   3. Jev's intent clears the Group's Chattiness thresholds: act (p(act) >= act) or clarify (p(clarify) >= clarify).
+//   3. p(act) clears the Group's Chattiness threshold: act.
 //   4. Follow-up window (Roomie spoke recently): unless Jev is fairly sure it's chatter between people, the agent
 //      sees the message with permission to answer "[silent]" (the last-resort path from the old router).
-//   5. Otherwise: logged as context, no reply.
+//   5. p(clarify) clears its threshold: clarify (ask one question, log nothing yet).
+//   6. Otherwise: logged as context, no reply.
 // "unprompted" = nobody addressed Roomie and it's not a follow-up: the agent asks before logging anything.
 import type { GateToolkit } from "../context";
 
@@ -63,10 +64,11 @@ export function decideGate({ hardTrigger, inWindow, jev, chattiness }: GateFacts
   const t = THRESHOLDS[chattiness] ?? THRESHOLDS.normal;
   const unprompted = !inWindow && jev.addressed < ADDRESSED_MIN;
   if (jev.intent.act >= t.act) return { speak: true, decision: "act", reason: "jev-act", unprompted, mayStaySilent: false, toolkit };
-  if (jev.intent.clarify >= t.clarify) return { speak: true, decision: "clarify", reason: "jev-clarify", unprompted, mayStaySilent: false, toolkit };
+  // In the window the agent has the thread and decides itself (it may still ask); outside it, clarify means "ask".
   if (inWindow && (jev.addressed >= ADDRESSED_MIN || jev.intent.ignore < WINDOW_IGNORE_MAX)) {
     return { speak: true, decision: "maybe", reason: "follow-up", unprompted: false, mayStaySilent: true, toolkit };
   }
+  if (jev.intent.clarify >= t.clarify) return { speak: true, decision: "clarify", reason: "jev-clarify", unprompted, mayStaySilent: false, toolkit };
   return quiet("jev-ignore");
 }
 

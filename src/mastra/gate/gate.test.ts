@@ -123,6 +123,14 @@ describe("follow-up window", () => {
     assert.equal(gate(REC.thanks).speak, false, "outside the window, no reply (the word roomie is a hard trigger anyway)");
   });
 
+  test("a follow-up Jev would clarify goes to the agent with the thread instead of a forced question", () => {
+    // An eval run gated "[Sam] and 2 bags of chips too" (right after Roomie added Sam's salsa) as clarify; shaped like that.
+    const d = gate(jev(0.35, 0.63, 0, 0.02, 0.7, "groceries", 1), { inWindow: true });
+    assert.equal(d.decision, "maybe");
+    assert.equal(d.toolkit, "groceries");
+    assert.equal(gate(REC.vague, { inWindow: true }).decision, "maybe");
+  });
+
   test("chatter in the window Jev is sure about skips the agent", () => {
     assert.equal(gate(REC.lol, { inWindow: true }).speak, false);
   });
