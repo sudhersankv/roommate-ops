@@ -123,9 +123,11 @@ Each step gets its own branch and PR, and you test locally before it's merged.
   - [x] 50/25/25, 2:2:1, multi-payer, edit and undo match to the cent between dev-chat and the dashboard ([walkthrough](./dev-chat.md)) · [x] Splitwise import, export and mirror round-trip against the in-memory fake (`npm run test:tools`) · [ ] the same against real Splitwise (blocked on a valid `COMPOSIO_API_KEY`; the current one gets 401, which the app reports as "Splitwise isn't available")
 
 ### 6. Groceries Toolkit (`step/6-groceries`)
-- Cart (personal vs shared items, estimated prices) and an Instacart shopping-list link through Composio. "I paid $84" becomes an Expense split by who wanted what.
-- Recipes: "tacos for 5 friday" gives a scaled Recipe and an Instacart recipe link. Ingredients go into the Cart only when someone asks or clearly means it.
+- [x] Cart (personal vs shared items, estimated prices, Recipe sub-groups, remove your own or as an Admin) and an Instacart shopping-list link through Composio, recorded as a Checkout (`services/cart.ts`, `integrations/instacart.ts`; migration 0003). "I paid $84" becomes one exact Expense (category groceries) split by who wanted what, weighted by the estimates (`computeCartSplits`, which the dashboard previews with).
+- [x] Recipes: "tacos for 5 friday" gives a scaled Recipe (Sonnet, strict JSON, Instacart units, one retry) and an Instacart recipe link, cached until the ingredients change. Ingredients go into the Cart only when someone asks or clearly means it, minus the Pantry and what they say they have (`services/recipes.ts`, `services/pantry.ts`).
+- [x] The Cart page: Recipe cards and detail, a New recipe sheet, the Pantry editor, Get Instacart link, and the "I paid" drawer. Home shows the next planned Recipe.
 - **Done when:** a recipe, a cart, the checkout link and the paid-to-Expense step all work end to end in the test group.
+  - [x] Recipe -> "yes add them, we have onions" -> checkout link -> "I paid 84" match to the cent between dev-chat and the dashboard's preview ([walkthrough](./dev-chat.md)) · [x] the Instacart link, verified against the fake · [ ] the real Instacart link (blocked on a valid `COMPOSIO_API_KEY`; Composio lists Instacart as "no auth", so no Instacart auth config is needed, but that is unconfirmed until a real call) · [ ] the same in a real WhatsApp group (step 2)
 
 ### 7. Chores and Upkeep Toolkits (`step/7-household`)
 - Move chores, rotation, streaks and upkeep onto Groups and the new UI. Reminders live in core, with each Group's time zone.
@@ -142,7 +144,7 @@ Each step gets its own branch and PR, and you test locally before it's merged.
 
 - [ ] Roomie's WhatsApp number: a real prepaid eSIM or SIM you **keep** (for example Tello, about $5/month). Not Google Voice and not a rented SMS-verification number. Use the WhatsApp Business app, turn on two-step verification, warm it up for a few days, and open it at least weekly.
 - [ ] Mastra platform: `MASTRA_PLATFORM_ACCESS_TOKEN` and `MASTRA_PROJECT_ID` in `.env`.
-- [ ] Composio: a valid `COMPOSIO_API_KEY` in `.env` (the current one is rejected with 401). Then connect Splitwise once from Settings and put the logged `COMPOSIO_SPLITWISE_AUTH_CONFIG_ID` in `.env`. I'll test the Instacart call.
+- [ ] Composio: a valid `COMPOSIO_API_KEY` in `.env` (the current one is rejected with 401). Then connect Splitwise once from Settings and put the logged `COMPOSIO_SPLITWISE_AUTH_CONFIG_ID` in `.env`, and press "Get Instacart link" on the Cart page once to confirm Instacart works with no Instacart key.
 - [ ] Google Cloud OAuth client for Neon Auth, before anyone outside the dev team signs in (dev uses Neon's shared Google keys; the consent screen shows Neon). Add it under the branch's Auth -> OAuth providers.
 
 ## Environment
@@ -156,6 +158,7 @@ GATE_MODEL=typesafeai-jev-1-14-0 Gate
 EMBED_MODEL=qwen3-embedding-0-6b semantic recall
 MASTRA_PLATFORM_ACCESS_TOKEN, MASTRA_PROJECT_ID
 COMPOSIO_API_KEY, COMPOSIO_SPLITWISE_AUTH_CONFIG_ID   Splitwise (SPLITWISE_FAKE=1: in-memory fake)
+                                 Instacart needs only the key (INSTACART_FAKE=1: instacart.example links)
 NEON_AUTH_BASE_URL               Neon Auth URL (branch -> Auth)
 NEON_AUTH_COOKIE_SECRET          32+ chars, ours
 DEV_AUTH_EMAIL                   dev-only sign-in bypass for browser automation

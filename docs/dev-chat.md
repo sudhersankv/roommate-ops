@@ -10,6 +10,7 @@ photo <name> <path|url> [caption]   a photo (a receipt): saved under public/uplo
 approve <name> [by <admin>] approve directly, without the agent
 link <name>                 mint a Claim link and print it
 ledger [n]                  the last n Expenses in cents (method, Payers, Shares) and the Balances, from the services
+cart [total]                open Cart items; with a total, the Shares "Maya paid <total>" would save
 who                         Members with role and status
 chat <id>                   switch to another dev Chat
 quit
@@ -161,3 +162,56 @@ The same inputs typed into the dashboard's add-expense drawer on Apt 4B (`npx ne
 | $100, Dev paid 60 + Maya 40, equal | Dev 3334, Maya 3333, Sam 3333 | (seed "Costco restock", Sam 60 + Maya 40: Sam 3334, Maya 3333, Dev 3333) |
 
 Editing the 2:2:1 Expense to $50 kept the method (the drawer opened on Shares with 2/2/1) and re-split it 2000/2000/1000. Delete showed the Undo toast and Undo brought it back. Screenshots: `design/screens/real-money-*.jpeg`.
+
+## Step 6: a Recipe, the Cart, the Instacart link and "I paid" (Apt 4B)
+
+`npm run seed:demo`, then `npx tsx scripts/dev-chat.ts --chat dev-apt-4b` (Composio's key is rejected, so Splitwise and Instacart are on their fakes). The seed already has a Pantry (salt, oil, rice) and a "Tacos for 5" Recipe; this run writes a new one.
+
+```
+> say Maya roomie tacos for 5 on friday
+         (gate act/hard-trigger, tools recipe_draft, 16.4s)
+[Roomie] Tacos for 5, Friday, 30 min. Need: 1.5 lb ground beef, 15 corn tortillas, yellow onion, garlic, chili powder,
+         cumin, 3 roma tomatoes, romaine, 8 oz cheddar, 3 limes, cilantro, and sour cream. We've already got salt and oil.
+         The 9 steps are on the Cart page 🌮
+         Add the 12 missing ingredients to the cart?
+         [button] 🥘 See the recipe -> http://localhost:3000/g/<id>/cart?recipe=<recipe id>
+
+> say Maya yes add them, we have onions
+         (gate act/jev-act, tools recipe_add_to_cart, 7.3s)
+[Roomie] Added 11 items to the shared cart, skipping the onion. That comes to about $44.55 🛒 Say the word when you
+         want to check out.
+         [button] 🛒 View cart -> http://localhost:3000/g/<id>/cart
+
+> say Dev roomie add 2 lb chicken for the house
+         (gate act/hard-trigger, tools cart_add, 6.1s)
+[Roomie] Added 2 lb chicken to the shared cart, about $8.99. The cart's at 19 items, about $103.76 total.
+
+> say Sam roomie checkout
+         (gate act/hard-trigger, tools cart_checkout, 6.0s)
+[Roomie] Checkout's ready: 19 items, about $103.76 estimated. Tap the Instacart button to order. Once someone pays,
+         tell me the total and I'll split it 🧾
+         [button] 🛒 Open in Instacart -> https://instacart.example/lists/419779d4
+
+> cart 84
+  ... 19 items: the seed's 7, 11 "Tacos for 5" items (shared), Dev's chicken (shared)
+  if Maya paid 8400c: Maya 2975, Dev 2773, Sam 2652
+
+> say Maya roomie I paid 84 for groceries
+         (gate act/hard-trigger, tools cart_purchased, 11.7s)
+[Roomie] Logged: $84.00 groceries, Maya paid. Shares: Dev $27.73, Sam $26.52, Maya $29.75. Cart's cleared 🧾
+         [button] See the expense -> http://localhost:3000/g/<id>/money/<expense id>
+
+> ledger 1
+  2026-10-28 Groceries (19 items) 8400c [exact, groceries] paid: Maya 8400 | shares: Dev 2773, Sam 2652, Maya 2975
+  balances: Maya 9675, Sam -3902, Dev -5773
+
+> say Dev roomie what do we always have?
+         (gate act/hard-trigger, tools pantry_list, 5.8s)
+[Roomie] Pantry has cumin, oil, olive oil, and salt 🧂
+```
+
+Notes:
+
+- The Recipe was written by `claude-sonnet-5-5` for 5 and saved, planned for Friday; nothing went into the Cart until "yes add them". Salt and the oil were left out by the Pantry, the onion by "we have onions".
+- The checkout recorded a `cart_checkouts` row with the fake shopping-list link; "I paid 84" marked it paid with the new Expense's id. Balances moved from Maya +$42.50 / Dev -$30.00 / Sam -$12.50 by exactly the Shares.
+- Between the checkout and "I paid", the dashboard's Cart (`npx next dev -p 3500`, `DISABLE_SCHEDULER=1`, `DEV_AUTH_EMAIL`, headless Chrome) showed the 11 items under "From Tacos for 5", the Get Instacart link button disabled with "Composio rejected COMPOSIO_API_KEY", and the "I paid" drawer at $84 previewed Dev $27.73, Maya $29.75, Sam $26.52: the same cents as `cart 84` and the saved Expense. On the same page the New recipe sheet drafted "Shakshuka for 3" through Sonnet (10 need, olive oil and salt have), and the Pantry chips took "cumin, olive oil" and dropped rice (hence the last line). Screenshots: `design/screens/real-cart-*.jpeg`.

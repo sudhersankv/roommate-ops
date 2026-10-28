@@ -41,7 +41,7 @@ The same works in the chat: "roomie connect splitwise", "import our Apt 4B group
 Other tools:
 
 ```sh
-npm run dev-chat         # a pretend WhatsApp group: join, add, say, photo, approve, link, ledger (docs/dev-chat.md)
+npm run dev-chat         # a pretend WhatsApp group: join, add, say, photo, approve, link, ledger, cart (docs/dev-chat.md)
 npm run mastra:dev       # Mastra Studio at http://localhost:4111: chat with Roomie, see traces and scores
 npm run db:generate      # after changing src/db/schema.ts: write the next migration into drizzle/
 ```
@@ -53,8 +53,8 @@ npm run db:generate      # after changing src/db/schema.ts: write the next migra
 ```sh
 npm run typecheck     # tsc --noEmit
 npm test              # unit tests for the pure functions (split math, Gate, permissions, receipts...), no .env needed
-npm run test:tools    # every agent tool against the dev DB in throwaway Groups (Splitwise on the fake), no LLM
-npm run evals         # ~45 chat scenarios through the real Gate and agent; baseline in docs/evals-baseline.md
+npm run test:tools    # every agent tool against the dev DB in throwaway Groups (Splitwise and Instacart on fakes), no LLM
+npm run evals         # ~55 chat scenarios through the real Gate and agent; baseline in docs/evals-baseline.md
 ```
 
 CI runs `typecheck` and `npm test` on every push and pull request.

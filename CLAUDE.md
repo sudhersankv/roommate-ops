@@ -2,7 +2,7 @@
 
 Roomie is an AI groupmate that lives in a group chat and on a per-group dashboard. It splits costs, keeps the shared grocery cart, tracks chores and upkeep, and sets reminders. Persona: a friendly, witty, brief groupmate; exact about facts.
 
-**Read first:** the rebuild plan is in `docs/plan.md`, the vocabulary in `GLOSSARY.md`, and the decisions in `docs/adr/`. They are the spec; where they conflict with this file, they win. Steps 1 (rename), 3 (Mastra agent), 4 (identity, Groups, dashboard) and 5 (Splitting) are done; the code below is what exists today. WhatsApp (step 2) isn't: `npm run dev-chat` stands in for it.
+**Read first:** the rebuild plan is in `docs/plan.md`, the vocabulary in `GLOSSARY.md`, and the decisions in `docs/adr/`. They are the spec; where they conflict with this file, they win. Steps 1 (rename), 3 (Mastra agent), 4 (identity, Groups, dashboard), 5 (Splitting) and 6 (Groceries) are done; the code below is what exists today. WhatsApp (step 2) isn't: `npm run dev-chat` stands in for it.
 
 Agent skills for this repo live in `.agents/skills/`.
 
@@ -16,7 +16,8 @@ Agent skills for this repo live in `.agents/skills/`.
 src/
   db/schema.ts          Drizzle tables: groups, chats, accounts, members, claim_tokens, group_toolkits, chat_messages,
                         member_notes, activity + the Toolkit tables (expenses, expense_payers, expense_splits,
-                        settlements, splitwise_links, expense/settlement_external_refs, outbox_jobs, cart_items, chores,
+                        settlements, splitwise_links, expense/settlement_external_refs, outbox_jobs, recipes, cart_items,
+                        cart_checkouts, chores,
                         chore_logs, reminders, maintenance), all keyed by group_id
   db/enums.ts           categories, split methods, recurrences, sources (no drizzle import: client code uses them)
   db/index.ts           db client
@@ -37,7 +38,14 @@ src/
     receipts.ts         photo -> parsed receipt (vision on the gateway, sums recomputed), receiptSplits, saveUpload
     splitwise.ts        connect / import / export / live mirror (ADR 0004) + runSplitwiseOutbox
     outbox.ts           outbox_jobs: enqueue, due, done/failed with backoff (ADR 0009)
-    cart.ts chores.ts reminders.ts upkeep.ts report.ts
+    cart.ts             Cart items (recipe_id, quantity + unit next to the free-text qty), removal (adder or Admin),
+                        checkout (snapshot -> Instacart shopping list -> cart_checkouts), markPurchased (exact Expense)
+    cart-split.ts       pure: computeCartSplits, cartTotal, canRemoveItem (the "I paid" drawer previews with it)
+    recipes.ts          draftRecipe / writeRecipe (Sonnet, strict JSON, one retry), save/list/get, addRecipeToCart,
+                        recipeLink (cached by recipeKey), upcomingRecipes
+    recipe-math.ts      pure: Pantry matching (covers, haveNeed), scaleIngredients, recipeKey
+    pantry.ts           group_toolkits.settings.pantry for groceries: getPantry, updatePantry (any active Member)
+    chores.ts reminders.ts upkeep.ts report.ts
   onboarding.ts         onGroupJoined (Group + Chat + Members, adder = Admin, intro + setup questions) and
                         onParticipantJoined (Pending + "approve X?"). Called by Channel adapters (ADR 0008)
   pipeline.ts           the message flow, channel-agnostic: handleIncoming(msg) resolves Group/Member itself (unknown
@@ -61,7 +69,7 @@ src/
     util.ts             ctxOf, toCents, memberIdByName (opts.includePending), dashboardLinks
     core/               members (list, list_pending, approve/decline/promote, set_payment_handle, forget_me),
                         settings (set_group_settings, toggle_toolkit), dashboard (get_dashboard_link), reminders, report
-    splitting/ groceries/ chores/ upkeep/   manifest.ts + the tools
+    splitting/ groceries/ chores/ upkeep/   manifest.ts + the tools (groceries: cart.ts + recipes.ts)
   integrations/         composio.ts (client + cached key health), splitwise.ts (SplitwiseClient: ComposioSplitwise and
                         FakeSplitwise, splitwiseClient(), splitwiseAvailability())
   channels/types.ts     IncomingMessage { channel, chatExternalId, userExternalId, userName, text, imageUrl?, ... }, Outgoing, Channel
@@ -75,6 +83,7 @@ src/
   lib/urls.ts           APP_URL links (dashboardUrl, linkFor)
   lib/dates.ts          day strings and labels in the Group's time zone (client-safe)
   lib/money.ts          formatMoney / parseMoney (client-safe)
+  lib/units.ts          Instacart's units, synonyms (tbsp, lb, pcs), clove/pinch/slice -> buyable, parseAmount, formatAmount
   lib/voice.ts lib/prices.ts lib/style-note.ts
   lib/pay-links.ts      Venmo / PayPal / Cash App links with the amount (settle_up and the settle drawer)
   jobs/scheduler.ts     60 s tick: due reminders, weekly Group Report, upkeep nudge -> channels.deliver; Group style
@@ -90,7 +99,7 @@ src/
     page.tsx            signed out: sign-in; signed in: last/first Group, or "No groups yet"
     claim/[token]/      Claim link: sign in, consume, link the Account, -> /g/<id>
     g/[groupId]/        layout (session + GroupProvider + shell; Pending members see a waiting screen), Home, money
-                        (+ ?tab=, [expenseId]), cart, chores, members, settings; actions.ts = every server action;
+                        (+ ?tab=, [expenseId]), cart (+ ?recipe=; Recipes and Pantry in _components/recipes.tsx), chores, members, settings; actions.ts = every server action;
                         _components/data.ts = services -> screen shapes; _components/screens/*
                         settings/splitwise/callback = Composio's return URL (route handler)
     design/             the design-system page (dev only unless SHOW_DESIGN_PAGE=1)
@@ -123,6 +132,15 @@ spikes/                 throwaway experiments (WhatsApp/Baileys)
 - **Receipts:** `services/receipts.ts` sends the photo (always as a data URL; our own `/uploads/...` files are read from disk) to `RECEIPT_MODEL ?? LLM_MODEL` on the gateway's `/v1/chat/completions` with an `image_url` part (no `temperature`: claude-sonnet-5-5 rejects it). The model only transcribes; zod validates, prices are parsed as strings, the total is recomputed (items + tax + tip) and a mismatch is flagged so Roomie asks. `expense_from_receipt` builds exact Shares per item (unclaimed items shared, tax and tip proportional), shows the breakdown first unless they explicitly asked to log it. Photos go to `public/uploads/<folder>/` (gitignored). `RECEIPT_FAKE=1` (evals) or `setReceiptReader()` (tests) skip the model.
 - **Splitwise** (ADR 0004, 0009): `SplitwiseClient` with a Composio implementation (`composio.tools.execute(slug, { userId: accounts.id, arguments })`, `connectedAccounts.link(userId, authConfigId, { callbackUrl })` for OAuth) and `FakeSplitwise`. `splitwiseClient()` returns the fake when `SPLITWISE_FAKE=1` (tests inject one with `setSplitwiseClient`); dev-chat switches to the fake by itself when `COMPOSIO_API_KEY` is missing or rejected and says so once. A 401 / missing key / no connection is `SplitwiseNotConnectedError` ("Splitwise isn't connected yet"), relayed as text, never a crash; Settings shows the card disabled with the reason. Import maps people by email, then name, else adds them as Pending; owed_share -> exact Shares, paid_share -> Payers, payments -> Settlements, refs dedupe per Group. Export is a one-time copy of what has no ref; the live mirror queues `outbox_jobs` that the scheduler pushes (create/update/delete by ref, retried with backoff).
 
+## Groceries (step 6)
+
+- **A Recipe never touches the Cart by itself** (plan Q7). `recipe_draft` writes and saves one (servings default to the active Members), returns ready-to-post text (need / have, step count) and an `askToAdd` question; only `recipe_add_to_cart` (someone asked, or clearly meant it) puts ingredients in, minus the Pantry and `skip` ("we have onions"), minus what's already open from that Recipe or shared, as shared items with `recipe_id`.
+- **Recipe JSON** comes from `RECIPE_MODEL ?? LLM_MODEL` on `/v1/chat/completions` (no `temperature`). zod validates it; units must map to Instacart's list (`lib/units.ts`), else one retry with the error as feedback, then unknown units become `each`. A recipe written for the wrong number of people is scaled in code (countable units round up). `RECIPE_FAKE=1` / `setRecipeWriter()` skip the model.
+- **Pantry** lives in `group_toolkits.settings.pantry` (groceries), names normalized. Matching is word-based with the last word as the thing itself: "oil" covers "olive oil", "rice" doesn't cover "rice vinegar".
+- **Estimates** stay in `lib/prices.ts` (catalog, $4.99 default); Recipe ingredients use `estimateMeasured` (countable units count up to 6 store items, weights and volumes are one). The model never prices anything.
+- **Checkout** (`cart_checkout`, "Get Instacart link"): snapshots the open Cart into `cart_checkouts`, builds an Instacart shopping list (structured `quantity`/`unit`, else parsed from `qty`), returns an "Open in Instacart" button. The same open items reuse the last unpaid Checkout. If Instacart can't be reached the Checkout is still saved with a null url and Roomie says the link isn't available yet.
+- **"I paid $84"** is `cart_purchased` (persona: not `log_expense`). `markPurchased` flips the open items (or a Checkout's) to purchased in a transaction, then `logExpense` with `method: "exact"`, `category: "groceries"` and `computeCartSplits` rows (personal to the adder, shared evenly, weighted by estimates, payer-first remainder); the newest unpaid Checkout it covers gets `expense_id` + `paid_at`. The drawer previews with the same function and the active Members in `listMembers` order, so it matches to the cent.
+- **Instacart** (ADR 0004): `InstacartClient` with `ComposioInstacart` (`tools.execute("INSTACART_CREATE_SHOPPING_LIST_PAGE" | "INSTACART_CREATE_RECIPE_PAGE", { userId: "roomie-app", arguments })`, Instacart IDP body shapes, `products_link_url` found at any depth) and `FakeInstacart` (deterministic `https://instacart.example/...`). Instacart is a "no auth" Composio toolkit: no auth config, no connection, only `COMPOSIO_API_KEY`. `INSTACART_FAKE=1` / `setInstacartClient()` pick the fake; dev-chat switches by itself when the key is missing or rejected; failures are `InstacartUnavailableError`, relayed as text. The dashboard button is enabled only for the real client with a healthy key. Recipe links are cached on the Recipe by `recipeKey` (title, servings, ingredients).
 ## The Gate (when Roomie speaks)
 
 `mastra/gate/policy.ts`, ADR 0002. In order: hard trigger (voice note, reply to Roomie, @mention, the word "roomie", the dashboard) always speaks; Jev error or > 2.5 s means hard triggers only; p(act) over the Group's threshold acts; in the follow-up window (3 min / 3 messages after Roomie spoke) the agent decides with permission to answer `[silent]`, unless Jev is sure it's chatter; p(clarify) over its threshold asks. Thresholds (act / clarify): quiet .9/.8, **normal .75/.6** (default), chatty .6/.45. If nobody addressed Roomie and it's not a follow-up, the agent is told to ask before logging anything. Jev's toolkit narrows the agent's tools only at p ≥ 0.6. While Onboarding is open (`groups.onboarded_at` null), an active Member's message in the follow-up window counts as a hard trigger, so "roommates, USD, Chicago" reaches `set_group_settings`.
@@ -135,7 +153,7 @@ spikes/                 throwaway experiments (WhatsApp/Baileys)
 - Tools get the Group and sender from `ctxOf(context)` (the RequestContext), never from closures.
 - Tools attach buttons by returning `links: [{ text, url }]` (see `cart_add` / `dashboardLinks()`); the pipeline collects them from every tool result into `Outgoing.buttons`. Never paste URLs. Buttons need an absolute `APP_URL`.
 - A new Toolkit = a folder with `manifest.ts` + tools, added to `TOOLKITS` in `toolkits/registry.ts`, `TOOLKIT_IDS`, and the Gate's toolkit choice in `gate/jev.ts` + `GATE_TOOLKITS`.
-- Dashboard pattern: a page (server) calls `currentMember(groupId)`, reads services through `_components/data.ts` and renders a client screen; writes are server actions in `g/[groupId]/actions.ts` that call a service with the session's Ctx and `revalidatePath`. They return `{ ok, error, status }`, so screens toast errors. Features of steps 6-7 stay visible but disabled with a "Coming soon" hint.
+- Dashboard pattern: a page (server) calls `currentMember(groupId)`, reads services through `_components/data.ts` and renders a client screen; writes are server actions in `g/[groupId]/actions.ts` that call a service with the session's Ctx and `revalidatePath`. They return `{ ok, error, status }`, so screens toast errors. Features of step 7 stay visible but disabled with a "Coming soon" hint.
 - Schema changes: edit `src/db/schema.ts`, `npm run db:generate`, commit the SQL in `drizzle/`, `npm run db:migrate`. Never `drizzle-kit push`.
 - Roomie's replies are 1 to 3 short lines unless someone asks for more. The trigger word is "roomie".
 - Use the glossary's words in code and UI text (Member, Group, Expense, Cart...), and avoid the words it lists under _Avoid_.
@@ -164,8 +182,8 @@ npm run dev-chat              # terminal group chat through the real pipeline (d
 npm run mastra:dev            # Mastra Studio at localhost:4111, with request-context presets for Apt 4B's Members
 npm run db:generate           # after a schema change: write the next migration
 npm run typecheck && npm test # tsc + unit tests (no .env); CI runs both
-npm run test:tools            # every tool against the dev DB in throwaway Groups (Splitwise on the fake), no LLM
-npm run evals                 # ~45 chat scenarios through the real Gate + Sonnet; prints a table and the pass rate
+npm run test:tools            # every tool against the dev DB in throwaway Groups (Splitwise, Instacart, recipes on fakes), no LLM
+npm run evals                 # ~55 chat scenarios through the real Gate + Sonnet; prints a table and the pass rate
                               # (npx tsx scripts/evals.ts --only id,id   or   --baseline to rewrite docs/evals-baseline.md)
 ```
 

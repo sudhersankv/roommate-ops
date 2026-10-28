@@ -121,3 +121,11 @@ _Avoid_: Product, line item
 **Recipe**:
 A dish Roomie wrote for the Group, with ingredients scaled to the people eating. A Recipe does not touch the Cart unless someone asks.
 _Avoid_: Meal plan
+
+**Pantry**:
+The things a Group always has (salt, oil, rice). When a Recipe's ingredients go into the Cart, the Pantry's are left out.
+_Avoid_: Staples, inventory
+
+**Checkout**:
+The open Cart as it was when someone asked for the Instacart list, kept so that "I paid" can point at what was ordered.
+_Avoid_: Order, purchase
