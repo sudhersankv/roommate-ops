@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" class="roomie" role="img" aria-label="Roomie"><title>Roomie</title><style>
+  .roomie .rm-eyes-happy,.roomie .rm-eyes-sleep,.roomie .rm-brows,.roomie .rm-drop,.roomie .rm-zzz{display:none}
+  .roomie.is-happy .rm-eyes-open,.roomie.is-sleepy .rm-eyes-open{display:none}
+  .roomie.is-happy .rm-eyes-happy{display:inline}
+  .roomie.is-sleepy .rm-eyes-sleep,.roomie.is-sleepy .rm-zzz{display:inline}
+  .roomie.is-worried .rm-brows,.roomie.is-worried .rm-drop{display:inline}
+  .roomie *{transform-box:view-box}
+  .roomie .rm-bird{transform-origin:64px 118px}
+  .roomie .rm-eyes-open{transform-origin:64px 60px}
+  .roomie .rm-tuft{transform-origin:64px 30px}
+  .roomie .rm-wing-l{transform-origin:29px 76px}
+  .roomie .rm-wing-r{transform-origin:99px 76px}
+  .roomie .rm-shadow{transform-origin:64px 122px}
+  .roomie.is-animated .rm-bird{animation:rm-bob 2.8s ease-in-out infinite}
+  .roomie.is-animated .rm-shadow{animation:rm-shadow 2.8s ease-in-out infinite}
+  .roomie.is-animated .rm-eyes-open{animation:rm-blink 4.6s infinite}
+  .roomie.is-animated .rm-tuft{animation:rm-sway 3.4s ease-in-out infinite}
+  .roomie.is-animated.is-sleepy .rm-bird{animation:rm-breathe 3.6s ease-in-out infinite}
+  .roomie.is-animated.is-sleepy .rm-z1{animation:rm-float 2.6s ease-in-out infinite}
+  .roomie.is-animated.is-sleepy .rm-z2{animation:rm-float 2.6s ease-in-out .9s infinite}
+  .roomie.is-animated.is-worried .rm-drop{animation:rm-drip 1.6s ease-in infinite}
+  .roomie.is-animated.is-worried .rm-bird{animation:rm-fidget 1.2s ease-in-out infinite}
+  .roomie.is-cheer .rm-bird{animation:rm-hop .62s cubic-bezier(.3,.7,.4,1.35) 2}
+  .roomie.is-cheer .rm-shadow{animation:rm-shadow-hop .62s cubic-bezier(.3,.7,.4,1.35) 2}
+  .roomie.is-cheer .rm-wing-l{animation:rm-flap-l .16s ease-in-out 8 alternate}
+  .roomie.is-cheer .rm-wing-r{animation:rm-flap-r .16s ease-in-out 8 alternate}
+  @keyframes rm-bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-2.5px)}}
+  @keyframes rm-shadow{0%,100%{transform:scaleX(1)}50%{transform:scaleX(.92)}}
+  @keyframes rm-blink{0%,91%,100%{transform:scaleY(1)}94%{transform:scaleY(.08)}}
+  @keyframes rm-sway{0%,100%{transform:rotate(-5deg)}50%{transform:rotate(6deg)}}
+  @keyframes rm-breathe{0%,100%{transform:scale(1,1)}50%{transform:scale(1.025,.975)}}
+  @keyframes rm-float{0%{transform:translate(0,4px);opacity:0}30%{opacity:1}100%{transform:translate(6px,-10px);opacity:0}}
+  @keyframes rm-drip{0%{transform:translateY(-3px);opacity:0}25%{opacity:1}100%{transform:translateY(8px);opacity:0}}
+  @keyframes rm-fidget{0%,100%{transform:rotate(0)}25%{transform:rotate(-2deg)}75%{transform:rotate(2deg)}}
+  @keyframes rm-hop{0%{transform:translateY(0) scale(1,1)}18%{transform:translateY(2px) scale(1.07,.93)}50%{transform:translateY(-15px) scale(.95,1.06)}82%{transform:translateY(0) scale(1.05,.95)}100%{transform:translateY(0) scale(1,1)}}
+  @keyframes rm-shadow-hop{0%,100%{transform:scaleX(1);opacity:.22}50%{transform:scaleX(.7);opacity:.12}}
+  @keyframes rm-flap-l{from{transform:rotate(0)}to{transform:rotate(-34deg)}}
+  @keyframes rm-flap-r{from{transform:rotate(0)}to{transform:rotate(34deg)}}
+  .roomie.rm-dino .rm-wing-l{transform-origin:34px 79px}
+  .roomie.rm-dino .rm-wing-r{transform-origin:94px 79px}
+  .roomie.rm-dino .rm-tuft{transform-origin:64px 34px}
+  .roomie.rm-dino .rm-dino-tail{transform-origin:95px 85px}
+  .roomie.rm-dino.is-animated .rm-tuft{animation:none}
+  .roomie.rm-dino.is-animated .rm-dino-tail{animation:rm-wag 1.9s ease-in-out infinite}
+  .roomie.rm-dino.is-cheer .rm-dino-tail{animation:rm-wag .3s ease-in-out 4}
+  @keyframes rm-wag{0%,100%{transform:rotate(0)}50%{transform:rotate(-9deg)}}
+  @media (prefers-reduced-motion:reduce){.roomie *{animation:none!important}}</style>
+  <ellipse class="rm-shadow" cx="64" cy="122" rx="27" ry="3.5" fill="#0B2A1E" opacity=".22"/>
+  <g class="rm-bird">
+    <path class="rm-tail" d="M31 82C18 80 11 71 12 61C20 66 28 68 35 70Z" fill="#4FCB78" stroke="#0B2A1E" stroke-width="3.5" stroke-linejoin="round"/>
+    <g class="rm-feet" fill="#FFB547" stroke="#0B2A1E" stroke-width="3">
+      <ellipse cx="52" cy="115.5" rx="7" ry="3.8"/><ellipse cx="76" cy="115.5" rx="7" ry="3.8"/>
+    </g>
+    <path class="rm-body" d="M64 26C89 26 105 46 105 72C105 98 88 114 64 114C40 114 23 98 23 72C23 46 39 26 64 26Z" fill="#86EFA0"/>
+    <clipPath id="bs-clip"><path d="M64 26C89 26 105 46 105 72C105 98 88 114 64 114C40 114 23 98 23 72C23 46 39 26 64 26Z"/></clipPath>
+    <path class="rm-belly" clip-path="url(#bs-clip)" d="M64 64C83 64 96 78 96 94C96 108 83 116 64 116C45 116 32 108 32 94C32 78 45 64 64 64Z" fill="#D7F8DF"/>
+    <path d="M64 26C89 26 105 46 105 72C105 98 88 114 64 114C40 114 23 98 23 72C23 46 39 26 64 26Z" fill="none" stroke="#0B2A1E" stroke-width="3.5"/>
+    <path class="rm-wing rm-wing-l" d="M26 72C21 89 31 104 45 104C42 93 37 82 26 72Z" fill="#4FCB78" stroke="#0B2A1E" stroke-width="3.5" stroke-linejoin="round"/>
+    <path class="rm-wing rm-wing-r" d="M102 72C107 89 97 104 83 104C86 93 91 82 102 72Z" fill="#4FCB78" stroke="#0B2A1E" stroke-width="3.5" stroke-linejoin="round"/>
+    <g class="rm-tuft" fill="#4FCB78" stroke="#0B2A1E" stroke-width="3.5" stroke-linejoin="round">
+      <path d="M64 30C55 28 47 20 49 9C59 11 66 19 64 30Z"/>
+      <path d="M64 30C68 19 77 13 88 15C88 26 77 32 64 30Z"/>
+    </g>
+    <g class="rm-cheeks" fill="#FF9FB2" opacity=".85">
+      <ellipse cx="43" cy="74" rx="6" ry="3.8"/><ellipse cx="85" cy="74" rx="6" ry="3.8"/>
+    </g>
+    <g class="rm-eyes rm-eyes-open">
+      <circle cx="51" cy="60" r="7" fill="#0B2A1E"/><circle cx="77" cy="60" r="7" fill="#0B2A1E"/>
+      <circle cx="53.6" cy="57.4" r="2.4" fill="#fff"/><circle cx="79.6" cy="57.4" r="2.4" fill="#fff"/>
+    </g>
+    <g class="rm-eyes-happy" fill="none" stroke="#0B2A1E" stroke-width="3.6" stroke-linecap="round">
+      <path d="M44.5 62Q51 53 57.5 62"/><path d="M70.5 62Q77 53 83.5 62"/>
+    </g>
+    <g class="rm-eyes-sleep" fill="none" stroke="#0B2A1E" stroke-width="3.6" stroke-linecap="round">
+      <path d="M44.5 58Q51 65 57.5 58"/><path d="M70.5 58Q77 65 83.5 58"/>
+    </g>
+    <g class="rm-brows" fill="none" stroke="#0B2A1E" stroke-width="3.2" stroke-linecap="round">
+      <path d="M43 50Q49 49.5 56 45"/><path d="M85 50Q79 49.5 72 45"/>
+    </g>
+    <path class="rm-beak" d="M56.5 68C60.5 64.8 67.5 64.8 71.5 68C69.5 74.5 66.5 77.5 64 77.5C61.5 77.5 58.5 74.5 56.5 68Z" fill="#FFB547" stroke="#0B2A1E" stroke-width="2.8" stroke-linejoin="round"/>
+    <path class="rm-drop" d="M98 38C98 38 92 46 92 50A6 6 0 0 0 104 50C104 46 98 38 98 38Z" fill="#9AD7FF" stroke="#0B2A1E" stroke-width="2.4"/>
+    <g class="rm-zzz" fill="none" stroke="#D7F8DF" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+      <path class="rm-z1" d="M96 34h9l-9 10h9"/><path class="rm-z2" d="M108 18h7l-7 8h7"/>
+    </g>
+  </g></svg>
