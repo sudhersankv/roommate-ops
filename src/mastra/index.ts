@@ -1,6 +1,6 @@
 // The Mastra instance: the roomie agent, Postgres storage (memory, traces, scores) and observability.
 // Used by the pipeline, the API routes and `npm run mastra:dev` (Studio).
-import "@/lib/env";
+import { loadEnv } from "@/lib/env";
 import { Mastra } from "@mastra/core/mastra";
 import { ConsoleLogger } from "@mastra/core/logger";
 import { SpanType } from "@mastra/core/observability";
@@ -8,6 +8,8 @@ import { MastraPlatformExporter, MastraStorageExporter, Observability, Sensitive
 import { roomie } from "./agents/roomie";
 import { storage } from "./memory";
 import { answerRelevancyScorer, brevityToneScorer } from "./scorers";
+
+loadEnv(); // already ran through lib/llm.ts; explicit so bundlers keep it
 
 const platformExport = !!(process.env.MASTRA_PLATFORM_ACCESS_TOKEN && process.env.MASTRA_PROJECT_ID);
 const g = globalThis as { __roomiePlatformNotice?: boolean };
