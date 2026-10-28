@@ -92,6 +92,18 @@ _Avoid_: Payment, payback, transfer
 The smallest set of Settlements that would bring every Balance to zero.
 _Avoid_: Debt graph, payout list
 
+**Simplify debts**:
+A Group setting for the Settle plan: on, the fewest payments overall (even between people who never shared an Expense); off, each pair settles what they shared.
+_Avoid_: Debt optimization, netting
+
+**Payment handle**:
+A Member's own Venmo, PayPal or Cash App name, which Settle up turns into a pay link with the amount filled in.
+_Avoid_: Payment method, account, username
+
+**Recurring expense**:
+An Expense that repeats monthly or weekly; Roomie adds a copy on each due day, split the same way.
+_Avoid_: Subscription, standing order
+
 **Activity**:
 The Group's record of who added, changed or deleted what.
 _Avoid_: Audit log, history, feed

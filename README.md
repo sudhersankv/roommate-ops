@@ -27,10 +27,21 @@ Then open the Claim link the seed printed (it's single use and lasts 24 hours), 
 
 In dev, Google sign-in uses Neon's shared OAuth credentials (the consent screen shows Neon's name). Localhost is a trusted origin by default.
 
+### Splitwise (optional)
+
+Splitwise goes through [Composio](https://composio.dev) with Composio-managed OAuth, so there's no Splitwise app to register.
+
+1. Create a project API key in the Composio dashboard and put it in `.env` as `COMPOSIO_API_KEY`.
+2. Restart `npm run dev`, open the Group's **Settings** as an Admin and press **Connect** on the Splitwise card. The first time, Roomie finds or creates the Splitwise auth config and logs `COMPOSIO_SPLITWISE_AUTH_CONFIG_ID=ac_...`; copy it into `.env`.
+3. Sign in to Splitwise on Composio's page. You come back to Settings (`/g/<id>/settings/splitwise/callback`).
+4. Pick a Splitwise group, then **Import its history** (people + every expense and payment), **Copy ours to Splitwise** (a one-time export) or switch on **Live mirror** (new, changed and deleted expenses are pushed by the scheduler within a minute).
+
+The same works in the chat: "roomie connect splitwise", "import our Apt 4B group from splitwise", "copy our expenses to splitwise", "turn on the splitwise mirror". Without a working key the card shows why it's off, and `npm run dev-chat` uses an in-memory Splitwise (`SPLITWISE_FAKE=1` turns that on anywhere). Splitwise's free API is for non-commercial use (ADR 0004).
+
 Other tools:
 
 ```sh
-npm run dev-chat         # a pretend WhatsApp group: join, add, say, approve, link (docs/dev-chat.md)
+npm run dev-chat         # a pretend WhatsApp group: join, add, say, photo, approve, link, ledger (docs/dev-chat.md)
 npm run mastra:dev       # Mastra Studio at http://localhost:4111: chat with Roomie, see traces and scores
 npm run db:generate      # after changing src/db/schema.ts: write the next migration into drizzle/
 ```
@@ -41,9 +52,9 @@ npm run db:generate      # after changing src/db/schema.ts: write the next migra
 
 ```sh
 npm run typecheck     # tsc --noEmit
-npm test              # unit tests for the pure functions (Gate, permissions, Claim links, Onboarding), no .env needed
-npm run test:tools    # every agent tool against the dev DB in a throwaway Group, no LLM
-npm run evals         # ~33 chat scenarios through the real Gate and agent; baseline in docs/evals-baseline.md
+npm test              # unit tests for the pure functions (split math, Gate, permissions, receipts...), no .env needed
+npm run test:tools    # every agent tool against the dev DB in throwaway Groups (Splitwise on the fake), no LLM
+npm run evals         # ~45 chat scenarios through the real Gate and agent; baseline in docs/evals-baseline.md
 ```
 
 CI runs `typecheck` and `npm test` on every push and pull request.

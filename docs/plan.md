@@ -115,11 +115,12 @@ Each step gets its own branch and PR, and you test locally before it's merged.
   - [x] Pending -> approved -> claimed -> own dashboard (dev-chat + browser, with the dev sign-in bypass for the Google step) · [x] non-Admins see no admin controls and every admin service refuses them · [ ] the same in a real WhatsApp group (step 2)
 
 ### 5. Splitting Toolkit (`step/5-splitting`)
-- Split equally, by exact amounts, by percentages or by shares. Multiple Payers. Categories (picked by Roomie), notes, dates, recurring Expenses, edit/delete/undo, Activity, a simplify-debts toggle, and a Settle plan with Venmo, PayPal and Cash App links.
-- Receipt photo to Expense (vision model), with per-item assignment ("I had the steak").
-- Splitwise through Composio: connect, import a group (people plus full history), and export as a one-time copy or a live mirror.
-- A Splitwise-style money page: a balances header, an Expense list with Shares visible, and add/edit sheets.
+- [x] Split equally, by exact amounts, by percentages or by shares. Multiple Payers. Categories (picked by Roomie), notes, dates, recurring Expenses, edit/delete/undo, Activity, a simplify-debts toggle, and a Settle plan with Venmo, PayPal and Cash App links (`services/split.ts`, `services/money.ts`, `services/recurring.ts`; migration 0001).
+- [x] Receipt photo to Expense (vision model: `claude-sonnet-5-5` reads `image_url` on the gateway), with per-item assignment ("I had the steak"); sums are recomputed and a mismatch makes Roomie ask (`services/receipts.ts`, `expense_from_receipt`, Scan receipt in the drawer).
+- [x] Splitwise through Composio: connect, import a group (people plus full history), and export as a one-time copy or a live mirror (`integrations/splitwise.ts`, `services/splitwise.ts`, the outbox in [ADR 0009](./adr/0009-outbox-for-splitwise-mirror-pushes.md)).
+- [x] A Splitwise-style money page: a balances header, an Expense list with Shares visible, and add/edit sheets with every split method, several Payers, category, date, note and repeats.
 - **Done when:** the "$90 dinner, 50/25/25" scenario, multi-payer, edit and undo all match to the cent between chat and dashboard, and a Splitwise import and export round-trips on a test group.
+  - [x] 50/25/25, 2:2:1, multi-payer, edit and undo match to the cent between dev-chat and the dashboard ([walkthrough](./dev-chat.md)) · [x] Splitwise import, export and mirror round-trip against the in-memory fake (`npm run test:tools`) · [ ] the same against real Splitwise (blocked on a valid `COMPOSIO_API_KEY`; the current one gets 401, which the app reports as "Splitwise isn't available")
 
 ### 6. Groceries Toolkit (`step/6-groceries`)
 - Cart (personal vs shared items, estimated prices) and an Instacart shopping-list link through Composio. "I paid $84" becomes an Expense split by who wanted what.
@@ -141,7 +142,7 @@ Each step gets its own branch and PR, and you test locally before it's merged.
 
 - [ ] Roomie's WhatsApp number: a real prepaid eSIM or SIM you **keep** (for example Tello, about $5/month). Not Google Voice and not a rented SMS-verification number. Use the WhatsApp Business app, turn on two-step verification, warm it up for a few days, and open it at least weekly.
 - [ ] Mastra platform: `MASTRA_PLATFORM_ACCESS_TOKEN` and `MASTRA_PROJECT_ID` in `.env`.
-- [ ] Composio: `COMPOSIO_API_KEY` in `.env`. I'll test the Instacart call.
+- [ ] Composio: a valid `COMPOSIO_API_KEY` in `.env` (the current one is rejected with 401). Then connect Splitwise once from Settings and put the logged `COMPOSIO_SPLITWISE_AUTH_CONFIG_ID` in `.env`. I'll test the Instacart call.
 - [ ] Google Cloud OAuth client for Neon Auth, before anyone outside the dev team signs in (dev uses Neon's shared Google keys; the consent screen shows Neon). Add it under the branch's Auth -> OAuth providers.
 
 ## Environment
@@ -154,7 +155,7 @@ SMALL_MODEL=claude-haiku-5-5     background jobs
 GATE_MODEL=typesafeai-jev-1-14-0 Gate
 EMBED_MODEL=qwen3-embedding-0-6b semantic recall
 MASTRA_PLATFORM_ACCESS_TOKEN, MASTRA_PROJECT_ID
-COMPOSIO_API_KEY
+COMPOSIO_API_KEY, COMPOSIO_SPLITWISE_AUTH_CONFIG_ID   Splitwise (SPLITWISE_FAKE=1: in-memory fake)
 NEON_AUTH_BASE_URL               Neon Auth URL (branch -> Auth)
 NEON_AUTH_COOKIE_SECRET          32+ chars, ours
 DEV_AUTH_EMAIL                   dev-only sign-in bypass for browser automation
