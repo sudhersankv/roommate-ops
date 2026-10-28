@@ -3,43 +3,55 @@
 import { useState, useTransition } from "react"
 import { ShoppingCart, XIcon } from "lucide-react"
 
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Drawer, DrawerClose, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/ui/drawer"
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { Field, FieldContent, FieldDescription, FieldLabel } from "@/components/ui/field"
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput, InputGroupText } from "@/components/ui/input-group"
 import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "@/components/ui/item"
+import { Spinner } from "@/components/ui/spinner"
 import { Switch } from "@/components/ui/switch"
 import { toast } from "@/components/ui/toast"
 import { Amount, useFormatMoney } from "@/components/app/money-bits"
-import { centsToInput, currencySymbol, parseMoney, splitByWeights } from "@/lib/money"
-import { addCartItem, purchaseCart, removeCartItem } from "../../actions"
+import { centsToInput, currencySymbol, parseMoney } from "@/lib/money"
+import { computeCartSplits } from "@/services/cart-split"
+import { addCartItem, checkoutCart, purchaseCart, removeCartItem } from "../../actions"
 import { useGroup } from "../group-context"
+import { PantryCard, RecipesSection } from "../recipes"
 import { PageHeader, TopBar } from "../shell"
-import type { CartItemView } from "../types"
+import type { CartItemView, CartPageView } from "../types"
 
-export function CartScreen({ items }: { items: CartItemView[] }) {
+export function CartScreen({ view, openRecipeId }: { view: CartPageView; openRecipeId: string | null }) {
   const { group } = useGroup()
+  const { items } = view
   const [name, setName] = useState("")
+  const [qty, setQty] = useState("")
   const [shared, setShared] = useState(true)
   const [paying, setPaying] = useState(false)
   const [pending, start] = useTransition()
+  const [linking, startLink] = useTransition()
   const total = items.reduce((a, c) => a + c.estCents, 0)
-  const sharedItems = items.filter((c) => c.shared)
-  const personal = items.filter((c) => !c.shared)
 
   const add = () => {
     const clean = name.trim()
     if (!clean) return
     start(async () => {
-      const res = await addCartItem(group.id, { name: clean.charAt(0).toUpperCase() + clean.slice(1), shared })
+      const res = await addCartItem(group.id, { name: clean.charAt(0).toUpperCase() + clean.slice(1), qty: qty.trim() || undefined, shared })
       if (!res.ok) return void toast.add({ title: "Couldn't add it", description: res.error, type: "error" })
       setName("")
+      setQty("")
       toast.add({ title: `Added ${clean}`, description: shared ? "Shared, so it's split evenly." : "Personal, so it's on you." })
     })
   }
+
+  const instacart = () =>
+    startLink(async () => {
+      const res = await checkoutCart(group.id)
+      if (!res.ok) return void toast.add({ title: "Couldn't make the list", description: res.error, type: "error" })
+      if (!res.data?.url) return void toast.add({ title: "Instacart isn't available", description: res.data?.unavailable ?? undefined, type: "error" })
+      window.open(res.data.url, "_blank", "noopener")
+      toast.add({ title: "Instacart list ready", description: `${res.data.itemCount} ${res.data.itemCount === 1 ? "thing" : "things"}. Tell Roomie what you paid once it's bought.` })
+    })
 
   return (
     <>
@@ -66,6 +78,7 @@ export function CartScreen({ items }: { items: CartItemView[] }) {
         >
           <InputGroup>
             <InputGroupInput aria-label="Add to the Cart" placeholder="Add to the Cart…" autoComplete="off" value={name} onChange={(e) => setName(e.target.value)} />
+            <InputGroupInput aria-label="How much" placeholder="Qty" autoComplete="off" className="max-w-20" value={qty} onChange={(e) => setQty(e.target.value)} />
             <InputGroupAddon align="inline-end">
               <InputGroupButton type="submit" variant="default" size="sm" disabled={!name.trim() || pending}>
                 Add
@@ -93,39 +106,39 @@ export function CartScreen({ items }: { items: CartItemView[] }) {
           </Empty>
         ) : (
           <>
-            <CartGroup title="Shared" note="Split evenly between everyone" items={sharedItems} />
-            <CartGroup title="Personal" note="Charged to whoever wants it" items={personal} />
+            <CartSection title="Shared" note="Split evenly between everyone" items={items.filter((c) => c.shared)} />
+            <CartSection title="Personal" note="Charged to whoever wants it" items={items.filter((c) => !c.shared)} />
             <div className="flex flex-col gap-2">
               <Button size="lg" onClick={() => setPaying(true)}>
                 I paid for these
               </Button>
-              <Button size="lg" variant="outline" disabled aria-describedby="instacart-hint">
+              <Button size="lg" variant="outline" disabled={!view.instacart.ready || linking} aria-describedby={view.instacart.ready ? undefined : "instacart-hint"} onClick={instacart}>
+                {linking ? <Spinner data-icon="inline-start" /> : null}
                 Get Instacart link
               </Button>
-              <p id="instacart-hint" className="type-caption text-center text-muted-foreground">
-                Coming soon. Roomie will turn the Cart into an Instacart list.
-              </p>
+              {view.instacart.ready ? null : (
+                <p id="instacart-hint" className="type-caption text-center text-muted-foreground">
+                  {view.instacart.hint ?? "The Instacart link isn't available yet."}
+                </p>
+              )}
             </div>
           </>
         )}
 
-        <RecipeCard />
+        <RecipesSection recipes={view.recipes} pantry={view.pantry} instacartReady={view.instacart.ready} openRecipeId={openRecipeId} />
+        <PantryCard pantry={view.pantry} />
       </div>
-      <PaidDrawer open={paying} onOpenChange={setPaying} items={items} />
+      <PaidDrawer open={paying} onOpenChange={setPaying} items={items} splitMemberIds={view.splitMemberIds} />
     </>
   )
 }
 
-function CartGroup({ title, note, items }: { title: string; note: string; items: CartItemView[] }) {
-  const { group, name } = useGroup()
-  const [pending, start] = useTransition()
+/** One section (Shared or Personal): loose items first, then one block per Recipe ("From Tacos for 5"). */
+function CartSection({ title, note, items }: { title: string; note: string; items: CartItemView[] }) {
   if (items.length === 0) return null
-  const remove = (c: CartItemView) =>
-    start(async () => {
-      const res = await removeCartItem(group.id, c.id)
-      if (!res.ok) toast.add({ title: "Couldn't remove it", description: res.error, type: "error" })
-    })
-  const who = (id: string) => (name(id) === "You" ? "you" : name(id))
+  const loose = items.filter((c) => !c.recipeId)
+  const byRecipe = new Map<string, CartItemView[]>()
+  for (const c of items.filter((x) => x.recipeId)) byRecipe.set(c.recipeId!, [...(byRecipe.get(c.recipeId!) ?? []), c])
   return (
     <section aria-labelledby={`cart-${title}`} className="flex flex-col gap-2">
       <div className="flex items-baseline justify-between px-1">
@@ -134,69 +147,70 @@ function CartGroup({ title, note, items }: { title: string; note: string; items:
         </h2>
         <span className="type-caption text-muted-foreground">{note}</span>
       </div>
-      <ItemGroup className="gap-0 rounded-3xl bg-card py-1">
-        {items.map((c) => (
-          <Item key={c.id} className="py-2 pr-1.5">
-            <ItemContent className="min-w-0">
-              <ItemTitle className="truncate">
-                {c.name}
-                {c.qty ? <span className="font-normal text-muted-foreground">{c.qty}</span> : null}
-              </ItemTitle>
-              <ItemDescription>{c.shared ? `Added by ${who(c.addedBy)}` : `For ${who(c.addedBy)}`}</ItemDescription>
-            </ItemContent>
-            <ItemActions className="gap-1">
-              <Amount cents={c.estCents} className="type-body text-muted-foreground" />
-              <Button variant="ghost" size="icon-sm" aria-label={`Remove ${c.name}`} disabled={pending} onClick={() => remove(c)}>
-                <XIcon />
-              </Button>
-            </ItemActions>
-          </Item>
-        ))}
-      </ItemGroup>
+      {loose.length ? <CartItems items={loose} /> : null}
+      {[...byRecipe].map(([id, list]) => (
+        <div key={id} className="flex flex-col gap-2 pt-2">
+          <h3 className="type-caption px-1 text-muted-foreground">From {list[0].recipeTitle ?? "a recipe"}</h3>
+          <CartItems items={list} />
+        </div>
+      ))}
     </section>
   )
 }
 
-/** Recipes arrive with the Groceries Toolkit (step 6); the card shows where they'll live. */
-function RecipeCard() {
+function CartItems({ items }: { items: CartItemView[] }) {
+  const { group, name } = useGroup()
+  const [pending, start] = useTransition()
+  const remove = (c: CartItemView) =>
+    start(async () => {
+      const res = await removeCartItem(group.id, c.id)
+      if (!res.ok) toast.add({ title: "Couldn't remove it", description: res.error, type: "error" })
+    })
+  const who = (id: string) => (name(id) === "You" ? "you" : name(id))
   return (
-    <Card className="rounded-3xl">
-      <CardHeader>
-        <CardTitle className="type-heading flex items-center gap-2">
-          Recipes <Badge variant="secondary">Coming soon</Badge>
-        </CardTitle>
-        <CardDescription>Ask Roomie for “tacos for 5 friday” and the recipe shows up here, scaled for everyone eating.</CardDescription>
-      </CardHeader>
-      <CardFooter className="flex-col items-stretch gap-2">
-        <Button disabled>Add ingredients to cart</Button>
-      </CardFooter>
-    </Card>
+    <ItemGroup className="gap-0 rounded-3xl bg-card py-1">
+      {items.map((c) => (
+        <Item key={c.id} className="py-2 pr-1.5">
+          <ItemContent className="min-w-0">
+            <ItemTitle className="truncate">
+              {c.name}
+              {c.qty ? <span className="font-normal text-muted-foreground">{c.qty}</span> : null}
+            </ItemTitle>
+            <ItemDescription>{c.shared ? `Added by ${who(c.addedBy)}` : `For ${who(c.addedBy)}`}</ItemDescription>
+          </ItemContent>
+          <ItemActions className="gap-1">
+            <Amount cents={c.estCents} className="type-body text-muted-foreground" />
+            {c.canRemove ? (
+              <Button variant="ghost" size="icon-sm" aria-label={`Remove ${c.name}`} disabled={pending} onClick={() => remove(c)}>
+                <XIcon />
+              </Button>
+            ) : (
+              <span aria-hidden className="size-9" />
+            )}
+          </ItemActions>
+        </Item>
+      ))}
+    </ItemGroup>
   )
 }
 
-/** "I paid $X": previews the Expense split by who wanted what, scaled from estimates to the real total. */
-function PaidDrawer({ open, onOpenChange, items }: { open: boolean; onOpenChange: (o: boolean) => void; items: CartItemView[] }) {
+/** "I paid $X": previews the Expense with the same split services/cart.ts saves (computeCartSplits), to the cent. */
+function PaidDrawer({ open, onOpenChange, items, splitMemberIds }: { open: boolean; onOpenChange: (o: boolean) => void; items: CartItemView[]; splitMemberIds: string[] }) {
   return (
     <Drawer open={open} onOpenChange={onOpenChange}>
-      <DrawerContent className="mx-auto max-w-md">{open ? <PaidForm items={items} onDone={() => onOpenChange(false)} /> : null}</DrawerContent>
+      <DrawerContent className="mx-auto max-w-md">{open ? <PaidForm items={items} splitMemberIds={splitMemberIds} onDone={() => onOpenChange(false)} /> : null}</DrawerContent>
     </Drawer>
   )
 }
 
-function PaidForm({ items, onDone }: { items: CartItemView[]; onDone: () => void }) {
-  const { group, active, name, cheer } = useGroup()
+function PaidForm({ items, splitMemberIds, onDone }: { items: CartItemView[]; splitMemberIds: string[]; onDone: () => void }) {
+  const { group, me, name, cheer } = useGroup()
   const money = useFormatMoney()
   const [pending, start] = useTransition()
   const est = items.reduce((a, c) => a + c.estCents, 0)
   const [amount, setAmount] = useState(centsToInput(est))
   const paid = parseMoney(amount)
-  const people = active.map((m) => m.id)
-
-  // Each person's estimated part: their personal things plus an even cut of the shared ones.
-  const sharedEst = items.filter((c) => c.shared).reduce((a, c) => a + c.estCents, 0)
-  const sharedCut = Object.fromEntries(splitByWeights(sharedEst, people, people.map(() => 1)).map((s) => [s.memberId, s.cents]))
-  const estOf = (id: string) => (sharedCut[id] ?? 0) + items.filter((c) => !c.shared && c.addedBy === id).reduce((a, c) => a + c.estCents, 0)
-  const shares = paid && paid > 0 ? splitByWeights(paid, people, people.map(estOf)) : []
+  const shares = paid && paid > 0 ? computeCartSplits(items, splitMemberIds, paid, me.id) : []
 
   const save = () =>
     start(async () => {
@@ -226,7 +240,7 @@ function PaidForm({ items, onDone }: { items: CartItemView[]; onDone: () => void
           <FieldDescription>The estimate was {money(est)}.</FieldDescription>
         </Field>
         <ItemGroup className="gap-0 rounded-3xl border py-1">
-          {people.map((id) => {
+          {splitMemberIds.map((id) => {
             const mine = items.filter((c) => !c.shared && c.addedBy === id).map((c) => c.name)
             return (
               <Item key={id} className="py-2.5">

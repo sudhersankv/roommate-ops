@@ -10,12 +10,12 @@ import { dashboardUrl } from "@/lib/urls";
 import { InstacartUnavailableError, instacartClient } from "@/integrations/instacart";
 import { record } from "./activity";
 import { NotAllowedError, requireActive } from "./authz";
-import { cartTotal, computeCartSplits } from "./cart-split";
+import { canRemoveItem, cartTotal, computeCartSplits } from "./cart-split";
 import { listMembers } from "./members";
 import { logExpense, type Expense } from "./money";
 import { dollars, type Ctx, type GroupCtx } from "./types";
 
-export { cartTotal, computeCartSplits, type SplitItem } from "./cart-split";
+export { canRemoveItem, cartTotal, computeCartSplits, type SplitItem } from "./cart-split";
 
 const { cartItems, cartCheckouts, members, recipes } = schema;
 
@@ -108,9 +108,8 @@ export async function addItems(ctx: Ctx, input: { items: { name: string; qty?: s
   return rows.map((r) => toItem(r, names, new Map()));
 }
 
-/** Whoever added an item, or an Admin, can take it off. */
 function checkRemove(actor: { id: string; role: string }, item: { addedBy: string; name: string }, adderName: string) {
-  if (actor.role === "admin" || item.addedBy === actor.id) return;
+  if (canRemoveItem(actor, item)) return;
   throw new NotAllowedError(`Only ${adderName} (who added ${item.name}) or an admin can take it off the Cart.`, "not-yours");
 }
 
@@ -131,7 +130,7 @@ export async function removeItem(ctx: Ctx, input: { name: string }): Promise<boo
   const exact = rows.filter((r) => norm(r.name) === q);
   const hits = exact.length ? exact : rows.filter((r) => norm(r.name).includes(q) || q.includes(norm(r.name)));
   if (hits.length === 0) return false;
-  const mine = hits.find((r) => actor.role === "admin" || r.addedBy === actor.id);
+  const mine = hits.find((r) => canRemoveItem(actor, r));
   if (!mine) checkRemove(actor, hits[0], (await namesFor(ctx.groupId)).get(hits[0].addedBy) ?? "whoever");
   await db.delete(cartItems).where(eq(cartItems.id, mine!.id));
   return true;

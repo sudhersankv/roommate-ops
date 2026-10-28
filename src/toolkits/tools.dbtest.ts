@@ -758,14 +758,14 @@ describe("Roomie tools against the dev DB", () => {
     assert.equal(r.recipe, "Tacos for 5");
     assert.equal(r.addedCount, 8);
     assert.deepEqual(r.skippedHave.sort(), ["red onion", "salt", "vegetable oil"]);
-    assert.ok(r.added.includes("ground turkey (2 lb)"));
+    assert.ok(r.added.includes("Ground turkey (2 lb)"));
     const rows = await db.select().from(schema.cartItems).where(and(eq(schema.cartItems.groupId, groupId), eq(schema.cartItems.recipeId, tacosId)));
     assert.equal(rows.length, 8);
     assert.ok(rows.every((x) => x.shared && x.status === "open" && x.addedBy === member.Sudhersan));
-    const turkey = rows.find((x) => x.name === "ground turkey")!;
+    const turkey = rows.find((x) => x.name === "Ground turkey")!;
     assert.deepEqual([turkey.qty, Number(turkey.quantity), turkey.unit, turkey.estCents], ["2 lb", 2, "pound", 699]);
-    assert.equal(rows.find((x) => x.name === "limes")?.estCents, 4 * 79);
-    assert.equal(rows.find((x) => x.name === "corn tortillas")?.estCents, 349, "20 tortillas is one pack");
+    assert.equal(rows.find((x) => x.name === "Limes")?.estCents, 4 * 79);
+    assert.equal(rows.find((x) => x.name === "Corn tortillas")?.estCents, 349, "20 tortillas is one pack");
     const view: CartView = await run("cart_view", {});
     assert.ok(view.groups.Shared.every((i) => i.recipeTitle === "Tacos for 5"));
     const again = await run("recipe_add_to_cart", { recipe: "the tacos", skip: ["onions"] });

@@ -5,6 +5,9 @@ import type { SplitRow } from "./split";
 /** The bits of an item the split needs. */
 export type SplitItem = { addedBy: string; shared: boolean; estCents: number | null };
 
+/** Whoever added an item, or an Admin, can take it off the Cart. */
+export const canRemoveItem = (actor: { id: string; role: string }, item: { addedBy: string }) => actor.role === "admin" || item.addedBy === actor.id;
+
 /** Sum of estimates (unknown = 0). */
 export function cartTotal(items: { estCents: number | null }[]): number {
   return items.reduce((s, i) => s + (i.estCents ?? 0), 0);

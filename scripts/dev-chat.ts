@@ -6,13 +6,14 @@
 //   say <name> <text>          a message in the Chat ("say Maya roomie who owes what")
 //   photo <name> <path|url> [caption]  a photo (e.g. a receipt), stored under public/uploads/dev/ and sent with the caption
 //   ledger [n]                 the last n Expenses (cents, method, Payers, Shares) and Balances, straight from services
+//   cart [total]               open Cart items; with a total, the split "Maya paid <total>" would save
 //   approve <name> [by <admin>] approve a Pending member directly (no LLM)
 //   link <name>                mint a Claim link for <name> and print it
 //   who                        Members with role and status
 //   quit
 // --chat attaches to an existing dev Chat (the seed's is "dev-apt-4b"); otherwise a new one is made on `join`.
 // --cleanup deletes the Group on exit. Lines can be piped in: `Get-Content walk.txt | npm run dev-chat`.
-// Splitwise uses the in-memory fake when COMPOSIO_API_KEY is missing or rejected (it says so once at start).
+// Splitwise and Instacart use their fakes when COMPOSIO_API_KEY is missing or rejected (each says so once at start).
 import "../src/lib/env";
 import { createInterface } from "node:readline";
 import { registerChannel } from "../src/channels";
@@ -21,8 +22,9 @@ import { db } from "../src/db";
 import { mastra } from "../src/mastra";
 import { onGroupJoined, onParticipantJoined } from "../src/onboarding";
 import { respondToIncoming } from "../src/pipeline";
-import { claims, groups, members, money, receipts } from "../src/services";
+import { cart, claims, groups, members, money, receipts } from "../src/services";
 import { useFakeSplitwiseIfUnavailable } from "../src/integrations/splitwise";
+import { useFakeInstacartIfUnavailable } from "../src/integrations/instacart";
 import { readFile } from "node:fs/promises";
 
 const args = process.argv.slice(2);
@@ -131,6 +133,19 @@ async function run(line: string) {
       console.log(`  balances: ${(await money.getBalances({ groupId: gid })).map((b) => `${b.name} ${b.cents}`).join(", ")}`);
       return;
     }
+    case "cart": {
+      // Open items (and, with a total, the split "I paid" would save), straight from services.
+      const gid = await groupId();
+      const items = await cart.listOpenItems({ groupId: gid });
+      for (const i of items) console.log(`  ${i.name} ${i.qty} [${i.shared ? "shared" : i.addedByName}${i.recipeTitle ? `, ${i.recipeTitle}` : ""}] est ${i.estCents}c`);
+      const total = Math.round(Number(tail) * 100);
+      if (total > 0) {
+        const people = await members.listMembers({ groupId: gid });
+        const rows = cart.computeCartSplits(items.map((i) => ({ addedBy: i.addedBy!, shared: i.shared, estCents: i.estCents })), people.map((m) => m.id), total, people.find((m) => m.displayName === "Maya")?.id);
+        console.log(`  if Maya paid ${total}c: ${rows.map((r) => `${people.find((m) => m.id === r.memberId)?.displayName} ${r.cents}`).join(", ")}`);
+      }
+      return;
+    }
     case "who": {
       const gid = await groupId();
       for (const m of await members.listGroupMembers({ groupId: gid })) console.log(`  ${m.displayName.padEnd(12)} ${m.role.padEnd(7)} ${m.status}${m.accountId ? "  (has an Account)" : ""}`);
@@ -147,12 +162,13 @@ async function run(line: string) {
       return;
     default:
       if (cmd.startsWith("#")) return; // comments in piped scripts
-      throw new Error(`Unknown command "${cmd}". Try: join, add, say, photo, approve, link, ledger, who, quit`);
+      throw new Error(`Unknown command "${cmd}". Try: join, add, say, photo, approve, link, ledger, cart, who, quit`);
   }
 }
 
 await useFakeSplitwiseIfUnavailable();
-console.log(`dev-chat on Chat "${chatId}". Commands: join, add, say, photo, approve, link, ledger, who, quit`);
+await useFakeInstacartIfUnavailable();
+console.log(`dev-chat on Chat "${chatId}". Commands: join, add, say, photo, approve, link, ledger, cart, who, quit`);
 const rl = createInterface({ input: process.stdin, output: process.stdout, prompt: "> ", terminal: interactive });
 if (interactive) rl.prompt();
 for await (const line of rl) {

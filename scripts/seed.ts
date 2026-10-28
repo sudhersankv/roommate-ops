@@ -1,6 +1,6 @@
 // npm run seed: the demo Group "Apt 4B" with Maya (Admin), Dev and Sam (active) and Priya (Pending), three weeks of
 // Expenses (equal splits, plus one percent, one shares, one multi-payer and one recurring Expense), Settlements, a
-// Cart, chores, upkeep, reminders and some chat. The numbers match the UI prototype: Maya is owed $42.50, Dev owes
+// Cart, a Pantry and a "Tacos for 5" Recipe, chores, upkeep, reminders and some chat. The numbers match the UI prototype: Maya is owed $42.50, Dev owes
 // $30.00 and Sam owes $12.50. Prints the Group id, a Claim link for Maya and a Studio
 // requestContext. `npm run seed:demo` (--reset) deletes Apt 4B first and rebuilds it.
 // The Chat is a dev Channel chat ("dev-apt-4b"), so `npm run dev-chat -- --chat dev-apt-4b` talks to it.
@@ -8,9 +8,9 @@ import "../src/lib/env";
 import { and, eq } from "drizzle-orm";
 import { db, schema } from "../src/db";
 import { devUserId } from "../src/channels/dev";
-import { localDay } from "../src/lib/dates";
+import { addDays, localDay } from "../src/lib/dates";
 import { guessCategory } from "../src/services/categories";
-import { claims, groups, money, chores as choresSvc, upkeep as upkeepSvc } from "../src/services";
+import { claims, groups, money, chores as choresSvc, pantry as pantrySvc, recipes as recipesSvc, upkeep as upkeepSvc } from "../src/services";
 import { dollars } from "../src/services/types";
 import { PRESETS_FILE, writeStudioPresets } from "./lib/presets";
 
@@ -59,10 +59,28 @@ async function addSplitDemos(groupId: string) {
   return true;
 }
 
+/**
+ * Step 6: the Pantry (salt, oil, rice) and Maya's "Tacos for 5" Recipe planned for the coming Friday. The Recipe
+ * stays out of the Cart (it only goes in when someone asks). Skipped when the Group already has a Recipe.
+ */
+async function addGroceriesDemos(groupId: string) {
+  const [has] = await db.select({ id: schema.recipes.id }).from(schema.recipes).where(eq(schema.recipes.groupId, groupId)).limit(1);
+  if (has) return false;
+  const [maya] = await db.select().from(schema.members).where(and(eq(schema.members.groupId, groupId), eq(schema.members.displayName, "Maya")));
+  const [g] = await db.select().from(schema.groups).where(eq(schema.groups.id, groupId));
+  const as = { groupId, memberId: maya.id, source: "chat" as const };
+  let friday = localDay(now, g.timezone);
+  while (new Date(`${friday}T12:00:00Z`).getUTCDay() !== 5) friday = addDays(friday, 1);
+  await pantrySvc.updatePantry(as, { add: ["salt", "oil", "rice"] });
+  await recipesSvc.saveRecipe(as, { ...recipesSvc.parseRecipeJson(recipesSvc.SAMPLE_RECIPE_JSON), plannedFor: friday, source: "roomie" });
+  return true;
+}
+
 const existing = await groups.chatFor("dev", CHAT);
 if (existing && !RESET) {
   const added = await addSplitDemos(existing.group.id);
-  console.log(`"${existing.group.name}" (${existing.group.id}) already seeded${added ? "; added the step-5 split examples" : ""}; pass --reset (npm run seed:demo) to rebuild`);
+  const groceries = await addGroceriesDemos(existing.group.id);
+  console.log(`"${existing.group.name}" (${existing.group.id}) already seeded${added ? "; added the step-5 split examples" : ""}${groceries ? "; added the Pantry and Tacos for 5" : ""}; pass --reset (npm run seed:demo) to rebuild`);
   await printAccess(existing.group.id);
   process.exit(0);
 }
@@ -206,6 +224,7 @@ const chat: [string | null, number, number, string][] = [
 await db.insert(schema.chatMessages).values(chat.map(([memberId, d, h, text]) => ({ groupId: gid, memberId, text, createdAt: ago(d, h) })));
 await db.insert(schema.activity).values(activity);
 await addSplitDemos(gid);
+await addGroceriesDemos(gid);
 
 /* ---------- summary ---------- */
 const ctx = { groupId: gid };

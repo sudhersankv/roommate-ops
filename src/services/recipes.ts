@@ -10,7 +10,7 @@ import { formatAmount, INSTACART_UNITS, measurementOrEach, roundQuantity, toInst
 import { dashboardUrl } from "@/lib/urls";
 import { instacartClient } from "@/integrations/instacart";
 import { record } from "./activity";
-import { NotAllowedError, requireActive } from "./authz";
+import { requireActive } from "./authz";
 import { listMembers } from "./members";
 import { getPantry } from "./pantry";
 import { coveredBy, haveNeed, recipeKey, scaleIngredients } from "./recipe-math";
@@ -342,7 +342,8 @@ export async function addRecipeToCart(ctx: Ctx, recipeId: string, opts: { skip?:
         .values(
           toAdd.map((i) => ({
             groupId: ctx.groupId,
-            name: i.name,
+            // Cart items read like the rest of the Cart ("Ground beef"); Recipes keep lower-case search names.
+            name: i.name.charAt(0).toUpperCase() + i.name.slice(1),
             qty: formatAmount(i.quantity, i.unit),
             quantity: String(roundQuantity(i.quantity)),
             unit: i.unit,
@@ -386,13 +387,4 @@ export async function recipeLink(ctx: GroupCtx, recipeId: string): Promise<{ rec
 export async function upcomingRecipes(ctx: GroupCtx, fromDay: string): Promise<Recipe[]> {
   const list = await listRecipes(ctx, 50);
   return list.filter((r) => r.plannedFor && r.plannedFor >= fromDay).sort((a, b) => a.plannedFor!.localeCompare(b.plannedFor!));
-}
-
-/** Delete a Recipe (its Cart items stay, without the link). Whoever saved it or an Admin. */
-export async function deleteRecipe(ctx: Ctx, recipeId: string): Promise<void> {
-  const actor = await requireActive(ctx);
-  const recipe = await getRecipe(ctx, recipeId);
-  if (actor.role !== "admin" && recipe.createdBy !== actor.id) throw new NotAllowedError("Only whoever saved that recipe (or an admin) can delete it.", "not-yours");
-  await db.delete(recipes).where(and(eq(recipes.id, recipe.id), eq(recipes.groupId, ctx.groupId)));
-  await record(ctx.groupId, ctx.memberId, "recipe.deleted", `deleted the recipe ${recipe.title}`);
 }
