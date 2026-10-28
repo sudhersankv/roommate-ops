@@ -2,7 +2,7 @@
 
 Roomie is an AI groupmate that lives in a group chat and on a per-group dashboard. It splits costs, keeps the shared grocery cart, tracks chores and upkeep, and sets reminders. Persona: a friendly, witty, brief groupmate; exact about facts.
 
-**Read first:** the rebuild plan is in `docs/plan.md`, the vocabulary in `GLOSSARY.md`, and the decisions in `docs/adr/`. They are the spec; where they conflict with this file, they win. Steps 1 (rename), 3 (Mastra agent), 4 (identity, Groups, dashboard), 5 (Splitting) and 6 (Groceries) are done; the code below is what exists today. WhatsApp (step 2) isn't: `npm run dev-chat` stands in for it.
+**Read first:** the rebuild plan is in `docs/plan.md`, the vocabulary in `GLOSSARY.md`, and the decisions in `docs/adr/`. They are the spec; where they conflict with this file, they win. Steps 1 (rename), 2b (Telegram), 3 (Mastra agent), 4 (identity, Groups, dashboard), 5 (Splitting) and 6 (Groceries) are done; the code below is what exists today. WhatsApp (step 2) is parked until Roomie has a number; `npm run dev-chat` simulates a group chat without any app.
 
 Agent skills for this repo live in `.agents/skills/`.
 
@@ -46,11 +46,13 @@ src/
     recipe-math.ts      pure: Pantry matching (covers, haveNeed), scaleIngredients, recipeKey
     pantry.ts           group_toolkits.settings.pantry for groceries: getPantry, updatePantry (any active Member)
     chores.ts reminders.ts upkeep.ts report.ts
-  onboarding.ts         onGroupJoined (Group + Chat + Members, adder = Admin, intro + setup questions) and
-                        onParticipantJoined (Pending + "approve X?"). Called by Channel adapters (ADR 0008)
+  onboarding.ts         onGroupJoined (Group + Chat + Members, adder = Admin, intro + setup questions),
+                        onParticipantJoined (Pending + "approve X?") and onUnknownSender (Pending, or active inside a
+                        Channel's roster grace, ADR 0010). Called by Channel adapters (ADR 0008)
   pipeline.ts           the message flow, channel-agnostic: handleIncoming(msg) resolves Group/Member itself (unknown
-                        Chat -> Onboarding, unknown sender -> Pending), logs the line, runs the Gate, calls the agent,
-                        collects links. askRoomie(ctx, text) for the dashboard. One trace per message.
+                        Chat -> Onboarding, unknown sender -> onUnknownSender), logs the line, runs the Gate, calls the
+                        agent, collects links. isPrivate (a Member's DM): addressed, not logged. askRoomie(ctx, text)
+                        for the dashboard. One trace per message.
   mastra/
     index.ts            `mastra`: the roomie agent, PostgresStore, Observability, scorers, logger
     context.ts          RequestContext schema { groupId, memberId, memberName, role, status, source, toolkits?,
@@ -72,10 +74,17 @@ src/
     splitting/ groceries/ chores/ upkeep/   manifest.ts + the tools (groceries: cart.ts + recipes.ts)
   integrations/         composio.ts (client + cached key health), splitwise.ts (SplitwiseClient: ComposioSplitwise and
                         FakeSplitwise, splitwiseClient(), splitwiseAvailability())
-  channels/types.ts     IncomingMessage { channel, chatExternalId, userExternalId, userName, text, imageUrl?, ... }, Outgoing, Channel
+  channels/types.ts     IncomingMessage { channel, chatExternalId, userExternalId, userName, text, imageUrl?, isPrivate?,
+                        ... }, Outgoing, Channel, CantMessagePrivatelyError, ROSTER_GRACE_MS
   channels/index.ts     registry: registerChannel(); deliver(groupId, out) and deliverPrivate(memberId, out) go through
                         the Chat's adapter (only log when none is registered)
   channels/dev.ts       the dev adapter used by scripts/dev-chat.ts
+  channels/telegram.ts  grammY adapter: TelegramChannel (outbound: typing, pause, rate limits, chunks, URL buttons, 403 ->
+                        CantMessagePrivatelyError) + createTelegramBot(deps) (inbound: joins, new members, text/photo/
+                        voice/DMs -> IncomingMessage, queued per Chat). Never imports the app: deps come in
+  channels/telegram-boot.ts  real deps (pipeline, onboarding, services); telegramChannel() for instrumentation,
+                        telegramBot() for the polling script and the webhook
+  channels/rate-limit.ts     token buckets (TokenBucket, SendLimiter) with an injectable clock
   lib/auth/             server.ts (createNeonAuth), client.ts (createAuthClient), dev.ts (DEV_AUTH_EMAIL bypass)
   lib/session.ts        sessionUser -> currentAccount -> memberSession(groupId) / currentMember(groupId) (redirect/404)
   lib/env.ts            loads .env with override (import first in every entry point)
@@ -91,7 +100,8 @@ src/
   jobs/retention.ts     deletes chat_messages older than 30 days (ADR 0006)
   jobs/style-note.ts    Haiku rewrites the Group style note every 50 chat lines
   proxy.ts              Neon Auth middleware on /g/* (the dev bypass skips it)
-  instrumentation.ts    loads env, starts the scheduler once (DISABLE_SCHEDULER=1 skips it)
+  instrumentation.ts    loads env, registers the Telegram Channel (outbound) when TELEGRAM_BOT_TOKEN is set, starts the
+                        scheduler once (DISABLE_SCHEDULER=1 skips it)
   components/ui/        shadcn components; components/roomie/ the mascot; components/app/ shared app bits
                         (sign-in, doorway, avatars, money-bits, categories, theme)
   app/
@@ -103,11 +113,13 @@ src/
                         _components/data.ts = services -> screen shapes; _components/screens/*
                         settings/splitwise/callback = Composio's return URL (route handler)
     design/             the design-system page (dev only unless SHOW_DESIGN_PAGE=1)
-    api/auth/[...path]  Neon Auth proxy; api/chat = Ask Roomie (session Member, 401/403); api/receipts = Scan receipt
+    api/auth/[...path]  Neon Auth proxy; api/chat = Ask Roomie (session Member, 401/403); api/receipts = Scan receipt;
+                        api/telegram = Telegram webhook (401 without TELEGRAM_WEBHOOK_SECRET in the header)
 drizzle/                generated migrations (0000 baseline drops the pre-step-4 tables)
 scripts/migrate.ts      npm run db:migrate
 scripts/seed.ts         demo Group "Apt 4B" (dev Chat dev-apt-4b); prints its id, a Claim link for Maya, a Studio requestContext
-scripts/dev-chat.ts     the terminal WhatsApp stand-in (docs/dev-chat.md)
+scripts/dev-chat.ts     the terminal group chat stand-in (docs/dev-chat.md)
+scripts/telegram.ts     npm run telegram: long polling (deletes any webhook first); telegram-webhook.ts --set/--delete/--info
 scripts/evals.ts        runs the scenarios in throwaway Groups; --baseline writes docs/evals-baseline.md
 scripts/studio-presets.ts  writes .mastra-presets.json for Studio (run by mastra:dev)
 spikes/                 throwaway experiments (WhatsApp/Baileys)
@@ -117,6 +129,8 @@ spikes/                 throwaway experiments (WhatsApp/Baileys)
 
 - **Accounts and Claim links** (ADR 0003): a Member gets a single-use, 24-hour Claim link only when they ask for the dashboard (`get_dashboard_link`, which sends it privately and reuses a live one) or from `dev-chat link`. Never in bulk (ADR 0001). `/claim/<token>` signs them in with Google, upserts `accounts` from the session user (mirrored by `auth_user_id`, ADR 0008) and links `members.account_id`. One Account can be a Member of many Groups.
 - **Who is what** (ADR 0008): whoever adds Roomie is Admin; people already in the Chat are active; later joiners and unknown senders are Pending until an Admin approves (chat or Members page).
+- **Telegram can't list members** (ADR 0010): at join time Roomie knows the adder (Admin) and the group's Telegram admins (active). Anyone else becomes a Member on their first message: active if it's within 24 h of Roomie joining (`ROSTER_GRACE_MS`, from `chats.created_at`), Pending after. `new_chat_members` are Pending at once (with the approval ask), even inside the 24 h; people added together with Roomie count as already there.
+- **Private messages on Telegram:** a bot can't DM anyone first, so the intro asks people to tap @bot and press Start once. A refused DM is a `CantMessagePrivatelyError`; `get_dashboard_link` relays its "tap @bot and press Start" message and never posts the Claim link in the group. A DM from a Member of exactly one Group goes through the pipeline as that Group with `isPrivate`.
 - **Rules** (`services/authz.ts`): Pending members can chat and read, but every write service calls `requireActive` and refuses with "Hang on, an admin needs to approve you first. <Admin> can approve you." Members, roles, settings, Toolkits and delete-group-data call `requireAdmin`. Expenses can be changed by whoever added or paid them, anyone with a Share, or an Admin.
 - **Dashboard:** every page and action goes through `lib/session.ts`; nothing trusts a member id from the client. Non-Admins don't see admin controls, and the actions return 403 anyway.
 - **Dev sign-in bypass:** with `NODE_ENV !== "production"` and `DEV_AUTH_EMAIL` set, that email is the signed-in Account (loud warning in the log). For automated browser checks only.
@@ -164,7 +178,9 @@ spikes/                 throwaway experiments (WhatsApp/Baileys)
 - **Jev** is not a chat model: `POST {base}/typesafe/v1/systemone` with typed questions (`gate/jev.ts`). The gateway rate limit (input tokens per minute, account-wide) also covers Jev; on a 429 the Gate falls back to hard triggers.
 - **Env:** `.env` must win over the process environment, but Node's `--env-file` and Next never override. `lib/env.ts` loads it with `dotenv({ override: true })`; import it first in every entry point. `mastra dev` tree-shakes side-effect-only imports, so bundled code must call `loadEnv()` (`lib/llm.ts` and `mastra/index.ts` do). **If you see 401 from the gateway, a system env var (e.g. a stale `NEON_AI_GATEWAY_BASE_URL`) is shadowing `.env`.**
 - **Observability:** traces go to Postgres (`mastra_ai_spans`, visible in Studio) and to the Mastra platform when `MASTRA_PLATFORM_ACCESS_TOKEN` + `MASTRA_PROJECT_ID` are set. API routes call `mastra.observability.flush()` at the end.
-- **Voice:** no Whisper on the gateway. `lib/voice.ts` sends the audio to OpenRouter (`OPENROUTER_API_KEY`, `STT_MODEL`, an audio-capable chat model) as an `input_audio` chat part and uses the text reply as the transcript. Optional; nothing calls it until a channel exists.
+- **Voice:** no Whisper on the gateway. `lib/voice.ts` sends the audio to OpenRouter (`OPENROUTER_API_KEY`, `STT_MODEL`, an audio-capable chat model) as an `input_audio` chat part and uses the text reply as the transcript. Optional; the Telegram adapter uses it for voice notes when `OPENROUTER_API_KEY` is set (otherwise Roomie says once per Chat that it can't hear them yet).
+- **grammY** (Telegram, `grammy` in `serverExternalPackages`): `new Bot(token, { botInfo })` skips getMe (the webhook builds botInfo from the token's id + `TELEGRAM_BOT_USERNAME`; tests do the same with a fake token). Polling: `bot.start({ allowed_updates, onStart })`; webhook: `webhookCallback(bot, "std/http", { secretToken })`. Outbound calls are captured in tests with `bot.api.config.use(transformer)`; `handleUpdate` + the adapter's `idle()` runs an update to the end. `my_chat_member` (Roomie added/removed) arrives without admin rights; `chat_member` doesn't, so we don't use it. Privacy mode must be off (BotFather `/setprivacy`) to see every group message. Groups upgraded to supergroups change id (`migrate_to_chat_id` -> `groups.moveChat`). Telegram refuses `localhost` URL buttons: the adapter sends those links as text.
+- **Env (pacing):** `JOIN_DELAY_MS` (intro after joining, default 60000) and `REPLY_DELAY_MS` (pause after "typing", default 600-1800 ms random); tests pass 0.
 - **Neon Auth** (Managed Better Auth, `@neondatabase/auth`): `lib/auth/server.ts` = `createNeonAuth({ baseUrl, cookies: { secret } })`; `app/api/auth/[...path]` = `auth.handler()`; `proxy.ts` = `auth.middleware({ loginUrl: "/" })` matched to `/g/:path*` only; browser `createAuthClient()` (no args) and `signIn.social({ provider: "google", callbackURL })` with an absolute callback. `auth.getSession()` returns `{ data }`, user is `data.user`. Users live in `neon_auth` (Neon owns it; never write there). Dev Google uses Neon's shared OAuth keys.
 - **Composio** (`@composio/core`, TS SDK v3): `new Composio({ apiKey })`; direct execution (`tools.execute`) needs a toolkit version, so we pass `COMPOSIO_SPLITWISE_VERSION` or `dangerouslySkipVersionCheck`. `connectedAccounts.initiate` is retired for Composio-managed OAuth; use `connectedAccounts.link`. The Splitwise auth config comes from `COMPOSIO_SPLITWISE_AUTH_CONFIG_ID`, else the first Composio-managed one, else one is created (`authConfigs.create("splitwise", { type: "use_composio_managed_auth" })`) and its id logged for `.env`.
 - **Next 16:** Mastra, pg and Composio are in `serverExternalPackages`. Read `node_modules/next/dist/docs/` before using Next APIs.
@@ -179,6 +195,8 @@ npm run seed                  # demo Group Apt 4B; prints its id, a Claim link f
 npm run seed:demo             # delete and rebuild Apt 4B
 npm run dev                   # dashboard at localhost:3000 (scheduler runs here too; DISABLE_SCHEDULER=1 to skip)
 npm run dev-chat              # terminal group chat through the real pipeline (docs/dev-chat.md)
+npm run telegram              # Roomie on Telegram, long polling (TELEGRAM_BOT_TOKEN/_USERNAME; docs/telegram.md)
+npm run telegram:webhook -- --set|--delete|--info   # webhook at <APP_URL>/api/telegram (public https only)
 npm run mastra:dev            # Mastra Studio at localhost:4111, with request-context presets for Apt 4B's Members
 npm run db:generate           # after a schema change: write the next migration
 npm run typecheck && npm test # tsc + unit tests (no .env); CI runs both

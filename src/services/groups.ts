@@ -120,7 +120,23 @@ export async function groupsForAccount(accountId: string): Promise<{ id: string;
     .orderBy(asc(groups.createdAt));
 }
 
+/** The Chats on a Channel where this person is a Member (not removed): where a 1:1 message from them belongs. */
+export async function chatsOfChannelUser(channel: ChannelName, channelUserId: string): Promise<Chat[]> {
+  return db
+    .select({ chat: chats })
+    .from(members)
+    .innerJoin(chats, eq(chats.groupId, members.groupId))
+    .where(and(eq(chats.channel, channel), eq(members.channelUserId, channelUserId), ne(members.status, "removed")))
+    .orderBy(asc(chats.createdAt))
+    .then((rows) => rows.map((r) => r.chat));
+}
+
 /* ---------- writes ---------- */
+
+/** The Chat got a new id on its Channel (a Telegram group upgraded to a supergroup). */
+export async function moveChat(channel: ChannelName, fromExternalId: string, toExternalId: string): Promise<void> {
+  await db.update(chats).set({ externalId: toExternalId }).where(and(eq(chats.channel, channel), eq(chats.externalId, fromExternalId)));
+}
 
 async function writeToolkits(groupId: string, on: readonly ToolkitId[]) {
   await db

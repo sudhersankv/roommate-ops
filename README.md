@@ -2,7 +2,7 @@
 
 Roomie is an AI groupmate. You add it to a group chat and it becomes part of the conversation: it splits costs, keeps the group's grocery cart, tracks chores and upkeep, and sets reminders. Each Group also gets a dashboard that everyone signs in to with Google.
 
-**Status: rebuild in progress.** See [docs/plan.md](docs/plan.md) for the plan, [GLOSSARY.md](GLOSSARY.md) for the vocabulary and [docs/adr/](docs/adr) for the decisions. There is no live WhatsApp channel yet (step 2); `npm run dev-chat` simulates a group chat in the terminal, and the dashboard's "Ask Roomie" panel works locally.
+**Status: rebuild in progress.** See [docs/plan.md](docs/plan.md) for the plan, [GLOSSARY.md](GLOSSARY.md) for the vocabulary and [docs/adr/](docs/adr) for the decisions. Telegram is the first live Channel (`npm run telegram`, [docs/telegram.md](docs/telegram.md)); WhatsApp comes later behind the same adapter. `npm run dev-chat` simulates a group chat in the terminal, and the dashboard's "Ask Roomie" panel works locally.
 
 Architecture and conventions: [CLAUDE.md](CLAUDE.md).
 
@@ -27,6 +27,13 @@ Then open the Claim link the seed printed (it's single use and lasts 24 hours), 
 
 In dev, Google sign-in uses Neon's shared OAuth credentials (the consent screen shows Neon's name). Localhost is a trusted origin by default.
 
+### Telegram
+
+1. Create the bot with [@BotFather](https://t.me/BotFather): `/newbot`, then `/setprivacy` → **Disable** and `/setjoingroups` → **Enable** (full checklist in [docs/telegram.md](docs/telegram.md)).
+2. Put `TELEGRAM_BOT_TOKEN` and `TELEGRAM_BOT_USERNAME` (no @) in `.env`.
+3. `npm run telegram` (long polling; no public URL needed), and `npm run dev` for the dashboard.
+4. Add the bot to a test group. After a minute (`JOIN_DELAY_MS`) it introduces itself; whoever added it is the Admin. Try `roomie who's here`, `I paid 20 for pizza`, and `send me the dashboard` (press **Start** in a DM with the bot first, so it can send you the link).
+
 ### Splitwise (optional)
 
 Splitwise goes through [Composio](https://composio.dev) with Composio-managed OAuth, so there's no Splitwise app to register.
@@ -41,7 +48,9 @@ The same works in the chat: "roomie connect splitwise", "import our Apt 4B group
 Other tools:
 
 ```sh
-npm run dev-chat         # a pretend WhatsApp group: join, add, say, photo, approve, link, ledger, cart (docs/dev-chat.md)
+npm run telegram         # Roomie on Telegram by long polling (docs/telegram.md)
+npm run telegram:webhook -- --set|--delete|--info   # the webhook, once APP_URL is a public https URL
+npm run dev-chat         # a pretend group chat: join, add, say, photo, approve, link, ledger, cart (docs/dev-chat.md)
 npm run mastra:dev       # Mastra Studio at http://localhost:4111: chat with Roomie, see traces and scores
 npm run db:generate      # after changing src/db/schema.ts: write the next migration into drizzle/
 ```

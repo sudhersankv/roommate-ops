@@ -9,6 +9,7 @@ Our `accounts` table mirrors Neon Auth users by their id (stored as text) instea
 - A stranger who is already in the WhatsApp group when Roomie arrives can log Expenses straight away. Admins can still decline or remove people later.
 - The pipeline treats an unknown sender in a known Chat as a later joiner, so a missed join event fails safe (Pending), not open.
 - `neon_auth` can change shape between Neon Auth versions without a migration on our side; the cost is one upsert per sign-in.
+- Telegram bots can't see who is already in a group, so there a first-time sender within 24 hours of Roomie joining counts as already there ([ADR 0010](./0010-telegram-cant-list-group-members.md)).
 
 ## Considered options
 
