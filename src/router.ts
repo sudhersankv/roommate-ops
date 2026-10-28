@@ -1,42 +1,42 @@
-// P0 · Sudhersan. Plain code decides whether Kevin speaks; every message is logged either way.
+// P0 · Sudhersan. Plain code decides whether Roomie speaks; every message is logged either way.
 //
-// How Kevin decides to talk (policy in router-policy.ts, facts from chat_log):
-//   1. Hard triggers always get a reply: voice note, reply to one of his messages, @mention, or the word "kevin".
-//   2. Attention window: for 3 minutes after Kevin last replied in a chat, up to 3 follow-up messages are shown to
-//      him with permission to answer "[silent]". He answers if it continues the conversation or is something he can
-//      act on ("and 2 bags of chips too"), and stays quiet for roommate chatter. A "[silent]" reply is not logged.
-//   3. Otherwise the message is logged as context and Kevin says nothing.
-// Scheduled posts (reminders, report, mail) go straight to telegram.send and are not logged, so they never open a
-// window. The dashboard's /api/chat calls askKevin directly and is never silent.
+// How Roomie decides to talk (policy in router-policy.ts, facts from chat_log):
+//   1. Hard triggers always get a reply: voice note, reply to one of its messages, @mention, or the word "roomie".
+//   2. Attention window: for 3 minutes after Roomie last replied in a chat, up to 3 follow-up messages are shown to
+//      it with permission to answer "[silent]". It answers if the message continues the conversation or is something
+//      it can act on ("and 2 bags of chips too"), and stays quiet for group chatter. A "[silent]" reply is not logged.
+//   3. Otherwise the message is logged as context and Roomie says nothing.
+// Scheduled posts (reminders, report) go straight to channels.deliver and are not logged, so they never open a
+// window. The dashboard's /api/chat calls askRoomie directly and is never silent.
 import type { IncomingMessage, Outgoing } from "@/channels/types";
-import { householdForTelegramChat, linkTelegram } from "@/services/members";
-import { humanMessagesSince, lastKevinReplyAt, logMessage, recentChatter } from "@/services/chatlog";
-import { askKevin } from "@/agent/kevin";
-import { decideReply, parseSilent, type Decision } from "./router-policy";
+import { householdForChat, linkChannelUser } from "@/services/members";
+import { humanMessagesSince, lastRoomieReplyAt, logMessage, recentChatter } from "@/services/chatlog";
+import { askRoomie } from "@/agent/roomie";
+import { decideReply, parseSilent, saysRoomie, type Decision } from "./router-policy";
 
 export { decideReply, parseSilent } from "./router-policy";
 
 /** Hard-trigger check (kept for callers that only need the old yes/no). */
 export function shouldReply(msg: IncomingMessage): boolean {
-  return !!(msg.isVoice || msg.isReplyToKevin || msg.mentionsKevin || /\bkevin\b/i.test(msg.text));
+  return !!(msg.isVoice || msg.isReplyToRoomie || msg.mentionsRoomie || saysRoomie(msg.text));
 }
 
 export async function handleIncoming(msg: IncomingMessage): Promise<Outgoing | null> {
-  const house = await householdForTelegramChat(msg.chatId, msg.chatTitle);
-  const member = await linkTelegram(house.id, msg.userId, msg.userName);
+  const house = await householdForChat(msg.chatId, msg.chatTitle);
+  const member = await linkChannelUser(house.id, msg.userId, msg.userName);
   await logMessage(house.id, member.id, msg.isVoice ? `(voice) ${msg.text}` : msg.text);
 
   let decision: Decision = "reply";
   if (!shouldReply(msg)) {
-    const lastKevinAt = await lastKevinReplyAt(house.id);
+    const lastRoomieAt = await lastRoomieReplyAt(house.id);
     // Counted after the log above, so this includes the current message (see router-policy.ts).
-    const humanSinceKevin = lastKevinAt ? await humanMessagesSince(house.id, lastKevinAt) : 0;
-    decision = decideReply({ hardTrigger: false, lastKevinAt, humanSinceKevin });
+    const humanSinceRoomie = lastRoomieAt ? await humanMessagesSince(house.id, lastRoomieAt) : 0;
+    decision = decideReply({ hardTrigger: false, lastRoomieAt, humanSinceRoomie });
   }
   if (decision === "ignore") return null;
 
   const chatter = await recentChatter(house.id);
-  const raw = await askKevin(
+  const raw = await askRoomie(
     { householdId: house.id, actorId: member.id, source: "chat" },
     `${msg.isVoice ? `[voice note from ${member.name}]` : `[${member.name}]`} ${msg.text}`,
     chatter.slice(0, -1), // everything before this message
@@ -46,7 +46,7 @@ export async function handleIncoming(msg: IncomingMessage): Promise<Outgoing | n
   let out = raw;
   const text = parseSilent(raw.text);
   if (text === null) {
-    if (decision === "maybe") return null; // Kevin chose silence: nothing sent, nothing logged, window not refreshed
+    if (decision === "maybe") return null; // Roomie chose silence: nothing sent, nothing logged, window not refreshed
     out = { ...raw, text: "👍" }; // by-name call: never post the literal token; acknowledge instead
   } else {
     out = { ...raw, text };

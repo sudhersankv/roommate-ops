@@ -49,12 +49,12 @@ test("rankShame: fewest this week first, then longest since (never = worst), the
     { memberId: "1", name: "Alex", daysSinceLastChore: 2, choresThisWeek: 3 },
     { memberId: "2", name: "Ryan", daysSinceLastChore: null, choresThisWeek: 0 },
     { memberId: "3", name: "Sudhersan", daysSinceLastChore: 10, choresThisWeek: 0 },
-    { memberId: "4", name: "Buzz", daysSinceLastChore: 10, choresThisWeek: 0 },
+    { memberId: "4", name: "Dev", daysSinceLastChore: 10, choresThisWeek: 0 },
     { memberId: "5", name: "Kate", daysSinceLastChore: 1, choresThisWeek: 1 },
   ];
   assert.deepEqual(
     rankShame(rows).map((r) => r.name),
-    ["Ryan", "Buzz", "Sudhersan", "Kate", "Alex"],
+    ["Ryan", "Dev", "Sudhersan", "Kate", "Alex"],
   );
 });
 

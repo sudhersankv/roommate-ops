@@ -1,6 +1,5 @@
-// P2 · Shared grocery cart: items grouped by who added them, price estimates from the catalog, checkout at our
-// simulated store (/cart/checkout) or "Mark purchased" right here. Reads services, writes via server actions.
-import Link from "next/link";
+// P2 · Shared grocery cart: items grouped by who added them, price estimates from the catalog, and "Mark purchased"
+// right here (Instacart checkout comes later). Reads services, writes via server actions.
 import { revalidatePath } from "next/cache";
 import { dashboardCtx } from "@/lib/dashboard";
 import { cart, members } from "@/services";
@@ -54,21 +53,17 @@ export default async function CartPage() {
 
   return (
     <main data-accent="gold">
-      <PageHead title="Grocery cart" quip="I'm eating junk and watching rubbish." emoji="🍕">
-        {all.length > 0 && (
-          <Link href="/cart/checkout" className="btn">Checkout at Kevin&apos;s Market</Link>
-        )}
-      </PageHead>
+      <PageHead title="Grocery cart" quip="Everything the group needs." emoji="🛒" />
       <div className="grid">
         {all.length === 0 ? (
           <section className="card">
-            <Empty title="The cart is empty. Not even a cheese pizza.">Say &apos;Kevin, add milk&apos; or add something here.</Empty>
+            <Empty title="The cart is empty.">Say &apos;roomie, add milk&apos; or add something here.</Empty>
           </section>
         ) : (
           groupNames.map((group) => (
             <section className="card" key={group}>
               <h2>
-                {group === "Shared" ? "🍕 Shared junk (whole house)" : `🛒 ${group}'s junk`}
+                {group === "Shared" ? "🏠 Shared (whole group)" : `🛒 ${group}'s items`}
                 <span className="pill">{groups[group].length}</span>
               </h2>
               <ul className="list">
@@ -94,12 +89,12 @@ export default async function CartPage() {
         )}
 
         <section className="card">
-          <h2>🛒 Add to cart · fill &apos;er up</h2>
+          <h2>➕ Add to cart</h2>
           <form action={addItem} className="stack">
             <div className="form-grid">
               <div className="field">
                 <label htmlFor="name">Item</label>
-                <input id="name" name="name" placeholder="cheese pizza, just for me 🍕" required />
+                <input id="name" name="name" placeholder="oat milk, paper towels" required />
               </div>
               <div className="field">
                 <label htmlFor="qty">Qty</label>
@@ -109,17 +104,17 @@ export default async function CartPage() {
             <div className="row">
               <label className="row" style={{ gap: 6, fontWeight: 500, color: "inherit" }}>
                 <input type="checkbox" name="shared" />
-                Shared (whole house splits it)
+                Shared (whole group splits it)
               </label>
               <span className="spacer" />
               <button>Add</button>
             </div>
-            <small className="muted">Prices are estimates from Kevin&apos;s catalog (he asked the guy at Little Nero&apos;s). Items are added as the person you&apos;re acting as.</small>
+            <small className="muted">Prices are estimates from a built-in catalog. Items are added as the person you&apos;re acting as.</small>
           </form>
         </section>
 
         <section className="card">
-          <h2>✨ Summary · the damage</h2>
+          <h2>✨ Summary</h2>
           <ul className="list">
             <li>
               <span>Items</span>
@@ -134,11 +129,8 @@ export default async function CartPage() {
           </ul>
           {all.length > 0 ? (
             <div className="stack" style={{ marginTop: 16 }}>
-              <div>
-                <Link href="/cart/checkout" className="btn">Checkout at Kevin&apos;s Market</Link>
-              </div>
               <form action={markPurchased} className="stack">
-                <label>Somebody actually went to the store? Legend. Mark it purchased:</label>
+                <label>Somebody went to the store? Mark it purchased:</label>
                 <div className="form-grid">
                   <div className="field">
                     <label htmlFor="total">Receipt total ($)</label>
@@ -155,12 +147,12 @@ export default async function CartPage() {
                 </div>
                 <div className="row">
                   <button className="btn-ghost">Mark purchased</button>
-                  <small className="muted">Logs one expense: everyone pays for their own junk, shared items split evenly. Nobody cheats Kevin.</small>
+                  <small className="muted">Logs one expense: everyone pays for their own items, shared items split evenly.</small>
                 </div>
               </form>
             </div>
           ) : (
-            <p className="muted" style={{ marginTop: 12 }}>Checkout and Mark purchased appear once something is in the cart. Even one cheese pizza counts.</p>
+            <p className="muted" style={{ marginTop: 12 }}>Mark purchased appears once something is in the cart. Instacart checkout is coming soon.</p>
           )}
         </section>
       </div>

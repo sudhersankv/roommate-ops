@@ -4,29 +4,20 @@ import { z } from "zod";
 import { cart } from "@/services";
 import type { Ctx } from "@/services/types";
 import { dollars } from "@/services/types";
-import { isAbsoluteUrl } from "@/lib/instacart";
 import type { ToolOutbox } from "./index";
-import { memberIdByName, toCents } from "./util";
+import { dashboardUrl, memberIdByName, toCents } from "./util";
 
-/** Dashboard base URL; empty when APP_URL is unset (then no buttons: Telegram needs absolute links). */
-const appUrl = () => (process.env.APP_URL ?? "").trim().replace(/\/+$/, "");
-
-function pushButtons(outbox: ToolOutbox, which: Array<"view" | "checkout">) {
-  const base = appUrl();
-  if (!base) return;
-  const have = new Set(outbox.buttons.map((b) => b.url));
-  const add = (text: string, url: string) => {
-    if (!have.has(url)) outbox.buttons.push({ text, url });
-  };
-  if (which.includes("view")) add("🛒 View cart", `${base}/cart`);
-  if (which.includes("checkout")) add("Checkout", `${base}/cart/checkout`);
+/** The View-cart button, once per reply; skipped when APP_URL is not an absolute URL. */
+function pushViewCart(outbox: ToolOutbox) {
+  const url = dashboardUrl("/cart");
+  if (url && !outbox.buttons.some((b) => b.url === url)) outbox.buttons.push({ text: "🛒 View cart", url });
 }
 
 export const cartTools = (ctx: Ctx, outbox: ToolOutbox) => ({
   cart_add: createTool({
     id: "cart_add",
     description:
-      "Add grocery items to the shared cart, attributed to the sender ('add 3 bags of chips for me' -> one item, name 'chips', qty '3 bags'). shared=true for household items (toilet paper, dish soap). Returns addedTotal (just these items) and cartTotal (the whole open cart). View-cart and Checkout buttons are attached automatically; don't paste URLs.",
+      "Add grocery items to the shared cart, attributed to the sender ('add 3 bags of chips for me' -> one item, name 'chips', qty '3 bags'). shared=true for household items (toilet paper, dish soap). Returns addedTotal (just these items) and cartTotal (the whole open cart). A View-cart button is attached automatically; don't paste URLs.",
     inputSchema: z.object({
       items: z
         .array(
@@ -40,7 +31,7 @@ export const cartTools = (ctx: Ctx, outbox: ToolOutbox) => ({
     }),
     execute: async (input) => {
       const items = await cart.addItems(ctx, input);
-      pushButtons(outbox, ["view", "checkout"]);
+      pushViewCart(outbox);
       const open = await cart.listOpenItems(ctx);
       const addedTotalCents = cart.cartTotal(items);
       const cartTotalCents = cart.cartTotal(open);
@@ -67,7 +58,7 @@ export const cartTools = (ctx: Ctx, outbox: ToolOutbox) => ({
     execute: async () => {
       const groups = await cart.viewCart(ctx);
       const all = Object.values(groups).flat();
-      if (all.length) pushButtons(outbox, ["view"]);
+      if (all.length) pushViewCart(outbox);
       const estTotalCents = cart.cartTotal(all);
       return { groups, itemCount: all.length, estTotalCents, estTotal: dollars(estTotalCents) };
     },
@@ -75,16 +66,18 @@ export const cartTools = (ctx: Ctx, outbox: ToolOutbox) => ({
   cart_checkout: createTool({
     id: "cart_checkout",
     description:
-      "Open the store checkout (Kevin's Market, a simulated Instacart) for the open cart. A Checkout button with the link is attached automatically; don't paste the URL.",
+      "Someone wants to check out / order the cart. Instacart checkout isn't available yet: tell them it's coming soon (use `message`) and mention the item count and estimated total.",
     inputSchema: z.object({}),
     execute: async () => {
-      const res = await cart.checkout(ctx);
-      // Telegram needs an absolute link; res.url is relative when APP_URL is unset. Same dedupe as the other tools.
-      const linkAttached = isAbsoluteUrl(res.url);
-      if (linkAttached) pushButtons(outbox, ["checkout"]);
-      const estTotalCents = cart.cartTotal(res.items);
-      // No url in the result on purpose: the model must not paste it; the button carries the link.
-      return { items: res.items, itemCount: res.items.length, estTotalCents, estTotal: dollars(estTotalCents), linkAttached };
+      const items = await cart.listOpenItems(ctx);
+      const estTotalCents = cart.cartTotal(items);
+      return {
+        available: false,
+        message: "Instacart checkout is coming soon. For now, buy it yourselves and tell me the total.",
+        itemCount: items.length,
+        estTotalCents,
+        estTotal: dollars(estTotalCents),
+      };
     },
   }),
   cart_purchased: createTool({

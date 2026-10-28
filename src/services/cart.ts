@@ -1,11 +1,10 @@
 // P2 · Shared grocery cart. Items are attributed to whoever added them; purchase logs ONE expense split by who
-// added what (weighted by estCents, shared items split evenly across active roommates).
+// added what (weighted by estCents, shared items split evenly across active members).
 // computeCartSplits and cartTotal are pure and unit-tested in cart.test.ts without a DB.
 import { and, asc, desc, eq } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { estimate } from "@/lib/prices";
-import { createShoppingList } from "@/lib/instacart";
-import { getHousehold, listMembers } from "./members";
+import { listMembers } from "./members";
 import { logExpense, type Expense, type SplitRow } from "./money";
 import type { Ctx } from "./types";
 
@@ -175,18 +174,6 @@ export async function viewCart(ctx: Pick<Ctx, "householdId">): Promise<Record<st
   return groups;
 }
 
-/** Link to the simulated store (/cart/checkout) for all open items; null when the cart is empty. */
-export async function checkout(ctx: Pick<Ctx, "householdId">): Promise<{ url: string | null; items: CartItem[] }> {
-  const items = await listOpenItems(ctx);
-  if (items.length === 0) return { url: null, items };
-  const house = await getHousehold(ctx.householdId);
-  const url = createShoppingList(
-    items.map((i) => ({ name: i.name, qty: i.qty })),
-    `${house?.name ?? "Kevin's"} cart`,
-  );
-  return { url, items };
-}
-
 /**
  * Payer bought the cart: one expense, split by who added what (weighted by estCents), shared split evenly.
  *
@@ -214,7 +201,7 @@ export async function markPurchased(ctx: Ctx, input: { totalCents: number; payer
       .where(and(eq(cartItems.householdId, ctx.householdId), eq(cartItems.status, "open")))
       .returning();
     if (items.length === 0) {
-      throw new Error("The cart is empty, so there's nothing to mark purchased. Add items first ('Kevin, add milk').");
+      throw new Error("The cart is empty, so there's nothing to mark purchased. Add items first ('roomie, add milk').");
     }
     const people = await listMembers(ctx);
     const splits = computeCartSplits(

@@ -9,11 +9,11 @@ export const reminderTools = (ctx: Ctx) => ({
   set_reminder: createTool({
     id: "set_reminder",
     description:
-      "Set a reminder for the whole group (omit who) or one roommate ('remind everyone trash goes out Tuesday 8pm'). Resolve relative times yourself from the 'Now:' in your instructions; dueAt is ISO 8601 with timezone.",
+      "Set a reminder for the whole group (omit who) or one member ('remind everyone trash goes out Tuesday 8pm'). Resolve relative times yourself from the 'Now:' in your instructions; dueAt is ISO 8601 with timezone.",
     inputSchema: z.object({
       text: z.string().min(1).describe("What to say when it fires, e.g. 'Trash goes out'"),
       dueAt: z.string().describe("ISO 8601 with timezone, e.g. 2026-10-07T20:00:00-04:00"),
-      who: z.string().optional().describe("Roommate name; omit for everyone"),
+      who: z.string().optional().describe("Member name; omit for everyone"),
       monthly: z.boolean().optional().describe("true to repeat every month"),
     }),
     execute: async ({ text, dueAt, who, monthly }) =>

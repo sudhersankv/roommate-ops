@@ -4,7 +4,6 @@ export * as money from "./money";
 export * as cart from "./cart";
 export * as chores from "./chores";
 export * as reminders from "./reminders";
-export * as leasing from "./leasing";
 export * as upkeep from "./upkeep";
 export * as report from "./report";
 export * as chatlog from "./chatlog";

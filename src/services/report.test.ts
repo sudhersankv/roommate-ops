@@ -2,17 +2,17 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  formatKevinReport,
+  formatGroupReport,
   shouldPostWeeklyReport,
   shouldPostUpkeepNudge,
   localParts,
   shortDate,
-  type KevinReport,
+  type GroupReport,
 } from "./report";
 
-const empty: KevinReport = { balances: [], settlePlan: [], chores: [], shame: [], upcoming: [], upkeep: [] };
+const empty: GroupReport = { balances: [], settlePlan: [], chores: [], shame: [], upcoming: [], upkeep: [] };
 
-const full: KevinReport = {
+const full: GroupReport = {
   balances: [
     { memberId: "a", name: "Sudhersan", cents: 1250 },
     { memberId: "b", name: "Ryan", cents: -1250 },
@@ -29,7 +29,7 @@ const full: KevinReport = {
     { memberId: "a", name: "Sudhersan", daysSinceLastChore: 0, choresThisWeek: 3 },
   ],
   upcoming: [
-    { id: "r1", householdId: "h", text: "Rent due", dueAt: new Date("2026-10-10T14:00:00Z"), memberId: null, memberName: null, recurring: "monthly" },
+    { id: "r1", householdId: "h", text: "Pay internet", dueAt: new Date("2026-10-10T14:00:00Z"), memberId: null, memberName: null, recurring: "monthly" },
     { id: "r2", householdId: "h", text: "Buy filters", dueAt: new Date("2026-10-12T20:00:00Z"), memberId: "b", memberName: "Ryan", recurring: null },
     { id: "r3", householdId: "h", text: "Call landlord", dueAt: new Date("2026-10-14T20:00:00Z"), memberId: null, memberName: null, recurring: null },
     { id: "r4", householdId: "h", text: "Fourth thing", dueAt: new Date("2026-10-20T20:00:00Z"), memberId: null, memberName: null, recurring: null },
@@ -41,54 +41,54 @@ const full: KevinReport = {
   ],
 };
 
-test("formatKevinReport: empty house -> All square, quiet lines, no watchlist/upkeep", () => {
-  const out = formatKevinReport(empty);
+test("formatGroupReport: empty house -> All square, quiet lines, no watchlist/upkeep", () => {
+  const out = formatGroupReport(empty);
   assert.equal(
     out,
     [
-      "📣 The Kevin Report",
-      "💸 All square. Keep it that way, ya filthy animals.",
-      "🧹 No chores on the chart. Suspicious. It's giving Wet Bandits.",
-      "⏰ Nothing scheduled. Enjoy the quiet. Order a Little Nero's 🍕",
+      "📣 Group report",
+      "💸 All square. Love that for us.",
+      "🧹 No chores on the chart yet.",
+      "⏰ Nothing scheduled. Enjoy the quiet.",
     ].join("\n"),
   );
-  assert.ok(!out.includes("Wet Bandits watchlist"));
+  assert.ok(!out.includes("Behind on chores"));
   assert.ok(!out.includes("🔧"));
   assert.ok(!out.includes("🏠"));
 });
 
-test("formatKevinReport: full house renders every section, deterministically, within 12 lines", () => {
-  const out = formatKevinReport(full, { houseName: "Apt 4B", tz: "America/Chicago" });
+test("formatGroupReport: full house renders every section, deterministically, within 12 lines", () => {
+  const out = formatGroupReport(full, { houseName: "Apt 4B", tz: "America/Chicago" });
   const lines = out.split("\n");
-  assert.equal(lines[0], "📣 The Kevin Report — Apt 4B");
+  assert.equal(lines[0], "📣 Group report — Apt 4B");
   assert.ok(lines.includes("💸 Ryan pays Sudhersan $12.50"));
   assert.ok(lines.includes("🧹 Overdue: Dishes (Ryan's turn), Take out trash"));
-  assert.ok(lines.includes("🚨 Wet Bandits watchlist: Ryan has never logged a chore. Bold strategy, Wet Bandit 😤"));
-  assert.ok(lines.includes("⏰ Sat Oct 10: Rent due"));
+  assert.ok(lines.includes("🚨 Behind on chores: Ryan hasn't logged a chore yet. Bold strategy 😅"));
+  assert.ok(lines.includes("⏰ Sat Oct 10: Pay internet"));
   assert.ok(lines.includes("⏰ Mon Oct 12: Buy filters (Ryan)"));
   assert.ok(lines.includes("⏰ Wed Oct 14: Call landlord"));
   assert.ok(!out.includes("Fourth thing"), "only the next 3 reminders");
-  assert.ok(lines.includes("🔧 Overdue upkeep: Replace HVAC filter, Test smoke alarms. Somebody adult today, bestie 🧦"));
+  assert.ok(lines.includes("🔧 Overdue upkeep: Replace HVAC filter, Test smoke alarms"));
   assert.ok(!out.includes("dryer vent"), "due-soon upkeep is not nagged about");
   assert.ok(lines.length <= 12, `too long: ${lines.length} lines`);
   assert.ok(!out.includes("🏠"), "no house emoji");
-  assert.equal(out, formatKevinReport(full, { houseName: "Apt 4B", tz: "America/Chicago" }), "deterministic");
+  assert.equal(out, formatGroupReport(full, { houseName: "Apt 4B", tz: "America/Chicago" }), "deterministic");
 });
 
-test("formatKevinReport: chores on track and everyone pulling weight -> no Hall of Shame", () => {
-  const r: KevinReport = {
+test("formatGroupReport: chores on track and everyone pulling weight -> no Hall of Shame", () => {
+  const r: GroupReport = {
     ...empty,
     chores: [{ ...full.chores[2] }],
     shame: [{ memberId: "a", name: "Sudhersan", daysSinceLastChore: 2, choresThisWeek: 2 }],
   };
-  const out = formatKevinReport(r);
+  const out = formatGroupReport(r);
   assert.ok(out.includes("🧹 Chores on track."));
-  assert.ok(!out.includes("Wet Bandits watchlist"));
+  assert.ok(!out.includes("Behind on chores"));
 });
 
-test("formatKevinReport: settle plan is capped at 3 lines with a count", () => {
+test("formatGroupReport: settle plan is capped at 3 lines with a count", () => {
   const t = (i: number) => ({ fromId: `f${i}`, fromName: `P${i}`, toId: "a", toName: "Sudhersan", cents: 100 * i });
-  const out = formatKevinReport({ ...empty, settlePlan: [t(1), t(2), t(3), t(4), t(5)] });
+  const out = formatGroupReport({ ...empty, settlePlan: [t(1), t(2), t(3), t(4), t(5)] });
   assert.equal(out.split("\n").filter((l) => l.startsWith("💸")).length, 4);
   assert.ok(out.includes("…and 2 more"));
 });
@@ -139,8 +139,8 @@ test("shouldPostUpkeepNudge: 09:xx local, once per local day", () => {
   assert.equal(shouldPostUpkeepNudge(new Date("2026-07-12T15:15:00Z"), null), false); // 10:15
 });
 
-test("formatKevinReport: two slackers are both named on the watchlist, jab aimed at the worst", () => {
-  const r: KevinReport = {
+test("formatGroupReport: two slackers are both named on the watchlist, jab aimed at the worst", () => {
+  const r: GroupReport = {
     ...empty,
     chores: [full.chores[0]],
     shame: [
@@ -149,5 +149,5 @@ test("formatKevinReport: two slackers are both named on the watchlist, jab aimed
       { memberId: "a", name: "Sudhersan", daysSinceLastChore: 0, choresThisWeek: 3 },
     ],
   };
-  assert.ok(formatKevinReport(r).includes("🚨 Wet Bandits watchlist: Ryan and Alex. Ryan 9 days since a chore. Nobody cheats Kevin 👀"));
+  assert.ok(formatGroupReport(r).includes("🚨 Behind on chores: Ryan and Alex. Ryan 9 days since a chore 👀"));
 });

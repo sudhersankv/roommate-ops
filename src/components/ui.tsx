@@ -1,8 +1,8 @@
-// Shared dashboard pieces. Styles live in app/globals.css; every page uses these so the house looks like one house.
+// Shared dashboard pieces. Styles live in app/globals.css; every page uses these so the dashboard looks consistent.
 import type { ReactNode } from "react";
 
 /**
- * Page header. `title` + `quip` (rendered like a movie subtitle) are what every page passes today;
+ * Page header. `title` + `quip` (a one-line subtitle) are what every page passes today;
  * `badge` adds a gold pill beside the title and `emoji` a big goofy face on the right. Both optional.
  */
 export function PageHead({
@@ -51,8 +51,8 @@ export function Empty({ title, className, children }: { title: string; className
 export function NoHousehold() {
   return (
     <div className="card">
-      <Empty title="Nobody's home.">
-        Add Kevin to a Telegram group and say hi, or run <code>npm run seed</code>.
+      <Empty title="No group yet.">
+        Roomie isn&apos;t in a group chat yet. Run <code>npm run seed</code> for a demo group.
       </Empty>
     </div>
   );

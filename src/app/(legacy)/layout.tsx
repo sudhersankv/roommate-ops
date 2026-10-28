@@ -4,13 +4,13 @@ import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { Fraunces, Inter } from "next/font/google";
 import { dashboardCtx } from "@/lib/dashboard";
-import { leasing, members } from "@/services";
+import { members } from "@/services";
 import { NavLinks } from "@/components/nav-links";
-import { AskKevin } from "@/components/ask-kevin";
+import { AskRoomie } from "@/components/ask-roomie";
 import "./globals.css";
 
-export const metadata = { title: "Kevin", description: "Nobody cheats Kevin." };
-// The layout reads the DB (roommates, unread mail), so nothing can be prerendered at build time, not even 404.
+export const metadata = { title: "Roomie", description: "Your group's groupmate." };
+// The layout reads the DB (members), so nothing can be prerendered at build time, not even 404.
 export const dynamic = "force-dynamic";
 
 const display = Fraunces({ subsets: ["latin"], variable: "--font-display" });
@@ -18,13 +18,11 @@ const body = Inter({ subsets: ["latin"], variable: "--font-body" });
 
 // One-liner under the wordmark. Picked by the current minute on the server so SSR and hydration agree.
 const TAGLINES = [
-  "Nobody cheats Kevin.",
-  "This is my house. I have to defend it.",
-  "Keep the change, ya filthy animal.",
-  "KEVIN!!!",
-  "You guys give up? Or are you thirsty for more?",
-  "I made my family disappear.",
-  "Buzz, your girlfriend… woof.",
+  "Your group's groupmate.",
+  "Splits the bill so you don't have to.",
+  "Remembers who bought the milk.",
+  "The chore chart doesn't lie.",
+  "Exact to the cent.",
 ] as const;
 const tagline = () => TAGLINES[new Date().getMinutes() % TAGLINES.length];
 
@@ -37,24 +35,18 @@ async function setActor(form: FormData) {
 
 export default async function RootLayout({ children }: { children: ReactNode }) {
   const ctx = await dashboardCtx();
-  const [people, unread] = ctx
-    ? await Promise.all([
-        members.listMembers(ctx),
-        // The badge is a nicety: never let a slow mail API hold up a page.
-        Promise.race([leasing.unreadCount(ctx), new Promise<number>((r) => setTimeout(() => r(0), 2500))]).catch(() => 0),
-      ])
-    : [[], 0];
+  const people = ctx ? await members.listMembers(ctx) : [];
   return (
     <html lang="en" className={`${display.variable} ${body.variable}`}>
       <body>
         <div className="plaid" />
         <div className="shell">
           <header className="topbar">
-            <Link href="/" className="brand" title="Kevin. Just Kevin.">
-              <b>Kevin</b>
+            <Link href="/" className="brand" title="Roomie">
+              <b>Roomie</b>
               <small className="tagline">{tagline()}</small>
             </Link>
-            <NavLinks unread={unread} />
+            <NavLinks />
             {people.length > 0 && (
               <form action={setActor} className="actor">
                 <label htmlFor="actor">Acting as</label>
@@ -67,7 +59,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
           </header>
           {children}
         </div>
-        <AskKevin actorName={people.find((m) => m.id === ctx?.actorId)?.name} />
+        <AskRoomie actorName={people.find((m) => m.id === ctx?.actorId)?.name} />
       </body>
     </html>
   );

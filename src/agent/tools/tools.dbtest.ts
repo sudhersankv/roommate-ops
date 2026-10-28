@@ -1,4 +1,4 @@
-// Integration tests for every Kevin tool against the real dev DB (no LLM involved).
+// Integration tests for every Roomie tool against the real dev DB (no LLM involved).
 // Run: npm run test:tools   (tsx --env-file=.env --test src/agent/tools/tools.dbtest.ts)
 // Not named *.test.ts on purpose: `npm test` runs without .env and must not pick this up.
 //
@@ -47,7 +47,7 @@ type HouseTable = PgTable & { householdId: PgColumn };
 const count = async (table: HouseTable) =>
   Number((await db.select({ n: sql<number>`count(*)::int` }).from(table).where(eq(table.householdId, householdId)))[0].n);
 
-describe("Kevin tools against the dev DB", () => {
+describe("Roomie tools against the dev DB", () => {
   before(async () => {
     const [house] = await db.insert(schema.households).values({ name: `Test House ${Date.now()}` }).returning();
     householdId = house.id;
@@ -73,7 +73,6 @@ describe("Kevin tools against the dev DB", () => {
       await db.delete(schema.maintenance).where(eq(schema.maintenance.householdId, householdId));
       await db.delete(schema.cartItems).where(eq(schema.cartItems.householdId, householdId));
       await db.delete(schema.chatLog).where(eq(schema.chatLog.householdId, householdId));
-      await db.delete(schema.emails).where(eq(schema.emails.householdId, householdId));
       await db.delete(schema.members).where(eq(schema.members.householdId, householdId));
       await db.delete(schema.households).where(eq(schema.households.id, householdId));
 
@@ -85,7 +84,6 @@ describe("Kevin tools against the dev DB", () => {
         ["maintenance", schema.maintenance],
         ["cart_items", schema.cartItems],
         ["chat_log", schema.chatLog],
-        ["emails", schema.emails],
         ["members", schema.members],
         ["chores", schema.chores],
       ];
@@ -105,15 +103,15 @@ describe("Kevin tools against the dev DB", () => {
 
   // ---------- members ----------
 
-  test("list_members returns the 3 test roommates", async () => {
+  test("list_members returns the 3 test members", async () => {
     const names: string[] = await run("list_members", {});
     assert.deepEqual([...names].sort(), [...NAMES].sort());
   });
 
-  test("unknown roommate name throws a helpful error listing the roommates", async () => {
-    await assert.rejects(run("log_expense", { amount: 10, description: "pizza", payer: "Buzz" }), /No roommate named "Buzz".*Sudhersan/);
-    await assert.rejects(run("log_chore", { chore: "dishes", who: "Marv" }), /No roommate named "Marv"/);
-    await assert.rejects(run("set_reminder", { text: "x", dueAt: new Date().toISOString(), who: "Harry" }), /No roommate named "Harry"/);
+  test("unknown member name throws a helpful error listing the members", async () => {
+    await assert.rejects(run("log_expense", { amount: 10, description: "pizza", payer: "Dev" }), /No member named "Dev".*Sudhersan/);
+    await assert.rejects(run("log_chore", { chore: "dishes", who: "Sam" }), /No member named "Sam"/);
+    await assert.rejects(run("set_reminder", { text: "x", dueAt: new Date().toISOString(), who: "Maya" }), /No member named "Maya"/);
   });
 
   test("schema validation: negative dollars never reach the service", async () => {
@@ -335,75 +333,26 @@ describe("Kevin tools against the dev DB", () => {
 
   // ---------- report ----------
 
-  test("kevin_report: ready-to-post text built from every card", async () => {
-    const r: { text: string } = await run("kevin_report", {});
+  test("group_report: ready-to-post text built from every card", async () => {
+    const r: { text: string } = await run("group_report", {});
     assert.equal(typeof r.text, "string");
-    assert.match(r.text, /The Kevin Report/);
+    assert.match(r.text, /Group report/);
     assert.match(r.text, /Ryan pays Sudhersan \$16\.00/, "settle plan from the ledger (1500 + the $1 Sudhersan sent Ryan)");
     assert.match(r.text, /Chores on track/);
-    assert.match(r.text, /Wet Bandits watchlist: Ryan/);
+    assert.match(r.text, /Behind on chores: Ryan/);
     assert.match(r.text, /Nothing scheduled/);
     assert.match(r.text, /Overdue upkeep: Test smoke alarms/);
     assert.doesNotMatch(r.text, /Replace HVAC filter/);
     assert.ok(r.text.split("\n").length <= 12, "stays short");
   });
 
-  // ---------- leasing (never sends real mail) ----------
-
-  test("create_work_order / email_leasing throw the configured error when AGENTMAIL_API_KEY is unset", async () => {
-    const saved = process.env.AGENTMAIL_API_KEY;
-    process.env.AGENTMAIL_API_KEY = "";
-    try {
-      await assert.rejects(run("create_work_order", { issue: "the sink is leaking", location: "kitchen", urgency: "urgent" }), /AGENTMAIL_API_KEY/);
-      await assert.rejects(run("email_leasing", { subject: "Parking", body: "Can we get a second spot?" }), /AGENTMAIL_API_KEY/);
-    } finally {
-      if (saved === undefined) delete process.env.AGENTMAIL_API_KEY;
-      else process.env.AGENTMAIL_API_KEY = saved;
-    }
-    assert.equal(await count(schema.emails), 0, "nothing logged to emails");
-  });
-
-  // Inbox buttons only exist with an absolute APP_URL (Telegram drops a reply whose button URL is relative).
-  const inboxBase = (process.env.APP_URL ?? "").trim().replace(/\/+$/, "");
-  const expectInboxButton = (threadId?: string) => {
-    if (!/^https?:\/\//i.test(inboxBase)) return assert.equal(outbox.buttons.length, 0, "no APP_URL -> no button (never a relative URL)");
-    assert.equal(outbox.buttons.length, 1);
-    assert.equal(outbox.buttons[0].url, `${inboxBase}/inbox${threadId ? `?thread=${encodeURIComponent(threadId)}` : ""}`);
-    assert.match(outbox.buttons[0].url, /^https?:\/\/[^/]+\/inbox/, "absolute, single slash before /inbox");
-  };
-
-  test("leasing_status: { threads: [] } without AGENTMAIL_API_KEY; with it, a threads array + the inbox button", async (t) => {
-    const saved = process.env.AGENTMAIL_API_KEY;
-    process.env.AGENTMAIL_API_KEY = "";
-    try {
-      outbox.buttons.length = 0;
-      assert.deepEqual(await run("leasing_status", {}), { threads: [] });
-      expectInboxButton();
-    } finally {
-      if (saved === undefined) delete process.env.AGENTMAIL_API_KEY;
-      else process.env.AGENTMAIL_API_KEY = saved;
-    }
-    if (!process.env.AGENTMAIL_API_KEY) return t.skip("AGENTMAIL_API_KEY not set; live status not checked");
-    // The throwaway house has no inboxAddress, so addresses() falls back to AGENTMAIL_INBOX (may be empty -> []).
-    outbox.buttons.length = 0;
-    const r: { threads: { threadId: string; lastFrom: "kevin" | "office"; unread: boolean; messageCount: number }[] } = await run("leasing_status", {});
-    assert.ok(Array.isArray(r.threads));
-    for (const th of r.threads) {
-      assert.ok(th.lastFrom === "kevin" || th.lastFrom === "office");
-      assert.equal(typeof th.unread, "boolean");
-      assert.ok(th.messageCount >= 1);
-    }
-    expectInboxButton(r.threads[0]?.threadId);
-    assert.equal(await count(schema.emails), 0, "status is read-only");
-  });
-
-  // ---------- cart (simulated store: estimates from lib/prices, checkout at /cart/checkout) ----------
+  // ---------- cart (estimates from lib/prices; Instacart checkout is not wired yet) ----------
 
   type CartAdd = { items: CartItem[]; addedTotalCents: number; addedTotal: string; cartItemCount: number; cartTotalCents: number; cartTotal: string };
   type CartView = { groups: Record<string, CartItem[]>; itemCount: number; estTotalCents: number; estTotal: string };
   const appUrl = (process.env.APP_URL ?? "").trim().replace(/\/+$/, "");
 
-  test("cart_add: '3 bags of chips for me' + a shared item; estimates from the catalog; buttons attached", async () => {
+  test("cart_add: '3 bags of chips for me' + a shared item; estimates from the catalog; View-cart button attached", async () => {
     outbox.buttons.length = 0;
     const added: CartAdd = await run("cart_add", { items: [{ name: "chips", qty: "3 bags" }] });
     assert.equal(added.items.length, 1);
@@ -415,14 +364,13 @@ describe("Kevin tools against the dev DB", () => {
     assert.equal(added.addedTotal, "$13.47");
     assert.equal(added.cartTotalCents, 3 * 449, "first add into an empty cart: cart total = added total");
     assert.equal(added.cartItemCount, 1);
-    if (appUrl) {
+    if (/^https?:\/\//i.test(appUrl)) {
       assert.deepEqual(
-        outbox.buttons.map((b) => b.url).sort(),
-        [`${appUrl}/cart`, `${appUrl}/cart/checkout`].sort(),
-        "View cart + Checkout buttons",
+        outbox.buttons.map((b) => b.url),
+        [`${appUrl}/cart`],
+        "only the View cart button",
       );
-      assert.ok(outbox.buttons.some((b) => /view cart/i.test(b.text)));
-      assert.ok(outbox.buttons.some((b) => /checkout/i.test(b.text)));
+      assert.ok(/view cart/i.test(outbox.buttons[0].text));
     } else {
       assert.equal(outbox.buttons.length, 0, "no APP_URL -> no buttons");
     }
@@ -465,22 +413,15 @@ describe("Kevin tools against the dev DB", () => {
     assert.deepEqual(open.filter((r) => r.status === "open").map((r) => r.name).sort(), ["chips", "dish soap"]);
   });
 
-  test("cart_checkout links to the simulated store and attaches the Checkout button via the outbox", async (t) => {
+  test("cart_checkout says Instacart checkout is coming soon, with the cart summary and no button", async () => {
     outbox.buttons.length = 0;
-    const r: { itemCount: number; linkAttached: boolean; url?: unknown } = await run("cart_checkout", {});
+    const r: { available: boolean; message: string; itemCount: number; estTotalCents: number; url?: unknown } = await run("cart_checkout", {});
+    assert.equal(r.available, false);
+    assert.match(r.message, /coming soon/i);
     assert.equal(r.itemCount, 2);
-    assert.ok(!("url" in r), "no url in the tool result: the model must not paste links, the button carries it");
-    if (r.linkAttached) {
-      assert.equal(outbox.buttons.length, 1);
-      assert.equal(outbox.buttons[0].text, "Checkout");
-      assert.equal(outbox.buttons[0].url, `${appUrl}/cart/checkout`, "our own checkout page, never a third-party store");
-      assert.match(outbox.buttons[0].url ?? "", /^https?:\/\//);
-      await run("cart_checkout", {});
-      assert.equal(outbox.buttons.length, 1, "calling it twice does not duplicate the button");
-    } else {
-      assert.equal(outbox.buttons.length, 0);
-      t.diagnostic("APP_URL not set; checkout button not attached");
-    }
+    assert.equal(r.estTotalCents, 1347 + 349);
+    assert.ok(!("url" in r), "no checkout link");
+    assert.equal(outbox.buttons.length, 0, "no checkout button");
   });
 
   test("cart_purchased: one expense split by who added what (shared split evenly), items marked purchased", async () => {
@@ -518,7 +459,7 @@ describe("Kevin tools against the dev DB", () => {
       "Sudhersan's milk, paid by Ryan: only Sudhersan owes",
     );
     await assert.rejects(run("cart_purchased", { total: 5 }), /cart is empty/i);
-    await assert.rejects(run("cart_purchased", { total: 5, payer: "Buzz" }), /No roommate named "Buzz"/);
+    await assert.rejects(run("cart_purchased", { total: 5, payer: "Dev" }), /No member named "Dev"/);
   });
 
   test("cart_purchased: a double-click charges once; a failed purchase leaves the items open", async () => {
@@ -531,7 +472,7 @@ describe("Kevin tools against the dev DB", () => {
     assert.equal(failed.length, 1);
     assert.match(String((failed[0] as PromiseRejectedResult).reason), /cart is empty/i);
     assert.equal(await count(schema.expenses), before + 1, "one expense, not two");
-    // A purchase whose expense can't be logged (payer not an active roommate) must roll the items back to open.
+    // A purchase whose expense can't be logged (payer not an active member) must roll the items back to open.
     await run("cart_add", { items: [{ name: "bagels" }] });
     const cartService = await import("@/services/cart");
     await assert.rejects(cartService.markPurchased({ ...ctx, actorId: "00000000-0000-0000-0000-000000000000" }, { totalCents: 400 }), /who paid/i);
