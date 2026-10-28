@@ -1,13 +1,13 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { members } from "@/services";
-import type { Ctx } from "@/services/types";
+import { ctxOf } from "../util";
 
-export const memberTools = (ctx: Ctx) => ({
+export const memberTools = {
   list_members: createTool({
     id: "list_members",
     description: "List the members of this group.",
     inputSchema: z.object({}),
-    execute: async () => (await members.listMembers(ctx)).map((m) => m.name),
+    execute: async (_input, context) => (await members.listMembers(ctxOf(context))).map((m) => m.name),
   }),
-});
+};

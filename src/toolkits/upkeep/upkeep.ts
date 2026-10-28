@@ -2,9 +2,9 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { upkeep } from "@/services";
-import type { Ctx } from "@/services/types";
+import { ctxOf } from "../util";
 
-export const upkeepTools = (ctx: Ctx) => ({
+export const upkeepTools = {
   add_maintenance: createTool({
     id: "add_maintenance",
     description: "Track a recurring upkeep item, e.g. 'change the AC filter every 90 days'. Same name again just updates the cadence.",
@@ -12,8 +12,8 @@ export const upkeepTools = (ctx: Ctx) => ({
       item: z.string().min(1).describe("e.g. 'Replace HVAC filter'"),
       everyDays: z.number().int().positive().describe("How often, in days"),
     }),
-    execute: async (input) => {
-      await upkeep.addMaintenance(ctx, input);
+    execute: async (input, context) => {
+      await upkeep.addMaintenance(ctxOf(context), input);
       return { ok: true };
     },
   }),
@@ -21,8 +21,8 @@ export const upkeepTools = (ctx: Ctx) => ({
     id: "maintenance_done",
     description: "Mark an upkeep item done today. Fuzzy name match ('hvac filter' finds 'Replace HVAC filter').",
     inputSchema: z.object({ item: z.string().min(1) }),
-    execute: async (input) => {
-      await upkeep.markDone(ctx, input);
+    execute: async (input, context) => {
+      await upkeep.markDone(ctxOf(context), input);
       return { ok: true };
     },
   }),
@@ -30,6 +30,9 @@ export const upkeepTools = (ctx: Ctx) => ({
     id: "maintenance_status",
     description: "Upkeep items with next-due date and status (overdue / due-soon / ok), soonest first.",
     inputSchema: z.object({ dueOnly: z.boolean().optional().describe("true = only overdue or due within 7 days") }),
-    execute: async ({ dueOnly }) => (dueOnly ? upkeep.dueMaintenance(ctx) : upkeep.listMaintenance(ctx)),
+    execute: async ({ dueOnly }, context) => {
+      const ctx = ctxOf(context);
+      return dueOnly ? upkeep.dueMaintenance(ctx) : upkeep.listMaintenance(ctx);
+    },
   }),
-});
+};

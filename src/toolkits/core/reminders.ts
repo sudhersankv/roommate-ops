@@ -2,10 +2,9 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { reminders } from "@/services";
-import type { Ctx } from "@/services/types";
-import { memberIdByName } from "./util";
+import { ctxOf, memberIdByName } from "../util";
 
-export const reminderTools = (ctx: Ctx) => ({
+export const reminderTools = {
   set_reminder: createTool({
     id: "set_reminder",
     description:
@@ -16,19 +15,21 @@ export const reminderTools = (ctx: Ctx) => ({
       who: z.string().optional().describe("Member name; omit for everyone"),
       monthly: z.boolean().optional().describe("true to repeat every month"),
     }),
-    execute: async ({ text, dueAt, who, monthly }) =>
-      reminders.setReminder(ctx, {
+    execute: async ({ text, dueAt, who, monthly }, context) => {
+      const ctx = ctxOf(context);
+      return reminders.setReminder(ctx, {
         text,
         dueAt: new Date(dueAt),
         memberId: who ? await memberIdByName(ctx, who) : undefined,
         recurring: monthly ? "monthly" : undefined,
-      }),
+      });
+    },
   }),
   list_reminders: createTool({
     id: "list_reminders",
     description: "Upcoming reminders, soonest first, with ids.",
     inputSchema: z.object({}),
-    execute: async () => reminders.listReminders(ctx),
+    execute: async (_input, context) => reminders.listReminders(ctxOf(context)),
   }),
   cancel_reminder: createTool({
     id: "cancel_reminder",
@@ -37,7 +38,8 @@ export const reminderTools = (ctx: Ctx) => ({
       reminderId: z.string().optional(),
       text: z.string().optional().describe("Words from the reminder text, case-insensitive"),
     }),
-    execute: async ({ reminderId, text }) => {
+    execute: async ({ reminderId, text }, context) => {
+      const ctx = ctxOf(context);
       const upcoming = await reminders.listReminders(ctx);
       const q = text?.trim().toLowerCase();
       const hit = upcoming.find((r) => (reminderId && r.id === reminderId) || (q && r.text.toLowerCase().includes(q)));
@@ -52,4 +54,4 @@ export const reminderTools = (ctx: Ctx) => ({
       return { cancelled: hit.text, id: hit.id };
     },
   }),
-});
+};
