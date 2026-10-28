@@ -212,12 +212,15 @@ const UPLOADS = path.join(process.cwd(), "public", "uploads");
 const MAX_BYTES = 8 * 1024 * 1024;
 const EXT: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif", "image/heic": "heic" };
 
-/** Save an uploaded photo under public/uploads/<folder>/ and return its URL (absolute when APP_URL is set). */
-export async function saveUpload(folder: string, bytes: Buffer, mime: string): Promise<{ file: string; path: string; url: string }> {
+/**
+ * Save an uploaded photo under public/uploads/<folder>/ (folder may be nested, "tg/-100123") and return its URL
+ * (absolute when APP_URL is set). `baseName` keeps a Channel's file id, so the same photo is stored once.
+ */
+export async function saveUpload(folder: string, bytes: Buffer, mime: string, baseName?: string): Promise<{ file: string; path: string; url: string }> {
   if (!EXT[mime]) throw new Error("That isn't a photo I can read (JPEG, PNG, WebP or GIF).");
   if (bytes.length > MAX_BYTES) throw new Error("That photo is over 8 MB.");
-  const safe = folder.replace(/[^a-z0-9-]/gi, "");
-  const name = `${randomUUID()}.${EXT[mime]}`;
+  const safe = folder.split("/").map((s) => s.replace(/[^a-z0-9-]/gi, "")).filter(Boolean).join("/");
+  const name = `${baseName?.replace(/[^a-z0-9_-]/gi, "") || randomUUID()}.${EXT[mime]}`;
   await mkdir(path.join(UPLOADS, safe), { recursive: true });
   const file = path.join(UPLOADS, safe, name);
   await writeFile(file, bytes);
@@ -229,7 +232,7 @@ const mimeOf = (p: string) => Object.entries(EXT).find(([, e]) => p.toLowerCase(
 
 /** Our own uploads are read from disk (the gateway can't reach localhost); anything else is fetched here. */
 export async function imageDataUrl(url: string): Promise<string> {
-  const local = /\/uploads\/([a-z0-9-]+)\/([a-z0-9-]+\.[a-z]+)$/i.exec(url);
+  const local = /\/uploads\/((?:[a-z0-9-]+\/)*[a-z0-9-]+)\/([a-z0-9_-]+\.[a-z]+)$/i.exec(url);
   const base = appUrl();
   if (local && (url.startsWith("/uploads/") || (base && url.startsWith(base)))) {
     const bytes = await readFile(path.join(UPLOADS, local[1], local[2]));

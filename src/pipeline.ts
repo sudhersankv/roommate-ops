@@ -18,7 +18,7 @@ import { mastra } from "@/mastra";
 import type { RoomieContext } from "@/mastra/context";
 import { inFollowUpWindow, parseSilent, runGate, saysRoomie, type Chattiness, type GateRun } from "@/mastra/gate";
 import { threadFor } from "@/mastra/memory";
-import { onGroupJoined, onParticipantJoined } from "@/onboarding";
+import { onGroupJoined, onUnknownSender } from "@/onboarding";
 
 /** How many earlier chat lines Jev sees; the agent sees up to 30 as context. */
 const GATE_RECENT = 6;
@@ -34,6 +34,8 @@ export type RespondInput = {
   imageUrl?: string;
   isReplyToRoomie?: boolean;
   mentionsRoomie?: boolean;
+  /** A 1:1 chat with Roomie: addressed, and kept out of the group chat log (no follow-up window). */
+  isPrivate?: boolean;
 };
 
 export type PipelineResult = {
@@ -57,6 +59,7 @@ export async function handleIncoming(msg: IncomingMessage): Promise<Outgoing | n
 export async function resolveIncoming(msg: IncomingMessage): Promise<{ groupId: string; member: Member }> {
   const sender = { userExternalId: msg.userExternalId, name: msg.userName };
   const known = await chatFor(msg.channel, msg.chatExternalId);
+  if (msg.isPrivate && !known) throw new Error("A private message needs a known Chat.");
   if (!known) {
     const joined = await onGroupJoined({ channel: msg.channel, externalId: msg.chatExternalId, title: msg.chatTitle }, [sender], sender);
     if (joined.intro) await deliver(joined.group.id, joined.intro);
@@ -65,7 +68,9 @@ export async function resolveIncoming(msg: IncomingMessage): Promise<{ groupId: 
   const groupId = known.group.id;
   const member = await memberByChannelUser(groupId, msg.userExternalId);
   if (member && member.status !== "removed") return { groupId, member };
-  const joined = await onParticipantJoined(groupId, sender);
+  if (msg.isPrivate) throw new Error("A private message needs a Member of the Group.");
+  // A missed join event fails safe (Pending), except where the Channel can't list members (ADR 0010).
+  const joined = await onUnknownSender(known.chat, sender);
   if (joined.announce) await deliver(groupId, joined.announce);
   return { groupId, member: joined.member };
 }
@@ -82,6 +87,7 @@ export async function respondToIncoming(msg: IncomingMessage): Promise<PipelineR
     imageUrl: msg.imageUrl,
     isReplyToRoomie: msg.isReplyToRoomie,
     mentionsRoomie: msg.mentionsRoomie,
+    isPrivate: msg.isPrivate,
   });
 }
 
@@ -95,7 +101,7 @@ export async function askRoomie(ctx: Ctx, text: string): Promise<Outgoing> {
 
 export async function respond(input: RespondInput): Promise<PipelineResult> {
   const { groupId, member, text, source } = input;
-  const chat = source === "chat";
+  const chat = source === "chat" && !input.isPrivate;
   const photo = input.imageUrl ? `[photo: ${input.imageUrl}] ` : "";
   const line = `${input.isVoice ? `[voice note from ${member.displayName}]` : `[${member.displayName}]`} ${photo}${text}`;
   if (chat) await logMessage(groupId, member.id, input.isVoice ? `(voice) ${text}` : input.imageUrl ? `(photo) ${text}` : text);
@@ -103,10 +109,10 @@ export async function respond(input: RespondInput): Promise<PipelineResult> {
   const [group, people, chatter, toolkits] = await Promise.all([
     getGroup(groupId),
     listGroupMembers({ groupId }),
-    chat ? recentChatter(groupId) : Promise.resolve([]),
+    source === "chat" ? recentChatter(groupId) : Promise.resolve([]),
     enabledToolkits({ groupId }),
   ]);
-  const earlier = chatter.slice(0, -1); // everything before this message
+  const earlier = chat ? chatter.slice(0, -1) : chatter; // everything before this message
   let hardTrigger = !chat || !!(input.isVoice || input.isReplyToRoomie || input.mentionsRoomie || saysRoomie(text));
   let inWindow = false;
   if (chat && !hardTrigger) {

@@ -13,11 +13,11 @@ One chat that Roomie has been added to, together with everything Roomie keeps fo
 _Avoid_: Household, house, space, workspace
 
 **Chat**:
-The conversation itself on a messaging app (today a WhatsApp group). A Group is linked to exactly one Chat.
+The conversation itself on a messaging app (a Telegram group today, WhatsApp later). A Group is linked to exactly one Chat.
 _Avoid_: Thread, channel (as a synonym for a single conversation)
 
 **Channel**:
-A messaging app Roomie can be reached on, such as WhatsApp.
+A messaging app Roomie can be reached on, such as Telegram or WhatsApp.
 _Avoid_: Platform, provider
 
 **Member**:

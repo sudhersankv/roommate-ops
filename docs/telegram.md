@@ -1,0 +1,77 @@
+# Roomie on Telegram
+
+Telegram is the first real Channel: the Bot API is official (no ban risk) and a bot can be added to a group people already have. The adapter is `src/channels/telegram.ts` (grammY); the app behind it is the same pipeline `npm run dev-chat` uses. WhatsApp comes later behind the same Channel interface ([ADR 0001](./adr/0001-baileys-for-whatsapp-groups.md)).
+
+Local dev uses **long polling** (`npm run telegram`), so no public URL is needed. The webhook (`/api/telegram`) is for when Roomie runs on a public https URL.
+
+## 1. Create the bot (BotFather, about 5 minutes)
+
+In Telegram, open [@BotFather](https://t.me/BotFather):
+
+1. `/newbot` → name: **Roomie** → username: something ending in `bot`, e.g. **`roomie_house_bot`**. BotFather replies with the token (`123456789:AA...`). Keep it secret.
+2. `/setprivacy` → pick the bot → **Disable**. Otherwise Roomie only sees messages that @-mention it, reply to it, or start with `/`, and can't follow the chat. (If the bot was already in a group when you changed this, remove it and add it again: the setting applies when it joins.)
+3. `/setjoingroups` → pick the bot → **Enable** (lets people add it to groups).
+4. `/setuserpic` → pick the bot → send `public/brand/roomie-icon.png` (512×512).
+5. `/setdescription` (shown on the empty chat before someone presses Start):
+   > I'm Roomie, an AI groupmate. Add me to your group chat and I'll split costs, keep a shared cart, track chores and remind people. Press Start so I can DM you your dashboard link.
+6. `/setabouttext` (the profile blurb):
+   > Your group chat's groupmate: splits costs, keeps the cart, tracks chores. Brief, a bit witty, exact about money.
+7. Optional: `/setcommands` → nothing. Roomie talks in plain language ("roomie ..."), not slash commands.
+
+## 2. `.env`
+
+```
+TELEGRAM_BOT_TOKEN=123456789:AA...        # from /newbot
+TELEGRAM_BOT_USERNAME=roomie_house_bot    # without the @
+TELEGRAM_WEBHOOK_SECRET=                  # only for the webhook: 1-256 chars of A-Z a-z 0-9 _ -
+JOIN_DELAY_MS=                            # pause before the intro after joining a group (default 60000)
+REPLY_DELAY_MS=                           # pause after "typing" before a reply (default 600-1800 ms random; 0 = none)
+```
+
+`APP_URL` is used for the dashboard and Claim link buttons. Telegram won't accept `localhost` buttons, so with `APP_URL=http://localhost:3000` those links go out as text instead (the log says so once). For real buttons, use a tunnel (`cloudflared tunnel --url http://localhost:3000`, ngrok) and put its https URL in `APP_URL`.
+
+## 3. Run it
+
+```sh
+npm run telegram      # long polling; prints "@roomie_house_bot is polling". Ctrl+C stops it
+npm run dev           # the dashboard (also posts reminders and the weekly report to Telegram)
+```
+
+Only one process receives updates. `npm run telegram` deletes any webhook when it starts. Without a token it exits with `TELEGRAM_BOT_TOKEN missing; see docs/telegram.md`.
+
+## 4. Try it in a test group
+
+1. Create a Telegram group with one or two friends (or a second account), then add the bot (group → Add members → `@roomie_house_bot`). Whoever adds it is Roomie's Admin.
+2. Wait `JOIN_DELAY_MS` (a minute by default): Roomie introduces itself, names the Admin, asks what the group is for, and asks everyone to tap `@roomie_house_bot` and press **Start** once. If someone talks to Roomie before then, the intro goes first.
+3. Answer the setup in one line: `roommates, USD, Chicago`.
+4. Each person who was already in the group should press **Start** in a 1:1 chat with the bot (needed for the private dashboard link; Telegram doesn't let bots message anyone first).
+5. Try:
+   - `roomie who's here` — lists Members with roles. People show up as they speak (see "Who is a Member" below).
+   - `I paid 20 for pizza` (or `roomie I paid 20 for pizza, split with Sam`) — logs an Expense; check it on the dashboard.
+   - A photo of a receipt with the caption `roomie split this receipt` — reads it and shows the breakdown.
+   - `send me the dashboard` — Roomie DMs you a single-use Claim link. If you never pressed Start, Roomie says so in the group and sends nothing there.
+   - Add a new person to the group later: Roomie welcomes them and asks the Admin to approve (`roomie approve <name>`).
+   - A voice note: transcribed when `OPENROUTER_API_KEY` is set; otherwise Roomie says once that it can't hear voice notes yet.
+
+## Who is a Member (ADR 0010)
+
+Telegram bots can't list a group's members. Roomie knows the person who added it (Admin) and the group's Telegram admins (active Members) at join time. Anyone else becomes a Member when they first speak: **active** if that's within 24 hours of Roomie joining (they were almost certainly already there), **Pending** after that. People Telegram reports as joining (`new_chat_members`) are Pending straight away, and Roomie asks the Admins to approve them.
+
+## Private messages
+
+A DM to the bot from someone who is a Member of exactly one Group is handled as that Group's conversation (Roomie answers in the DM; nothing is logged in the group chat). In no Group: "Add me to your group chat first"; in several: "ask me in the group chat you mean". `/start` just confirms that DMs work now.
+
+## Webhook (public URL later)
+
+```sh
+# APP_URL=https://<public host>, TELEGRAM_WEBHOOK_SECRET set
+npm run telegram:webhook -- --set      # points Telegram at <APP_URL>/api/telegram with the secret
+npm run telegram:webhook -- --info     # what Telegram has (url, pending updates, last error)
+npm run telegram:webhook -- --delete   # back to polling
+```
+
+The route answers 401 to anything without the right `X-Telegram-Bot-Api-Secret-Token` (and to everything while `TELEGRAM_WEBHOOK_SECRET` is unset). It answers 200 at once and replies in the background, so it needs a long-running Node server (`next start`), not a serverless function that stops after the response.
+
+## Limits Roomie keeps to (ADR 0001)
+
+Typing indicator and a short pause before each reply; at most about 1 message a second per chat, 20 a minute per group and 25 a second overall; replies over 4096 characters are split; links go as buttons with no previews, and Claim links only ever go out in a DM, on request.

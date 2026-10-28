@@ -1,7 +1,7 @@
 // Onboarding copy and defaults, no DB. Run: npx tsx --test src/onboarding.test.ts
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { approvalPrompt, introMessage } from "./onboarding";
+import { approvalPrompt, introMessage, rosterStillOpen } from "./onboarding";
 import { defaultToolkitsFor, validateSettings } from "./services/groups";
 
 test("intro: names the Admin and asks purpose, currency and time zone in one message", () => {
@@ -11,6 +11,23 @@ test("intro: names the Admin and asks purpose, currency and time zone in one mes
   assert.match(text, /USD, Chicago/, "says what the defaults are");
   assert.ok(text.split("\n").length <= 3, "one short message");
   assert.ok(!/https?:\/\//.test(text), "no links at join time (ADR 0001)");
+});
+
+test("intro on Telegram: one extra line asking people to press Start, still no URL", () => {
+  const text = introMessage("Maya", { dmHandle: "roomie_house_bot" });
+  assert.match(text, /tap @roomie_house_bot and press Start/);
+  assert.equal(text.split("\n").length, 3);
+  assert.ok(!/https?:\/\//.test(text));
+});
+
+test("roster grace (ADR 0010): Telegram first-time senders count as already there for 24 hours; other Channels never", () => {
+  const joined = new Date("2026-10-28T12:00:00Z");
+  const at = (h: number) => new Date(joined.getTime() + h * 3_600_000);
+  assert.equal(rosterStillOpen({ channel: "telegram", createdAt: joined }, at(1)), true);
+  assert.equal(rosterStillOpen({ channel: "telegram", createdAt: joined }, at(23.9)), true);
+  assert.equal(rosterStillOpen({ channel: "telegram", createdAt: joined }, at(24)), false);
+  assert.equal(rosterStillOpen({ channel: "whatsapp", createdAt: joined }, at(1)), false);
+  assert.equal(rosterStillOpen({ channel: "dev", createdAt: joined }, at(0)), false);
 });
 
 test("approval prompt: asks the Admins by name and says what Pending means", () => {
