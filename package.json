@@ -6,12 +6,14 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start -p ${PORT:-3000}",
-    "seed": "tsx --env-file=.env scripts/seed.ts",
-    "seed:demo": "tsx --env-file=.env scripts/seed.ts --reset",
+    "seed": "tsx scripts/seed.ts",
+    "seed:demo": "tsx scripts/seed.ts --reset",
     "db:push": "drizzle-kit push",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test \"src/**/*.test.ts\"",
-    "test:tools": "tsx --env-file=.env --test src/agent/tools/tools.dbtest.ts"
+    "test:tools": "tsx --test src/toolkits/tools.dbtest.ts",
+    "evals": "tsx scripts/evals.ts",
+    "mastra:dev": "tsx scripts/studio-presets.ts && mastra dev --request-context-presets .mastra-presets.json"
   },
   "dependencies": {
     "@mastra/core": "^1.79.0",
