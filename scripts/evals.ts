@@ -4,6 +4,12 @@
 // table and the pass rate; --baseline also writes docs/evals-baseline.md. Traces stay in Postgres for Studio.
 import "../src/lib/env";
 import { writeFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
+import path from "node:path";
+
+// Receipts use the sample receipt (the vision call is covered by dev-chat); Splitwise uses the in-memory fake.
+process.env.RECEIPT_FAKE = "1";
+process.env.SPLITWISE_FAKE = "1";
 
 import { db, schema } from "../src/db";
 import { respond, type PipelineResult } from "../src/pipeline";
@@ -31,7 +37,15 @@ async function createGroup(id: string): Promise<EvalEnv> {
 
 const say = (env: EvalEnv, t: Turn) => {
   const name = t.from ?? "Maya";
-  return respond({ groupId: env.ctx.groupId, member: { id: env.member[name], displayName: name, role: name === "Maya" ? "admin" : "member", status: "active" }, text: t.text, source: "chat", channel: "evals", isReplyToRoomie: t.isReplyToRoomie });
+  return respond({
+    groupId: env.ctx.groupId,
+    member: { id: env.member[name], displayName: name, role: name === "Maya" ? "admin" : "member", status: "active" },
+    text: t.text,
+    source: "chat",
+    channel: "evals",
+    isReplyToRoomie: t.isReplyToRoomie,
+    ...(t.photo && env.photo ? { imageUrl: env.photo } : {}),
+  });
 };
 async function failures(x: Expect, r: PipelineResult, env: EvalEnv): Promise<string[]> {
   const out: string[] = [];
@@ -95,6 +109,7 @@ async function runOne(s: Scenario): Promise<Row> {
         ms,
       };
     } finally {
+      if (env.photo) await rm(path.join("public", env.photo), { force: true }).catch(() => {});
       await deleteGroup(env.ctx.groupId).catch((e) => console.error(`cleanup failed for ${s.id}`, e));
     }
   }
