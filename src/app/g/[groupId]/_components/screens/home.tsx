@@ -116,7 +116,7 @@ function Today({ chores, cart, nextRecipe }: { chores: ChoreView[]; cart: CartIt
   const [pending, start] = useTransition()
   const mineToday = chores.filter((c) => c.turn === me.id && c.due <= dates.today)
   const yourCart = cart.filter((c) => c.addedBy === me.id && !c.shared).length
-  const yours = yourCart ? `${yourCart} of them ${yourCart === 1 ? "is" : "are"} just for you.` : "None of them are just for you."
+  const yours = cart.length === 0 ? "Nothing to buy right now." : yourCart ? `${yourCart} of them ${yourCart === 1 ? "is" : "are"} just for you.` : "None of them are just for you."
   const recipeHint = nextRecipe ? `${nextRecipe.title} is ${dates.dueLabel(nextRecipe.plannedFor)}.` : null
 
   const done = (c: ChoreView) =>
