@@ -11,6 +11,9 @@ const badgeVariants = cva(
         default: "bg-primary text-primary-foreground [a]:hover:bg-primary/80",
         secondary:
           "bg-secondary text-secondary-foreground [a]:hover:bg-secondary/80",
+        // Money from your point of view: owed to you (green) or owed by you (amber, not alarm red).
+        owed: "bg-owed-soft text-owed",
+        owe: "bg-owe-soft text-owe",
         destructive:
           "bg-destructive/10 text-destructive focus-visible:ring-destructive/20 dark:bg-destructive/20 dark:focus-visible:ring-destructive/40 [a]:hover:bg-destructive/20",
         outline:
