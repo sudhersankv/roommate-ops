@@ -164,9 +164,9 @@ function ExpenseForm({ expense, onDone, onSaved }: { expense?: Expense; onDone: 
 
   return (
     <>
-      <DrawerHeader className="text-left md:text-left">
+      <DrawerHeader>
         <DrawerTitle className="type-heading">{expense ? "Edit expense" : "Add expense"}</DrawerTitle>
-        <DrawerDescription className="text-left">
+        <DrawerDescription>
           Roomie posts it in the group chat so everyone sees the same numbers.
         </DrawerDescription>
       </DrawerHeader>

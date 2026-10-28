@@ -216,9 +216,9 @@ function PaidForm({ onDone }: { onDone: () => void }) {
 
   return (
     <>
-      <DrawerHeader className="text-left md:text-left">
+      <DrawerHeader>
         <DrawerTitle className="type-heading">You paid for the Cart</DrawerTitle>
-        <DrawerDescription className="text-left">
+        <DrawerDescription>
           Roomie splits the receipt by who wanted what, scaled from the estimates to what you paid.
         </DrawerDescription>
       </DrawerHeader>
@@ -233,7 +233,7 @@ function PaidForm({ onDone }: { onDone: () => void }) {
           </InputGroup>
           <FieldDescription>The estimate was {formatMoney(est)}.</FieldDescription>
         </Field>
-        <ItemGroup className="gap-0 rounded-3xl bg-card py-1">
+        <ItemGroup className="gap-0 rounded-3xl border py-1">
           {people.map((id) => {
             const mine = state.cart.filter((c) => !c.shared && c.addedBy === id).map((c) => c.name)
             return (

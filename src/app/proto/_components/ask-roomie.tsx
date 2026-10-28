@@ -27,11 +27,11 @@ export function AskRoomie() {
   return (
     <Drawer open={state.askOpen} onOpenChange={setAskOpen}>
       <DrawerContent className="mx-auto max-w-md [--drawer-height:88dvh]">
-        <DrawerHeader className="flex-row items-center gap-3 border-b pb-4 text-left md:text-left">
+        <DrawerHeader className="flex-row items-center gap-3 border-b pb-4">
           <RoomieAvatar size={44} animated />
-          <div className="flex flex-col gap-0.5 text-left">
+          <div className="flex flex-col gap-0.5">
             <DrawerTitle className="type-heading">Ask Roomie</DrawerTitle>
-            <DrawerDescription className="text-left">Same Roomie as in your WhatsApp chat.</DrawerDescription>
+            <DrawerDescription>Same Roomie as in your WhatsApp chat.</DrawerDescription>
           </div>
         </DrawerHeader>
         <Conversation />

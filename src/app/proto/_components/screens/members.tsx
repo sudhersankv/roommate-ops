@@ -97,9 +97,9 @@ export function MembersScreen() {
 
       <Drawer open={inviting} onOpenChange={setInviting}>
         <DrawerContent className="mx-auto max-w-md">
-          <DrawerHeader className="text-left md:text-left">
+          <DrawerHeader>
             <DrawerTitle className="type-heading">Invite someone</DrawerTitle>
-            <DrawerDescription className="text-left">There&apos;s no invite link to share. People join through the chat.</DrawerDescription>
+            <DrawerDescription>There&apos;s no invite link to share. People join through the chat.</DrawerDescription>
           </DrawerHeader>
           <ol className="type-body flex list-decimal flex-col gap-3 py-4 pr-4 pl-9">
             <li>Add them to the Apt 4B group on WhatsApp.</li>

@@ -108,13 +108,13 @@ function SettleOne({ transfer, onDone }: { transfer: Transfer; onDone: () => voi
 
   return (
     <>
-      <DrawerHeader className="items-center gap-2 pt-6">
+      <DrawerHeader className="items-center gap-2 pt-6 text-center">
         <MemberAvatar name={otherName} size="lg" />
         <DrawerTitle className="type-heading">
           {youAreOwed ? `${otherName} owes you` : `You owe ${otherName}`}
         </DrawerTitle>
         <p className={youAreOwed ? "type-display text-owed" : "type-display text-owe"}>{amount}</p>
-        <DrawerDescription>
+        <DrawerDescription className="text-center">
           {youAreOwed
             ? `Send ${otherName} a request with your handle, or record it once they've paid.`
             : `Pay ${otherName} with one of their apps, then record it here.`}
