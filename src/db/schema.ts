@@ -9,6 +9,10 @@ export const households = pgTable("households", {
   id: id(),
   name: text("name").notNull(),
   chatId: text("chat_id").unique(), // the linked Chat's id on its Channel
+  // How readily Roomie speaks up unaddressed; thresholds in mastra/gate/policy.ts.
+  chattiness: text("chattiness", { enum: ["quiet", "normal", "chatty"] }).notNull().default("normal"),
+  // Last Group style refresh (jobs/style-note.ts); chat_log lines after it count toward the next one.
+  styleNoteAt: timestamp("style_note_at", { withTimezone: true }),
   createdAt: createdAt(),
 });
 
