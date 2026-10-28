@@ -1,8 +1,9 @@
 // The one Roomie agent, built once (ADR 0005). Everything per-request comes from the RequestContext (context.ts):
-// instructions and tools are functions of it, and tools read householdId/actorId from it, never from closures.
+// instructions and tools are functions of it, and tools read groupId/memberId from it, never from closures.
 import { Agent } from "@mastra/core/agent";
 import { model } from "@/lib/llm";
-import { listMembers } from "@/services/members";
+import { enabledToolkits, getGroup } from "@/services/groups";
+import { listGroupMembers } from "@/services/members";
 import { toolsFor } from "@/toolkits/registry";
 import { roomieContextSchema, type RoomieContext } from "../context";
 import { memory } from "../memory";
@@ -28,6 +29,7 @@ RULES
 - If a name is ambiguous or doesn't match anyone in the group, ask instead of guessing.
 - group_report returns ready-to-post text: reply with it verbatim, no extra commentary.
 - Links and buttons are attached for you. Never paste URLs.
+- If a tool says the member is pending or not allowed, say so kindly and tell them who can approve or do it (the admins).
 
 MEMORY
 - Your working memory has the Group style note and Member notes. Lean into the Group style gradually, more as its confidence grows.
@@ -58,12 +60,32 @@ export const UNPROMPTED = `Nobody asked you directly: you're chiming in. Don't l
 
 export const CLARIFY = `Something here is worth acting on but a detail is missing or ambiguous. Ask one short question to fill it in; don't log anything until you have it.`;
 
-export function roomieInstructions(ctx: Partial<RoomieContext>, members: string[], now = new Date(), timezone = DEFAULT_TIMEZONE): string {
+export const ONBOARDING = `This group hasn't finished setup. If this message answers your setup question (what the group is for, currency, time zone), save it with set_group_settings: purpose is one of roommates, trip, friends, family, work, other; currency is a 3-letter code; timezone is an IANA name (Chicago = America/Chicago). Missing answers keep the defaults (USD, America/Chicago). Then confirm in one short line, mentioning which Toolkits are on.`;
+
+export const PENDING = (name: string) =>
+  `${name} is a Pending member: an admin hasn't approved them yet. You can chat with them and answer questions, but tools that change anything will refuse; relay that kindly.`;
+
+/** "Maya (admin), Dev, Sam; pending: Priya" */
+export function describeMembers(people: { displayName: string; role: string; status: string }[]): string {
+  const active = people.filter((p) => p.status === "active").map((p) => (p.role === "admin" ? `${p.displayName} (admin)` : p.displayName));
+  const pending = people.filter((p) => p.status === "pending").map((p) => p.displayName);
+  return `${active.join(", ") || "unknown yet"}${pending.length ? `; pending approval: ${pending.join(", ")}` : ""}`;
+}
+
+export function roomieInstructions(
+  ctx: Partial<RoomieContext>,
+  members: string,
+  now = new Date(),
+  timezone = DEFAULT_TIMEZONE,
+  opts: { onboarding?: boolean } = {},
+): string {
   const blocks = [
     PERSONA,
-    `Group members: ${members.join(", ") || "unknown yet"}.${ctx.actorName ? ` You're talking with ${ctx.actorName}.` : ""}`,
+    `Group members: ${members}.${ctx.memberName ? ` You're talking with ${ctx.memberName}.` : ""}`,
     `Now: ${now.toISOString()} (UTC). Group timezone: ${timezone}. Interpret times people say in that zone and pass ISO with an offset to tools.`,
   ];
+  if (ctx.status === "pending" && ctx.memberName) blocks.push(PENDING(ctx.memberName));
+  if (opts.onboarding) blocks.push(ONBOARDING);
   if (ctx.gate?.unprompted) blocks.push(UNPROMPTED);
   else if (ctx.gate?.decision === "clarify") blocks.push(CLARIFY);
   if (ctx.mayStaySilent) blocks.push(MAY_STAY_SILENT);
@@ -77,11 +99,16 @@ export const roomie = new Agent({
   requestContextSchema: roomieContextSchema,
   instructions: async ({ requestContext }) => {
     const ctx = requestContext.all;
-    const members = ctx.householdId ? (await listMembers({ householdId: ctx.householdId })).map((m) => m.name) : [];
-    return roomieInstructions(ctx, members);
+    if (!ctx.groupId) return roomieInstructions(ctx, "unknown yet");
+    const [group, people] = await Promise.all([getGroup(ctx.groupId), listGroupMembers({ groupId: ctx.groupId })]);
+    return roomieInstructions(ctx, describeMembers(people), new Date(), group?.timezone ?? DEFAULT_TIMEZONE, { onboarding: !!group && !group.onboardedAt });
   },
   model,
-  tools: ({ requestContext }) => toolsFor(requestContext.get("toolkit")),
+  tools: async ({ requestContext }) => {
+    const groupId = requestContext.get("groupId");
+    const enabled = requestContext.get("toolkits") ?? (groupId ? await enabledToolkits({ groupId }) : undefined);
+    return toolsFor(requestContext.get("toolkit"), enabled);
+  },
   memory,
   scorers: liveScorers,
   defaultOptions: { maxSteps: 6 },

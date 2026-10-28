@@ -12,6 +12,9 @@ import {
 
 const empty: GroupReport = { balances: [], settlePlan: [], chores: [], shame: [], upcoming: [], upkeep: [] };
 
+type Chore = GroupReport["chores"][number];
+const chore = (c: Omit<Chore, "lastDoneById" | "dueAt" | "whoseTurnId" | "streak">): Chore => ({ lastDoneById: null, dueAt: null, whoseTurnId: null, streak: 0, ...c });
+
 const full: GroupReport = {
   balances: [
     { memberId: "a", name: "Sudhersan", cents: 1250 },
@@ -19,9 +22,9 @@ const full: GroupReport = {
   ],
   settlePlan: [{ fromId: "b", fromName: "Ryan", toId: "a", toName: "Sudhersan", cents: 1250 }],
   chores: [
-    { choreId: "c1", name: "Dishes", everyDays: 2, lastDoneBy: "Sudhersan", lastDoneAt: new Date("2026-09-20T00:00:00Z"), overdue: true, whoseTurn: "Ryan" },
-    { choreId: "c2", name: "Take out trash", everyDays: 7, lastDoneBy: null, lastDoneAt: null, overdue: true, whoseTurn: null },
-    { choreId: "c3", name: "Vacuum", everyDays: 7, lastDoneBy: "Alex", lastDoneAt: new Date("2026-10-03T00:00:00Z"), overdue: false, whoseTurn: "Ryan" },
+    chore({ choreId: "c1", name: "Dishes", everyDays: 2, lastDoneBy: "Sudhersan", lastDoneAt: new Date("2026-09-20T00:00:00Z"), overdue: true, whoseTurn: "Ryan" }),
+    chore({ choreId: "c2", name: "Take out trash", everyDays: 7, lastDoneBy: null, lastDoneAt: null, overdue: true, whoseTurn: null }),
+    chore({ choreId: "c3", name: "Vacuum", everyDays: 7, lastDoneBy: "Alex", lastDoneAt: new Date("2026-10-03T00:00:00Z"), overdue: false, whoseTurn: "Ryan" }),
   ],
   shame: [
     { memberId: "b", name: "Ryan", daysSinceLastChore: null, choresThisWeek: 0 },
@@ -29,10 +32,10 @@ const full: GroupReport = {
     { memberId: "a", name: "Sudhersan", daysSinceLastChore: 0, choresThisWeek: 3 },
   ],
   upcoming: [
-    { id: "r1", householdId: "h", text: "Pay internet", dueAt: new Date("2026-10-10T14:00:00Z"), memberId: null, memberName: null, recurring: "monthly" },
-    { id: "r2", householdId: "h", text: "Buy filters", dueAt: new Date("2026-10-12T20:00:00Z"), memberId: "b", memberName: "Ryan", recurring: null },
-    { id: "r3", householdId: "h", text: "Call landlord", dueAt: new Date("2026-10-14T20:00:00Z"), memberId: null, memberName: null, recurring: null },
-    { id: "r4", householdId: "h", text: "Fourth thing", dueAt: new Date("2026-10-20T20:00:00Z"), memberId: null, memberName: null, recurring: null },
+    { id: "r1", groupId: "h", text: "Pay internet", dueAt: new Date("2026-10-10T14:00:00Z"), memberId: null, memberName: null, recurring: "monthly" },
+    { id: "r2", groupId: "h", text: "Buy filters", dueAt: new Date("2026-10-12T20:00:00Z"), memberId: "b", memberName: "Ryan", recurring: null },
+    { id: "r3", groupId: "h", text: "Call landlord", dueAt: new Date("2026-10-14T20:00:00Z"), memberId: null, memberName: null, recurring: null },
+    { id: "r4", groupId: "h", text: "Fourth thing", dueAt: new Date("2026-10-20T20:00:00Z"), memberId: null, memberName: null, recurring: null },
   ],
   upkeep: [
     { id: "m1", item: "Replace HVAC filter", everyDays: 90, lastDone: null, nextDue: null, status: "overdue" },
@@ -58,7 +61,7 @@ test("formatGroupReport: empty house -> All square, quiet lines, no watchlist/up
 });
 
 test("formatGroupReport: full house renders every section, deterministically, within 12 lines", () => {
-  const out = formatGroupReport(full, { houseName: "Apt 4B", tz: "America/Chicago" });
+  const out = formatGroupReport(full, { groupName: "Apt 4B", tz: "America/Chicago" });
   const lines = out.split("\n");
   assert.equal(lines[0], "📣 Group report — Apt 4B");
   assert.ok(lines.includes("💸 Ryan pays Sudhersan $12.50"));
@@ -72,7 +75,7 @@ test("formatGroupReport: full house renders every section, deterministically, wi
   assert.ok(!out.includes("dryer vent"), "due-soon upkeep is not nagged about");
   assert.ok(lines.length <= 12, `too long: ${lines.length} lines`);
   assert.ok(!out.includes("🏠"), "no house emoji");
-  assert.equal(out, formatGroupReport(full, { houseName: "Apt 4B", tz: "America/Chicago" }), "deterministic");
+  assert.equal(out, formatGroupReport(full, { groupName: "Apt 4B", tz: "America/Chicago" }), "deterministic");
 });
 
 test("formatGroupReport: chores on track and everyone pulling weight -> no Hall of Shame", () => {

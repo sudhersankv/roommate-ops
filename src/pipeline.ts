@@ -1,28 +1,32 @@
 // How a message flows (docs/plan.md), channel-agnostic. Channel adapters call handleIncoming(); the dashboard's
 // "Ask Roomie" calls askRoomie(). Both end in respond():
-//   resolve household + member -> log the chat line -> Gate (hard trigger / follow-up window / Jev)
-//   -> roomie.generate(text, { requestContext, memory }) -> reply text + links from tool results.
+//   resolve Group + Member (unknown Chat -> Onboarding; unknown sender -> Pending member) -> log the chat line
+//   -> Gate (hard trigger / follow-up window / Jev) -> roomie.generate(text, { requestContext, memory })
+//   -> reply text + links from tool results.
 // Each message is one trace: "roomie message" -> "gate" span (+ the agent run, its model calls and tools).
 // Roomie's chat replies are logged (memberId null) and open the follow-up window; "[silent]" replies are not.
 import "@/lib/env";
 import { RequestContext } from "@mastra/core/request-context";
 import { SpanType, type AnySpan } from "@mastra/core/observability";
+import { deliver } from "@/channels";
 import type { Button, IncomingMessage, Outgoing } from "@/channels/types";
-import { getHousehold, householdForChat, linkChannelUser, listMembers, type Member } from "@/services/members";
+import { chatFor, enabledToolkits, getGroup } from "@/services/groups";
+import { getMember, listGroupMembers, memberByChannelUser, type Member } from "@/services/members";
 import { humanMessagesSince, lastRoomieReplyAt, logMessage, recentChatter } from "@/services/chatlog";
 import type { Ctx } from "@/services/types";
 import { mastra } from "@/mastra";
 import type { RoomieContext } from "@/mastra/context";
 import { inFollowUpWindow, parseSilent, runGate, saysRoomie, type Chattiness, type GateRun } from "@/mastra/gate";
 import { threadFor } from "@/mastra/memory";
+import { onGroupJoined, onParticipantJoined } from "@/onboarding";
 
 /** How many earlier chat lines Jev sees; the agent sees up to 30 as context. */
 const GATE_RECENT = 6;
 const ACK = "👍";
 
 export type RespondInput = {
-  householdId: string;
-  member: Pick<Member, "id" | "name">;
+  groupId: string;
+  member: Pick<Member, "id" | "displayName" | "role" | "status">;
   text: string;
   source: "chat" | "ui";
   channel: string;
@@ -45,11 +49,30 @@ export async function handleIncoming(msg: IncomingMessage): Promise<Outgoing | n
   return (await respondToIncoming(msg)).out;
 }
 
+/**
+ * Resolve the Group and Member for a Channel message. A Chat Roomie never saw a join event for is onboarded with the
+ * sender as its Admin; a sender Roomie doesn't know becomes a Pending member and the Admins are asked to approve.
+ */
+export async function resolveIncoming(msg: IncomingMessage): Promise<{ groupId: string; member: Member }> {
+  const sender = { userExternalId: msg.userExternalId, name: msg.userName };
+  const known = await chatFor(msg.channel, msg.chatExternalId);
+  if (!known) {
+    const joined = await onGroupJoined({ channel: msg.channel, externalId: msg.chatExternalId, title: msg.chatTitle }, [sender], sender);
+    if (joined.intro) await deliver(joined.group.id, joined.intro);
+    return { groupId: joined.group.id, member: joined.members[0] };
+  }
+  const groupId = known.group.id;
+  const member = await memberByChannelUser(groupId, msg.userExternalId);
+  if (member && member.status !== "removed") return { groupId, member };
+  const joined = await onParticipantJoined(groupId, sender);
+  if (joined.announce) await deliver(groupId, joined.announce);
+  return { groupId, member: joined.member };
+}
+
 export async function respondToIncoming(msg: IncomingMessage): Promise<PipelineResult> {
-  const house = await householdForChat(msg.chatId, msg.chatTitle);
-  const member = await linkChannelUser(house.id, msg.userId, msg.userName);
+  const { groupId, member } = await resolveIncoming(msg);
   return respond({
-    householdId: house.id,
+    groupId,
     member,
     text: msg.text,
     source: "chat",
@@ -62,36 +85,44 @@ export async function respondToIncoming(msg: IncomingMessage): Promise<PipelineR
 
 /** Dashboard entry point ("Ask Roomie"): always addressed, never logged to the chat. */
 export async function askRoomie(ctx: Ctx, text: string): Promise<Outgoing> {
-  const me = (await listMembers(ctx)).find((m) => m.id === ctx.actorId);
-  const { out } = await respond({ householdId: ctx.householdId, member: { id: ctx.actorId, name: me?.name ?? "Someone" }, text, source: "ui", channel: "dashboard" });
+  const me = await getMember(ctx, ctx.memberId);
+  if (!me) throw new Error("Not a member of this group.");
+  const { out } = await respond({ groupId: ctx.groupId, member: me, text, source: "ui", channel: "dashboard" });
   return out ?? { text: ACK };
 }
 
 export async function respond(input: RespondInput): Promise<PipelineResult> {
-  const { householdId, member, text, source } = input;
+  const { groupId, member, text, source } = input;
   const chat = source === "chat";
-  const line = `${input.isVoice ? `[voice note from ${member.name}]` : `[${member.name}]`} ${text}`;
-  if (chat) await logMessage(householdId, member.id, input.isVoice ? `(voice) ${text}` : text);
+  const line = `${input.isVoice ? `[voice note from ${member.displayName}]` : `[${member.displayName}]`} ${text}`;
+  if (chat) await logMessage(groupId, member.id, input.isVoice ? `(voice) ${text}` : text);
 
-  const [house, people, chatter] = await Promise.all([getHousehold(householdId), listMembers({ householdId }), chat ? recentChatter(householdId) : Promise.resolve([])]);
+  const [group, people, chatter, toolkits] = await Promise.all([
+    getGroup(groupId),
+    listGroupMembers({ groupId }),
+    chat ? recentChatter(groupId) : Promise.resolve([]),
+    enabledToolkits({ groupId }),
+  ]);
   const earlier = chatter.slice(0, -1); // everything before this message
-  const hardTrigger = !chat || !!(input.isVoice || input.isReplyToRoomie || input.mentionsRoomie || saysRoomie(text));
+  let hardTrigger = !chat || !!(input.isVoice || input.isReplyToRoomie || input.mentionsRoomie || saysRoomie(text));
   let inWindow = false;
   if (chat && !hardTrigger) {
-    const lastRoomieAt = await lastRoomieReplyAt(householdId);
+    const lastRoomieAt = await lastRoomieReplyAt(groupId);
     // Counted after the log above, so this includes the current message (see gate/policy.ts).
-    inWindow = inFollowUpWindow({ lastRoomieAt, humanSinceRoomie: lastRoomieAt ? await humanMessagesSince(householdId, lastRoomieAt) : 0 });
+    inWindow = inFollowUpWindow({ lastRoomieAt, humanSinceRoomie: lastRoomieAt ? await humanMessagesSince(groupId, lastRoomieAt) : 0 });
+    // Onboarding asked the Chat a question; an active Member's reply in the window is the answer.
+    if (inWindow && group && !group.onboardedAt && member.status === "active") hardTrigger = true;
   }
 
-  const root = startSpan("roomie message", { text: line }, { channel: input.channel, source, householdId, actorId: member.id });
+  const root = startSpan("roomie message", { text: line }, { channel: input.channel, source, groupId, memberId: member.id, role: member.role, status: member.status });
   const gateSpan = root?.createChildSpan({ type: SpanType.GENERIC, name: "gate", input: { latest: line, hardTrigger, inWindow } });
   const gate = await runGate({
     latest: line,
     recent: earlier.slice(-GATE_RECENT),
-    members: people.map((p) => p.name),
+    members: people.map((p) => p.displayName),
     hardTrigger,
     inWindow,
-    chattiness: (house?.chattiness ?? "normal") as Chattiness,
+    chattiness: (group?.chattiness ?? "normal") as Chattiness,
   });
   const gateMeta = {
     gateDecision: gate.decision,
@@ -110,10 +141,13 @@ export async function respond(input: RespondInput): Promise<PipelineResult> {
   }
 
   const ctx: RoomieContext = {
-    householdId,
-    actorId: member.id,
-    actorName: member.name,
+    groupId,
+    memberId: member.id,
+    memberName: member.displayName,
+    role: member.role,
+    status: member.status,
     source,
+    toolkits,
     ...(gate.toolkit ? { toolkit: gate.toolkit } : {}),
     ...(gate.decision !== "ignore" ? { gate: { decision: gate.decision, unprompted: gate.unprompted } } : {}),
     ...(gate.mayStaySilent ? { mayStaySilent: true } : {}),
@@ -123,7 +157,7 @@ export async function respond(input: RespondInput): Promise<PipelineResult> {
   try {
     const res = await mastra.getAgentById("roomie").generate(line, {
       requestContext,
-      memory: threadFor(householdId),
+      memory: threadFor(groupId),
       ...(earlier.length ? { context: [{ role: "user" as const, content: `Recent group chat (for context, not addressed to you):\n${earlier.join("\n")}` }] } : {}),
       tracingContext: { currentSpan: root },
       tracingOptions: { metadata: { ...gateMeta, channel: input.channel } },
@@ -142,7 +176,7 @@ export async function respond(input: RespondInput): Promise<PipelineResult> {
       root?.end({ output: { replied: false, silent: true }, metadata: gateMeta });
       return { out: null, gate, toolCalls, traceId: root?.traceId };
     }
-    if (chat) await logMessage(householdId, null, replyText);
+    if (chat) await logMessage(groupId, null, replyText);
     const out: Outgoing = { text: replyText, ...(buttons.length ? { buttons } : {}) };
     root?.end({ output: out, metadata: gateMeta });
     return { out, gate, toolCalls, traceId: root?.traceId };

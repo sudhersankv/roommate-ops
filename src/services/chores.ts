@@ -2,8 +2,10 @@
 // Pure helpers (pickChore, whoseTurn, rankShame, countStreak) are exported so chores.test.ts can run them without a DB.
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { db, schema } from "@/db";
+import { record } from "./activity";
+import { requireActive } from "./authz";
 import { listMembers } from "./members";
-import type { Ctx } from "./types";
+import type { Ctx, GroupCtx } from "./types";
 
 const { chores, choreLogs, members } = schema;
 
@@ -12,9 +14,15 @@ export type ChoreStatus = {
   name: string;
   everyDays: number;
   lastDoneBy: string | null;
+  lastDoneById: string | null;
   lastDoneAt: Date | null;
+  /** lastDoneAt + everyDays; null = never done, so it's due now. */
+  dueAt: Date | null;
   overdue: boolean;
   whoseTurn: string | null;
+  whoseTurnId: string | null;
+  /** How many times in a row the last doer did it. */
+  streak: number;
 };
 export type ShameRow = { memberId: string; name: string; daysSinceLastChore: number | null; choresThisWeek: number };
 
@@ -55,12 +63,17 @@ export function whoseTurn(
   people: Array<{ id: string; name: string }>,
   lastDoneByMember: Map<string, Date>,
 ): string | null {
+  return nextUp(people, lastDoneByMember)?.name ?? null;
+}
+
+/** Same as whoseTurn, but the whole Member. */
+export function nextUp<T extends { id: string; name: string }>(people: T[], lastDoneByMember: Map<string, Date>): T | null {
   const ordered = [...people].sort((a, b) => {
     const ta = lastDoneByMember.get(a.id)?.getTime() ?? -Infinity;
     const tb = lastDoneByMember.get(b.id)?.getTime() ?? -Infinity;
     return ta - tb || a.name.localeCompare(b.name);
   });
-  return ordered[0]?.name ?? null;
+  return ordered[0] ?? null;
 }
 
 /** Worst first: fewest chores this week, then longest since last chore (never = worst), then name. */
@@ -97,50 +110,62 @@ export const daysSince = (d: Date, now = new Date()) => Math.max(0, Math.floor((
 
 // ---------- DB ----------
 
-async function householdChores(householdId: string) {
-  return db.select().from(chores).where(eq(chores.householdId, householdId));
+async function groupChores(groupId: string) {
+  return db.select().from(chores).where(eq(chores.groupId, groupId));
 }
 
-/** All logs for the house, newest first, with the doer's name. */
-async function householdLogs(householdId: string) {
+/** All logs for the Group, newest first, with the doer's name. */
+async function groupLogs(groupId: string) {
   return db
     .select({
       choreId: choreLogs.choreId,
       memberId: choreLogs.memberId,
-      memberName: members.name,
+      memberName: members.displayName,
       doneAt: choreLogs.doneAt,
     })
     .from(choreLogs)
     .innerJoin(chores, eq(choreLogs.choreId, chores.id))
     .innerJoin(members, eq(choreLogs.memberId, members.id))
-    .where(eq(chores.householdId, householdId))
+    .where(eq(chores.groupId, groupId))
     .orderBy(desc(choreLogs.doneAt));
 }
 
+const named = (people: { id: string; displayName: string }[]) => people.map((m) => ({ id: m.id, name: m.displayName }));
+
 /** Adds a chore; same name (case-insensitive) already on the chart just updates its cadence. */
 export async function addChore(ctx: Ctx, input: { name: string; everyDays: number }): Promise<void> {
+  await requireActive(ctx);
   const name = input.name.trim();
   if (!name) throw new Error("Chore needs a name.");
   const everyDays = Math.max(1, Math.round(Number(input.everyDays) || 7));
-  const existing = (await householdChores(ctx.householdId)).find((c) => norm(c.name) === norm(name));
+  const existing = (await groupChores(ctx.groupId)).find((c) => norm(c.name) === norm(name));
   if (existing) {
     await db.update(chores).set({ everyDays }).where(eq(chores.id, existing.id));
     return;
   }
-  await db.insert(chores).values({ householdId: ctx.householdId, name, everyDays });
+  const [c] = await db.insert(chores).values({ groupId: ctx.groupId, name, everyDays }).returning();
+  await record(ctx.groupId, ctx.memberId, "chore.added", `put ${name} on the chart`, { table: "chores", id: c.id });
 }
 
-/** Fuzzy-matches the chore by name; creates it (every 7 days) if unknown. Logs it for ctx.actorId by default. */
-export async function logChore(ctx: Ctx, input: { chore: string; memberId?: string }): Promise<{ chore: string; streak: number }> {
-  const memberId = input.memberId ?? ctx.actorId;
+/**
+ * Logs a chore for ctx.memberId (or `memberId`). `choreId` picks it exactly (dashboard); otherwise `chore` is
+ * fuzzy-matched by name and created (every 7 days) if unknown.
+ */
+export async function logChore(ctx: Ctx, input: { chore?: string; choreId?: string; memberId?: string }): Promise<{ chore: string; streak: number }> {
+  await requireActive(ctx);
+  const memberId = input.memberId ?? ctx.memberId;
   const people = await listMembers(ctx);
-  if (!people.some((m) => m.id === memberId)) throw new Error("That person doesn't live here.");
+  const doer = people.find((m) => m.id === memberId);
+  if (!doer) throw new Error("That person isn't an active member of this group.");
 
-  const query = input.chore.trim();
-  if (!query) throw new Error("Which chore?");
-  let chore = pickChore(query, await householdChores(ctx.householdId));
+  const chart = await groupChores(ctx.groupId);
+  let chore = input.choreId ? chart.find((c) => c.id === input.choreId) : undefined;
+  if (input.choreId && !chore) throw new Error("That chore isn't on the chart anymore.");
   if (!chore) {
-    [chore] = await db.insert(chores).values({ householdId: ctx.householdId, name: query, everyDays: 7 }).returning();
+    const query = (input.chore ?? "").trim();
+    if (!query) throw new Error("Which chore?");
+    chore = pickChore(query, chart);
+    if (!chore) [chore] = await db.insert(chores).values({ groupId: ctx.groupId, name: query, everyDays: 7 }).returning();
   }
 
   await db.insert(choreLogs).values({ choreId: chore.id, memberId });
@@ -149,44 +174,46 @@ export async function logChore(ctx: Ctx, input: { chore: string; memberId?: stri
     .from(choreLogs)
     .where(eq(choreLogs.choreId, chore.id))
     .orderBy(desc(choreLogs.doneAt));
+  await record(ctx.groupId, ctx.memberId, "chore.done", memberId === ctx.memberId ? `marked ${chore.name} done` : `marked ${chore.name} done for ${doer.displayName}`, { table: "chores", id: chore.id });
   return { chore: chore.name, streak: Math.max(1, countStreak(recent.map((r) => r.memberId), memberId)) };
 }
 
-export async function choreStatus(ctx: Pick<Ctx, "householdId">): Promise<ChoreStatus[]> {
-  const [chart, logs, people] = await Promise.all([
-    householdChores(ctx.householdId),
-    householdLogs(ctx.householdId),
-    listMembers(ctx),
-  ]);
+export async function choreStatus(ctx: GroupCtx): Promise<ChoreStatus[]> {
+  const [chart, logs, people] = await Promise.all([groupChores(ctx.groupId), groupLogs(ctx.groupId), listMembers(ctx)]);
   const now = new Date();
   const rows = chart.map((c) => {
     const mine = logs.filter((l) => l.choreId === c.id); // newest first
     const latest = mine[0];
     const lastByMember = new Map<string, Date>();
     for (const l of mine) if (!lastByMember.has(l.memberId)) lastByMember.set(l.memberId, l.doneAt);
+    const up = nextUp(named(people), lastByMember);
     return {
       choreId: c.id,
       name: c.name,
       everyDays: c.everyDays,
       lastDoneBy: latest?.memberName ?? null,
+      lastDoneById: latest?.memberId ?? null,
       lastDoneAt: latest?.doneAt ?? null,
+      dueAt: latest ? new Date(latest.doneAt.getTime() + c.everyDays * DAY) : null,
       overdue: isOverdue(latest?.doneAt ?? null, c.everyDays, now),
-      whoseTurn: whoseTurn(people, lastByMember),
+      whoseTurn: up?.name ?? null,
+      whoseTurnId: up?.id ?? null,
+      streak: latest ? countStreak(mine.map((l) => l.memberId), latest.memberId) : 0,
     };
   });
   return sortStatus(rows);
 }
 
 /** Sorted worst first. */
-export async function hallOfShame(ctx: Pick<Ctx, "householdId">): Promise<ShameRow[]> {
-  const [people, logs] = await Promise.all([listMembers(ctx), householdLogs(ctx.householdId)]);
+export async function hallOfShame(ctx: GroupCtx): Promise<ShameRow[]> {
+  const [people, logs] = await Promise.all([listMembers(ctx), groupLogs(ctx.groupId)]);
   const now = new Date();
   const weekAgo = now.getTime() - 7 * DAY;
   const rows = people.map((m) => {
     const mine = logs.filter((l) => l.memberId === m.id);
     return {
       memberId: m.id,
-      name: m.name,
+      name: m.displayName,
       daysSinceLastChore: mine[0] ? daysSince(mine[0].doneAt, now) : null,
       choresThisWeek: mine.filter((l) => l.doneAt.getTime() >= weekAgo).length,
     };
@@ -196,10 +223,11 @@ export async function hallOfShame(ctx: Pick<Ctx, "householdId">): Promise<ShameR
 
 /** Removes a chore and its history. Dashboard-only housekeeping. */
 export async function removeChore(ctx: Ctx, input: { choreId: string }): Promise<void> {
+  await requireActive(ctx);
   const [c] = await db
     .select({ id: chores.id })
     .from(chores)
-    .where(and(eq(chores.id, input.choreId), eq(chores.householdId, ctx.householdId)));
+    .where(and(eq(chores.id, input.choreId), eq(chores.groupId, ctx.groupId)));
   if (!c) return;
   await db.delete(choreLogs).where(inArray(choreLogs.choreId, [c.id]));
   await db.delete(chores).where(eq(chores.id, c.id));

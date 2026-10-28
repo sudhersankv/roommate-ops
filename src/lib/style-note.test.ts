@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readSection, replaceSection, shouldRefreshStyle, STYLE_EVERY } from "./style-note";
+import { dropMemberLines, readSection, replaceSection, shouldRefreshStyle, STYLE_EVERY } from "./style-note";
 
 const WM = `# Group
 ## Group style
@@ -32,4 +32,10 @@ test("replaceSection appends a missing section", () => {
 
 test("readSection of a missing heading is empty", () => {
   assert.equal(readSection(WM, "## Nope"), "");
+});
+
+test("dropMemberLines forgets one Member's notes and keeps everyone else's", () => {
+  const notes = "- Dev: pays with venmo\n- [Maya]: vegetarian\n- Developer Dan: likes tea";
+  assert.equal(dropMemberLines(notes, "dev"), "- [Maya]: vegetarian\n- Developer Dan: likes tea");
+  assert.equal(dropMemberLines(notes, "Maya"), "- Dev: pays with venmo\n- Developer Dan: likes tea");
 });

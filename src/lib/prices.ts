@@ -91,7 +91,7 @@ export const CATALOG: Record<string, number> = {
   salt: 199,
   pepper: 399,
   ramen: 99,
-  // household
+  // around the house
   "toilet paper": 1299,
   "paper towels": 999,
   "dish soap": 349,

@@ -1,7 +1,9 @@
 import type { ToolAction } from "@mastra/core/tools";
 
 /** Switchable Toolkits; core is always on and is not in this list. */
-export type ToolkitId = "splitting" | "groceries" | "chores" | "upkeep";
+export const TOOLKIT_IDS = ["splitting", "groceries", "chores", "upkeep"] as const;
+export type ToolkitId = (typeof TOOLKIT_IDS)[number];
+export const isToolkitId = (s: string): s is ToolkitId => (TOOLKIT_IDS as readonly string[]).includes(s);
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type AnyTool = ToolAction<any, any, any, any, any, any>;

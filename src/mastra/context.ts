@@ -1,17 +1,22 @@
 // The RequestContext contract for the roomie agent. The pipeline (and Studio presets) fill it; tools and the
-// dynamic instructions/tools read it. `householdId`/`actorId` become groupId/memberId in step 4.
+// dynamic instructions/tools read it.
 import { z } from "zod";
 import type { Ctx } from "@/services/types";
+import { TOOLKIT_IDS } from "@/toolkits/types";
 
 /** What the Gate can pick. "reminders" lives in core, so it narrows to core tools only; "none" means no narrowing. */
 export const GATE_TOOLKITS = ["splitting", "groceries", "chores", "upkeep", "reminders", "none"] as const;
 export type GateToolkit = (typeof GATE_TOOLKITS)[number];
 
 export const roomieContextSchema = z.object({
-  householdId: z.string().min(1),
-  actorId: z.string().min(1),
-  actorName: z.string().min(1),
+  groupId: z.string().min(1),
+  memberId: z.string().min(1),
+  memberName: z.string().min(1),
+  role: z.enum(["admin", "member"]),
+  status: z.enum(["pending", "active", "removed"]),
   source: z.enum(["chat", "ui"]),
+  /** The Group's enabled Toolkits. The agent loads them from the DB when this is missing (Studio). */
+  toolkits: z.array(z.enum(TOOLKIT_IDS)).optional(),
   toolkit: z.enum(GATE_TOOLKITS).optional(),
   gate: z
     .object({
@@ -31,10 +36,10 @@ type ContextReader = { get(key: string): unknown };
 /** The service Ctx for a tool call, from the run's requestContext. Throws if the pipeline didn't set it. */
 export function ctxOf(context: { requestContext?: unknown } | undefined): Ctx {
   const rc = context?.requestContext as ContextReader | undefined;
-  const householdId = rc?.get("householdId");
-  const actorId = rc?.get("actorId");
-  if (typeof householdId !== "string" || !householdId || typeof actorId !== "string" || !actorId) {
-    throw new Error("Roomie tools need householdId and actorId in the requestContext.");
+  const groupId = rc?.get("groupId");
+  const memberId = rc?.get("memberId");
+  if (typeof groupId !== "string" || !groupId || typeof memberId !== "string" || !memberId) {
+    throw new Error("Roomie tools need groupId and memberId in the requestContext.");
   }
-  return { householdId, actorId, source: rc?.get("source") === "ui" ? "ui" : "chat" };
+  return { groupId, memberId, source: rc?.get("source") === "ui" ? "ui" : "chat" };
 }

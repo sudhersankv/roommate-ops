@@ -1,9 +1,10 @@
-// P4 · Sudhersan. Started once from instrumentation.ts (one long-running process; DISABLE_SCHEDULER=1 skips it).
-// Every 60 s: due reminders, the weekly Group Report (Sun 18:00 Chicago) and a 9 AM upkeep nudge, all through deliver(),
-// plus the Group style refresh (jobs/style-note.ts, posts nothing). The tick never rejects: every job is wrapped.
-import { isNotNull } from "drizzle-orm";
-import { db, schema } from "@/db";
+// Started once from instrumentation.ts (one long-running process; DISABLE_SCHEDULER=1 skips it).
+// Every 60 s: due reminders, the weekly Group Report (Sun 18:00 in the Group's time zone) and a 9 AM upkeep nudge,
+// all through deliver() (the Channel registry), plus the Group style refresh (jobs/style-note.ts, posts nothing) and
+// the daily chat retention sweep (jobs/retention.ts). The tick never rejects: every job is wrapped.
 import { deliver } from "@/channels";
+import { groupsWithChat } from "@/services/groups";
+import { runRetention } from "./retention";
 import { refreshStyleNote } from "./style-note";
 import { dueReminders, markSent, type Reminder } from "@/services/reminders";
 import { dueMaintenance } from "@/services/upkeep";
@@ -15,9 +16,10 @@ const MAX_SEND_ATTEMPTS = 3;
 /* ---------- in-memory state (one process, so globalThis is enough; survives Next HMR) ---------- */
 
 type State = {
-  weeklyPostedAt: Map<string, Date>; // householdId -> last weekly report
-  upkeepPostedDay: Map<string, string>; // householdId -> "YYYY-MM-DD" (Chicago) of last nudge
+  weeklyPostedAt: Map<string, Date>; // groupId -> last weekly report
+  upkeepPostedDay: Map<string, string>; // groupId -> "YYYY-MM-DD" (Group time zone) of last nudge
   reminderFailures: Map<string, number>; // reminderId -> failed send attempts
+  retentionDay?: string; // UTC day of the last retention sweep
 };
 function state(): State {
   const g = globalThis as { __roomieSchedulerState?: State };
@@ -52,25 +54,17 @@ export function reminderLine(r: Pick<Reminder, "id" | "text" | "memberName">): s
 
 /* ---------- helpers ---------- */
 
-/** Households that have a chat linked (the only ones Roomie can post to unprompted). */
-export async function householdsWithChat(): Promise<{ id: string; name: string; styleNoteAt: Date | null }[]> {
-  return db
-    .select({ id: schema.households.id, name: schema.households.name, styleNoteAt: schema.households.styleNoteAt })
-    .from(schema.households)
-    .where(isNotNull(schema.households.chatId));
-}
-
-async function safeSend(householdId: string, text: string, what: string): Promise<boolean> {
+async function safeSend(groupId: string, text: string, what: string): Promise<boolean> {
   try {
-    await deliver(householdId, { text });
+    await deliver(groupId, { text });
     return true;
   } catch (e) {
-    console.error(`scheduler: ${what} send failed for household ${householdId}`, e);
+    console.error(`scheduler: ${what} send failed for group ${groupId}`, e);
     return false;
   }
 }
 
-/* ---------- the three jobs ---------- */
+/* ---------- the jobs ---------- */
 
 async function sendDueReminders(now: Date) {
   const s = state();
@@ -84,7 +78,7 @@ async function sendDueReminders(now: Date) {
   for (const r of due) {
     const failures = s.reminderFailures.get(r.id) ?? 0;
     if (failures >= MAX_SEND_ATTEMPTS) continue; // gave up; stays unsent so a restart may retry
-    const ok = await safeSend(r.householdId, reminderLine(r), "reminder");
+    const ok = await safeSend(r.groupId, reminderLine(r), "reminder");
     if (!ok) {
       s.reminderFailures.set(r.id, failures + 1);
       if (failures + 1 >= MAX_SEND_ATTEMPTS) console.error(`scheduler: giving up on reminder ${r.id} after ${MAX_SEND_ATTEMPTS} attempts`);
@@ -99,51 +93,64 @@ async function sendDueReminders(now: Date) {
   }
 }
 
-/** Post the Group Report to a household's chat now. Returns the text. */
-export async function postWeeklyReport(householdId: string, houseName?: string): Promise<string> {
-  const text = formatGroupReport(await groupReport({ householdId }), { houseName });
-  if (await safeSend(householdId, text, "weekly report")) state().weeklyPostedAt.set(householdId, new Date());
+/** Post the Group Report to a Group's Chat now. Returns the text. */
+export async function postWeeklyReport(groupId: string, groupName?: string, tz?: string): Promise<string> {
+  const text = formatGroupReport(await groupReport({ groupId }), { groupName, tz });
+  if (await safeSend(groupId, text, "weekly report")) state().weeklyPostedAt.set(groupId, new Date());
   return text;
 }
 
 /** Post one line about overdue upkeep, if any. Returns the line or null when nothing is overdue. */
-export async function postUpkeepNudge(householdId: string, now = new Date()): Promise<string | null> {
-  const overdue = (await dueMaintenance({ householdId })).filter((m) => m.status === "overdue");
+export async function postUpkeepNudge(groupId: string, now = new Date(), tz?: string): Promise<string | null> {
+  const overdue = (await dueMaintenance({ groupId })).filter((m) => m.status === "overdue");
   if (overdue.length === 0) return null;
   const text = `🔧 Overdue: ${overdue.map((m) => m.item).join(", ")}. Anyone free today?`;
-  if (await safeSend(householdId, text, "upkeep nudge")) state().upkeepPostedDay.set(householdId, localParts(now).day);
+  if (await safeSend(groupId, text, "upkeep nudge")) state().upkeepPostedDay.set(groupId, localParts(now, tz).day);
   return text;
 }
 
-async function runHouseholdJobs(now: Date) {
+async function runGroupJobs(now: Date) {
   const s = state();
-  let houses: { id: string; name: string; styleNoteAt: Date | null }[];
+  let all: Awaited<ReturnType<typeof groupsWithChat>>;
   try {
-    houses = await householdsWithChat();
+    all = await groupsWithChat();
   } catch (e) {
-    console.error("scheduler: householdsWithChat failed", e);
+    console.error("scheduler: groupsWithChat failed", e);
     return;
   }
-  for (const h of houses) {
+  for (const g of all) {
     try {
-      if (shouldPostWeeklyReport(now, s.weeklyPostedAt.get(h.id) ?? null)) await postWeeklyReport(h.id, h.name);
+      if (shouldPostWeeklyReport(now, s.weeklyPostedAt.get(g.id) ?? null, g.timezone)) await postWeeklyReport(g.id, g.name, g.timezone);
     } catch (e) {
-      console.error(`scheduler: weekly report failed for ${h.name}`, e);
+      console.error(`scheduler: weekly report failed for ${g.name}`, e);
     }
     try {
-      if (shouldPostUpkeepNudge(now, s.upkeepPostedDay.get(h.id) ?? null)) {
+      if (shouldPostUpkeepNudge(now, s.upkeepPostedDay.get(g.id) ?? null, g.timezone)) {
         // Mark the day even when nothing is overdue so we don't re-query every minute of the 9 o'clock hour.
-        s.upkeepPostedDay.set(h.id, localParts(now).day);
-        await postUpkeepNudge(h.id, now);
+        s.upkeepPostedDay.set(g.id, localParts(now, g.timezone).day);
+        await postUpkeepNudge(g.id, now, g.timezone);
       }
     } catch (e) {
-      console.error(`scheduler: upkeep nudge failed for ${h.name}`, e);
+      console.error(`scheduler: upkeep nudge failed for ${g.name}`, e);
     }
     try {
-      await refreshStyleNote(h.id, h.styleNoteAt, now);
+      await refreshStyleNote(g.id, g.styleNoteAt, now);
     } catch (e) {
-      console.error(`scheduler: group style refresh failed for ${h.name}`, e);
+      console.error(`scheduler: group style refresh failed for ${g.name}`, e);
     }
+  }
+}
+
+/** Once a day (first tick of each UTC day): drop chat lines older than 30 days. */
+async function dailyRetention(now: Date) {
+  const s = state();
+  const day = now.toISOString().slice(0, 10);
+  if (s.retentionDay === day) return;
+  s.retentionDay = day;
+  try {
+    await runRetention(now);
+  } catch (e) {
+    console.error("scheduler: retention failed", e);
   }
 }
 
@@ -151,7 +158,8 @@ async function runHouseholdJobs(now: Date) {
 export async function tick(now = new Date()): Promise<void> {
   try {
     await sendDueReminders(now);
-    await runHouseholdJobs(now);
+    await runGroupJobs(now);
+    await dailyRetention(now);
   } catch (e) {
     console.error("scheduler: tick failed", e);
   }

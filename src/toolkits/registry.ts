@@ -1,16 +1,41 @@
-// The list of Toolkits. The agent's tools for a request are core + the enabled Toolkits, narrowed to the one the
-// Gate picked (ADR 0005). Every Group has every Toolkit enabled until group_toolkits exists (step 4).
+// The list of Toolkits. The agent's tools for a request are core + the Group's enabled Toolkits, narrowed to the one
+// the Gate picked (ADR 0005).
 import type { GateToolkit } from "@/mastra/context";
+import { isNotAllowed } from "@/services/authz";
 import { core } from "./core/manifest";
 import { splitting } from "./splitting/manifest";
 import { groceries } from "./groceries/manifest";
 import { chores } from "./chores/manifest";
 import { upkeep } from "./upkeep/manifest";
-import type { AnyTool, ToolkitId } from "./types";
+import { TOOLKIT_IDS, type AnyTool, type ToolkitId } from "./types";
 
 export { core };
 export const TOOLKITS = [splitting, groceries, chores, upkeep] as const;
-export const ALL_TOOLKIT_IDS: ToolkitId[] = TOOLKITS.map((t) => t.id);
+export const ALL_TOOLKIT_IDS: ToolkitId[] = [...TOOLKIT_IDS];
+
+const RELAYED = Symbol("relaysNotAllowed");
+
+/**
+ * Permission refusals (Pending member, not an Admin, not your Expense) come back as a plain result instead of a tool
+ * error, so the model reads the message and relays it ("Hang on, an admin needs to approve you first...").
+ */
+function relayNotAllowed(tool: AnyTool): AnyTool {
+  const run = tool.execute;
+  const marked = tool as AnyTool & { [RELAYED]?: true };
+  if (!run || marked[RELAYED]) return tool;
+  tool.execute = async (input, context) => {
+    try {
+      return await run(input, context);
+    } catch (e) {
+      if (isNotAllowed(e)) return { notAllowed: true, reason: e.code, message: e.message };
+      throw e;
+    }
+  };
+  marked[RELAYED] = true;
+  return tool;
+}
+
+for (const tk of [core, ...TOOLKITS]) for (const t of Object.values(tk.tools)) relayNotAllowed(t);
 
 /**
  * Tools for one request. `toolkit` from the Gate narrows to that Toolkit (plus core); unset or "none" gives every

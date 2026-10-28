@@ -1,322 +1,182 @@
-// Demo history for "Apt 4B": three weeks of group life so the dashboard and Roomie's context look lived-in.
-//
-//   npm run seed          first time (no-op if the house already has expenses)
-//   npm run seed:demo     --reset: wipe this house's history and rebuild it (re-runnable, identical counts)
-//
-// Resolves the house: SEED_HOUSEHOLD_ID, else the household named "Apt 4B", else the first by created_at,
-// else creates "Apt 4B" with Sudhersan, Ryan and Alex. --reset keeps the household row and members (and their
-// chat links); everything else for this house is rebuilt.
-// SEED_CHAT_ID binds the chat: always on create, and on an existing house when --reset or it has no chat yet.
+// npm run seed: the demo Group "Apt 4B" with Maya (Admin), Dev and Sam (active) and Priya (Pending), three weeks of
+// Expenses, Settlements, a Cart, chores, upkeep, reminders and some chat. The numbers match the UI prototype: Maya is
+// owed $42.50, Dev owes $30.00 and Sam owes $12.50. Prints the Group id, a Claim link for Maya and a Studio
+// requestContext. `npm run seed:demo` (--reset) deletes Apt 4B first and rebuilds it.
+// The Chat is a dev Channel chat ("dev-apt-4b"), so `npm run dev-chat -- --chat dev-apt-4b` talks to it.
 import "../src/lib/env";
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { db, schema } from "../src/db";
-import { estimate } from "../src/lib/prices";
-import { money, chores as choresSvc, reminders as remindersSvc, upkeep } from "../src/services";
-import { dollars, type Ctx } from "../src/services/types";
+import { devUserId } from "../src/channels/dev";
+import { claims, groups, money, chores as choresSvc, upkeep as upkeepSvc } from "../src/services";
+import { dollars } from "../src/services/types";
 import { PRESETS_FILE, writeStudioPresets } from "./lib/presets";
 
-const { households, members, expenses, expenseSplits, settlements, chores, choreLogs, reminders, maintenance, cartItems, chatLog } = schema;
-
 const RESET = process.argv.includes("--reset");
-const HOUSE_NAME = "Apt 4B";
-const TZ = "America/Chicago";
+const NAME = "Apt 4B";
+const CHAT = "dev-apt-4b";
 const DAY = 24 * 60 * 60 * 1000;
 const HOUR = 60 * 60 * 1000;
 const now = new Date();
-
-/* ---------- time helpers ---------- */
-
-/** `days` days (and `hours` hours) before now. */
 const ago = (days: number, hours = 0) => new Date(now.getTime() - days * DAY - hours * HOUR);
 
-/** Offset (ms) of `tz` from UTC at instant `d`. */
-function tzOffsetMs(d: Date, tz: string): number {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: tz,
-    hourCycle: "h23",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  }).formatToParts(d);
-  const get = (t: Intl.DateTimeFormatPartTypes) => Number(parts.find((p) => p.type === t)?.value ?? 0);
-  const asUtc = Date.UTC(get("year"), get("month") - 1, get("day"), get("hour") % 24, get("minute"), get("second"));
-  return asUtc - Math.floor(d.getTime() / 1000) * 1000;
-}
-
-/** The instant of wall-clock `y-m-d h:mi` in `tz` (two-pass offset correction handles DST edges). */
-function zoned(y: number, m: number, d: number, h: number, mi: number, tz = TZ): Date {
-  const guess = Date.UTC(y, m - 1, d, h, mi);
-  const first = new Date(guess - tzOffsetMs(new Date(guess), tz));
-  return new Date(guess - tzOffsetMs(first, tz));
-}
-
-/** Calendar date (y, m, d) of `d` in `tz`, plus its weekday 0-6 (Sun-Sat). */
-function localDate(d: Date, tz = TZ) {
-  const parts = new Intl.DateTimeFormat("en-US", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit", weekday: "short" }).formatToParts(d);
-  const get = (t: Intl.DateTimeFormatPartTypes) => parts.find((p) => p.type === t)?.value ?? "";
-  const weekday = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(get("weekday"));
-  return { y: Number(get("year")), m: Number(get("month")), d: Number(get("day")), weekday };
-}
-
-/** `h:mi` house-local time, `plusDays` days from today (house calendar). */
-function localAt(plusDays: number, h: number, mi = 0): Date {
-  const t = localDate(new Date(now.getTime() + plusDays * DAY));
-  return zoned(t.y, t.m, t.d, h, mi);
-}
-
-/** Next Tuesday (strictly after today, house calendar) at `h:mi`. */
-function nextWeekday(weekday: number, h: number, mi = 0): Date {
-  const today = localDate(now).weekday;
-  const delta = ((weekday - today + 7) % 7) || 7;
-  return localAt(delta, h, mi);
-}
-
-/* ---------- resolve the house ---------- */
-
-type House = typeof households.$inferSelect;
-
-/** Bind SEED_CHAT_ID to an existing house when --reset, or when it has no chat yet. Unchanged otherwise. */
-async function bindChat(h: House): Promise<House> {
-  const chatId = process.env.SEED_CHAT_ID?.trim();
-  if (!chatId || h.chatId === chatId) return h;
-  if (!RESET && h.chatId) {
-    console.log(`"${h.name}" keeps chat ${h.chatId} (pass --reset to rebind to SEED_CHAT_ID)`);
-    return h;
-  }
-  const [updated] = await db.update(households).set({ chatId }).where(eq(households.id, h.id)).returning();
-  console.log(`bound "${h.name}" to chat ${chatId}${h.chatId ? ` (was ${h.chatId})` : ""}`);
-  return updated;
-}
-
-async function resolveHouse(): Promise<House> {
-  const envId = process.env.SEED_HOUSEHOLD_ID;
-  if (envId) {
-    const [h] = await db.select().from(households).where(eq(households.id, envId));
-    if (!h) throw new Error(`SEED_HOUSEHOLD_ID=${envId} does not exist.`);
-    return bindChat(h);
-  }
-  const [named] = await db.select().from(households).where(eq(households.name, HOUSE_NAME)).orderBy(asc(households.createdAt)).limit(1);
-  if (named) return bindChat(named);
-  const [first] = await db.select().from(households).orderBy(asc(households.createdAt)).limit(1);
-  if (first) return bindChat(first);
-  const [created] = await db
-    .insert(households)
-    .values({ name: HOUSE_NAME, chatId: process.env.SEED_CHAT_ID || null })
-    .returning();
-  console.log(`created household "${HOUSE_NAME}" ${created.id}${process.env.SEED_CHAT_ID ? "" : " (set SEED_CHAT_ID to bind a chat)"}`);
-  return created;
-}
-
-/**
- * Sudhersan, Ryan, Alex by name (case-insensitive, active or not). A missing one is added; an inactive one is reactivated
- * rather than duplicated. Existing rows (and chat links) are otherwise untouched.
- */
-async function resolveMembers(householdId: string) {
-  const want = ["Sudhersan", "Ryan", "Alex"] as const;
-  const have = await db.select().from(members).where(eq(members.householdId, householdId)).orderBy(asc(members.createdAt));
-  const out = {} as Record<(typeof want)[number], string>;
-  for (const name of want) {
-    const same = have.filter((x) => x.name.toLowerCase() === name.toLowerCase());
-    let m = same.find((x) => x.active) ?? same[0];
-    if (!m) {
-      [m] = await db.insert(members).values({ householdId, name }).returning();
-      console.log(`added member ${name}`);
-    } else if (!m.active) {
-      await db.update(members).set({ active: true }).where(eq(members.id, m.id));
-      console.log(`reactivated member ${m.name}`);
-    }
-    out[name] = m.id;
-  }
-  return out;
-}
-
-/* ---------- main ---------- */
-
-const house = await resolveHouse();
-const hid = house.id;
-const who = await resolveMembers(hid);
-const { Sudhersan: S, Ryan: R, Alex: A } = who;
-const ctx: Ctx = { householdId: hid, actorId: S, source: "ui" };
-
-/** The household id and a requestContext to paste into Studio (also written to .mastra-presets.json). */
-async function printStudioContext() {
+async function printAccess(groupId: string) {
+  const [maya] = await db.select().from(schema.members).where(eq(schema.members.groupId, groupId)).then((rows) => rows.filter((m) => m.displayName === "Maya"));
+  const link = maya ? await claims.createClaimToken(maya.id) : null;
   await writeStudioPresets();
-  const studio = { householdId: hid, actorId: S, actorName: "Sudhersan", source: "chat" };
-  console.log(`\nStudio (npm run mastra:dev): household ${hid}; presets in ${PRESETS_FILE}. requestContext:\n${JSON.stringify(studio)}`);
+  const studio = maya ? { groupId, memberId: maya.id, memberName: "Maya", role: "admin", status: "active", source: "chat" } : null;
+  console.log(`\nGroup "${NAME}": ${groupId}`);
+  if (link) console.log(`Claim link for Maya (single use, 24 h): ${link.url}`);
+  console.log(`Studio (npm run mastra:dev): presets in ${PRESETS_FILE}. requestContext:\n${JSON.stringify(studio)}`);
 }
 
-const [{ n: existing }] = await db.select({ n: sql<number>`count(*)::int` }).from(expenses).where(eq(expenses.householdId, hid));
-if (Number(existing) > 0 && !RESET) {
-  console.log(`"${house.name}" (${hid}) already seeded; pass --reset to rebuild`);
-  await printStudioContext();
+const existing = await groups.chatFor("dev", CHAT);
+if (existing && !RESET) {
+  console.log(`"${existing.group.name}" (${existing.group.id}) already seeded; pass --reset (npm run seed:demo) to rebuild`);
+  await printAccess(existing.group.id);
   process.exit(0);
 }
-
-await db.transaction(async (tx) => {
-  if (RESET) {
-    const choreIds = tx.select({ id: chores.id }).from(chores).where(eq(chores.householdId, hid));
-    const expenseIds = tx.select({ id: expenses.id }).from(expenses).where(eq(expenses.householdId, hid));
-    await tx.delete(choreLogs).where(inArray(choreLogs.choreId, choreIds));
-    await tx.delete(chores).where(eq(chores.householdId, hid));
-    await tx.delete(expenseSplits).where(inArray(expenseSplits.expenseId, expenseIds));
-    await tx.delete(expenses).where(eq(expenses.householdId, hid));
-    await tx.delete(settlements).where(eq(settlements.householdId, hid));
-    await tx.delete(reminders).where(eq(reminders.householdId, hid));
-    await tx.delete(maintenance).where(eq(maintenance.householdId, hid));
-    await tx.delete(cartItems).where(eq(cartItems.householdId, hid));
-    await tx.delete(chatLog).where(eq(chatLog.householdId, hid));
-  }
-
-  /* ----- money: 6 expenses + 2 settlements over 3 weeks ----- */
-  type Src = "chat" | "ui" | "cart";
-  const expense = async (daysAgo: number, hours: number, payerId: string, cents: number, description: string, source: Src, splits?: { memberId: string; cents: number }[]) => {
-    const rows = splits ?? money.splitEvenly(cents, [S, R, A], payerId);
-    const sum = rows.reduce((s, r) => s + r.cents, 0);
-    if (sum !== cents) throw new Error(`${description}: splits ${sum} != ${cents}`);
-    const [e] = await tx.insert(expenses).values({ householdId: hid, payerId, cents, description, source, createdAt: ago(daysAgo, hours) }).returning();
-    await tx.insert(expenseSplits).values(rows.map((r) => ({ expenseId: e.id, memberId: r.memberId, cents: r.cents })));
-  };
-  await expense(21, 3, S, 250_000, "Rent", "ui");
-  await expense(18, 5, R, 6_000, "Internet", "chat");
-  await expense(15, 7, A, 8_640, "Groceries", "cart", [
-    { memberId: S, cents: 3_120 },
-    { memberId: R, cents: 2_960 },
-    { memberId: A, cents: 2_560 },
-  ]);
-  await expense(9, 2, S, 4_200, "Pizza night", "chat");
-  await expense(6, 6, R, 2_400, "Cleaning supplies", "ui");
-  await expense(3, 4, A, 13_890, "Electricity", "chat");
-  await tx.insert(settlements).values([
-    { householdId: hid, fromId: A, toId: S, cents: 30_000, createdAt: ago(12, 1) },
-    { householdId: hid, fromId: R, toId: S, cents: 12_000, createdAt: ago(5, 2) },
-  ]);
-
-  /* ----- chores: 4 on the chart, 18 logs. Sudhersan 10 (last 1d), Ryan 6 (last 2d), Alex 2 (last 9d). ----- */
-  const chart = await tx
-    .insert(chores)
-    .values([
-      { householdId: hid, name: "Dishes", everyDays: 1 },
-      { householdId: hid, name: "Take out trash", everyDays: 3 },
-      { householdId: hid, name: "Clean bathroom", everyDays: 7 },
-      { householdId: hid, name: "Vacuum living room", everyDays: 7 },
-    ])
-    .returning();
-  const chore = (name: string) => chart.find((c) => c.name === name)!.id;
-  const dishes = chore("Dishes");
-  const trash = chore("Take out trash");
-  const bathroom = chore("Clean bathroom");
-  const vacuum = chore("Vacuum living room");
-  // [chore, member, daysAgo, hoursAgo on top]. Dishes yesterday (on track), bathroom 9d ago (overdue).
-  const logs: [string, string, number, number][] = [
-    [dishes, S, 0, 22],
-    [dishes, S, 3, 1],
-    [dishes, S, 5, 2],
-    [dishes, S, 8, 3],
-    [dishes, S, 12, 1],
-    [dishes, S, 16, 2],
-    [dishes, S, 19, 4],
-    [dishes, R, 4, 2],
-    [dishes, R, 7, 1],
-    [dishes, A, 14, 3],
-    [trash, R, 2, 5],
-    [trash, R, 10, 4],
-    [trash, R, 17, 2],
-    [trash, S, 6, 1],
-    [bathroom, A, 9, 6],
-    [bathroom, S, 18, 5],
-    [vacuum, S, 5, 4],
-    [vacuum, R, 15, 3],
-  ];
-  await tx.insert(choreLogs).values(logs.map(([choreId, memberId, d, h]) => ({ choreId, memberId, doneAt: ago(d, h) })));
-
-  /* ----- reminders (unsent) ----- */
-  await tx.insert(reminders).values([
-    { householdId: hid, text: "Trash goes out tonight", dueAt: nextWeekday(2, 20, 0), memberId: null },
-    { householdId: hid, text: "Landlord inspection — tidy up", dueAt: localAt(5, 9, 0), memberId: null },
-    { householdId: hid, text: "Venmo Sudhersan for pizza", dueAt: localAt(1, 18, 0), memberId: A },
-  ]);
-
-  /* ----- cart (open); estimates from the price table so the seed matches what cart_add would compute ----- */
-  await tx.insert(cartItems).values([
-    { householdId: hid, name: "tortilla chips", qty: "3 bags", addedBy: S, shared: false, estCents: estimate("tortilla chips", "3 bags"), createdAt: ago(1, 4) },
-    { householdId: hid, name: "oat milk", qty: "1", addedBy: R, shared: false, estCents: estimate("oat milk", "1"), createdAt: ago(1, 2) },
-    { householdId: hid, name: "paper towels", qty: "1", addedBy: S, shared: true, estCents: estimate("paper towels", "1"), createdAt: ago(0, 20) },
-    { householdId: hid, name: "eggs", qty: "1 dozen", addedBy: A, shared: false, estCents: estimate("eggs", "1 dozen"), createdAt: ago(0, 6) },
-  ]);
-
-  /* ----- group chatter, last 48h. memberId null = Roomie. ----- */
-  const ROOMIE = null;
-  const chat: [string | null, number, string][] = [
-    [R, 46, "did the electric bill come yet"],
-    [A, 45.5, "paid it, $138.90. roomie split electricity 138.90"],
-    [ROOMIE, 45.4, "Electricity $138.90 logged, Alex paid, $46.30 each 💡"],
-    [S, 44, "thanks alex. bathroom's getting scary btw"],
-    [R, 43.5, "that's you alex"],
-    [A, 43, "lol it's on the list"],
-    [S, 30, "landlord inspection friday morning, let's not look like animals"],
-    [R, 29, "anyone need anything from Trader Joe's"],
-    [S, 28.5, "chips, like 3 bags. we're out again"],
-    [A, 28, "roomie add oat milk"],
-    [ROOMIE, 27.9, "Oat milk's in the cart 🛒"],
-    [R, 27.5, "paper towels too, shared"],
-    [S, 22, "dishes done. you're welcome"],
-    [R, 20, "trash is out"],
-    [A, 5, "roomie who owes what"],
-    [ROOMIE, 4.9, "Ryan pays Sudhersan $747.23. Alex pays Sudhersan $421.93."],
-    [A, 4.5, "ok ok, venmo tomorrow after work"],
-  ];
-  await tx.insert(chatLog).values(chat.map(([memberId, h, text]) => ({ householdId: hid, memberId, text, createdAt: ago(0, h) })));
-});
-
-/* ----- after commit: service calls (they use the shared db connection, so they must see committed rows) ----- */
-await upkeep.addDefaults(ctx);
-const lastDone: Record<string, Date | null> = {
-  "Replace HVAC filter": ago(85), // due in 5d -> due-soon
-  "Test smoke alarms": ago(200), // overdue (180)
-  "Clean dryer vent": ago(40), // ok
-  "Descale coffee maker": null, // never
-  "Check fire extinguisher": ago(100), // ok
-};
-for (const [item, when] of Object.entries(lastDone)) {
-  await db.update(maintenance).set({ lastDone: when }).where(and(eq(maintenance.householdId, hid), eq(maintenance.item, item)));
+if (existing) {
+  await groups.deleteGroup(existing.group.id);
+  console.log(`deleted the old "${existing.group.name}" (${existing.group.id})`);
 }
 
-/* ---------- summary ---------- */
+const [group] = await db
+  .insert(schema.groups)
+  .values({ name: NAME, purpose: "roommates", currency: "USD", timezone: "America/Chicago", onboardedAt: ago(26), createdAt: ago(26) })
+  .returning();
+const gid = group.id;
+await db.insert(schema.chats).values({ groupId: gid, channel: "dev", externalId: CHAT, title: NAME, createdAt: ago(26) });
+await groups.initToolkits(gid);
 
-const count = async (table: any, where: any) => {
-  const [{ n }] = await db.select({ n: sql<number>`count(*)::int` }).from(table).where(where);
-  return Number(n);
+const person = async (displayName: string, role: "admin" | "member", status: "active" | "pending", joinedDaysAgo: number) => {
+  const [m] = await db
+    .insert(schema.members)
+    .values({ groupId: gid, displayName, channelUserId: devUserId(displayName), role, status, joinedAt: ago(joinedDaysAgo) })
+    .returning();
+  return m.id;
 };
-const choreIdsQ = db.select({ id: chores.id }).from(chores).where(eq(chores.householdId, hid));
-const counts = {
-  expenses: await count(expenses, eq(expenses.householdId, hid)),
-  settlements: await count(settlements, eq(settlements.householdId, hid)),
-  chores: await count(chores, eq(chores.householdId, hid)),
-  chore_logs: await count(choreLogs, inArray(choreLogs.choreId, choreIdsQ)),
-  reminders: await count(reminders, eq(reminders.householdId, hid)),
-  maintenance: await count(maintenance, eq(maintenance.householdId, hid)),
-  cart_items: await count(cartItems, eq(cartItems.householdId, hid)),
-  chat_log: await count(chatLog, eq(chatLog.householdId, hid)),
-};
-const [balances, plan, shame, status, due] = await Promise.all([
-  money.getBalances(ctx),
-  money.getSettlePlan(ctx),
-  choresSvc.hallOfShame(ctx),
-  choresSvc.choreStatus(ctx),
-  upkeep.dueMaintenance(ctx),
+const M = await person("Maya", "admin", "active", 26);
+const D = await person("Dev", "member", "active", 26);
+const S = await person("Sam", "member", "active", 25);
+const P = await person("Priya", "member", "pending", 2);
+await db.update(schema.groups).set({ createdBy: M }).where(eq(schema.groups.id, gid));
+const all = [M, D, S];
+
+await db.insert(schema.memberNotes).values([
+  { memberId: M, note: { handles: { venmo: "@maya-r", paypal: "maya.r@gmail.com" } } },
+  { memberId: D, note: { handles: { venmo: "@devp", cashapp: "$devpatel" } } },
+  { memberId: S, note: { handles: { cashapp: "$samkim", paypal: "samkim@icloud.com" } } },
 ]);
-const fmt = (d: Date) => new Intl.DateTimeFormat("en-US", { timeZone: TZ, weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(d);
 
-console.log(`\n${RESET ? "rebuilt" : "seeded"} "${house.name}" ${hid}`);
-console.log("  rows:", Object.entries(counts).map(([k, v]) => `${k}=${v}`).join("  "));
+const activity: (typeof schema.activity.$inferInsert)[] = [
+  { groupId: gid, actorMemberId: null, kind: "group.created", summary: "joined the chat. Maya is the first admin", createdAt: ago(26) },
+  { groupId: gid, actorMemberId: null, kind: "member.pending", summary: "added Priya as a pending member", refTable: "members", refId: P, createdAt: ago(2) },
+];
+
+/* ----- money: 12 Expenses (equal splits) and 2 Settlements over three weeks ----- */
+const expense = async (daysAgo: number, payerId: string, cents: number, description: string, among = all, source: "chat" | "ui" | "cart" = "chat") => {
+  const [e] = await db.insert(schema.expenses).values({ groupId: gid, payerId, cents, description, source, createdBy: payerId, createdAt: ago(daysAgo, 3) }).returning();
+  await db.insert(schema.expenseSplits).values(money.splitEvenly(cents, among, payerId).map((r) => ({ expenseId: e.id, ...r })));
+  activity.push({ groupId: gid, actorMemberId: payerId, kind: "expense.added", summary: `added ${description}, ${dollars(cents)}`, refTable: "expenses", refId: e.id, createdAt: ago(daysAgo, 3) });
+};
+await expense(20, M, 12630, "Costco run", all, "cart");
+await expense(19, D, 7500, "Internet");
+await expense(17, S, 4800, "Pizza night");
+await expense(15, M, 9100, "Electricity", all, "ui");
+await expense(13, S, 2347, "Cleaning supplies");
+await expense(11, D, 18000, "Concert tickets", [D, S]);
+await expense(10, M, 9600, "Sunday brunch");
+await expense(10, S, 1860, "Uber home", [M, S]);
+await expense(7, D, 1299, "Paper towels");
+await expense(5, S, 5400, "Water bill");
+await expense(2, M, 4125, "Taco night ingredients");
+await expense(1, D, 1500, "Movie snacks");
+const settle = async (daysAgo: number, fromId: string, toId: string, cents: number, from: string, to: string) => {
+  const [s] = await db.insert(schema.settlements).values({ groupId: gid, fromId, toId, cents, createdAt: ago(daysAgo, 2) }).returning();
+  activity.push({ groupId: gid, actorMemberId: fromId, kind: "settlement.added", summary: `paid ${to} ${dollars(cents)}`, refTable: "settlements", refId: s.id, createdAt: ago(daysAgo, 2) });
+};
+await settle(8, S, M, 10841, "Sam", "Maya");
+await settle(4, S, D, 2866, "Sam", "Dev");
+
+/* ----- Cart ----- */
+await db.insert(schema.cartItems).values([
+  { groupId: gid, name: "Oat milk", qty: "2 cartons", addedBy: M, shared: false, estCents: 898, createdAt: ago(1, 6) },
+  { groupId: gid, name: "Eggs", qty: "18", addedBy: M, shared: true, estCents: 579, createdAt: ago(1, 5) },
+  { groupId: gid, name: "Coffee beans", qty: "2 lb", addedBy: S, shared: true, estCents: 1399, createdAt: ago(1, 4) },
+  { groupId: gid, name: "Dish soap", qty: "1", addedBy: S, shared: true, estCents: 399, createdAt: ago(1, 3) },
+  { groupId: gid, name: "Greek yogurt", qty: "32 oz", addedBy: D, shared: false, estCents: 649, createdAt: ago(0, 9) },
+  { groupId: gid, name: "Hot sauce", qty: "1", addedBy: S, shared: false, estCents: 499, createdAt: ago(0, 8) },
+  { groupId: gid, name: "Sparkling water", qty: "12 pack", addedBy: D, shared: true, estCents: 599, createdAt: ago(0, 7) },
+]);
+
+/* ----- chores: whose turn = whoever did it longest ago. Trash is Maya's today, dishes Dev's. ----- */
+const chart = await db
+  .insert(schema.chores)
+  .values([
+    { groupId: gid, name: "Take out the trash", everyDays: 2 },
+    { groupId: gid, name: "Dishes", everyDays: 1 },
+    { groupId: gid, name: "Water the plants", everyDays: 3 },
+    { groupId: gid, name: "Vacuum the living room", everyDays: 7 },
+    { groupId: gid, name: "Clean the bathroom", everyDays: 7 },
+  ])
+  .returning();
+const chore = (name: string) => chart.find((c) => c.name === name)!.id;
+const logs: [string, string, number][] = [
+  ["Take out the trash", S, 2],
+  ["Take out the trash", D, 4],
+  ["Take out the trash", M, 6],
+  ["Dishes", S, 1],
+  ["Dishes", S, 2],
+  ["Dishes", M, 3],
+  ["Dishes", D, 5],
+  ["Water the plants", D, 2],
+  ["Water the plants", M, 5],
+  ["Water the plants", S, 8],
+  ["Vacuum the living room", D, 4],
+  ["Vacuum the living room", S, 11],
+  ["Vacuum the living room", M, 18],
+  ["Clean the bathroom", M, 3],
+  ["Clean the bathroom", D, 10],
+  ["Clean the bathroom", S, 17],
+];
+await db.insert(schema.choreLogs).values(logs.map(([name, memberId, d]) => ({ choreId: chore(name), memberId, doneAt: ago(d, 2) })));
+activity.push({ groupId: gid, actorMemberId: S, kind: "chore.done", summary: "marked Dishes done", refTable: "chores", refId: chore("Dishes"), createdAt: ago(1, 2) });
+
+/* ----- upkeep and reminders ----- */
+await db.insert(schema.maintenance).values([
+  { groupId: gid, item: "Smoke detector batteries", everyDays: 182, lastDone: ago(180) },
+  { groupId: gid, item: "HVAC filter", everyDays: 91, lastDone: ago(86) },
+  { groupId: gid, item: "Descale the kettle", everyDays: 30, lastDone: ago(8) },
+  { groupId: gid, item: "Fridge coils", everyDays: 365, lastDone: ago(256) },
+]);
+await db.insert(schema.reminders).values([
+  { groupId: gid, text: "Rent is due", dueAt: new Date(now.getTime() + 4 * DAY), recurring: "monthly" },
+  { groupId: gid, text: "Venmo Maya for brunch", dueAt: new Date(now.getTime() + DAY), memberId: D },
+]);
+
+/* ----- chat: what Roomie said lately (Home's narration) and a little chatter ----- */
+const chat: [string | null, number, number, string][] = [
+  [S, 4, 3, "sent dev the concert money"],
+  [null, 4, 2, "Sam paid Dev $28.66 on Cash App. Noted."],
+  [M, 2, 5, "tacos tonight, I grabbed everything"],
+  [null, 2, 4, "Taco night ingredients: $41.25 from Maya, split three ways."],
+  [null, 2, 1, "Priya joined the chat. I'll help her out, but I'm waiting on Maya to approve her before I log anything for her."],
+  [S, 1, 3, "dishes done again"],
+  [null, 1, 2, "Sam did the dishes again. Two days in a row, I'm keeping count."],
+  [D, 1, 1, "roomie I paid 15 for movie snacks"],
+  [null, 1, 0.9, "Logged Dev's $15.00 for movie snacks, split three ways: $5.00 each."],
+  [null, 0, 2, "Trash is on Maya today. Dev has dishes."],
+];
+await db.insert(schema.chatMessages).values(chat.map(([memberId, d, h, text]) => ({ groupId: gid, memberId, text, createdAt: ago(d, h) })));
+await db.insert(schema.activity).values(activity);
+
+/* ---------- summary ---------- */
+const ctx = { groupId: gid };
+const [balances, plan, status, due] = await Promise.all([money.getBalances(ctx), money.getSettlePlan(ctx), choresSvc.choreStatus(ctx), upkeepSvc.dueMaintenance(ctx)]);
+console.log(`${RESET ? "rebuilt" : "seeded"} "${NAME}" ${gid}`);
 console.log("  balances:", balances.map((b) => `${b.name} ${b.cents >= 0 ? "+" : "-"}${dollars(Math.abs(b.cents))}`).join(", "));
-console.log("  settle:  ", plan.length ? plan.map((t) => `${t.fromName} -> ${t.toName} ${dollars(t.cents)}`).join("; ") : "all square");
-console.log("  shame:   ", shame.map((s) => `${s.name} (${s.choresThisWeek} this wk, last ${s.daysSinceLastChore ?? "never"}d)`).join(" > "));
-console.log("  chores:  ", status.map((c) => `${c.name}${c.overdue ? " OVERDUE" : ""} [${c.whoseTurn}'s turn]`).join(", "));
-console.log("  upkeep:  ", due.map((m) => `${m.item} (${m.status})`).join(", "));
-console.log("  reminders:", (await remindersSvc.listReminders(ctx)).map((r) => `${fmt(r.dueAt)} ${r.text}${r.memberName ? ` (${r.memberName})` : ""}`).join(" | "));
-await printStudioContext();
+console.log("  settle:  ", plan.map((t) => `${t.fromName} -> ${t.toName} ${dollars(t.cents)}`).join("; ") || "all square");
+console.log("  chores:  ", status.map((c) => `${c.name} [${c.whoseTurn}'s turn${c.overdue ? ", due" : ""}]`).join(", "));
+console.log("  upkeep:  ", due.map((m) => `${m.item} (${m.status})`).join(", ") || "nothing due");
+await printAccess(gid);
 process.exit(0);

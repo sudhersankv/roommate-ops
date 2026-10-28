@@ -1,0 +1,147 @@
+// npm run dev-chat [-- --chat <id>] [-- --cleanup]
+// A pretend WhatsApp group in the terminal, through the real pipeline (Gate + agent + tools) and the dev Channel.
+// Commands (names are display names; quotes around text are optional):
+//   join <adder> [others...]   Roomie is added to the Chat by <adder>; <others> were already in it (Onboarding)
+//   add <name>                 someone joins later (Pending; Roomie asks the Admins)
+//   say <name> <text>          a message in the Chat ("say Maya roomie who owes what")
+//   approve <name> [by <admin>] approve a Pending member directly (no LLM)
+//   link <name>                mint a Claim link for <name> and print it
+//   who                        Members with role and status
+//   quit
+// --chat attaches to an existing dev Chat (the seed's is "dev-apt-4b"); otherwise a new one is made on `join`.
+// --cleanup deletes the Group on exit. Lines can be piped in: `Get-Content walk.txt | npm run dev-chat`.
+import "../src/lib/env";
+import { createInterface } from "node:readline";
+import { registerChannel } from "../src/channels";
+import { DevChannel, devUserId, type DevOutput } from "../src/channels/dev";
+import { db } from "../src/db";
+import { mastra } from "../src/mastra";
+import { onGroupJoined, onParticipantJoined } from "../src/onboarding";
+import { respondToIncoming } from "../src/pipeline";
+import { claims, groups, members } from "../src/services";
+
+const args = process.argv.slice(2);
+const flag = (name: string) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);
+let chatId = flag("--chat") ?? `dev-${Date.now()}`;
+const cleanup = args.includes("--cleanup");
+const interactive = process.stdin.isTTY;
+
+const names = new Map<string, string>(); // dev user id -> display name
+const nameOf = (userId: string) => names.get(userId) ?? userId;
+const user = (name: string) => {
+  const id = devUserId(name);
+  names.set(id, name);
+  return { userExternalId: id, name };
+};
+
+function show(out: DevOutput) {
+  const head = out.to === "chat" ? "[Roomie]" : `[Roomie -> ${nameOf(out.userExternalId)}, private]`;
+  console.log(`${head} ${out.msg.text.replace(/\n/g, "\n         ")}`);
+  for (const b of out.msg.buttons ?? []) console.log(`         [button] ${b.text} -> ${b.url}`);
+}
+registerChannel(new DevChannel(show));
+
+const unquote = (s: string) => s.trim().replace(/^["'](.*)["']$/s, "$1");
+
+async function groupId(): Promise<string> {
+  const found = await groups.chatFor("dev", chatId);
+  if (!found) throw new Error(`No Chat "${chatId}" yet. Start with: join <name>`);
+  return found.group.id;
+}
+
+async function memberNamed(name: string) {
+  const gid = await groupId();
+  const m = (await members.listGroupMembers({ groupId: gid })).find((x) => x.displayName.toLowerCase() === name.toLowerCase());
+  if (!m) throw new Error(`No member named ${name}.`);
+  return { gid, m };
+}
+
+async function run(line: string) {
+  const [cmd, ...rest] = line.trim().split(/\s+/);
+  const tail = line.trim().slice(cmd.length).trim();
+  switch (cmd?.toLowerCase()) {
+    case "join": {
+      const [adder, ...others] = rest.map(unquote);
+      if (!adder) throw new Error("join <adder> [others...]");
+      const res = await onGroupJoined({ channel: "dev", externalId: chatId, title: flag("--title") ?? "Dev chat" }, [adder, ...others].map(user), user(adder));
+      if (!res.created) return console.log(`(Chat ${chatId} already has Group ${res.group.id})`);
+      console.log(`(Group ${res.group.id} created; ${res.members.map((m) => `${m.displayName} ${m.role}/${m.status}`).join(", ")})`);
+      // A real adapter waits 1-3 minutes before this first message (ADR 0001).
+      if (res.intro) show({ to: "chat", chatExternalId: chatId, msg: res.intro });
+      return;
+    }
+    case "add": {
+      const name = unquote(tail);
+      const res = await onParticipantJoined(await groupId(), user(name));
+      console.log(`(${res.member.displayName} is ${res.member.status})`);
+      if (res.announce) show({ to: "chat", chatExternalId: chatId, msg: res.announce });
+      return;
+    }
+    case "say": {
+      const [name] = rest;
+      const text = unquote(tail.slice(name.length));
+      const u = user(unquote(name));
+      console.log(`[${u.name}] ${text}`);
+      const started = Date.now();
+      const r = await respondToIncoming({ channel: "dev", chatExternalId: chatId, userExternalId: u.userExternalId, userName: u.name, text });
+      const tools = r.toolCalls.filter((t) => t !== "updateWorkingMemory");
+      console.log(`         (gate ${r.gate.decision}/${r.gate.reason}${tools.length ? `, tools ${tools.join(",")}` : ""}, ${((Date.now() - started) / 1000).toFixed(1)}s)`);
+      if (r.out) show({ to: "chat", chatExternalId: chatId, msg: r.out });
+      else console.log("         (Roomie stays quiet)");
+      return;
+    }
+    case "approve": {
+      const byAt = rest.findIndex((x) => x.toLowerCase() === "by");
+      const name = unquote((byAt === -1 ? rest : rest.slice(0, byAt)).join(" "));
+      const { gid, m } = await memberNamed(name);
+      const admin = byAt === -1 ? (await members.admins({ groupId: gid }))[0] : (await memberNamed(rest.slice(byAt + 1).join(" "))).m;
+      await members.approveMember({ groupId: gid, memberId: admin.id, source: "chat" }, { memberId: m.id });
+      return console.log(`(${admin.displayName} approved ${m.displayName})`);
+    }
+    case "link": {
+      const { m } = await memberNamed(unquote(tail));
+      const link = await claims.createClaimToken(m.id);
+      return console.log(`(Claim link for ${m.displayName}, single use, until ${link.expiresAt.toISOString()}): ${link.url}`);
+    }
+    case "who": {
+      const gid = await groupId();
+      for (const m of await members.listGroupMembers({ groupId: gid })) console.log(`  ${m.displayName.padEnd(12)} ${m.role.padEnd(7)} ${m.status}${m.accountId ? "  (has an Account)" : ""}`);
+      return;
+    }
+    case "chat":
+      chatId = unquote(tail);
+      return console.log(`(now in Chat ${chatId})`);
+    case "quit":
+    case "exit":
+      return "quit";
+    case "":
+    case undefined:
+      return;
+    default:
+      if (cmd.startsWith("#")) return; // comments in piped scripts
+      throw new Error(`Unknown command "${cmd}". Try: join, add, say, approve, link, who, quit`);
+  }
+}
+
+console.log(`dev-chat on Chat "${chatId}". Commands: join, add, say, approve, link, who, quit`);
+const rl = createInterface({ input: process.stdin, output: process.stdout, prompt: "> ", terminal: interactive });
+if (interactive) rl.prompt();
+for await (const line of rl) {
+  if (!interactive && line.trim() && !line.trim().startsWith("#")) console.log(`\n> ${line.trim()}`);
+  try {
+    if ((await run(line)) === "quit") break;
+  } catch (e) {
+    console.log(`(error) ${e instanceof Error ? e.message : String(e)}`);
+  }
+  if (interactive) rl.prompt();
+}
+rl.close();
+
+if (cleanup) {
+  const found = await groups.chatFor("dev", chatId);
+  if (found) await groups.deleteGroup(found.group.id);
+  console.log("(Group deleted)");
+}
+await mastra.observability.flush().catch(() => {});
+await db.$client.end();
+process.exit(0);
