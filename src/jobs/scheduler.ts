@@ -1,9 +1,10 @@
 // P4 · Sudhersan. Started once from instrumentation.ts (one long-running process; DISABLE_SCHEDULER=1 skips it).
-// Every 60 s: due reminders, the weekly Group Report (Sun 18:00 Chicago) and a 9 AM upkeep nudge, all through deliver().
-// The tick never rejects: every send is wrapped.
+// Every 60 s: due reminders, the weekly Group Report (Sun 18:00 Chicago) and a 9 AM upkeep nudge, all through deliver(),
+// plus the Group style refresh (jobs/style-note.ts, posts nothing). The tick never rejects: every job is wrapped.
 import { isNotNull } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { deliver } from "@/channels";
+import { refreshStyleNote } from "./style-note";
 import { dueReminders, markSent, type Reminder } from "@/services/reminders";
 import { dueMaintenance } from "@/services/upkeep";
 import { formatGroupReport, groupReport, localParts, shouldPostUpkeepNudge, shouldPostWeeklyReport } from "@/services/report";
@@ -52,9 +53,9 @@ export function reminderLine(r: Pick<Reminder, "id" | "text" | "memberName">): s
 /* ---------- helpers ---------- */
 
 /** Households that have a chat linked (the only ones Roomie can post to unprompted). */
-export async function householdsWithChat(): Promise<{ id: string; name: string }[]> {
+export async function householdsWithChat(): Promise<{ id: string; name: string; styleNoteAt: Date | null }[]> {
   return db
-    .select({ id: schema.households.id, name: schema.households.name })
+    .select({ id: schema.households.id, name: schema.households.name, styleNoteAt: schema.households.styleNoteAt })
     .from(schema.households)
     .where(isNotNull(schema.households.chatId));
 }
@@ -116,7 +117,7 @@ export async function postUpkeepNudge(householdId: string, now = new Date()): Pr
 
 async function runHouseholdJobs(now: Date) {
   const s = state();
-  let houses: { id: string; name: string }[];
+  let houses: { id: string; name: string; styleNoteAt: Date | null }[];
   try {
     houses = await householdsWithChat();
   } catch (e) {
@@ -137,6 +138,11 @@ async function runHouseholdJobs(now: Date) {
       }
     } catch (e) {
       console.error(`scheduler: upkeep nudge failed for ${h.name}`, e);
+    }
+    try {
+      await refreshStyleNote(h.id, h.styleNoteAt, now);
+    } catch (e) {
+      console.error(`scheduler: group style refresh failed for ${h.name}`, e);
     }
   }
 }
