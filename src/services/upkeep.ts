@@ -16,7 +16,7 @@ export type MaintenanceItem = {
   status: MaintenanceStatus;
 };
 
-/** "Due soon" window: items due within this many days show up on the Home card and in the Kevin Report. */
+/** "Due soon" window: items due within this many days show up on the Home card and in the Group Report. */
 export const DUE_SOON_DAYS = 7;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -98,7 +98,7 @@ export async function addMaintenance(ctx: Ctx, input: { item: string; everyDays:
   await db.insert(maintenance).values({ householdId: ctx.householdId, item, everyDays });
 }
 
-/** Mark an item done now. Fuzzy name match; unknown names throw with the list of known items so Kevin can ask. */
+/** Mark an item done now. Fuzzy name match; unknown names throw with the list of known items so Roomie can ask. */
 export async function markDone(ctx: Ctx, input: { item: string }): Promise<void> {
   const all = await rows(ctx.householdId);
   const match = pickByName(all, input.item);
@@ -124,7 +124,7 @@ export async function listMaintenance(ctx: Pick<Ctx, "householdId">): Promise<Ma
     .sort(compareByNextDue);
 }
 
-/** Items overdue or due within the next 7 days, soonest first. Home card + Kevin Report read this. */
+/** Items overdue or due within the next 7 days, soonest first. Home card + Group Report read this. */
 export async function dueMaintenance(ctx: Pick<Ctx, "householdId">): Promise<MaintenanceItem[]> {
   return (await listMaintenance(ctx)).filter((m) => m.status !== "ok");
 }

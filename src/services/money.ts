@@ -108,7 +108,7 @@ export async function logExpense(
   const byId = new Map(people.map((m) => [m.id, m]));
   const payerId = input.payerId ?? ctx.actorId;
   const payer = byId.get(payerId);
-  if (!payer) throw new Error("I don't know who paid. The payer isn't an active roommate in this house.");
+  if (!payer) throw new Error("I don't know who paid. The payer isn't an active member of this group.");
 
   let rows: SplitRow[];
   if (input.splits) {
@@ -116,7 +116,7 @@ export async function logExpense(
     if (rows.length === 0) throw new Error("Splits can't be empty. Who shares this?");
     const seen = new Set<string>();
     for (const r of rows) {
-      if (!byId.has(r.memberId)) throw new Error(`Can't split with ${r.memberId}: not an active roommate here.`);
+      if (!byId.has(r.memberId)) throw new Error(`Can't split with ${r.memberId}: not an active member here.`);
       if (seen.has(r.memberId)) throw new Error(`${byId.get(r.memberId)!.name} appears twice in the split.`);
       seen.add(r.memberId);
       if (!Number.isInteger(r.cents) || r.cents < 0) throw new Error(`Bad split for ${byId.get(r.memberId)!.name}: ${r.cents} cents.`);
@@ -127,9 +127,9 @@ export async function logExpense(
     }
   } else {
     const among = input.splitAmong ?? people.map((m) => m.id);
-    if (among.length === 0) throw new Error("Nobody to split with. Add some roommates first.");
+    if (among.length === 0) throw new Error("Nobody to split with. Add some members first.");
     const unknown = among.find((id) => !byId.has(id));
-    if (unknown) throw new Error(`Can't split with ${unknown}: not an active roommate here.`);
+    if (unknown) throw new Error(`Can't split with ${unknown}: not an active member here.`);
     rows = splitEvenly(input.cents, among, payerId);
   }
 
@@ -193,7 +193,7 @@ export async function getBalances(ctx: Pick<Ctx, "householdId">): Promise<Balanc
   add(sent, 1);
   add(received, -1);
 
-  // Removed roommates stay in the ledger while they still owe or are owed, so balances always net to zero.
+  // Removed members stay in the ledger while they still owe or are owed, so balances always net to zero.
   const movedOut = everyone
     .filter((m) => !m.active && (tally.get(m.id) ?? 0) !== 0)
     .map((m) => ({ memberId: m.id, name: `${m.name} (moved out)`, cents: tally.get(m.id) ?? 0 }));
@@ -212,8 +212,8 @@ export async function settleUp(ctx: Ctx, input: { fromId?: string; toId: string;
   if (fromId === input.toId) throw new Error("Paying yourself back doesn't count.");
   const people = await listMembers(ctx);
   const ids = new Set(people.map((m) => m.id));
-  if (!ids.has(fromId)) throw new Error("The payer isn't an active roommate in this house.");
-  if (!ids.has(input.toId)) throw new Error("The person being paid isn't an active roommate in this house.");
+  if (!ids.has(fromId)) throw new Error("The payer isn't an active member of this group.");
+  if (!ids.has(input.toId)) throw new Error("The person being paid isn't an active member of this group.");
   await db.insert(settlements).values({ householdId: ctx.householdId, fromId, toId: input.toId, cents: input.cents });
 }
 

@@ -1,6 +1,6 @@
-// P7 · "Ask Kevin" panel. Same agent, acting as the dashboard's selected member.
+// P7 · "Ask Roomie" panel. Same agent, acting as the dashboard's selected member.
 // Swap to assistant-ui's streaming protocol later; this JSON shape is enough to start.
-import { askKevin } from "@/agent/kevin";
+import { askRoomie } from "@/agent/roomie";
 import { listMembers } from "@/services/members";
 import { dashboardCtx } from "@/lib/dashboard";
 
@@ -12,7 +12,7 @@ export async function POST(req: Request) {
   if (!ctx) return Response.json({ error: "no household yet" }, { status: 400 });
   const me = (await listMembers(ctx)).find((m) => m.id === ctx.actorId);
   try {
-    const out = await askKevin(ctx, `[${me?.name ?? "Someone"}] ${text}`);
+    const out = await askRoomie(ctx, `[${me?.name ?? "Someone"}] ${text}`);
     return Response.json(out);
   } catch (err) {
     console.error("[api/chat]", err);

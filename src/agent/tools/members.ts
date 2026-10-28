@@ -6,7 +6,7 @@ import type { Ctx } from "@/services/types";
 export const memberTools = (ctx: Ctx) => ({
   list_members: createTool({
     id: "list_members",
-    description: "List the roommates in this house.",
+    description: "List the members of this group.",
     inputSchema: z.object({}),
     execute: async () => (await members.listMembers(ctx)).map((m) => m.name),
   }),

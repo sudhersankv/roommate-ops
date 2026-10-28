@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { buildTranscriptionRequest, cleanTranscript, DEFAULT_STT_MODEL, formatFromMime, TRANSCRIBE_PROMPT } from "./voice";
 
-test("formatFromMime: Telegram voice notes (ogg/opus) -> ogg, and the default is ogg", () => {
+test("formatFromMime: voice notes (ogg/opus) -> ogg, and the default is ogg", () => {
   assert.equal(formatFromMime("audio/ogg"), "ogg");
   assert.equal(formatFromMime("audio/ogg; codecs=opus"), "ogg");
   assert.equal(formatFromMime("audio/opus"), "ogg");
@@ -43,7 +43,7 @@ test("buildTranscriptionRequest: explicit model and format are passed through", 
 });
 
 test("cleanTranscript: trims and strips one layer of wrapping quotes", () => {
-  assert.equal(cleanTranscript('  "Kevin, add milk to the cart"  \n'), "Kevin, add milk to the cart");
+  assert.equal(cleanTranscript('  "Roomie, add milk to the cart"  \n'), "Roomie, add milk to the cart");
   assert.equal(cleanTranscript("“check the work order”"), "check the work order");
   assert.equal(cleanTranscript("'hi'"), "hi");
   assert.equal(cleanTranscript('she said "hi" to me'), 'she said "hi" to me', "inner quotes are kept");

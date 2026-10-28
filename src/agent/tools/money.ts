@@ -13,8 +13,8 @@ export const moneyTools = (ctx: Ctx) => ({
     inputSchema: z.object({
       amount: z.number().positive().describe("Dollars, e.g. 62.5"),
       description: z.string().min(1).describe("What it was for, e.g. 'internet'"),
-      payer: z.string().optional().describe("Roommate name if not the sender"),
-      splitAmong: z.array(z.string()).optional().describe("Roommate names; omit for everyone"),
+      payer: z.string().optional().describe("Member name if not the sender"),
+      splitAmong: z.array(z.string()).optional().describe("Member names; omit for everyone"),
     }),
     execute: async ({ amount, description, payer, splitAmong }) =>
       money.logExpense(ctx, {
@@ -33,11 +33,11 @@ export const moneyTools = (ctx: Ctx) => ({
   }),
   settle_up: createTool({
     id: "settle_up",
-    description: "Record a payment between roommates (e.g. 'I paid Ryan back $30'). Default payer = sender.",
+    description: "Record a payment between members (e.g. 'I paid Ryan back $30'). Default payer = sender.",
     inputSchema: z.object({
-      to: z.string().min(1).describe("Roommate who got paid"),
+      to: z.string().min(1).describe("Member who got paid"),
       amount: z.number().positive().describe("Dollars"),
-      from: z.string().optional().describe("Roommate who paid, if not the sender"),
+      from: z.string().optional().describe("Member who paid, if not the sender"),
     }),
     execute: async ({ to, amount, from }) => {
       await money.settleUp(ctx, {

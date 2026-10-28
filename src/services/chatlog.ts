@@ -1,4 +1,4 @@
-// P0 · implemented. Every group message is logged so Kevin knows what happened between mentions.
+// P0 · implemented. Every group message is logged so Roomie knows what happened between mentions.
 import { and, desc, eq, gt, isNotNull, isNull, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 
@@ -18,11 +18,11 @@ export async function recentChatter(householdId: string, sinceMinutes = 120, lim
     .where(and(eq(chatLog.householdId, householdId), gt(chatLog.createdAt, since)))
     .orderBy(desc(chatLog.createdAt))
     .limit(limit);
-  return rows.reverse().map((r) => `[${r.name ?? "Kevin"}] ${r.text}`);
+  return rows.reverse().map((r) => `[${r.name ?? "Roomie"}] ${r.text}`);
 }
 
-/** When Kevin last spoke in this chat (his rows have memberId null), or null if never. Opens the attention window. */
-export async function lastKevinReplyAt(householdId: string): Promise<Date | null> {
+/** When Roomie last spoke in this chat (its rows have memberId null), or null if never. Opens the attention window. */
+export async function lastRoomieReplyAt(householdId: string): Promise<Date | null> {
   const [row] = await db
     .select({ at: chatLog.createdAt })
     .from(chatLog)
@@ -34,7 +34,7 @@ export async function lastKevinReplyAt(householdId: string): Promise<Date | null
 
 /**
  * Human messages (memberId NOT NULL) logged strictly after `since`. The router logs the incoming message before it
- * asks, so when called with lastKevinReplyAt() the result already counts the message being handled (first follow-up = 1).
+ * asks, so when called with lastRoomieReplyAt() the result already counts the message being handled (first follow-up = 1).
  */
 export async function humanMessagesSince(householdId: string, since: Date): Promise<number> {
   const [row] = await db
