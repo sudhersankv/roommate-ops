@@ -10,5 +10,8 @@ export * as reminders from "./reminders";
 export * as upkeep from "./upkeep";
 export * as report from "./report";
 export * as chatlog from "./chatlog";
+export * as receipts from "./receipts";
+export * as recurring from "./recurring";
+export * as splitwise from "./splitwise";
 export { isNotAllowed, NotAllowedError } from "./authz";
 export type { Ctx, GroupCtx } from "./types";
