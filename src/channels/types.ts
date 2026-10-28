@@ -5,10 +5,10 @@ export type { ChannelName };
 
 export type IncomingMessage = {
   channel: ChannelName;
-  /** The Chat's id on its Channel (WhatsApp group jid). */
+  /** The Chat's id on its Channel (Telegram chat id, WhatsApp group jid). */
   chatExternalId: string;
   chatTitle?: string;
-  /** The sender's id on the Channel (WhatsApp jid). */
+  /** The sender's id on the Channel (Telegram user id, WhatsApp jid). */
   userExternalId: string;
   userName: string;
   text: string; // for voice notes: the transcript

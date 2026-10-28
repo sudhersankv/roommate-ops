@@ -1,4 +1,4 @@
-// The Channel registry. Adapters register themselves (the dev adapter in scripts/dev-chat.ts, WhatsApp in step 2);
+// The Channel registry. Adapters register themselves (dev in scripts/dev-chat.ts, Telegram via telegram-boot.ts);
 // deliver() posts into a Group's Chat through whichever adapter owns it, and only logs when none is connected.
 import { eq } from "drizzle-orm";
 import { db, schema } from "@/db";

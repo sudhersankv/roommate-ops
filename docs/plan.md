@@ -12,7 +12,7 @@ Roomie is a groupmate, not a platform: brief, witty, exact about facts, and it s
 
 | Area | Decision |
 |---|---|
-| Channel | WhatsApp only, through **Baileys** on a dedicated carrier number, behind a Channel adapter ([ADR 0001](./adr/0001-baileys-for-whatsapp-groups.md)). Telegram is deleted. |
+| Channel | **Telegram first** (official Bot API, no ban risk; step 2b), then WhatsApp through **Baileys** (via the Evolution API) on a dedicated carrier number, both behind the Channel adapter ([ADR 0001](./adr/0001-baileys-for-whatsapp-groups.md)). |
 | Agent | One **Mastra** agent (`roomie`), built once. Per-request context goes through `RequestContext`, and tools come from the Group's Toolkits ([ADR 0005](./adr/0005-toolkits-and-one-agent.md)). |
 | Models (Neon AI Gateway) | `claude-sonnet-5-5` for the agent and recipes. `claude-haiku-5-5` for background summaries and Group style. `typesafeai-jev-1-14-0` for the Gate ([ADR 0002](./adr/0002-jev-gate-before-the-agent.md)). `qwen3-embedding-0-6b` for semantic recall. |
 | Observability | Mastra tracing to the **Mastra platform** (`MastraPlatformExporter`) and to local storage for Studio. About 10% of live replies are scored. `npm run evals` runs a fixed scenario set. |
@@ -23,7 +23,7 @@ Roomie is a groupmate, not a platform: brief, witty, exact about facts, and it s
 | Privacy | Raw chat is kept for 30 days. "roomie forget me" and an Admin "delete group data" are available ([ADR 0006](./adr/0006-chat-retention.md)). |
 | Dashboard | Next.js 16, mobile-first, **Tailwind + shadcn/ui**. One dashboard per Group, with a group switcher. |
 | Data | Fresh schema, using Drizzle **migrations** (`drizzle-kit generate` + `migrate`) instead of `push`. The new Neon database starts empty. |
-| Hosting | Local only for now: `npm run dev` (dashboard and API) and `npm run wa` (WhatsApp). Fly and the deploy workflow are removed. CI runs typecheck and tests. |
+| Hosting | Local only for now: `npm run dev` (dashboard and API), `npm run telegram` (Telegram, long polling) and later `npm run wa` (WhatsApp). Fly and the deploy workflow are removed. CI runs typecheck and tests. |
 
 ## How a message flows
 
@@ -94,6 +94,15 @@ Each step gets its own branch and PR, and you test locally before it's merged.
 - `npm run wa` process, with reconnects and a health log. A channel-agnostic `pipeline.ts`, using today's agent for now.
 - **Done when:** Roomie in a test group answers "roomie hi", transcribes a voice note, and can send a private message to a Member.
 - If the number isn't ready, steps 2 and 3 swap.
+- **Parked** until Roomie has its number; step 2b validates the adapter and the flows on Telegram first.
+
+### 2b. Telegram channel (`step/2b-telegram`)
+- [x] grammY adapter (`src/channels/telegram.ts`): Roomie added to a group -> Onboarding (adder = Admin, the group's Telegram admins active, intro after `JOIN_DELAY_MS`), `new_chat_members` -> Pending + approval ask, text / captions / photos (receipts) / voice notes (OpenRouter when set), @-mentions and replies to Roomie, DMs from a Member of one Group, supergroup upgrades.
+- [x] Outbound: typing + human-like pause, per-Chat and global rate limits, 4096-character chunks, URL buttons. Claim links only by DM; when Telegram refuses (the person never pressed Start) Roomie tells them to tap @bot and press Start.
+- [x] Telegram can't list members: first-time senders within 24 h of the join are active, later ones Pending ([ADR 0010](./adr/0010-telegram-cant-list-group-members.md)).
+- [x] `npm run telegram` (long polling, local) and `/api/telegram` (webhook with a secret, for a public URL; `npm run telegram:webhook`). Offline tests with fake updates.
+- **Done when:** in a real test group, Roomie introduces itself, logs "I paid 20 for pizza", approves a newcomer, and DMs a Claim link that signs someone in ([docs/telegram.md](./telegram.md)).
+  - [x] all of it offline against the real pipeline and dev DB with a fake token · [ ] live, waiting for the bot token (BotFather checklist in docs/telegram.md)
 
 ### 3. Mastra agent rebuild (`step/3-agent`)
 - [x] `src/mastra/` with a `roomie` agent built once: `RequestContext` with a schema, dynamic instructions (persona, Group style, Members, time zone) and dynamic tools from the Toolkit registry.
@@ -140,6 +149,7 @@ Each step gets its own branch and PR, and you test locally before it's merged.
 
 ## Your to-dos
 
+- [ ] Create the Telegram bot with BotFather (privacy off, join groups on) and put `TELEGRAM_BOT_TOKEN` + `TELEGRAM_BOT_USERNAME` in `.env` ([docs/telegram.md](./telegram.md)).
 - [ ] Roomie's WhatsApp number: a real prepaid eSIM or SIM you **keep** (for example Tello, about $5/month). Not Google Voice and not a rented SMS-verification number. Use the WhatsApp Business app, turn on two-step verification, warm it up for a few days, and open it at least weekly.
 - [ ] Mastra platform: `MASTRA_PLATFORM_ACCESS_TOKEN` and `MASTRA_PROJECT_ID` in `.env`.
 - [ ] Composio: a valid `COMPOSIO_API_KEY` in `.env` (the current one is rejected with 401). Then connect Splitwise once from Settings and put the logged `COMPOSIO_SPLITWISE_AUTH_CONFIG_ID` in `.env`. I'll test the Instacart call.
@@ -160,4 +170,6 @@ NEON_AUTH_BASE_URL               Neon Auth URL (branch -> Auth)
 NEON_AUTH_COOKIE_SECRET          32+ chars, ours
 DEV_AUTH_EMAIL                   dev-only sign-in bypass for browser automation
 APP_URL=http://localhost:3000    links Roomie sends
+TELEGRAM_BOT_TOKEN, TELEGRAM_BOT_USERNAME, TELEGRAM_WEBHOOK_SECRET   Telegram (docs/telegram.md)
+JOIN_DELAY_MS, REPLY_DELAY_MS    pacing: intro delay after joining, pause before replies
 ```
