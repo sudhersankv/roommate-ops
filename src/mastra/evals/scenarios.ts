@@ -1,5 +1,5 @@
 // The fixed scenario set for `npm run evals` (scripts/evals.ts). Each scenario runs through the real pipeline
-// (Gate + Sonnet + tools) in its own throwaway household with Maya, Dev and Sam; the sender is Maya unless set.
+// (Gate + Sonnet + tools) in its own throwaway Group with Maya (Admin), Dev and Sam; the sender is Maya unless set.
 // A scenario passes when every check in `expect` holds, or every check in `alt` does (two acceptable behaviours).
 import { cart, chores, money, reminders, upkeep } from "@/services";
 import type { Ctx } from "@/services/types";

@@ -1,36 +1,23 @@
-import { listMembers } from "@/services/members";
+import { listGroupMembers, listMembers } from "@/services/members";
 import type { Ctx } from "@/services/types";
 import type { Button } from "@/channels/types";
+import { dashboardUrl } from "@/lib/urls";
 
 export { ctxOf } from "@/mastra/context";
+export { appUrl, dashboardUrl, isAbsoluteUrl } from "@/lib/urls";
 
 export const toCents = (dollars: number) => Math.round(dollars * 100);
 
-/** Case-insensitive first-name match. Unknown names throw so the model can ask. */
-export async function memberIdByName(ctx: Ctx, name: string): Promise<string> {
-  const people = await listMembers(ctx);
-  const hit = people.find((p) => p.name.toLowerCase().startsWith(name.trim().toLowerCase()));
-  if (!hit) throw new Error(`No member named "${name}". Members: ${people.map((p) => p.name).join(", ")}`);
-  return hit.id;
-}
-
-/** Dashboard base URL (APP_URL, trailing slashes trimmed); "" when unset. */
-export const appUrl = () => (process.env.APP_URL ?? "").trim().replace(/\/+$/, "");
-
-/** True when the link is absolute (http/https), i.e. usable as a chat button. */
-export const isAbsoluteUrl = (url: string | null | undefined) => /^https?:\/\//i.test(url ?? "");
-
 /**
- * Absolute link to a dashboard path (e.g. "/cart"), or null when APP_URL is unset or not absolute.
- * A relative link is useless in a chat app, so callers attach a button only when this is non-null.
+ * Case-insensitive first-name match among active Members (or pending ones too, for approvals). Unknown names throw
+ * so the model can ask.
  */
-export function dashboardUrl(path: string, query?: Record<string, string | null | undefined>): string | null {
-  const base = appUrl();
-  if (!isAbsoluteUrl(base)) return null;
-  const params = new URLSearchParams();
-  for (const [k, v] of Object.entries(query ?? {})) if (v) params.set(k, v);
-  const qs = params.toString();
-  return `${base}${path.startsWith("/") ? path : `/${path}`}${qs ? `?${qs}` : ""}`;
+export async function memberIdByName(ctx: Ctx, name: string, opts: { includePending?: boolean } = {}): Promise<string> {
+  const people = opts.includePending ? await listGroupMembers(ctx) : await listMembers(ctx);
+  const q = name.trim().toLowerCase();
+  const hit = people.find((p) => p.displayName.toLowerCase() === q) ?? people.find((p) => p.displayName.toLowerCase().startsWith(q));
+  if (!hit) throw new Error(`No member named "${name}". Members: ${people.map((p) => p.displayName).join(", ")}`);
+  return hit.id;
 }
 
 /**

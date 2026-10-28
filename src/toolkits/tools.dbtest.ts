@@ -2,12 +2,12 @@
 // Run: npm run test:tools   (tsx --test src/toolkits/tools.dbtest.ts; src/lib/env loads .env)
 // Not named *.test.ts on purpose: `npm test` runs without .env and must not pick this up.
 //
-// Isolation: `before` creates a throwaway household ("Test House <ts>") with 3 members; `after` deletes every row
+// Isolation: `before` onboards a throwaway Group ("Test Group <ts>", Sudhersan is the Admin); `after` deletes every row
 // that references it and asserts the DB is clean. The seeded "Apt 4B" rows are never touched.
 import "@/lib/env";
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type { PgColumn, PgTable } from "drizzle-orm/pg-core";
 import { isValidationError } from "@mastra/core/tools";
 import { RequestContext } from "@mastra/core/request-context";
@@ -18,6 +18,9 @@ import type { ChoreStatus, ShameRow } from "@/services/chores";
 import type { Reminder } from "@/services/reminders";
 import type { MaintenanceItem } from "@/services/upkeep";
 import type { CartItem } from "@/services/cart";
+import { devUserId } from "@/channels/dev";
+import { onGroupJoined, onParticipantJoined } from "@/onboarding";
+import { deleteGroup } from "@/services/groups";
 import { allTools } from "./registry";
 
 type Tools = ReturnType<typeof allTools>;
@@ -27,72 +30,66 @@ type AnyTool = { id: string; execute?: (input: unknown, context: unknown) => Pro
 
 const NAMES = ["Sudhersan", "Ryan", "Alex"] as const;
 
-let householdId: string;
+let groupId: string;
 let member: Record<(typeof NAMES)[number], string>;
 let ctx: Ctx;
 let requestContext: RequestContext;
 let tools: Tools;
 const covered = new Set<string>();
 
-/** Call a tool's execute the way the agent runtime would: Mastra validates the input; the household comes from requestContext. */
+const contextFor = (memberId: string, name: string, role: "admin" | "member", status: "active" | "pending"): RequestContext =>
+  new RequestContext<unknown>([
+    ["groupId", groupId],
+    ["memberId", memberId],
+    ["memberName", name],
+    ["role", role],
+    ["status", status],
+    ["source", "chat"],
+  ]);
+
+/** Call a tool's execute the way the agent runtime would: Mastra validates the input; the Group comes from requestContext. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function run<K extends ToolId>(id: K, input: ToolInput<K>): Promise<any> {
+async function run<K extends ToolId>(id: K, input: ToolInput<K>, rc = requestContext): Promise<any> {
   covered.add(id);
   const tool = tools[id] as unknown as AnyTool;
   assert.ok(tool.execute, `${id} has no execute`);
-  const out = await tool.execute(input, { requestContext });
+  const out = await tool.execute(input, { requestContext: rc });
   if (isValidationError(out)) throw new Error(`${id} rejected input: ${JSON.stringify(out)}`);
   return out;
 }
 
-type HouseTable = PgTable & { householdId: PgColumn };
-const count = async (table: HouseTable) =>
-  Number((await db.select({ n: sql<number>`count(*)::int` }).from(table).where(eq(table.householdId, householdId)))[0].n);
+type GroupTable = PgTable & { groupId: PgColumn };
+const count = async (table: GroupTable) =>
+  Number((await db.select({ n: sql<number>`count(*)::int` }).from(table).where(eq(table.groupId, groupId)))[0].n);
 
 describe("Roomie tools against the dev DB", () => {
   before(async () => {
-    const [house] = await db.insert(schema.households).values({ name: `Test House ${Date.now()}` }).returning();
-    householdId = house.id;
-    const rows = await db
-      .insert(schema.members)
-      .values(NAMES.map((name) => ({ householdId, name })))
-      .returning();
-    member = Object.fromEntries(rows.map((r) => [r.name, r.id])) as typeof member;
-    ctx = { householdId, actorId: member.Sudhersan, source: "chat" };
-    requestContext = new RequestContext([
-      ["householdId", householdId],
-      ["actorId", member.Sudhersan],
-      ["actorName", "Sudhersan"],
-      ["source", "chat"],
-    ]);
+    const people = NAMES.map((name) => ({ userExternalId: devUserId(`test-${name}-${Date.now()}`), name }));
+    const joined = await onGroupJoined({ channel: "dev", externalId: `test-${Date.now()}`, title: `Test Group ${Date.now()}` }, people, people[0]);
+    groupId = joined.group.id;
+    member = Object.fromEntries(joined.members.map((r) => [r.displayName, r.id])) as typeof member;
+    ctx = { groupId, memberId: member.Sudhersan, source: "chat" };
+    requestContext = contextFor(member.Sudhersan, "Sudhersan", "admin", "active");
     tools = allTools();
   });
 
   after(async () => {
     try {
-      if (!householdId) return;
-      const choreIds = (await db.select({ id: schema.chores.id }).from(schema.chores).where(eq(schema.chores.householdId, householdId))).map((c) => c.id);
-      if (choreIds.length) await db.delete(schema.choreLogs).where(inArray(schema.choreLogs.choreId, choreIds));
-      await db.delete(schema.chores).where(eq(schema.chores.householdId, householdId));
-      await db.delete(schema.expenses).where(eq(schema.expenses.householdId, householdId)); // expense_splits cascade
-      await db.delete(schema.settlements).where(eq(schema.settlements.householdId, householdId));
-      await db.delete(schema.reminders).where(eq(schema.reminders.householdId, householdId));
-      await db.delete(schema.maintenance).where(eq(schema.maintenance.householdId, householdId));
-      await db.delete(schema.cartItems).where(eq(schema.cartItems.householdId, householdId));
-      await db.delete(schema.chatLog).where(eq(schema.chatLog.householdId, householdId));
-      await db.delete(schema.members).where(eq(schema.members.householdId, householdId));
-      await db.delete(schema.households).where(eq(schema.households.id, householdId));
-
+      if (!groupId) return;
+      await deleteGroup(groupId);
       // Verify nothing is left behind.
-      const tables: [string, HouseTable][] = [
+      const tables: [string, GroupTable][] = [
         ["expenses", schema.expenses],
         ["settlements", schema.settlements],
         ["reminders", schema.reminders],
         ["maintenance", schema.maintenance],
         ["cart_items", schema.cartItems],
-        ["chat_log", schema.chatLog],
+        ["chat_messages", schema.chatMessages],
+        ["activity", schema.activity],
         ["members", schema.members],
         ["chores", schema.chores],
+        ["chats", schema.chats],
+        ["group_toolkits", schema.groupToolkits],
       ];
       for (const [name, t] of tables) assert.equal(await count(t), 0, `leftover rows in ${name}`);
       const [orphans] = await db
@@ -101,8 +98,8 @@ describe("Roomie tools against the dev DB", () => {
         .leftJoin(schema.expenses, eq(schema.expenseSplits.expenseId, schema.expenses.id))
         .where(sql`${schema.expenses.id} is null`);
       assert.equal(Number(orphans.n), 0, "orphan expense_splits");
-      const house = await db.select().from(schema.households).where(eq(schema.households.id, householdId));
-      assert.equal(house.length, 0, "test household still exists");
+      const left = await db.select().from(schema.groups).where(eq(schema.groups.id, groupId));
+      assert.equal(left.length, 0, "test Group still exists");
     } finally {
       await db.$client.end();
     }
@@ -110,11 +107,12 @@ describe("Roomie tools against the dev DB", () => {
 
   // ---------- members ----------
 
-  test("list_members returns the 3 test members", async () => {
-    const names: string[] = await run("list_members", {});
-    assert.deepEqual([...names].sort(), [...NAMES].sort());
+  test("list_members returns the 3 test members with role and status; the adder is the Admin", async () => {
+    const list: { name: string; role: string; status: string }[] = await run("list_members", {});
+    assert.deepEqual(list.map((m) => m.name).sort(), [...NAMES].sort());
+    assert.deepEqual(list.find((m) => m.name === "Sudhersan"), { name: "Sudhersan", role: "admin", status: "active" });
+    assert.ok(list.filter((m) => m.name !== "Sudhersan").every((m) => m.role === "member" && m.status === "active"), "people already in the chat are active");
   });
-
   test("unknown member name throws a helpful error listing the members", async () => {
     await assert.rejects(run("log_expense", { amount: 10, description: "pizza", payer: "Dev" }), /No member named "Dev".*Sudhersan/);
     await assert.rejects(run("log_chore", { chore: "dishes", who: "Sam" }), /No member named "Sam"/);
@@ -128,9 +126,9 @@ describe("Roomie tools against the dev DB", () => {
     assert.equal(await count(schema.expenses), 0);
   });
 
-  test("a tool called without the household in requestContext refuses", async () => {
+  test("a tool called without the Group in requestContext refuses", async () => {
     const tool = tools.list_members as unknown as AnyTool;
-    await assert.rejects(tool.execute!({}, { requestContext: new RequestContext() }), /householdId and actorId/);
+    await assert.rejects(tool.execute!({}, { requestContext: new RequestContext() }), /groupId and memberId/);
   });
 
   // ---------- money ----------
@@ -173,7 +171,7 @@ describe("Roomie tools against the dev DB", () => {
   test("settle_up: 'Alex paid Sudhersan back $25' zeroes Alex", async () => {
     const r = await run("settle_up", { to: "Sudhersan", amount: 25, from: "Alex" });
     assert.deepEqual(r, { ok: true });
-    const rows = await db.select().from(schema.settlements).where(eq(schema.settlements.householdId, householdId));
+    const rows = await db.select().from(schema.settlements).where(eq(schema.settlements.groupId, groupId));
     assert.equal(rows.length, 1);
     assert.equal(rows[0].cents, 2500);
     assert.equal(rows[0].fromId, member.Alex);
@@ -208,7 +206,7 @@ describe("Roomie tools against the dev DB", () => {
     assert.deepEqual(await run("add_chore", { name: "Dishes", everyDays: 1 }), { ok: true, chore: "Dishes", everyDays: 1 });
     await run("add_chore", { name: "Take out trash", everyDays: 3 });
     await run("add_chore", { name: "take out trash", everyDays: 2 });
-    const chart = await db.select().from(schema.chores).where(eq(schema.chores.householdId, householdId));
+    const chart = await db.select().from(schema.chores).where(eq(schema.chores.groupId, groupId));
     assert.deepEqual(
       chart.map((c) => [c.name, c.everyDays]).sort(),
       [
@@ -231,11 +229,11 @@ describe("Roomie tools against the dev DB", () => {
       .select({ memberId: schema.choreLogs.memberId, name: schema.chores.name })
       .from(schema.choreLogs)
       .innerJoin(schema.chores, eq(schema.choreLogs.choreId, schema.chores.id))
-      .where(eq(schema.chores.householdId, householdId));
+      .where(eq(schema.chores.groupId, groupId));
     assert.equal(logs.length, 3);
     assert.equal(logs.filter((l) => l.memberId === member.Sudhersan && l.name === "Dishes").length, 2);
     assert.equal(logs.filter((l) => l.memberId === member.Alex && l.name === "Take out trash").length, 1);
-    assert.equal((await db.select().from(schema.chores).where(eq(schema.chores.householdId, householdId))).length, 2, "no new chore was created");
+    assert.equal((await db.select().from(schema.chores).where(eq(schema.chores.groupId, groupId))).length, 2, "no new chore was created");
   });
 
   test("log_chore: an unknown chore is added to the chart (every 7 days)", async () => {
@@ -244,8 +242,8 @@ describe("Roomie tools against the dev DB", () => {
     const [c] = await db
       .select()
       .from(schema.chores)
-      .where(and(eq(schema.chores.householdId, householdId), eq(schema.chores.name, "watered the plants")));
-    assert.equal(c.householdId, householdId);
+      .where(and(eq(schema.chores.groupId, groupId), eq(schema.chores.name, "watered the plants")));
+    assert.equal(c.groupId, groupId);
     assert.equal(c.everyDays, 7);
   });
 
@@ -284,7 +282,7 @@ describe("Roomie tools against the dev DB", () => {
     assert.equal(rent.memberId, null);
     assert.equal(rent.recurring, "monthly");
 
-    const rows = await db.select().from(schema.reminders).where(eq(schema.reminders.householdId, householdId));
+    const rows = await db.select().from(schema.reminders).where(eq(schema.reminders.groupId, groupId));
     assert.equal(rows.length, 2);
     assert.ok(rows.every((x) => x.sentAt === null));
   });
@@ -329,7 +327,7 @@ describe("Roomie tools against the dev DB", () => {
     const [row] = await db
       .select()
       .from(schema.maintenance)
-      .where(and(eq(schema.maintenance.householdId, householdId), eq(schema.maintenance.item, "Replace HVAC filter")));
+      .where(and(eq(schema.maintenance.groupId, groupId), eq(schema.maintenance.item, "Replace HVAC filter")));
     assert.ok(row.lastDone && Date.now() - row.lastDone.getTime() < 60_000, "lastDone set to now");
     const due: MaintenanceItem[] = await run("maintenance_status", { dueOnly: true });
     assert.deepEqual(
@@ -379,7 +377,7 @@ describe("Roomie tools against the dev DB", () => {
     if (/^https?:\/\//i.test(appUrl)) {
       assert.deepEqual(
         added.links?.map((b) => b.url),
-        [`${appUrl}/cart`],
+        [`${appUrl}/g/${groupId}/cart`],
         "only the View cart link",
       );
       assert.ok(/view cart/i.test(added.links![0].text));
@@ -391,7 +389,7 @@ describe("Roomie tools against the dev DB", () => {
     assert.equal(second.addedTotalCents, 349, "addedTotal is only the new item");
     assert.equal(second.cartTotalCents, 1347 + 349, "cartTotal is the whole open cart");
     assert.equal(second.cartItemCount, 2);
-    const rows = await db.select().from(schema.cartItems).where(eq(schema.cartItems.householdId, householdId));
+    const rows = await db.select().from(schema.cartItems).where(eq(schema.cartItems.groupId, groupId));
     assert.equal(rows.length, 2);
     const chips = rows.find((r) => r.name === "chips");
     assert.equal(chips?.qty, "3 bags");
@@ -421,7 +419,7 @@ describe("Roomie tools against the dev DB", () => {
     await run("cart_add", { items: [{ name: "oat milk", qty: "2" }] });
     assert.deepEqual(await run("cart_remove", { name: "Oat Milk" }), { removed: true });
     assert.deepEqual(await run("cart_remove", { name: "caviar" }), { removed: false });
-    const open = await db.select().from(schema.cartItems).where(eq(schema.cartItems.householdId, householdId));
+    const open = await db.select().from(schema.cartItems).where(eq(schema.cartItems.groupId, groupId));
     assert.deepEqual(open.filter((r) => r.status === "open").map((r) => r.name).sort(), ["chips", "dish soap"]);
   });
 
@@ -452,7 +450,7 @@ describe("Roomie tools against the dev DB", () => {
     assert.ok(cents[member.Sudhersan] >= 2588 && cents[member.Sudhersan] <= 2590, `Sudhersan got ${cents[member.Sudhersan]}`);
     assert.ok(Math.abs(cents[member.Ryan] - cents[member.Alex]) <= 1, "shared item split evenly");
     assert.ok(cents[member.Ryan] >= 205 && cents[member.Ryan] <= 206);
-    const items = await db.select().from(schema.cartItems).where(eq(schema.cartItems.householdId, householdId));
+    const items = await db.select().from(schema.cartItems).where(eq(schema.cartItems.groupId, groupId));
     assert.ok(items.filter((r) => r.name !== "oat milk").every((r) => r.status === "purchased"), "cart items marked purchased");
     const view: CartView = await run("cart_view", {});
     assert.deepEqual(view.groups, {});
@@ -486,11 +484,115 @@ describe("Roomie tools against the dev DB", () => {
     // A purchase whose expense can't be logged (payer not an active member) must roll the items back to open.
     await run("cart_add", { items: [{ name: "bagels" }] });
     const cartService = await import("@/services/cart");
-    await assert.rejects(cartService.markPurchased({ ...ctx, actorId: "00000000-0000-0000-0000-000000000000" }, { totalCents: 400 }), /who paid/i);
-    const open = await db.select().from(schema.cartItems).where(eq(schema.cartItems.householdId, householdId));
+    await assert.rejects(cartService.markPurchased(ctx, { totalCents: 400, payerId: "00000000-0000-0000-0000-000000000000" }), /who paid/i);
+    const open = await db.select().from(schema.cartItems).where(eq(schema.cartItems.groupId, groupId));
     assert.deepEqual(open.filter((r) => r.status === "open").map((r) => r.name), ["bagels"], "items stay open after a failed purchase");
     assert.equal(await count(schema.expenses), before + 1);
     await run("cart_purchased", { total: 4 });
+  });
+
+  // ---------- identity: Pending members, Admins, settings, Claim links, forget me ----------
+
+  let priya: string;
+  let priyaRc: RequestContext;
+
+  test("someone who joins later is Pending: Roomie asks the Admin; reads work, writes are refused kindly", async () => {
+    const joined = await onParticipantJoined(groupId, { userExternalId: devUserId(`test-priya-${Date.now()}`), name: "Priya" });
+    priya = joined.member.id;
+    assert.equal(joined.member.status, "pending");
+    assert.match(joined.announce?.text ?? "", /Sudhersan.*approve Priya/);
+    priyaRc = contextFor(priya, "Priya", "member", "pending");
+    const before = await count(schema.expenses);
+    const refused = await run("log_expense", { amount: 20, description: "pizza" }, priyaRc);
+    assert.equal(refused.notAllowed, true);
+    assert.equal(refused.reason, "pending");
+    assert.match(refused.message, /approve you first.*Sudhersan/);
+    assert.equal(await count(schema.expenses), before, "nothing logged for a Pending member");
+    const { balances }: { balances: Balance[] } = await run("get_balances", {}, priyaRc);
+    assert.ok(!balances.some((b) => b.name === "Priya"), "Pending members aren't in the ledger");
+    assert.deepEqual((await run("list_pending", {})).map((m: { name: string }) => m.name), ["Priya"]);
+  });
+
+  test("only an Admin approves; once approved, Priya's expense is logged and split 4 ways", async () => {
+    const ryan = contextFor(member.Ryan, "Ryan", "member", "active");
+    const no = await run("approve_member", { name: "Priya" }, ryan);
+    assert.equal(no.reason, "admin-only");
+    assert.match(no.message, /Only an admin.*Sudhersan/);
+    assert.deepEqual(await run("approve_member", { name: "priya" }), { approved: "Priya" });
+    const e: Expense = await run("log_expense", { amount: 20, description: "pizza" }, contextFor(priya, "Priya", "member", "active"));
+    assert.equal(e.payerName, "Priya");
+    assert.equal(e.splits?.length, 4);
+    assert.deepEqual((await run("list_pending", {})), []);
+  });
+
+  test("decline_member removes a Pending member; promote_member makes an Admin", async () => {
+    const zed = await onParticipantJoined(groupId, { userExternalId: devUserId(`test-zed-${Date.now()}`), name: "Zed" });
+    assert.deepEqual(await run("decline_member", { name: "Zed" }), { declined: "Zed" });
+    const [row] = await db.select().from(schema.members).where(eq(schema.members.id, zed.member.id));
+    assert.equal(row.status, "removed");
+    assert.deepEqual(await run("promote_member", { name: "Ryan" }), { promoted: "Ryan" });
+    const [ryan] = await db.select().from(schema.members).where(eq(schema.members.id, member.Ryan));
+    assert.equal(ryan.role, "admin");
+  });
+
+  test("set_group_settings (Admin): Onboarding answer picks the purpose's Toolkits; toggle_toolkit switches one", async () => {
+    const alex = contextFor(member.Alex, "Alex", "member", "active");
+    assert.equal((await run("set_group_settings", { currency: "EUR" }, alex)).reason, "admin-only");
+    const s = await run("set_group_settings", { purpose: "trip", currency: "eur", timezone: "Europe/Berlin" });
+    assert.equal(s.currency, "EUR");
+    assert.equal(s.timezone, "Europe/Berlin");
+    assert.deepEqual([...s.toolkits].sort(), ["groceries", "splitting"]);
+    const [g] = await db.select().from(schema.groups).where(eq(schema.groups.id, groupId));
+    assert.ok(g.onboardedAt, "Onboarding is done");
+    await assert.rejects(run("set_group_settings", { timezone: "Mars/Olympus" }), /isn't a time zone/);
+    const t = await run("toggle_toolkit", { toolkit: "chores", enabled: true }, contextFor(member.Ryan, "Ryan", "admin", "active"));
+    assert.ok(t.toolkits.includes("chores"));
+    assert.equal((await run("toggle_toolkit", { toolkit: "upkeep", enabled: true }, alex)).reason, "admin-only");
+  });
+
+  test("get_dashboard_link: a Claim link goes out privately (reused while live); with an Account, the dashboard", async () => {
+    const alex = contextFor(member.Alex, "Alex", "member", "active");
+    const first = await run("get_dashboard_link", {}, alex);
+    assert.deepEqual(first, { kind: "claim", sentPrivately: true, expiresIn: "24 hours" });
+    assert.ok(!("links" in first), "Claim links never go into the group chat");
+    await run("get_dashboard_link", {}, alex);
+    const tokens = await db.select().from(schema.claimTokens).where(eq(schema.claimTokens.memberId, member.Alex));
+    assert.equal(tokens.length, 1, "asking twice reuses the live link");
+
+    const claimsSvc = await import("@/services/claims");
+    const user = { id: `test-${Date.now()}`, email: `alex-${Date.now()}@example.com`, name: "Alex" };
+    try {
+      const claimed = await claimsSvc.consumeClaim(tokens[0].token, user);
+      assert.equal(claimed.memberId, member.Alex);
+      await assert.rejects(claimsSvc.consumeClaim(tokens[0].token, { ...user, id: `${user.id}-other`, email: `x${user.email}` }), /already used/);
+      const again = await claimsSvc.consumeClaim(tokens[0].token, user);
+      assert.equal(again.memberId, member.Alex, "reloading the claim page as the same Account is fine");
+      const next = await run("get_dashboard_link", {}, alex);
+      assert.equal(next.kind, "dashboard");
+      assert.match(next.links[0].url, new RegExp(`/g/${groupId}$`));
+    } finally {
+      await db.delete(schema.accounts).where(eq(schema.accounts.authUserId, user.id));
+      await db.delete(schema.accounts).where(eq(schema.accounts.authUserId, `${user.id}-other`));
+    }
+  });
+
+  test("set_payment_handle and forget_me: chat lines and the note go, the ledger stays", async () => {
+    const alex = contextFor(member.Alex, "Alex", "member", "active");
+    const h = await run("set_payment_handle", { app: "venmo", handle: "@alex-p" }, alex);
+    assert.deepEqual(h.handles, { venmo: "@alex-p" });
+    await db.insert(schema.chatMessages).values([
+      { groupId, memberId: member.Alex, text: "hi" },
+      { groupId, memberId: member.Alex, text: "remember me?" },
+    ]);
+    const splitsBefore = await db.select().from(schema.expenseSplits).where(eq(schema.expenseSplits.memberId, member.Alex));
+    const r = await run("forget_me", {}, alex);
+    assert.equal(r.chatLines, 2);
+    assert.equal(r.keptLedger, true);
+    const lines = await db.select().from(schema.chatMessages).where(and(eq(schema.chatMessages.groupId, groupId), eq(schema.chatMessages.memberId, member.Alex)));
+    assert.equal(lines.length, 0);
+    assert.equal((await db.select().from(schema.memberNotes).where(eq(schema.memberNotes.memberId, member.Alex))).length, 0);
+    const splitsAfter = await db.select().from(schema.expenseSplits).where(eq(schema.expenseSplits.memberId, member.Alex));
+    assert.equal(splitsAfter.length, splitsBefore.length, "Shares are kept so Balances still add up");
   });
 
   // ---------- coverage ----------

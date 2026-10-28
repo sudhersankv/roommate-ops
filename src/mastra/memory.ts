@@ -1,7 +1,7 @@
-// Roomie's memory: one thread per household ("household-<id>", resource = householdId), in the app's Postgres.
+// Roomie's memory: one thread per Group ("group-<id>", resource = groupId), in the app's Postgres.
 //   - message history: the last 30 messages of the thread
 //   - semantic recall: pgvector over every message, embedded on the gateway (qwen3-embedding-0-6b, 1024 dims)
-//   - working memory, scoped to the resource (the household): the Group style note and Member notes
+//   - working memory, scoped to the resource (the Group): the Group style note and Member notes
 // Group style grows in the background, not in the reply path: jobs/style-note.ts asks Haiku to rewrite the Style
 // section from the latest ~50 chat lines whenever that many new lines have been logged since its last update. The
 // agent itself only edits Member notes (it's told so in its instructions).
@@ -39,4 +39,4 @@ export const memory = new Memory({
   },
 });
 
-export const threadFor = (householdId: string) => ({ thread: `household-${householdId}`, resource: householdId });
+export const threadFor = (groupId: string) => ({ thread: `group-${groupId}`, resource: groupId });

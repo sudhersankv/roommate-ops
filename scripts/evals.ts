@@ -1,14 +1,14 @@
 // npm run evals [-- --only id,id] [-- --baseline]
 // Runs every scenario in src/mastra/evals/scenarios.ts through the real pipeline (Jev Gate + Sonnet + tools) against
-// the dev DB, each in its own throwaway household that is deleted afterwards (memory thread included). Prints a
+// the dev DB, each in its own throwaway Group that is deleted afterwards (memory thread included). Prints a
 // table and the pass rate; --baseline also writes docs/evals-baseline.md. Traces stay in Postgres for Studio.
 import "../src/lib/env";
 import { writeFileSync } from "node:fs";
-import { eq, inArray, sql } from "drizzle-orm";
+
 import { db, schema } from "../src/db";
 import { respond, type PipelineResult } from "../src/pipeline";
 import { mastra } from "../src/mastra";
-import { memory, threadFor } from "../src/mastra/memory";
+import { deleteGroup } from "../src/services/groups";
 import { shapeOf } from "../src/mastra/scorers/brevity-tone";
 import { EVAL_MEMBERS, READ_ONLY_TOOLS, SCENARIOS, type EvalEnv, type EvalMember, type Expect, type Scenario, type Turn } from "../src/mastra/evals/scenarios";
 
@@ -18,28 +18,21 @@ const writeBaseline = args.includes("--baseline");
 const MAX_ATTEMPTS = 3;
 const RATE_LIMIT_WAIT_MS = 30_000;
 
-async function createHousehold(id: string): Promise<EvalEnv> {
-  const [house] = await db.insert(schema.households).values({ name: `Eval ${id} ${Date.now()}` }).returning();
-  const rows = await db.insert(schema.members).values(EVAL_MEMBERS.map((name) => ({ householdId: house.id, name }))).returning();
-  const member = Object.fromEntries(rows.map((r) => [r.name, r.id])) as Record<EvalMember, string>;
-  const as = (name: EvalMember) => ({ householdId: house.id, actorId: member[name], source: "chat" as const });
+async function createGroup(id: string): Promise<EvalEnv> {
+  const [group] = await db.insert(schema.groups).values({ name: `Eval ${id} ${Date.now()}`, purpose: "roommates", onboardedAt: new Date() }).returning();
+  const rows = await db
+    .insert(schema.members)
+    .values(EVAL_MEMBERS.map((name) => ({ groupId: group.id, displayName: name, role: name === "Maya" ? ("admin" as const) : ("member" as const), status: "active" as const })))
+    .returning();
+  const member = Object.fromEntries(rows.map((r) => [r.displayName, r.id])) as Record<EvalMember, string>;
+  const as = (name: EvalMember) => ({ groupId: group.id, memberId: member[name], source: "chat" as const });
   return { ctx: as("Maya"), member, as };
 }
 
-async function deleteHousehold(householdId: string) {
-  const choreIds = (await db.select({ id: schema.chores.id }).from(schema.chores).where(eq(schema.chores.householdId, householdId))).map((c) => c.id);
-  if (choreIds.length) await db.delete(schema.choreLogs).where(inArray(schema.choreLogs.choreId, choreIds));
-  for (const t of [schema.chores, schema.expenses, schema.settlements, schema.reminders, schema.maintenance, schema.cartItems, schema.chatLog, schema.members]) {
-    await db.delete(t).where(eq(t.householdId, householdId));
-  }
-  await db.delete(schema.households).where(eq(schema.households.id, householdId));
-  const { thread } = threadFor(householdId);
-  await memory.deleteThread(thread).catch(() => {});
-  await db.execute(sql`delete from mastra_resources where id = ${householdId}`).catch(() => {});
-}
-
-const say = (env: EvalEnv, t: Turn) => respond({ householdId: env.ctx.householdId, member: { id: env.member[t.from ?? "Maya"], name: t.from ?? "Maya" }, text: t.text, source: "chat", channel: "evals", isReplyToRoomie: t.isReplyToRoomie });
-
+const say = (env: EvalEnv, t: Turn) => {
+  const name = t.from ?? "Maya";
+  return respond({ groupId: env.ctx.groupId, member: { id: env.member[name], displayName: name, role: name === "Maya" ? "admin" : "member", status: "active" }, text: t.text, source: "chat", channel: "evals", isReplyToRoomie: t.isReplyToRoomie });
+};
 async function failures(x: Expect, r: PipelineResult, env: EvalEnv): Promise<string[]> {
   const out: string[] = [];
   const reply = r.out?.text ?? "";
@@ -70,7 +63,7 @@ type Row = { s: Scenario; pass: boolean; why: string; gate: string; tools: strin
 
 async function runOne(s: Scenario): Promise<Row> {
   for (let attempt = 1; ; attempt++) {
-    const env = await createHousehold(s.id);
+    const env = await createGroup(s.id);
     const started = Date.now();
     let r: PipelineResult | null = null;
     let err: unknown;
@@ -102,7 +95,7 @@ async function runOne(s: Scenario): Promise<Row> {
         ms,
       };
     } finally {
-      await deleteHousehold(env.ctx.householdId).catch((e) => console.error(`cleanup failed for ${s.id}`, e));
+      await deleteGroup(env.ctx.groupId).catch((e) => console.error(`cleanup failed for ${s.id}`, e));
     }
   }
 }

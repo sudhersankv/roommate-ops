@@ -6,13 +6,13 @@ import { dollars } from "@/services/types";
 import { ctxOf, dashboardLinks, memberIdByName, toCents } from "../util";
 
 /** The View-cart button; omitted when APP_URL is not an absolute URL. */
-const viewCart = () => dashboardLinks("🛒 View cart", "/cart");
+const viewCart = (groupId: string) => dashboardLinks("🛒 View cart", `/g/${groupId}/cart`);
 
 export const cartTools = {
   cart_add: createTool({
     id: "cart_add",
     description:
-      "Add grocery items to the shared cart, attributed to the sender ('add 3 bags of chips for me' -> one item, name 'chips', qty '3 bags'). shared=true for household items (toilet paper, dish soap). Returns addedTotal (just these items) and cartTotal (the whole open cart). A View-cart button is attached automatically; don't paste URLs.",
+      "Add grocery items to the shared cart, attributed to the sender ('add 3 bags of chips for me' -> one item, name 'chips', qty '3 bags'). shared=true for things the whole group uses (toilet paper, dish soap). Returns addedTotal (just these items) and cartTotal (the whole open cart). A View-cart button is attached automatically; don't paste URLs.",
     inputSchema: z.object({
       items: z
         .array(
@@ -37,7 +37,7 @@ export const cartTools = {
         cartItemCount: open.length,
         cartTotalCents,
         cartTotal: dollars(cartTotalCents),
-        ...viewCart(),
+        ...viewCart(ctx.groupId),
       };
     },
   }),
@@ -52,10 +52,11 @@ export const cartTools = {
     description: "Show the open cart grouped by who added each item, with estimated prices and the estimated total.",
     inputSchema: z.object({}),
     execute: async (_input, context) => {
-      const groups = await cart.viewCart(ctxOf(context));
+      const ctx = ctxOf(context);
+      const groups = await cart.viewCart(ctx);
       const all = Object.values(groups).flat();
       const estTotalCents = cart.cartTotal(all);
-      return { groups, itemCount: all.length, estTotalCents, estTotal: dollars(estTotalCents), ...(all.length ? viewCart() : {}) };
+      return { groups, itemCount: all.length, estTotalCents, estTotal: dollars(estTotalCents), ...(all.length ? viewCart(ctx.groupId) : {}) };
     },
   }),
   cart_checkout: createTool({

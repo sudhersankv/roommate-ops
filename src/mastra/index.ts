@@ -30,7 +30,7 @@ export const mastra = new Mastra({
         exporters: [...(platformExport ? [new MastraPlatformExporter()] : []), new MastraStorageExporter()],
         spanOutputProcessors: [new SensitiveDataFilter()],
         excludeSpanTypes: [SpanType.MODEL_CHUNK], // one row per streamed chunk otherwise
-        requestContextKeys: ["householdId", "actorId", "toolkit"],
+        requestContextKeys: ["groupId", "memberId", "role", "status", "toolkit"],
       },
     },
   }),
