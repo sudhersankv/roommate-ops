@@ -1,5 +1,8 @@
 import { listMembers } from "@/services/members";
 import type { Ctx } from "@/services/types";
+import type { Button } from "@/channels/types";
+
+export { ctxOf } from "@/mastra/context";
 
 export const toCents = (dollars: number) => Math.round(dollars * 100);
 
@@ -28,4 +31,13 @@ export function dashboardUrl(path: string, query?: Record<string, string | null 
   for (const [k, v] of Object.entries(query ?? {})) if (v) params.set(k, v);
   const qs = params.toString();
   return `${base}${path.startsWith("/") ? path : `/${path}`}${qs ? `?${qs}` : ""}`;
+}
+
+/**
+ * Buttons for Roomie's reply. Tools return them as `links` in their result and the pipeline collects every
+ * tool result's links (deduped by url) into Outgoing.buttons, so the model never pastes URLs.
+ */
+export function dashboardLinks(text: string, path: string): { links?: Button[] } {
+  const url = dashboardUrl(path);
+  return url ? { links: [{ text, url }] } : {};
 }

@@ -1,3 +1,4 @@
+import "./src/lib/env";
 import { defineConfig } from "drizzle-kit";
 
 export default defineConfig({
@@ -5,6 +6,7 @@ export default defineConfig({
   out: "./drizzle",
   dialect: "postgresql",
   dbCredentials: { url: process.env.DATABASE_URL! },
-  // Mastra memory creates its own mastra_* tables in the same DB; don't let push drop them.
-  tablesFilter: ["!mastra_*"],
+  // Mastra creates its own tables in the same DB (mastra_* for storage, memory_messages* for pgvector recall);
+  // don't let push drop them.
+  tablesFilter: ["!mastra_*", "!memory_messages*"],
 });

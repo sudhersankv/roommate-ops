@@ -9,3 +9,6 @@ spikes/**/auth/
 *.tsbuildinfo
 next-env.d.ts
 plans/
+.scratch/
+.mastra/
+.mastra-presets.json

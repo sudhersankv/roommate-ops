@@ -1,14 +1,16 @@
 // Integration tests for every Roomie tool against the real dev DB (no LLM involved).
-// Run: npm run test:tools   (tsx --env-file=.env --test src/agent/tools/tools.dbtest.ts)
+// Run: npm run test:tools   (tsx --test src/toolkits/tools.dbtest.ts; src/lib/env loads .env)
 // Not named *.test.ts on purpose: `npm test` runs without .env and must not pick this up.
 //
 // Isolation: `before` creates a throwaway household ("Test House <ts>") with 3 members; `after` deletes every row
 // that references it and asserts the DB is clean. The seeded "Apt 4B" rows are never touched.
+import "@/lib/env";
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type { PgColumn, PgTable } from "drizzle-orm/pg-core";
 import { isValidationError } from "@mastra/core/tools";
+import { RequestContext } from "@mastra/core/request-context";
 import { db, schema } from "@/db";
 import type { Ctx } from "@/services/types";
 import type { Balance, Expense, Transfer } from "@/services/money";
@@ -16,29 +18,29 @@ import type { ChoreStatus, ShameRow } from "@/services/chores";
 import type { Reminder } from "@/services/reminders";
 import type { MaintenanceItem } from "@/services/upkeep";
 import type { CartItem } from "@/services/cart";
-import { makeTools, type ToolOutbox } from "./index";
+import { allTools } from "./registry";
 
-type Tools = ReturnType<typeof makeTools>;
+type Tools = ReturnType<typeof allTools>;
 type ToolId = keyof Tools;
 type ToolInput<K extends ToolId> = Parameters<NonNullable<Tools[K]["execute"]>>[0];
-type AnyTool = { id: string; execute?: (input: unknown) => Promise<unknown> };
+type AnyTool = { id: string; execute?: (input: unknown, context: unknown) => Promise<unknown> };
 
 const NAMES = ["Sudhersan", "Ryan", "Alex"] as const;
 
 let householdId: string;
 let member: Record<(typeof NAMES)[number], string>;
 let ctx: Ctx;
-let outbox: ToolOutbox;
+let requestContext: RequestContext;
 let tools: Tools;
 const covered = new Set<string>();
 
-/** Call a tool's execute the way the agent runtime would: Mastra validates the input and builds a synthetic context. */
+/** Call a tool's execute the way the agent runtime would: Mastra validates the input; the household comes from requestContext. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function run<K extends ToolId>(id: K, input: ToolInput<K>): Promise<any> {
   covered.add(id);
   const tool = tools[id] as unknown as AnyTool;
   assert.ok(tool.execute, `${id} has no execute`);
-  const out = await tool.execute(input);
+  const out = await tool.execute(input, { requestContext });
   if (isValidationError(out)) throw new Error(`${id} rejected input: ${JSON.stringify(out)}`);
   return out;
 }
@@ -57,8 +59,13 @@ describe("Roomie tools against the dev DB", () => {
       .returning();
     member = Object.fromEntries(rows.map((r) => [r.name, r.id])) as typeof member;
     ctx = { householdId, actorId: member.Sudhersan, source: "chat" };
-    outbox = { buttons: [] };
-    tools = makeTools(ctx, outbox);
+    requestContext = new RequestContext([
+      ["householdId", householdId],
+      ["actorId", member.Sudhersan],
+      ["actorName", "Sudhersan"],
+      ["source", "chat"],
+    ]);
+    tools = allTools();
   });
 
   after(async () => {
@@ -116,9 +123,14 @@ describe("Roomie tools against the dev DB", () => {
 
   test("schema validation: negative dollars never reach the service", async () => {
     const tool = tools.log_expense as unknown as AnyTool;
-    const out = await tool.execute!({ amount: -5, description: "nope" });
+    const out = await tool.execute!({ amount: -5, description: "nope" }, { requestContext });
     assert.ok(isValidationError(out), "expected a ValidationError object");
     assert.equal(await count(schema.expenses), 0);
+  });
+
+  test("a tool called without the household in requestContext refuses", async () => {
+    const tool = tools.list_members as unknown as AnyTool;
+    await assert.rejects(tool.execute!({}, { requestContext: new RequestContext() }), /householdId and actorId/);
   });
 
   // ---------- money ----------
@@ -348,12 +360,12 @@ describe("Roomie tools against the dev DB", () => {
 
   // ---------- cart (estimates from lib/prices; Instacart checkout is not wired yet) ----------
 
-  type CartAdd = { items: CartItem[]; addedTotalCents: number; addedTotal: string; cartItemCount: number; cartTotalCents: number; cartTotal: string };
-  type CartView = { groups: Record<string, CartItem[]>; itemCount: number; estTotalCents: number; estTotal: string };
+  type Link = { text: string; url: string };
+  type CartAdd = { items: CartItem[]; addedTotalCents: number; addedTotal: string; cartItemCount: number; cartTotalCents: number; cartTotal: string; links?: Link[] };
+  type CartView = { groups: Record<string, CartItem[]>; itemCount: number; estTotalCents: number; estTotal: string; links?: Link[] };
   const appUrl = (process.env.APP_URL ?? "").trim().replace(/\/+$/, "");
 
-  test("cart_add: '3 bags of chips for me' + a shared item; estimates from the catalog; View-cart button attached", async () => {
-    outbox.buttons.length = 0;
+  test("cart_add: '3 bags of chips for me' + a shared item; estimates from the catalog; View-cart link attached", async () => {
     const added: CartAdd = await run("cart_add", { items: [{ name: "chips", qty: "3 bags" }] });
     assert.equal(added.items.length, 1);
     assert.equal(added.items[0].name, "chips");
@@ -366,13 +378,13 @@ describe("Roomie tools against the dev DB", () => {
     assert.equal(added.cartItemCount, 1);
     if (/^https?:\/\//i.test(appUrl)) {
       assert.deepEqual(
-        outbox.buttons.map((b) => b.url),
+        added.links?.map((b) => b.url),
         [`${appUrl}/cart`],
-        "only the View cart button",
+        "only the View cart link",
       );
-      assert.ok(/view cart/i.test(outbox.buttons[0].text));
+      assert.ok(/view cart/i.test(added.links![0].text));
     } else {
-      assert.equal(outbox.buttons.length, 0, "no APP_URL -> no buttons");
+      assert.equal(added.links, undefined, "no APP_URL -> no links");
     }
 
     const second: CartAdd = await run("cart_add", { items: [{ name: "dish soap" }], shared: true });
@@ -414,14 +426,13 @@ describe("Roomie tools against the dev DB", () => {
   });
 
   test("cart_checkout says Instacart checkout is coming soon, with the cart summary and no button", async () => {
-    outbox.buttons.length = 0;
     const r: { available: boolean; message: string; itemCount: number; estTotalCents: number; url?: unknown } = await run("cart_checkout", {});
     assert.equal(r.available, false);
     assert.match(r.message, /coming soon/i);
     assert.equal(r.itemCount, 2);
     assert.equal(r.estTotalCents, 1347 + 349);
     assert.ok(!("url" in r), "no checkout link");
-    assert.equal(outbox.buttons.length, 0, "no checkout button");
+    assert.ok(!("links" in r), "no checkout button");
   });
 
   test("cart_purchased: one expense split by who added what (shared split evenly), items marked purchased", async () => {
@@ -484,7 +495,7 @@ describe("Roomie tools against the dev DB", () => {
 
   // ---------- coverage ----------
 
-  test("every tool makeTools exposes was exercised", () => {
+  test("every tool in the registry was exercised", () => {
     const all = Object.keys(tools).sort();
     const missing = all.filter((id) => !covered.has(id));
     assert.deepEqual(missing, [], `tools without a test: ${missing.join(", ")}`);

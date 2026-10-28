@@ -1,11 +1,10 @@
 // P3 · Sudhersan.
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
-import { chores, report } from "@/services";
-import type { Ctx } from "@/services/types";
-import { memberIdByName } from "./util";
+import { chores } from "@/services";
+import { ctxOf, memberIdByName } from "../util";
 
-export const choreTools = (ctx: Ctx) => ({
+export const choreTools = {
   log_chore: createTool({
     id: "log_chore",
     description:
@@ -14,8 +13,10 @@ export const choreTools = (ctx: Ctx) => ({
       chore: z.string().min(1).describe("Free text, e.g. 'the dishes', 'trash'"),
       who: z.string().optional().describe("Member name if not the sender"),
     }),
-    execute: async ({ chore, who }) =>
-      chores.logChore(ctx, { chore, memberId: who ? await memberIdByName(ctx, who) : undefined }),
+    execute: async ({ chore, who }, context) => {
+      const ctx = ctxOf(context);
+      return chores.logChore(ctx, { chore, memberId: who ? await memberIdByName(ctx, who) : undefined });
+    },
   }),
   add_chore: createTool({
     id: "add_chore",
@@ -24,8 +25,8 @@ export const choreTools = (ctx: Ctx) => ({
       name: z.string().min(1),
       everyDays: z.number().int().positive().optional().describe("How often, in days. Default 7."),
     }),
-    execute: async ({ name, everyDays }) => {
-      await chores.addChore(ctx, { name, everyDays: everyDays ?? 7 });
+    execute: async ({ name, everyDays }, context) => {
+      await chores.addChore(ctxOf(context), { name, everyDays: everyDays ?? 7 });
       return { ok: true, chore: name.trim(), everyDays: everyDays ?? 7 };
     },
   }),
@@ -33,13 +34,9 @@ export const choreTools = (ctx: Ctx) => ({
     id: "chore_status",
     description: "Chores: last done, overdue, whose turn, and the Hall of Shame (worst first).",
     inputSchema: z.object({}),
-    execute: async () => ({ chores: await chores.choreStatus(ctx), shame: await chores.hallOfShame(ctx) }),
+    execute: async (_input, context) => {
+      const ctx = ctxOf(context);
+      return { chores: await chores.choreStatus(ctx), shame: await chores.hallOfShame(ctx) };
+    },
   }),
-  group_report: createTool({
-    id: "group_report",
-    description:
-      "The full Group Report: balances, settle plan, chores, Hall of Shame, upcoming reminders, upkeep. Returns ready-to-post text; reply with it verbatim.",
-    inputSchema: z.object({}),
-    execute: async () => ({ text: report.formatGroupReport(await report.groupReport(ctx)) }),
-  }),
-});
+};
