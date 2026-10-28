@@ -11,7 +11,7 @@ const createdAt = () => timestamp("created_at", { withTimezone: true }).notNull(
 export const GROUP_PURPOSES = ["roommates", "trip", "friends", "family", "work", "other"] as const;
 export type GroupPurpose = (typeof GROUP_PURPOSES)[number];
 export const CHATTINESS_LEVELS = ["quiet", "normal", "chatty"] as const;
-export const CHANNELS = ["whatsapp", "dev"] as const;
+export const CHANNELS = ["whatsapp", "telegram", "dev"] as const;
 export type ChannelName = (typeof CHANNELS)[number];
 
 /* ---------- core ---------- */

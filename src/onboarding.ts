@@ -1,18 +1,19 @@
 // Onboarding: what happens when Roomie is added to a Chat, and when someone joins one later.
-// Called by Channel adapters (WhatsApp in step 2; scripts/dev-chat.ts today). The adapter owns the anti-ban timing
-// (ADR 0001: wait 1-3 minutes after joining before the first message); these functions only decide what to say.
+// Called by Channel adapters (channels/telegram.ts, scripts/dev-chat.ts). The adapter owns the anti-spam timing
+// (ADR 0001: wait a while after joining before the first message); these functions only decide what to say.
 //
-// Who is what (docs/adr/0008):
+// Who is what (docs/adr/0008, 0010):
 //   - whoever added Roomie: Admin, active
-//   - everyone already in the Chat when Roomie joins: active (they were in the group before Roomie)
+//   - everyone already in the Chat when Roomie joins: active (they were in the group before Roomie). Telegram can't
+//     list them, so there a first-time sender within 24 hours of Roomie joining counts as already there
 //   - anyone who joins later, or speaks without Roomie having seen them join: Pending until an Admin approves
 import { and, eq } from "drizzle-orm";
 import { db, schema } from "@/db";
 import type { ChannelName } from "@/db/schema";
-import type { ChannelUser, Outgoing } from "@/channels/types";
+import { ROSTER_GRACE_MS, type ChannelUser, type Outgoing } from "@/channels/types";
 import { record } from "@/services/activity";
 import { logMessage } from "@/services/chatlog";
-import { chatFor, initToolkits, type Group } from "@/services/groups";
+import { chatFor, initToolkits, type Chat, type Group } from "@/services/groups";
 import { addMember, admins, memberByChannelUser, type Member } from "@/services/members";
 
 export type ChatRef = { channel: ChannelName; externalId: string; title?: string };
@@ -21,11 +22,15 @@ const joinNames = (n: string[]) => (n.length <= 1 ? n.join("") : `${n.slice(0, -
 
 /* ---------- pure copy (onboarding.test.ts) ---------- */
 
-/** Roomie's first message: who it is, who the Admin is, and the setup questions in one go. */
-export function introMessage(adderName: string): string {
+/**
+ * Roomie's first message: who it is, who the Admin is, and the setup questions in one go. `dmHandle` (Telegram's
+ * @username) adds the one nudge to open a 1:1 chat, since a bot can't message anyone first.
+ */
+export function introMessage(adderName: string, opts: { dmHandle?: string } = {}): string {
   return [
     `Hey all, I'm Roomie 👋 ${adderName} added me, so ${adderName}'s my admin. I split costs, keep a shared Cart and track chores.`,
     `Quick setup, one reply is plenty: what's this group for (roommates, a trip, friends, family, work), which currency, and which time zone? Just "roommates" works too: I'll go with USD, Chicago time and switch everything on.`,
+    ...(opts.dmHandle ? [`One more thing: tap @${opts.dmHandle} and press Start, so I can DM you your dashboard link later.`] : []),
   ].join("\n");
 }
 
@@ -44,7 +49,12 @@ export type JoinResult = { group: Group; members: Member[]; intro: Outgoing | nu
  * Members, switches every Toolkit on until the Group says what it's for, and returns the intro to post. Calling it
  * again for a known Chat changes nothing and returns `intro: null`.
  */
-export async function onGroupJoined(chat: ChatRef, participants: ChannelUser[], addedBy: ChannelUser): Promise<JoinResult> {
+export async function onGroupJoined(
+  chat: ChatRef,
+  participants: ChannelUser[],
+  addedBy: ChannelUser,
+  opts: { dmHandle?: string } = {},
+): Promise<JoinResult> {
   const known = await chatFor(chat.channel, chat.externalId);
   if (known) {
     const rows = await db.select().from(schema.members).where(eq(schema.members.groupId, known.group.id));
@@ -69,12 +79,33 @@ export async function onGroupJoined(chat: ChatRef, participants: ChannelUser[], 
   await initToolkits(group.id);
   await record(group.id, null, "group.created", `joined the chat. ${admin.displayName} is the first admin`, { table: "groups", id: group.id });
 
-  const intro = { text: introMessage(admin.displayName) };
+  const intro = { text: introMessage(admin.displayName, opts) };
   await logMessage(group.id, null, intro.text); // opens the follow-up window for the answers
   return { group: withCreator, members: [admin, ...others], intro, created: true };
 }
 
 export type ParticipantResult = { member: Member; announce: Outgoing | null; created: boolean };
+
+/** Whether a first-time sender in this Chat counts as already in it when Roomie joined (ADR 0010). Pure. */
+export function rosterStillOpen(chat: Pick<Chat, "channel" | "createdAt">, now = new Date()): boolean {
+  const grace = ROSTER_GRACE_MS[chat.channel];
+  return grace !== undefined && now.getTime() - chat.createdAt.getTime() < grace;
+}
+
+/**
+ * Someone Roomie has no Member for spoke in a known Chat. Normally a later joiner (Pending + "approve X?"), but on a
+ * Channel that can't list members, in the first hours after Roomie joined, they were almost certainly already there:
+ * an active Member, no approval asked.
+ */
+export async function onUnknownSender(chat: Chat, user: ChannelUser, now = new Date()): Promise<ParticipantResult> {
+  const existing = await memberByChannelUser(chat.groupId, user.userExternalId);
+  if (!existing && rosterStillOpen(chat, now)) {
+    const member = await addMember(chat.groupId, { displayName: user.name, channelUserId: user.userExternalId, status: "active" });
+    await record(chat.groupId, null, "member.added", `added ${member.displayName}, already in the chat when Roomie joined`, { table: "members", id: member.id });
+    return { member, announce: null, created: true };
+  }
+  return onParticipantJoined(chat.groupId, user);
+}
 
 /**
  * Someone joined a known Chat (or spoke without Roomie having seen them join): they're a Pending member and Roomie

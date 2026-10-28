@@ -1,7 +1,9 @@
 // Receipts: the model only transcribes; sums and splits are recomputed here (pure, no model call).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { checkReceipt, matchItem, parseModelJson, priceToCents, receiptSplits, SAMPLE_RECEIPT } from "./receipts";
+import { rm } from "node:fs/promises";
+import path from "node:path";
+import { checkReceipt, imageDataUrl, matchItem, parseModelJson, priceToCents, receiptSplits, saveUpload, SAMPLE_RECEIPT } from "./receipts";
 
 const sum = (rows: { cents: number }[]) => rows.reduce((s, r) => s + r.cents, 0);
 
@@ -60,4 +62,14 @@ test("matchItem prefers exact, then contains, then a word", () => {
   assert.equal(matchItem(items, "pizza bianca", new Set()), 1);
   assert.equal(matchItem(items, "margherita", new Set()), 0);
   assert.equal(matchItem(items, "the pizza", new Set([0])), 1);
+});
+
+test("uploads in nested folders (Telegram: tg/<chat id>/<file id>.jpg) are read back from disk, and nothing escapes", async () => {
+  const saved = await saveUpload("tg/-100123/../x", Buffer.from("jpeg"), "image/jpeg", "AQAD_x-1.");
+  try {
+    assert.equal(saved.path, "/uploads/tg/-100123/x/AQAD_x-1.jpg");
+    assert.equal(await imageDataUrl(saved.path), `data:image/jpeg;base64,${Buffer.from("jpeg").toString("base64")}`);
+  } finally {
+    await rm(path.dirname(path.dirname(saved.file)), { recursive: true, force: true });
+  }
 });
