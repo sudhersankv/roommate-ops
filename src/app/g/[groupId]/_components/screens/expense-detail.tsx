@@ -3,7 +3,7 @@
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { useState, useTransition } from "react"
-import { ArrowLeftIcon, PencilIcon, ReceiptText, Trash2Icon } from "lucide-react"
+import { ArrowLeftIcon, PencilIcon, ReceiptText, RepeatIcon, Trash2Icon } from "lucide-react"
 
 import {
   AlertDialog,
@@ -16,9 +16,10 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
-import { Item, ItemActions, ItemContent, ItemGroup, ItemMedia, ItemTitle } from "@/components/ui/item"
+import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from "@/components/ui/item"
 import { toast } from "@/components/ui/toast"
 import { MemberAvatar } from "@/components/app/member-avatar"
 import { Amount, CategoryIcon, categoryOf, useFormatMoney } from "@/components/app/money-bits"
@@ -26,6 +27,14 @@ import { deleteExpense, restoreExpense } from "../../actions"
 import { ExpenseDrawer } from "../expense-drawer"
 import { useGroup } from "../group-context"
 import type { ExpenseView } from "../types"
+
+const methodText = {
+  equal: "Split equally",
+  exact: "Split by exact amounts",
+  percent: "Split by percentage",
+  shares: "Split by shares",
+  cart: "Split by who wanted what",
+} as const
 
 export function ExpenseDetailScreen({ expense }: { expense: ExpenseView | null }) {
   const { base } = useGroup()
@@ -95,8 +104,26 @@ function Detail({ expense: e }: { expense: ExpenseView }) {
         <h1 className="type-title">{e.description}</h1>
         <p className="type-display">{money(e.cents)}</p>
         <p className="type-body text-muted-foreground">
-          {e.category === "other" ? `Added ${when}` : `${cat.label}, ${when}`}.{addedBy ? ` Added by ${addedBy}.` : ""}
+          {e.category === "other" ? `On ${when}` : `${cat.label}, ${when}`}.{addedBy ? ` Added by ${addedBy}.` : ""}
         </p>
+        {e.recurring || e.repeated || e.inSplitwise || e.receiptUrl ? (
+          <div className="flex flex-wrap gap-1.5">
+            {e.recurring ? (
+              <Badge variant="secondary">
+                <RepeatIcon data-icon="inline-start" />
+                Repeats {e.recurring}
+              </Badge>
+            ) : null}
+            {e.repeated ? (
+              <Badge variant="secondary">
+                <RepeatIcon data-icon="inline-start" />
+                Added by the repeat
+              </Badge>
+            ) : null}
+            {e.inSplitwise ? <Badge variant="outline">In Splitwise</Badge> : null}
+            {e.receiptUrl ? <Badge variant="outline">Receipt</Badge> : null}
+          </div>
+        ) : null}
         {e.yourShare > 0 || e.youPaid > 0 ? (
           <p className="type-body">
             {e.youPaid - e.yourShare > 0 ? (
@@ -140,7 +167,7 @@ function Detail({ expense: e }: { expense: ExpenseView }) {
           <h2 id="shares" className="type-heading">
             Shares
           </h2>
-          <p className="type-caption text-muted-foreground">{e.uneven ? "Split by who wanted what" : "Split equally"}, worked out to the cent.</p>
+          <p className="type-caption text-muted-foreground">{methodText[e.source === "cart" ? "cart" : e.method]}, worked out to the cent.</p>
         </div>
         <ItemGroup className="gap-0 rounded-3xl bg-card py-1">
           {e.shares.map((s) => (
@@ -150,6 +177,9 @@ function Detail({ expense: e }: { expense: ExpenseView }) {
               </ItemMedia>
               <ItemContent>
                 <ItemTitle>{name(s.memberId)}</ItemTitle>
+                {s.weight != null ? (
+                  <ItemDescription>{e.method === "percent" ? `${s.weight}%` : `${s.weight} ${s.weight === 1 ? "share" : "shares"}`}</ItemDescription>
+                ) : null}
               </ItemContent>
               <ItemActions>
                 <Amount cents={s.cents} className="type-heading" />
@@ -158,6 +188,27 @@ function Detail({ expense: e }: { expense: ExpenseView }) {
           ))}
         </ItemGroup>
       </section>
+
+      {e.note ? (
+        <section aria-labelledby="note" className="flex flex-col gap-2">
+          <h2 id="note" className="type-heading">
+            Note
+          </h2>
+          <p className="type-body whitespace-pre-line text-muted-foreground">{e.note}</p>
+        </section>
+      ) : null}
+
+      {e.receiptUrl ? (
+        <section aria-labelledby="receipt" className="flex flex-col gap-2">
+          <h2 id="receipt" className="type-heading">
+            Receipt
+          </h2>
+          <a href={e.receiptUrl} target="_blank" rel="noreferrer" className="w-fit">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={e.receiptUrl} alt={`Receipt for ${e.description}`} className="max-h-72 rounded-2xl border object-contain" />
+          </a>
+        </section>
+      ) : null}
 
       {e.canChange ? (
         <div className="flex gap-3">

@@ -1,19 +1,21 @@
 // The fixed scenario set for `npm run evals` (scripts/evals.ts). Each scenario runs through the real pipeline
 // (Gate + Sonnet + tools) in its own throwaway Group with Maya (Admin), Dev and Sam; the sender is Maya unless set.
 // A scenario passes when every check in `expect` holds, or every check in `alt` does (two acceptable behaviours).
-import { cart, chores, money, reminders, upkeep } from "@/services";
+import { cart, chores, groups, members, money, receipts, reminders, upkeep } from "@/services";
 import type { Ctx } from "@/services/types";
 
 export const EVAL_MEMBERS = ["Maya", "Dev", "Sam"] as const;
 export type EvalMember = (typeof EVAL_MEMBERS)[number];
 
-export type Turn = { text: string; from?: EvalMember; isReplyToRoomie?: boolean };
+/** `photo` sends the photo the scenario's seed saved (env.photo) with the message. */
+export type Turn = { text: string; from?: EvalMember; isReplyToRoomie?: boolean; photo?: boolean };
 
 export type EvalEnv = {
   /** Ctx acting as Maya. */
   ctx: Ctx;
   member: Record<EvalMember, string>;
   as: (name: EvalMember) => Ctx;
+  photo?: string;
 };
 
 export type Expect = {
@@ -55,12 +57,26 @@ export const READ_ONLY_TOOLS = new Set([
   "list_reminders",
   "maintenance_status",
   "group_report",
+  "splitwise_status",
   "updateWorkingMemory",
 ]);
 
 const balanceOf = async (env: EvalEnv, name: EvalMember) => (await money.getBalances(env.ctx)).find((b) => b.name === name)?.cents ?? 0;
 const expenseCount = async (env: EvalEnv) => (await money.listExpenses(env.ctx, 50)).length;
+const lastExpense = async (env: EvalEnv) => (await money.listExpenses(env.ctx, 1))[0];
+const ORDER: EvalMember[] = ["Maya", "Dev", "Sam"];
+/** "Maya 4500, Dev 2250, Sam 2250" for the newest Expense. */
+const sharesOf = async (env: EvalEnv) =>
+  ((await lastExpense(env))?.splits ?? [])
+    .sort((a, b) => ORDER.indexOf(a.name as EvalMember) - ORDER.indexOf(b.name as EvalMember))
+    .map((s) => `${s.name} ${s.cents}`)
+    .join(", ");
 const internet = (env: EvalEnv) => money.logExpense(env.ctx, { cents: 6000, description: "internet" });
+/** Maya paid $90 for all three, Dev $60 for Dev and Sam: pairwise Dev->Maya 30, Sam->Maya 30, Sam->Dev 30; simplified Sam->Maya 60. */
+const dinnerAndCab = async (env: EvalEnv) => {
+  await money.logExpense(env.ctx, { cents: 9000, description: "dinner", category: "food" });
+  await money.logExpense(env.as("Dev"), { cents: 6000, description: "cab", category: "transport", splitAmong: [env.member.Dev, env.member.Sam] });
+};
 const fail = (ok: boolean, msg: string) => (ok ? null : msg);
 
 export const SCENARIOS: Scenario[] = [
@@ -81,11 +97,115 @@ export const SCENARIOS: Scenario[] = [
     id: "split-uneven-50-25-25",
     area: "splitting",
     turn: { text: "roomie $90 dinner, I paid. I had the steak so 50/25/25" },
-    // Exact shares aren't a tool yet (step 5): either get the cents right with the tools there are, or ask.
     expect: {
-      check: async (e) => fail((await balanceOf(e, "Maya")) === 4500 && (await balanceOf(e, "Dev")) === -2250 && (await balanceOf(e, "Sam")) === -2250, "balances should be Maya +45.00, Dev -22.50, Sam -22.50"),
+      tools: ["log_expense"],
+      check: async (e) =>
+        fail(
+          (await sharesOf(e)) === "Maya 4500, Dev 2250, Sam 2250" && (await lastExpense(e))?.method === "percent",
+          `percent split 4500/2250/2250, got ${await sharesOf(e)} (${(await lastExpense(e))?.method})`,
+        ),
     },
-    alt: { asks: true, check: async (e) => fail((await expenseCount(e)) === 0, "asked, so nothing should be logged") },
+  },
+  {
+    id: "split-shares-2-2-1",
+    area: "splitting",
+    turn: { text: "roomie I paid $41.25 for wine and cheese, split it 2:2:1 between me, Dev and Sam" },
+    expect: {
+      tools: ["log_expense"],
+      check: async (e) => fail((await sharesOf(e)) === "Maya 1650, Dev 1650, Sam 825", `shares 1650/1650/825, got ${await sharesOf(e)}`),
+    },
+  },
+  {
+    id: "split-exact-doesnt-add-up-asks",
+    area: "splitting",
+    turn: { text: "roomie I paid $50 for groceries: Dev's part is 30, Sam's 15 and mine 10" },
+    expect: { asks: true, check: async (e) => fail((await expenseCount(e)) === 0, "amounts add up to $55, so nothing should be logged") },
+  },
+  {
+    id: "multi-payer",
+    area: "splitting",
+    turn: { text: "roomie concert tickets were $100, Dev paid 60 and I paid 40, split between the three of us" },
+    expect: {
+      tools: ["log_expense"],
+      check: async (e) => {
+        const x = await lastExpense(e);
+        const paid = (x?.payers ?? []).map((p) => `${p.name} ${p.cents}`).join(", ");
+        return fail(paid === "Dev 6000, Maya 4000" && (await balanceOf(e, "Dev")) === 2666 && (await balanceOf(e, "Maya")) === 667 && (await balanceOf(e, "Sam")) === -3333, `payers Dev 6000 + Maya 4000 and balances +26.66/+6.67/-33.33, got ${paid}`);
+      },
+    },
+  },
+  {
+    id: "delete-expense",
+    area: "splitting",
+    seed: async (e) => void (await money.logExpense(e.as("Dev"), { cents: 2400, description: "pizza", category: "food" })),
+    turn: { text: "roomie delete the pizza expense" },
+    expect: { tools: ["delete_expense"], check: async (e) => fail((await expenseCount(e)) === 0, "pizza deleted") },
+  },
+  {
+    id: "delete-then-undo",
+    area: "splitting",
+    seed: async (e) => void (await money.logExpense(e.as("Dev"), { cents: 2400, description: "pizza", category: "food" })),
+    setup: [{ text: "roomie delete the pizza expense" }],
+    turn: { text: "wait no, undo that", isReplyToRoomie: true },
+    expect: { tools: ["restore_expense"], check: async (e) => fail((await expenseCount(e)) === 1 && (await balanceOf(e, "Dev")) === 1600, "pizza back, Dev +16.00") },
+  },
+  {
+    id: "set-venmo",
+    area: "core",
+    turn: { text: "roomie set my venmo to @maya" },
+    expect: { tools: ["set_payment_handle"], check: async (e) => fail((await members.getNote(e.member.Maya)).handles?.venmo === "@maya", "Maya's venmo is @maya") },
+  },
+  {
+    id: "owes-pairwise-simplify-off",
+    area: "splitting",
+    seed: async (e) => {
+      await groups.setSimplifyDebts(e.ctx, { on: false });
+      await dinnerAndCab(e);
+    },
+    turn: { text: "roomie who owes what?", from: "Sam" },
+    // Pairwise: Dev -> Maya 30, Sam -> Maya 30, Sam -> Dev 30 (simplified would be one $60 payment).
+    expect: { tools: ["get_balances"], replyIncludes: ["30"] },
+  },
+  {
+    id: "owes-simplified",
+    area: "splitting",
+    seed: async (e) => void (await dinnerAndCab(e)),
+    turn: { text: "roomie who owes what?", from: "Sam" },
+    expect: { tools: ["get_balances"], replyIncludes: ["60"] },
+  },
+  {
+    id: "category-utilities",
+    area: "splitting",
+    turn: { text: "roomie I paid 54 for the water bill" },
+    expect: { tools: ["log_expense"], check: async (e) => fail((await lastExpense(e))?.category === "utilities", `category utilities, got ${(await lastExpense(e))?.category}`) },
+  },
+  {
+    id: "settle-up-pay-links",
+    area: "splitting",
+    seed: async (e) => {
+      await internet(e);
+      await members.setPaymentHandles(e.ctx, { venmo: "@maya-r" });
+    },
+    turn: { text: "roomie settle up with Maya", from: "Dev" },
+    expect: { tools: ["settle_up"], replyIncludes: ["20"], check: async (e) => fail((await balanceOf(e, "Dev")) === -2000, "nothing recorded until Dev says it's paid") },
+  },
+  {
+    id: "receipt-photo",
+    area: "splitting",
+    seed: async (e) => {
+      e.photo = (await receipts.saveUpload("evals", Buffer.from("fake receipt"), "image/jpeg")).path;
+    },
+    turn: { text: "roomie log this receipt, I paid. The steak was Dev's, the rest we all shared", photo: true },
+    expect: {
+      tools: ["expense_from_receipt"],
+      check: async (e) => {
+        const x = await lastExpense(e);
+        const dev = x?.splits?.find((s) => s.name === "Dev")?.cents ?? 0;
+        const maya = x?.splits?.find((s) => s.name === "Maya")?.cents ?? 0;
+        return fail(x?.cents === 13797 && x.method === "exact" && dev > maya, `one $137.97 exact expense with Dev's steak, got ${x?.cents} ${x?.method}`);
+      },
+    },
+    alt: { tools: ["expense_from_receipt"], asks: true, check: async (e) => fail((await expenseCount(e)) === 0, "asked first, so nothing logged yet") },
   },
   {
     id: "owes-named",

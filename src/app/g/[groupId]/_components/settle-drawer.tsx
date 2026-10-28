@@ -18,6 +18,7 @@ import { toast } from "@/components/ui/toast"
 import { Amount, useFormatMoney } from "@/components/app/money-bits"
 import { MemberAvatar } from "@/components/app/member-avatar"
 import type { PaymentApp } from "@/db/schema"
+import { payLink } from "@/lib/pay-links"
 import { recordSettlement } from "../actions"
 import { useGroup } from "./group-context"
 import type { Transfer } from "./types"
@@ -27,15 +28,6 @@ const apps: { id: PaymentApp; label: string }[] = [
   { id: "paypal", label: "PayPal" },
   { id: "cashapp", label: "Cash App" },
 ]
-
-/** Where "Pay with ..." goes. Venmo and Cash App take the amount; PayPal.me only works for usernames, not emails. */
-function payLink(app: PaymentApp, handle: string, cents: number, note: string): string {
-  const amount = (cents / 100).toFixed(2)
-  const bare = handle.replace(/^[@$]/, "")
-  if (app === "venmo") return `https://venmo.com/${encodeURIComponent(bare)}?txn=pay&amount=${amount}&note=${encodeURIComponent(note)}`
-  if (app === "cashapp") return `https://cash.app/$${encodeURIComponent(bare)}/${amount}`
-  return handle.includes("@") ? "https://www.paypal.com/myaccount/transfer/homepage/pay" : `https://www.paypal.me/${encodeURIComponent(bare)}/${amount}`
-}
 
 /**
  * Settle up. With no `transfer`, it lists your rows of the Settle plan first.

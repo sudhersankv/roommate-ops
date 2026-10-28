@@ -31,6 +31,7 @@ export type RespondInput = {
   source: "chat" | "ui";
   channel: string;
   isVoice?: boolean;
+  imageUrl?: string;
   isReplyToRoomie?: boolean;
   mentionsRoomie?: boolean;
 };
@@ -78,6 +79,7 @@ export async function respondToIncoming(msg: IncomingMessage): Promise<PipelineR
     source: "chat",
     channel: msg.channel,
     isVoice: msg.isVoice,
+    imageUrl: msg.imageUrl,
     isReplyToRoomie: msg.isReplyToRoomie,
     mentionsRoomie: msg.mentionsRoomie,
   });
@@ -94,8 +96,9 @@ export async function askRoomie(ctx: Ctx, text: string): Promise<Outgoing> {
 export async function respond(input: RespondInput): Promise<PipelineResult> {
   const { groupId, member, text, source } = input;
   const chat = source === "chat";
-  const line = `${input.isVoice ? `[voice note from ${member.displayName}]` : `[${member.displayName}]`} ${text}`;
-  if (chat) await logMessage(groupId, member.id, input.isVoice ? `(voice) ${text}` : text);
+  const photo = input.imageUrl ? `[photo: ${input.imageUrl}] ` : "";
+  const line = `${input.isVoice ? `[voice note from ${member.displayName}]` : `[${member.displayName}]`} ${photo}${text}`;
+  if (chat) await logMessage(groupId, member.id, input.isVoice ? `(voice) ${text}` : input.imageUrl ? `(photo) ${text}` : text);
 
   const [group, people, chatter, toolkits] = await Promise.all([
     getGroup(groupId),

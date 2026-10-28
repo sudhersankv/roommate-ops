@@ -3,7 +3,9 @@
 // Not named *.test.ts on purpose: `npm test` runs without .env and must not pick this up.
 //
 // Isolation: `before` onboards a throwaway Group ("Test Group <ts>", Sudhersan is the Admin); `after` deletes every row
-// that references it and asserts the DB is clean. The seeded "Apt 4B" rows are never touched.
+// that references it and asserts the DB is clean. The seeded "Apt 4B" rows are never touched. The Splitwise tools run
+// in a second throwaway Group (Maya, Dev, Sam, matching the fake's people) against FakeSplitwise; the last test there
+// uses the real Composio client to check that a missing or rejected key comes back as "not connected".
 import "@/lib/env";
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
@@ -21,7 +23,12 @@ import type { CartItem } from "@/services/cart";
 import { devUserId } from "@/channels/dev";
 import { onGroupJoined, onParticipantJoined } from "@/onboarding";
 import { deleteGroup } from "@/services/groups";
+import { members, money, receipts, recurring, splitwise } from "@/services";
+import { composioHealth } from "@/integrations/composio";
+import { FakeSplitwise, setSplitwiseClient } from "@/integrations/splitwise";
+import { rm } from "node:fs/promises";
 import { allTools } from "./registry";
+import { expenseSummary } from "./splitting/money";
 
 type Tools = ReturnType<typeof allTools>;
 type ToolId = keyof Tools;
@@ -101,7 +108,7 @@ describe("Roomie tools against the dev DB", () => {
       const left = await db.select().from(schema.groups).where(eq(schema.groups.id, groupId));
       assert.equal(left.length, 0, "test Group still exists");
     } finally {
-      await db.$client.end();
+      receipts.setReceiptReader(null);
     }
   });
 
@@ -114,7 +121,7 @@ describe("Roomie tools against the dev DB", () => {
     assert.ok(list.filter((m) => m.name !== "Sudhersan").every((m) => m.role === "member" && m.status === "active"), "people already in the chat are active");
   });
   test("unknown member name throws a helpful error listing the members", async () => {
-    await assert.rejects(run("log_expense", { amount: 10, description: "pizza", payer: "Dev" }), /No member named "Dev".*Sudhersan/);
+    await assert.rejects(run("log_expense", { amount: 10, description: "pizza", category: "food", payer: "Dev" }), /No member named "Dev".*Sudhersan/);
     await assert.rejects(run("log_chore", { chore: "dishes", who: "Sam" }), /No member named "Sam"/);
     await assert.rejects(run("set_reminder", { text: "x", dueAt: new Date().toISOString(), who: "Maya" }), /No member named "Maya"/);
   });
@@ -133,71 +140,242 @@ describe("Roomie tools against the dev DB", () => {
 
   // ---------- money ----------
 
-  test("log_expense: '$60 internet' -> 6000 cents, 3 even splits, payer = sender", async () => {
-    const e: Expense = await run("log_expense", { amount: 60, description: "internet" });
-    assert.equal(e.cents, 6000);
-    assert.equal(e.payerName, "Sudhersan");
-    assert.equal(e.splits?.length, 3);
-    for (const s of e.splits ?? []) assert.equal(s.cents, 2000);
+  type Summary = ReturnType<typeof expenseSummary> & { logged?: boolean };
+  const sharesOf = async (expenseId: string) =>
+    Object.fromEntries(
+      (await db.select().from(schema.expenseSplits).where(eq(schema.expenseSplits.expenseId, expenseId))).map((s) => [NAMES.find((n) => member[n] === s.memberId) ?? s.memberId, s.cents]),
+    );
+  const payersOf = async (expenseId: string) =>
+    Object.fromEntries(
+      (await db.select().from(schema.expensePayers).where(eq(schema.expensePayers.expenseId, expenseId))).map((p) => [NAMES.find((n) => member[n] === p.memberId) ?? p.memberId, p.cents]),
+    );
+  const balancesNow = async () => Object.fromEntries((await money.getBalances({ groupId })).map((b) => [b.name, b.cents]));
+
+  test("log_expense: '$60 internet' -> 6000 cents, 3 even splits, payer = sender, category kept", async () => {
+    const e: Summary = await run("log_expense", { amount: 60, description: "internet", category: "utilities" });
+    assert.equal(e.total, "$60.00");
+    assert.deepEqual(e.paidBy, [{ name: "Sudhersan", paid: "$60.00" }]);
+    assert.equal(e.shares.length, 3);
+    for (const s of e.shares) assert.equal(s.owes, "$20.00");
 
     const [row] = await db.select().from(schema.expenses).where(eq(schema.expenses.id, e.id));
     assert.equal(row.cents, 6000);
     assert.equal(row.payerId, member.Sudhersan);
     assert.equal(row.source, "chat");
+    assert.equal(row.category, "utilities");
+    assert.equal(row.splitMethod, "equal");
+    assert.match(row.occurredOn, /^\d{4}-\d{2}-\d{2}$/);
+    assert.deepEqual(await payersOf(e.id), { Sudhersan: 6000 });
     const splits = await db.select().from(schema.expenseSplits).where(eq(schema.expenseSplits.expenseId, e.id));
     assert.equal(splits.length, 3);
     assert.equal(splits.reduce((s, r) => s + r.cents, 0), 6000);
   });
 
   test("log_expense: payer by name, split among a subset, odd cent goes to the payer", async () => {
-    const e: Expense = await run("log_expense", { amount: 10.01, description: "beer", payer: "Ryan", splitAmong: ["Ryan", "Alex"] });
-    assert.equal(e.cents, 1001);
-    assert.equal(e.payerName, "Ryan");
-    const by = Object.fromEntries((e.splits ?? []).map((s) => [s.name, s.cents]));
-    assert.deepEqual(by, { Ryan: 501, Alex: 500 });
+    const e: Summary = await run("log_expense", { amount: 10.01, description: "beer", category: "food", payer: "Ryan", splitAmong: ["Ryan", "Alex"] });
+    assert.equal(e.total, "$10.01");
+    assert.deepEqual(e.paidBy, [{ name: "Ryan", paid: "$10.01" }]);
+    assert.deepEqual(await sharesOf(e.id), { Ryan: 501, Alex: 500 });
   });
 
-  test("get_balances: who owes what + settle plan (cents, nets to zero)", async () => {
-    const { balances, settlePlan }: { balances: Balance[]; settlePlan: Transfer[] } = await run("get_balances", {});
-    const by = Object.fromEntries(balances.map((b) => [b.name, b.cents]));
+  test("get_balances: who owes what + settle plan (nets to zero)", async () => {
+    const { balances, settlePlan, simplifyDebts } = await run("get_balances", {});
+    const by = Object.fromEntries(balances.map((b: { name: string; cents: number }) => [b.name, b.cents]));
     // internet: S +4000, R -2000, A -2000. beer: R +500, A -500.
     assert.deepEqual(by, { Sudhersan: 4000, Ryan: -1500, Alex: -2500 });
-    assert.equal(balances.reduce((s, b) => s + b.cents, 0), 0);
-    assert.equal(settlePlan.reduce((s, t) => s + t.cents, 0), 4000);
-    for (const t of settlePlan) assert.equal(t.toName, "Sudhersan");
-    assert.equal(settlePlan[0].fromName, "Alex", "biggest debtor pays first");
+    assert.equal(simplifyDebts, true);
+    assert.equal(balances.find((b: { name: string }) => b.name === "Alex").balance, "-$25.00");
+    assert.deepEqual(settlePlan, [
+      { from: "Alex", to: "Sudhersan", amount: "$25.00" },
+      { from: "Ryan", to: "Sudhersan", amount: "$15.00" },
+    ]);
   });
 
-  test("settle_up: 'Alex paid Sudhersan back $25' zeroes Alex", async () => {
-    const r = await run("settle_up", { to: "Sudhersan", amount: 25, from: "Alex" });
-    assert.deepEqual(r, { ok: true });
+  test("settle_up paid=true: 'Alex paid Sudhersan back $25' zeroes Alex", async () => {
+    const r = await run("settle_up", { with: "Sudhersan", paid: true, amount: 25, from: "Alex" });
+    assert.equal(r.recorded, true);
+    assert.equal(r.amount, "$25.00");
     const rows = await db.select().from(schema.settlements).where(eq(schema.settlements.groupId, groupId));
     assert.equal(rows.length, 1);
     assert.equal(rows[0].cents, 2500);
     assert.equal(rows[0].fromId, member.Alex);
     assert.equal(rows[0].toId, member.Sudhersan);
-    const { balances }: { balances: Balance[] } = await run("get_balances", {});
-    assert.equal(balances.find((b) => b.name === "Alex")?.cents, 0);
-    assert.equal(balances.find((b) => b.name === "Sudhersan")?.cents, 1500);
+    const by = await balancesNow();
+    assert.equal(by.Alex, 0);
+    assert.equal(by.Sudhersan, 1500);
   });
 
-  test("settle_up: default payer is the sender; paying yourself is rejected", async () => {
-    await assert.rejects(run("settle_up", { to: "Sudhersan", amount: 1 }), /yourself/);
-    await run("settle_up", { to: "Ryan", amount: 1 });
+  test("settle_up paid=true: default payer is the sender; paying yourself is rejected", async () => {
+    await assert.rejects(run("settle_up", { with: "Sudhersan", paid: true, amount: 1 }), /yourself/);
+    await run("settle_up", { with: "Ryan", paid: true, amount: 1 });
     const mine = await db.select().from(schema.settlements).where(eq(schema.settlements.fromId, member.Sudhersan));
     assert.equal(mine.length, 1);
     assert.equal(mine[0].cents, 100);
     assert.equal(mine[0].toId, member.Ryan);
   });
 
-  test("list_expenses: newest first with splits; limit respected", async () => {
-    const list: Expense[] = await run("list_expenses", {});
+  test("settle_up paid=false: 'settle up with Ryan' records nothing and returns pay links to the payee's handles", async () => {
+    // Two handles in one message become two parallel tool calls; both must stick.
+    await Promise.all([run("set_payment_handle", { app: "venmo", handle: "@sudhersan-k" }), run("set_payment_handle", { app: "cashapp", handle: "$sudk" })]);
+    assert.deepEqual((await members.getNote(member.Sudhersan)).handles, { venmo: "@sudhersan-k", cashapp: "$sudk" });
+    const before = await count(schema.settlements);
+    const r = await run("settle_up", { with: "Ryan", paid: false });
+    assert.equal(r.recorded, false);
+    assert.deepEqual(r.owes, { from: "Ryan", to: "Sudhersan", amount: "$16.00" });
+    const urls = r.links.map((l: { url: string }) => l.url);
+    assert.ok(urls.some((u: string) => u.startsWith("https://venmo.com/u/sudhersan-k?txn=pay&amount=16.00")), urls.join(" "));
+    assert.ok(urls.includes("https://cash.app/$sudk/16.00"));
+    assert.equal(await count(schema.settlements), before, "nothing recorded");
+  });
+
+  test("list_expenses: newest first with payers and shares; limit respected", async () => {
+    const list: Summary[] = await run("list_expenses", {});
     assert.equal(list.length, 2);
     assert.equal(list[0].description, "beer");
     assert.equal(list[1].description, "internet");
-    assert.equal(list[1].splits?.length, 3);
-    const one: Expense[] = await run("list_expenses", { limit: 1 });
+    assert.equal(list[1].shares.length, 3);
+    const one: Summary[] = await run("list_expenses", { limit: 1 });
     assert.equal(one.length, 1);
+  });
+
+  test("log_expense percent: '$90 dinner, 50/25/25' -> 4500/2250/2250; an edit of the total keeps the method", async () => {
+    const e: Summary = await run("log_expense", {
+      amount: 90,
+      description: "steak dinner",
+      category: "food",
+      percents: [
+        { name: "Sudhersan", percent: 50 },
+        { name: "Ryan", percent: 25 },
+        { name: "Alex", percent: 25 },
+      ],
+    });
+    assert.equal(e.method, "percent");
+    assert.deepEqual(await sharesOf(e.id), { Sudhersan: 4500, Ryan: 2250, Alex: 2250 });
+    const weights = await db.select({ w: schema.expenseSplits.weight }).from(schema.expenseSplits).where(eq(schema.expenseSplits.expenseId, e.id));
+    assert.deepEqual(weights.map((x) => Number(x.w)).sort((a, b) => a - b), [25, 25, 50]);
+    const changed: Summary = await run("update_expense", { expense: "steak dinner", amount: 100 });
+    assert.equal(changed.method, "percent");
+    assert.deepEqual(await sharesOf(e.id), { Sudhersan: 5000, Ryan: 2500, Alex: 2500 });
+    await run("delete_expense", { expense: "steak dinner" });
+  });
+
+  test("log_expense shares: 2:2:1 on $41.25 -> 1650/1650/825", async () => {
+    const e: Summary = await run("log_expense", {
+      amount: 41.25,
+      description: "wine and cheese",
+      category: "food",
+      shares: [
+        { name: "Sudhersan", shares: 2 },
+        { name: "Ryan", shares: 2 },
+        { name: "Alex", shares: 1 },
+      ],
+    });
+    assert.deepEqual(await sharesOf(e.id), { Sudhersan: 1650, Ryan: 1650, Alex: 825 });
+    await run("delete_expense", { expense: "wine and cheese" });
+  });
+
+  test("log_expense exact: amounts that don't add up are refused with what's left; nothing is saved", async () => {
+    const before = await count(schema.expenses);
+    await assert.rejects(
+      run("log_expense", { amount: 50, description: "groceries", category: "groceries", exact: [{ name: "Ryan", amount: 30 }, { name: "Alex", amount: 15 }] }),
+      /\$5\.00 left to assign/,
+    );
+    assert.equal(await count(schema.expenses), before);
+  });
+
+  test("log_expense payers: 'Alex paid 60 and I paid 40 of the 100' -> two Payers, Alex primary, balances to the cent", async () => {
+    const before = await balancesNow();
+    const e: Summary = await run("log_expense", { amount: 100, description: "concert tickets", category: "entertainment", payers: [{ name: "Alex", amount: 60 }, { name: "Sudhersan", amount: 40 }] });
+    assert.deepEqual(await payersOf(e.id), { Alex: 6000, Sudhersan: 4000 });
+    const [row] = await db.select().from(schema.expenses).where(eq(schema.expenses.id, e.id));
+    assert.equal(row.payerId, member.Alex, "the primary payer paid the most");
+    // 100 / 3 = 33.33 r 1: the primary Payer (Alex) gets the extra cent.
+    assert.deepEqual(await sharesOf(e.id), { Sudhersan: 3333, Ryan: 3333, Alex: 3334 });
+    const after = await balancesNow();
+    assert.deepEqual({ S: after.Sudhersan - before.Sudhersan, R: after.Ryan - before.Ryan, A: after.Alex - before.Alex }, { S: 667, R: -3333, A: 2666 });
+    await assert.rejects(run("log_expense", { amount: 100, description: "x", category: "other", payers: [{ name: "Alex", amount: 60 }, { name: "Sudhersan", amount: 30 }] }), /\$10\.00 unaccounted/);
+    await run("delete_expense", { expense: "concert tickets" });
+  });
+
+  test("delete_expense + restore_expense ('undo'): soft delete, then back; Activity has both", async () => {
+    await run("log_expense", { amount: 24, description: "pizza", category: "food" });
+    const gone = await run("delete_expense", { expense: "the pizza" });
+    assert.deepEqual(gone, { deleted: "pizza", amount: "$24.00", undo: "Say 'undo' to bring it back." });
+    assert.ok(!(await money.listExpenses({ groupId })).some((x) => x.description === "pizza"));
+    const back = await run("restore_expense", {});
+    assert.deepEqual(back, { restored: "pizza", amount: "$24.00" });
+    assert.ok((await money.listExpenses({ groupId })).some((x) => x.description === "pizza"));
+    const kinds = (await db.select({ kind: schema.activity.kind }).from(schema.activity).where(eq(schema.activity.groupId, groupId))).map((a) => a.kind);
+    assert.ok(kinds.includes("expense.deleted") && kinds.includes("expense.restored"));
+    await run("log_expense", { amount: 18, description: "pizza", category: "food" });
+    await assert.rejects(run("delete_expense", { expense: "pizza" }), /More than one expense matches "pizza"/);
+    for (const x of await money.findExpenses({ groupId }, "pizza")) await money.deleteExpense(ctx, { expenseId: x.id });
+  });
+
+  test("set_simplify_debts: off -> pairwise settle plan, on -> fewest payments; Admins only", async () => {
+    const alex = contextFor(member.Alex, "Alex", "member", "active");
+    assert.equal((await run("set_simplify_debts", { on: false }, alex)).reason, "admin-only");
+    const off = await run("set_simplify_debts", { on: false });
+    assert.equal(off.simplifyDebts, false);
+    // internet (S paid for all 3), beer (R paid for R+A), Alex -> S $25 (more than his $20), S -> Ryan $1 (so Ryan
+    // owes S one more dollar).
+    assert.deepEqual(off.settlePlan, [
+      { from: "Ryan", to: "Sudhersan", amount: "$21.00" },
+      { from: "Alex", to: "Ryan", amount: "$5.00" },
+      { from: "Sudhersan", to: "Alex", amount: "$5.00" },
+    ]);
+    const on = await run("set_simplify_debts", { on: true });
+    assert.deepEqual(on.settlePlan, [{ from: "Ryan", to: "Sudhersan", amount: "$16.00" }]);
+  });
+
+  test("expense_from_receipt: reads (fake reader), asks first, then logs exact per-item shares that add up", async () => {
+    receipts.setReceiptReader({ read: async () => receipts.SAMPLE_RECEIPT });
+    const photo = await receipts.saveUpload("test", Buffer.from("not really a jpeg"), "image/jpeg");
+    try {
+      const before = await count(schema.expenses);
+      const draft = await run("expense_from_receipt", { receipt_url: photo.url || photo.path, assignments: [{ item: "steak", who: ["Ryan"] }, { item: "wine", who: ["everyone"] }] });
+      assert.equal(draft.logged, false);
+      assert.equal(draft.total, "$137.97");
+      assert.equal(await count(schema.expenses), before, "nothing logged before confirming");
+      const done = await run("expense_from_receipt", { receipt_url: photo.url || photo.path, assignments: [{ item: "steak", who: ["Ryan"] }], confirm: true });
+      assert.equal(done.logged, true);
+      assert.equal(done.method, "exact");
+      const shares = await sharesOf(done.id);
+      assert.equal(Object.values(shares).reduce((s, c) => s + c, 0), 13797);
+      assert.ok(shares.Ryan > shares.Sudhersan, "the steak is Ryan's");
+      const [row] = await db.select().from(schema.expenses).where(eq(schema.expenses.id, done.id));
+      assert.ok(row.receiptUrl?.endsWith(photo.path));
+      await money.deleteExpense(ctx, { expenseId: done.id });
+      // A printed total that disagrees with the items is never logged without asking, even with confirm.
+      receipts.setReceiptReader({ read: async () => ({ ...receipts.SAMPLE_RECEIPT, total: "150.00" }) });
+      const blurry = await receipts.saveUpload("test", Buffer.from("another photo"), "image/jpeg");
+      try {
+        const odd = await run("expense_from_receipt", { receipt_url: blurry.url || blurry.path, confirm: true });
+        assert.equal(odd.logged, false);
+        assert.match(odd.warning, /says \$150\.00.*add up to \$137\.97/);
+        assert.equal(await count(schema.expenses), before + 1);
+      } finally {
+        await rm(blurry.file, { force: true });
+      }
+    } finally {
+      await rm(photo.file, { force: true });
+    }
+  });
+
+  test("recurring: a monthly expense gets one copy per period, however often the job runs", async () => {
+    const start = new Date(Date.now() - 40 * 86_400_000).toISOString().slice(0, 10);
+    const rent: Summary = await run("log_expense", { amount: 1800, description: "rent", category: "rent", recurring: "monthly", date: start });
+    assert.equal(rent.repeats, "monthly");
+    await recurring.runRecurring();
+    await recurring.runRecurring();
+    const copies = await db.select().from(schema.expenses).where(eq(schema.expenses.recurringParentId, rent.id));
+    assert.equal(copies.length, 1, "one copy, not two");
+    assert.equal(copies[0].source, "recurring");
+    assert.deepEqual(await sharesOf(copies[0].id), await sharesOf(rent.id));
+    await money.deleteExpense(ctx, { expenseId: copies[0].id });
+    await recurring.runRecurring();
+    assert.equal((await db.select().from(schema.expenses).where(eq(schema.expenses.recurringParentId, rent.id))).length, 1, "a deleted copy isn't remade");
+    await money.deleteExpense(ctx, { expenseId: rent.id });
   });
 
   // ---------- chores ----------
@@ -503,7 +681,7 @@ describe("Roomie tools against the dev DB", () => {
     assert.match(joined.announce?.text ?? "", /Sudhersan.*approve Priya/);
     priyaRc = contextFor(priya, "Priya", "member", "pending");
     const before = await count(schema.expenses);
-    const refused = await run("log_expense", { amount: 20, description: "pizza" }, priyaRc);
+    const refused = await run("log_expense", { amount: 20, description: "pizza", category: "food" }, priyaRc);
     assert.equal(refused.notAllowed, true);
     assert.equal(refused.reason, "pending");
     assert.match(refused.message, /approve you first.*Sudhersan/);
@@ -519,9 +697,9 @@ describe("Roomie tools against the dev DB", () => {
     assert.equal(no.reason, "admin-only");
     assert.match(no.message, /Only an admin.*Sudhersan/);
     assert.deepEqual(await run("approve_member", { name: "priya" }), { approved: "Priya" });
-    const e: Expense = await run("log_expense", { amount: 20, description: "pizza" }, contextFor(priya, "Priya", "member", "active"));
-    assert.equal(e.payerName, "Priya");
-    assert.equal(e.splits?.length, 4);
+    const e: Summary = await run("log_expense", { amount: 20, description: "pizza", category: "food" }, contextFor(priya, "Priya", "member", "active"));
+    assert.deepEqual(e.paidBy, [{ name: "Priya", paid: "$20.00" }]);
+    assert.equal(e.shares.length, 4);
     assert.deepEqual((await run("list_pending", {})), []);
   });
 
@@ -595,12 +773,144 @@ describe("Roomie tools against the dev DB", () => {
     assert.equal(splitsAfter.length, splitsBefore.length, "Shares are kept so Balances still add up");
   });
 
-  // ---------- coverage ----------
+});
 
+// ---------- Splitwise against the in-memory fake (a second throwaway Group named like the fake's people) ----------
+
+describe("Splitwise tools against the fake client", () => {
+  let gid: string;
+  let ids: Record<string, string>;
+  let rc: RequestContext;
+  let fake: FakeSplitwise;
+  const as = (name: string) => new RequestContext<unknown>([["groupId", gid], ["memberId", ids[name]], ["memberName", name], ["role", name === "Maya" ? "admin" : "member"], ["status", "active"], ["source", "chat"]]);
+  const cents = async () => Object.fromEntries((await money.getBalances({ groupId: gid })).map((b) => [b.name, b.cents]));
+
+  before(async () => {
+    fake = new FakeSplitwise();
+    setSplitwiseClient(fake);
+    const people = ["Maya", "Dev", "Sam"].map((name) => ({ userExternalId: devUserId(`sw-${name}-${Date.now()}`), name }));
+    const joined = await onGroupJoined({ channel: "dev", externalId: `test-sw-${Date.now()}`, title: `Splitwise test ${Date.now()}` }, people, people[0]);
+    gid = joined.group.id;
+    ids = Object.fromEntries(joined.members.map((m) => [m.displayName, m.id]));
+    rc = as("Maya");
+  });
+
+  after(async () => {
+    setSplitwiseClient(null);
+    if (gid) await deleteGroup(gid);
+  });
+
+  test("not connected yet: status says so; non-Admins can't connect", async () => {
+    const s = await run("splitwise_status", {}, rc);
+    assert.equal(s.available, true);
+    assert.equal(s.connected, false);
+    assert.equal((await run("splitwise_connect", {}, as("Dev"))).reason, "admin-only");
+    const r = await run("splitwise_import", { group: "Apt 4B" }, rc);
+    assert.equal(r.notConnected, true);
+    assert.match(r.message, /isn't connected yet/);
+  });
+
+  test("connect, then import a group: people matched by name, Jordan comes in Pending, history and payments, no duplicates", async () => {
+    assert.deepEqual(await run("splitwise_connect", {}, rc), { connected: true });
+    const status = await run("splitwise_status", {}, rc);
+    assert.deepEqual(status.splitwiseGroups, ["Apt 4B (Splitwise)", "Tahoe weekend"]);
+    const r = await run("splitwise_import", { group: "apt 4b" }, rc);
+    assert.equal(r.expenses, 3);
+    assert.equal(r.settlements, 1);
+    assert.equal(r.skipped.deleted, 1);
+    assert.deepEqual(r.newMembers, ["Jordan Lee"]);
+    const [jordan] = await db.select().from(schema.members).where(and(eq(schema.members.groupId, gid), eq(schema.members.displayName, "Jordan Lee")));
+    assert.equal(jordan.status, "pending");
+    // Internet (Maya 75 for 3), Thai (Dev 64 for 4), Costco (Maya 70 + Sam 50 for 3), Sam paid Maya 25.
+    assert.deepEqual(await cents(), { Maya: 3900, "Jordan Lee": -1600, Sam: -600, Dev: -1700 });
+    const costco = (await money.listExpenses({ groupId: gid })).find((e) => e.description === "Costco")!;
+    assert.equal(costco.method, "exact");
+    assert.equal(costco.category, "groceries");
+    assert.equal(costco.note, "Two carts");
+    assert.equal(costco.occurredOn, "2026-09-14");
+    assert.deepEqual(costco.payers?.map((p) => [p.name, p.cents]), [["Maya", 7000], ["Sam", 5000]]);
+    assert.ok(costco.splitwiseId);
+    const again = await run("splitwise_import", { group: "Apt 4B (Splitwise)" }, rc);
+    assert.equal(again.expenses, 0);
+    assert.equal(again.skipped.duplicate, 4);
+    assert.deepEqual(await cents(), { Maya: 3900, "Jordan Lee": -1600, Sam: -600, Dev: -1700 }, "re-import changes nothing");
+  });
+
+  test("export: a one-time copy of what Splitwise doesn't have, with 2-decimal shares; running it twice copies nothing more", async () => {
+    await run("log_expense", { amount: 30, description: "pizza", category: "food", splitAmong: ["Maya", "Dev", "Sam"] }, rc);
+    await money.settleUp({ groupId: gid, memberId: ids.Dev, source: "chat" }, { toId: ids.Maya, cents: 500 });
+    const r = await run("splitwise_export", {}, rc);
+    assert.equal(r.expenses, 1);
+    assert.equal(r.settlements, 1);
+    const pizza = fake.state.expenses.find((e) => e.description === "pizza")!;
+    assert.equal(pizza.costCents, 3000);
+    assert.deepEqual(pizza.users.map((x) => [x.userId, x.paidCents, x.owedCents]).sort(), [["101", 3000, 1000], ["102", 0, 1000], ["103", 0, 1000]]);
+    assert.equal((await run("splitwise_export", {}, rc)).expenses, 0);
+  });
+
+  test("live mirror: add, change and delete are queued and pushed by the outbox", async () => {
+    assert.deepEqual(await run("splitwise_mirror", { on: true }, rc), { mode: "mirror" });
+    const e = await run("log_expense", { amount: 45, description: "brunch", category: "food", percents: [{ name: "Maya", percent: 50 }, { name: "Dev", percent: 50 }] }, rc);
+    assert.equal((await splitwise.splitwiseState({ groupId: gid })).pendingPushes, 1);
+    assert.deepEqual(await splitwise.runSplitwiseOutbox(), { done: 1, failed: 0 });
+    const pushed = () => fake.state.expenses.find((x) => x.description === "brunch");
+    assert.equal(pushed()?.costCents, 4500);
+    await run("update_expense", { expense: "brunch", amount: 50 }, rc);
+    await splitwise.runSplitwiseOutbox();
+    assert.deepEqual(pushed()?.users.map((x) => x.owedCents), [2500, 2500]);
+    await run("delete_expense", { expense: "brunch" }, rc);
+    await splitwise.runSplitwiseOutbox();
+    assert.equal(pushed()?.deleted, true);
+    assert.equal((await splitwise.splitwiseState({ groupId: gid })).pendingPushes, 0);
+    assert.deepEqual(await run("splitwise_mirror", { on: false }, rc), { mode: "import" });
+    await run("log_expense", { amount: 9, description: "coffee", category: "food" }, rc);
+    assert.equal((await splitwise.splitwiseState({ groupId: gid })).pendingPushes, 0, "mirror off: nothing queued");
+  });
+
+  test("a failed push is retried later, not lost", async () => {
+    await run("splitwise_mirror", { on: true }, rc);
+    const real = fake.createExpense.bind(fake);
+    fake.createExpense = async () => {
+      throw new Error("Splitwise is down");
+    };
+    await run("log_expense", { amount: 12, description: "bagels", category: "food" }, rc);
+    assert.deepEqual(await splitwise.runSplitwiseOutbox(), { done: 0, failed: 1 });
+    fake.createExpense = real;
+    assert.deepEqual(await splitwise.runSplitwiseOutbox(), { done: 0, failed: 0 }, "backoff: not due yet");
+    assert.deepEqual(await splitwise.runSplitwiseOutbox(new Date(Date.now() + 5 * 60_000)), { done: 1, failed: 0 });
+    assert.ok(fake.state.expenses.some((x) => x.description === "bagels"));
+  });
+
+  test("the real Composio client with a missing or rejected key answers 'not connected', never crashes", async () => {
+    setSplitwiseClient(null);
+    const was = process.env.SPLITWISE_FAKE;
+    delete process.env.SPLITWISE_FAKE;
+    try {
+      const r = await run("splitwise_connect", {}, rc);
+      if ((await composioHealth()) === "ok") assert.ok(r.connected !== undefined, "a valid key gives a connect link");
+      else {
+        assert.equal(r.notConnected, true);
+        assert.match(r.message, /Splitwise isn't (connected|available|set up)/);
+        const s = await run("splitwise_status", {}, rc);
+        assert.equal(s.available, false);
+        assert.match(s.why, /COMPOSIO_API_KEY/);
+      }
+    } finally {
+      if (was !== undefined) process.env.SPLITWISE_FAKE = was;
+      setSplitwiseClient(fake);
+    }
+  });
+});
+
+describe("coverage", () => {
   test("every tool in the registry was exercised", () => {
     const all = Object.keys(tools).sort();
     const missing = all.filter((id) => !covered.has(id));
     assert.deepEqual(missing, [], `tools without a test: ${missing.join(", ")}`);
     for (const id of all) assert.equal((tools as unknown as Record<string, AnyTool>)[id].id, id, `key ${id} must equal its tool id`);
   });
+});
+
+after(async () => {
+  await db.$client.end();
 });

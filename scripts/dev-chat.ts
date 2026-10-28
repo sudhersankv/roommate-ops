@@ -4,12 +4,15 @@
 //   join <adder> [others...]   Roomie is added to the Chat by <adder>; <others> were already in it (Onboarding)
 //   add <name>                 someone joins later (Pending; Roomie asks the Admins)
 //   say <name> <text>          a message in the Chat ("say Maya roomie who owes what")
+//   photo <name> <path|url> [caption]  a photo (e.g. a receipt), stored under public/uploads/dev/ and sent with the caption
+//   ledger [n]                 the last n Expenses (cents, method, Payers, Shares) and Balances, straight from services
 //   approve <name> [by <admin>] approve a Pending member directly (no LLM)
 //   link <name>                mint a Claim link for <name> and print it
 //   who                        Members with role and status
 //   quit
 // --chat attaches to an existing dev Chat (the seed's is "dev-apt-4b"); otherwise a new one is made on `join`.
 // --cleanup deletes the Group on exit. Lines can be piped in: `Get-Content walk.txt | npm run dev-chat`.
+// Splitwise uses the in-memory fake when COMPOSIO_API_KEY is missing or rejected (it says so once at start).
 import "../src/lib/env";
 import { createInterface } from "node:readline";
 import { registerChannel } from "../src/channels";
@@ -18,7 +21,9 @@ import { db } from "../src/db";
 import { mastra } from "../src/mastra";
 import { onGroupJoined, onParticipantJoined } from "../src/onboarding";
 import { respondToIncoming } from "../src/pipeline";
-import { claims, groups, members } from "../src/services";
+import { claims, groups, members, money, receipts } from "../src/services";
+import { useFakeSplitwiseIfUnavailable } from "../src/integrations/splitwise";
+import { readFile } from "node:fs/promises";
 
 const args = process.argv.slice(2);
 const flag = (name: string) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);
@@ -56,6 +61,17 @@ async function memberNamed(name: string) {
   return { gid, m };
 }
 
+async function send(name: string, text: string, imageUrl?: string) {
+  const u = user(name);
+  console.log(`[${u.name}] ${imageUrl ? `(photo ${imageUrl}) ` : ""}${text}`);
+  const started = Date.now();
+  const r = await respondToIncoming({ channel: "dev", chatExternalId: chatId, userExternalId: u.userExternalId, userName: u.name, text, imageUrl });
+  const tools = r.toolCalls.filter((t) => t !== "updateWorkingMemory");
+  console.log(`         (gate ${r.gate.decision}/${r.gate.reason}${tools.length ? `, tools ${tools.join(",")}` : ""}, ${((Date.now() - started) / 1000).toFixed(1)}s)`);
+  if (r.out) show({ to: "chat", chatExternalId: chatId, msg: r.out });
+  else console.log("         (Roomie stays quiet)");
+}
+
 async function run(line: string) {
   const [cmd, ...rest] = line.trim().split(/\s+/);
   const tail = line.trim().slice(cmd.length).trim();
@@ -79,16 +95,17 @@ async function run(line: string) {
     }
     case "say": {
       const [name] = rest;
-      const text = unquote(tail.slice(name.length));
-      const u = user(unquote(name));
-      console.log(`[${u.name}] ${text}`);
-      const started = Date.now();
-      const r = await respondToIncoming({ channel: "dev", chatExternalId: chatId, userExternalId: u.userExternalId, userName: u.name, text });
-      const tools = r.toolCalls.filter((t) => t !== "updateWorkingMemory");
-      console.log(`         (gate ${r.gate.decision}/${r.gate.reason}${tools.length ? `, tools ${tools.join(",")}` : ""}, ${((Date.now() - started) / 1000).toFixed(1)}s)`);
-      if (r.out) show({ to: "chat", chatExternalId: chatId, msg: r.out });
-      else console.log("         (Roomie stays quiet)");
-      return;
+      return send(unquote(name), unquote(tail.slice(name.length)));
+    }
+    case "photo": {
+      // photo <name> <path-or-url> [caption]: the file goes to public/uploads/dev/ like a Channel adapter would store it.
+      const [name, src, ...words] = rest.map(unquote);
+      if (!name || !src) throw new Error("photo <name> <path-or-url> [caption]");
+      const bytes = /^https?:\/\//i.test(src) ? Buffer.from(await (await fetch(src)).arrayBuffer()) : await readFile(src);
+      const mime = /\.png$/i.test(src) ? "image/png" : /\.webp$/i.test(src) ? "image/webp" : "image/jpeg";
+      const saved = await receipts.saveUpload("dev", bytes, mime);
+      const imageUrl = saved.url || saved.path;
+      return send(name, unquote(words.join(" ")), imageUrl);
     }
     case "approve": {
       const byAt = rest.findIndex((x) => x.toLowerCase() === "by");
@@ -102,6 +119,17 @@ async function run(line: string) {
       const { m } = await memberNamed(unquote(tail));
       const link = await claims.createClaimToken(m.id);
       return console.log(`(Claim link for ${m.displayName}, single use, until ${link.expiresAt.toISOString()}): ${link.url}`);
+    }
+    case "ledger": {
+      // The numbers straight from the services (no LLM), to compare with the dashboard to the cent.
+      const gid = await groupId();
+      for (const e of await money.listExpenses({ groupId: gid }, Number(tail) || 5)) {
+        const paid = (e.payers ?? []).map((p) => `${p.name} ${p.cents}`).join(" + ");
+        const owe = (e.splits ?? []).map((s) => `${s.name} ${s.cents}${s.weight != null ? ` (${s.weight})` : ""}`).join(", ");
+        console.log(`  ${e.occurredOn} ${e.description} ${e.cents}c [${e.method}, ${e.category}] paid: ${paid} | shares: ${owe}`);
+      }
+      console.log(`  balances: ${(await money.getBalances({ groupId: gid })).map((b) => `${b.name} ${b.cents}`).join(", ")}`);
+      return;
     }
     case "who": {
       const gid = await groupId();
@@ -119,11 +147,12 @@ async function run(line: string) {
       return;
     default:
       if (cmd.startsWith("#")) return; // comments in piped scripts
-      throw new Error(`Unknown command "${cmd}". Try: join, add, say, approve, link, who, quit`);
+      throw new Error(`Unknown command "${cmd}". Try: join, add, say, photo, approve, link, ledger, who, quit`);
   }
 }
 
-console.log(`dev-chat on Chat "${chatId}". Commands: join, add, say, approve, link, who, quit`);
+await useFakeSplitwiseIfUnavailable();
+console.log(`dev-chat on Chat "${chatId}". Commands: join, add, say, photo, approve, link, ledger, who, quit`);
 const rl = createInterface({ input: process.stdin, output: process.stdout, prompt: "> ", terminal: interactive });
 if (interactive) rl.prompt();
 for await (const line of rl) {

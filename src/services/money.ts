@@ -1,36 +1,53 @@
-// Money: Expenses, Shares, Balances, settling up. Integer cents everywhere (ADR 0007).
-import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+// Money: Expenses (any split method, one or more Payers), Balances, the Settle plan, settling up. Integer cents
+// everywhere (ADR 0007): the model passes intent (percents, shares, who was in), never per-person cents it worked out.
+import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
+import type { ExpenseCategory, ExpenseSource, Recurrence, SplitMethod } from "@/db/enums";
+import { localDay } from "@/lib/dates";
 import { record } from "./activity";
 import { canChangeExpense, NotAllowedError, requireActive } from "./authz";
+import { guessCategory, isCategory } from "./categories";
 import { listMembers } from "./members";
-import { splitEvenly, type SplitRow } from "./split";
+import { enqueueSplitwisePush } from "./outbox";
+import { checkPayers, computeShares, SplitError, type PayerRow, type PercentRow, type SharesRow, type SplitIntent, type SplitRow } from "./split";
 import { dollars, type Ctx, type GroupCtx } from "./types";
 
-const { expenses, expenseSplits, settlements, members } = schema;
+const { expenses, expensePayers, expenseSplits, expenseExternalRefs, settlements, members, groups } = schema;
 
 export type Balance = { memberId: string; name: string; cents: number }; // + = is owed, - = owes
 export type Transfer = { fromId: string; fromName: string; toId: string; toName: string; cents: number };
-export type ExpenseSplit = { memberId: string; name: string; cents: number };
+export type ExpenseSplit = { memberId: string; name: string; cents: number; weight?: number | null };
+export type ExpensePayer = { memberId: string; name: string; cents: number };
 export type Expense = {
   id: string;
+  /** The primary Payer (paid the most). */
   payerName: string;
   cents: number;
   description: string;
   createdAt: Date;
   payerId?: string;
   createdBy?: string | null;
-  source?: "chat" | "ui" | "cart";
+  source?: ExpenseSource;
   splits?: ExpenseSplit[];
+  payers?: ExpensePayer[];
+  method?: SplitMethod;
+  category?: ExpenseCategory;
+  note?: string | null;
+  occurredOn?: string;
+  recurring?: Recurrence | null;
+  recurringParentId?: string | null;
+  receiptUrl?: string | null;
+  splitwiseId?: string | null;
+  deletedAt?: Date | null;
 };
-export { splitEvenly, type SplitRow } from "./split";
+export { splitEvenly, splitExact, splitPercent, splitShares, checkPayers, SplitError, type SplitRow } from "./split";
 
 /* ---------- pure helpers (unit-tested in money.test.ts) ---------- */
 
 /**
- * Minimal-ish set of transfers that zeroes all balances. Greedy: the biggest debtor pays the
- * biggest creditor min(debt, credit), repeat. Balances are integer cents, so "< 1 cent" means zero
- * and is skipped. Ties break by name so the output is deterministic.
+ * Simplified debts: a minimal-ish set of transfers that zeroes all balances. Greedy: the biggest debtor pays the
+ * biggest creditor min(debt, credit), repeat. Balances are integer cents, so "< 1 cent" means zero and is skipped.
+ * Ties break by name so the output is deterministic.
  */
 export function computeSettlePlan(balances: Balance[]): Transfer[] {
   const byName = (a: Balance, b: Balance) => a.name.localeCompare(b.name);
@@ -69,134 +86,355 @@ function bubbleDown(arr: { cents: number; name: string }[], from: number) {
   }
 }
 
-/* ---------- services ---------- */
+export type LedgerExpense = { payers: { memberId: string; cents: number }[]; shares: { memberId: string; cents: number }[] };
+export type LedgerSettlement = { fromId: string; toId: string; cents: number };
+
+/**
+ * Pairwise debts (simplify debts off): A owes B exactly what their shared Expenses imply. Within one Expense, each
+ * Share is owed to the Payers in proportion to what they paid (computeSettlePlan on that Expense's nets, so it's
+ * deterministic and whole cents); then every pair is netted across Expenses and Settlements.
+ */
+export function computePairwiseDebts(ledger: LedgerExpense[], paid: LedgerSettlement[], nameOf: (id: string) => string): Transfer[] {
+  const owes = new Map<string, number>(); // "from|to" -> cents from owes to
+  const bump = (from: string, to: string, cents: number) => {
+    if (from === to || cents === 0) return;
+    const [a, b] = from < to ? [from, to] : [to, from];
+    const key = `${a}|${b}`;
+    owes.set(key, (owes.get(key) ?? 0) + (from === a ? cents : -cents));
+  };
+  for (const e of ledger) {
+    const net = new Map<string, number>();
+    for (const p of e.payers) net.set(p.memberId, (net.get(p.memberId) ?? 0) + p.cents);
+    for (const s of e.shares) net.set(s.memberId, (net.get(s.memberId) ?? 0) - s.cents);
+    const balances = [...net].map(([memberId, cents]) => ({ memberId, name: nameOf(memberId), cents }));
+    for (const t of computeSettlePlan(balances)) bump(t.fromId, t.toId, t.cents);
+  }
+  for (const s of paid) bump(s.fromId, s.toId, -s.cents);
+  const out: Transfer[] = [];
+  for (const [key, cents] of owes) {
+    if (cents === 0) continue;
+    const [a, b] = key.split("|");
+    const [from, to] = cents > 0 ? [a, b] : [b, a];
+    out.push({ fromId: from, fromName: nameOf(from), toId: to, toName: nameOf(to), cents: Math.abs(cents) });
+  }
+  return out.sort((x, y) => y.cents - x.cents || x.fromName.localeCompare(y.fromName) || x.toName.localeCompare(y.toName));
+}
+
+/* ---------- building an Expense ---------- */
+
+export type ExpenseInput = {
+  cents: number;
+  description: string;
+  /** Inferred when omitted: splits -> exact, percents -> percent, shares -> shares, else equal. */
+  method?: SplitMethod;
+  /** equal: member ids (default: everyone active). */
+  splitAmong?: string[];
+  /** exact: cents per member; must add up to `cents`. */
+  splits?: SplitRow[];
+  /** percent: must add up to 100. */
+  percents?: PercentRow[];
+  /** shares: any positive numbers ("2:2:1"). */
+  shares?: SharesRow[];
+  /** One Payer for the whole amount (default: the sender). Ignored when `payers` is given. */
+  payerId?: string;
+  /** Several Payers; must add up to `cents`. */
+  payers?: PayerRow[];
+  category?: ExpenseCategory;
+  note?: string | null;
+  /** "YYYY-MM-DD"; default today in the Group's time zone. */
+  occurredOn?: string;
+  recurring?: Recurrence | null;
+  receiptUrl?: string | null;
+  source?: ExpenseSource;
+};
+
+export type BuiltExpense = {
+  cents: number;
+  description: string;
+  method: SplitMethod;
+  payers: PayerRow[]; // biggest first
+  rows: SplitRow[];
+  weights: Map<string, number>;
+  category: ExpenseCategory;
+  note: string | null;
+  occurredOn: string;
+  recurring: Recurrence | null;
+  receiptUrl: string | null;
+};
 
 function assertWholeCents(cents: number, what = "Amount") {
   if (!Number.isInteger(cents)) throw new Error(`${what} must be whole cents (got ${cents}).`);
   if (cents <= 0) throw new Error(`${what} must be more than $0.00.`);
 }
 
-type ExpenseInput = { payerId?: string; cents: number; description: string; splitAmong?: string[]; splits?: SplitRow[]; source?: "ui" | "chat" | "cart" };
+export function inferMethod(input: Pick<ExpenseInput, "method" | "splits" | "percents" | "shares">): SplitMethod {
+  return input.method ?? (input.splits ? "exact" : input.percents ? "percent" : input.shares ? "shares" : "equal");
+}
 
-/** Validates an Expense against the Group's active Members and returns its Share rows. */
-async function shareRows(ctx: Ctx, input: ExpenseInput) {
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+function checkDay(day: string): string {
+  const d = new Date(`${day}T12:00:00Z`);
+  if (!DAY.test(day) || Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== day) throw new Error(`"${day}" isn't a date like 2026-10-28.`);
+  return day;
+}
+
+async function groupTz(groupId: string): Promise<string> {
+  const [g] = await db.select({ tz: groups.timezone }).from(groups).where(eq(groups.id, groupId));
+  return g?.tz ?? "America/Chicago";
+}
+
+export const todayIn = async (groupId: string) => localDay(new Date(), await groupTz(groupId));
+
+/** Validates an Expense against the Group's active Members and works out every Share. */
+async function build(ctx: Ctx, input: ExpenseInput): Promise<BuiltExpense & { nameOf: (id: string) => string }> {
   assertWholeCents(input.cents);
   const description = input.description?.trim();
   if (!description) throw new Error("What was it for? Give the expense a description.");
 
   const people = await listMembers(ctx);
   const byId = new Map(people.map((m) => [m.id, m]));
-  const payerId = input.payerId ?? ctx.memberId;
-  const payer = byId.get(payerId);
-  if (!payer) throw new Error("I don't know who paid. The payer isn't an active member of this group.");
+  const nameOf = (id: string) => byId.get(id)?.displayName ?? id;
+  const known = (id: string, role: string) => {
+    if (!byId.has(id)) throw new Error(role === "payer" ? "I don't know who paid. The payer isn't an active member of this group." : `Can't split with ${id}: not an active member here.`);
+  };
 
-  let rows: SplitRow[];
-  if (input.splits) {
-    rows = input.splits;
-    if (rows.length === 0) throw new Error("Splits can't be empty. Who shares this?");
-    const seen = new Set<string>();
-    for (const r of rows) {
-      if (!byId.has(r.memberId)) throw new Error(`Can't split with ${r.memberId}: not an active member here.`);
-      if (seen.has(r.memberId)) throw new Error(`${byId.get(r.memberId)!.displayName} appears twice in the split.`);
-      seen.add(r.memberId);
-      if (!Number.isInteger(r.cents) || r.cents < 0) throw new Error(`Bad split for ${byId.get(r.memberId)!.displayName}: ${r.cents} cents.`);
-    }
-    const sum = rows.reduce((s, r) => s + r.cents, 0);
-    if (sum !== input.cents) {
-      throw new Error(`Splits add up to ${dollars(sum)} but the expense is ${dollars(input.cents)}. They have to match.`);
-    }
-  } else {
-    const among = input.splitAmong ?? people.map((m) => m.id);
-    if (among.length === 0) throw new Error("Nobody to split with. Add some members first.");
-    const unknown = among.find((id) => !byId.has(id));
-    if (unknown) throw new Error(`Can't split with ${unknown}: not an active member here.`);
-    rows = splitEvenly(input.cents, among, payerId);
-  }
-  return { rows, payerId, payer, description, byId };
+  const payerList = input.payers?.length ? input.payers : [{ memberId: input.payerId ?? ctx.memberId, cents: input.cents }];
+  for (const p of payerList) known(p.memberId, "payer");
+  const payers = checkPayers(input.cents, payerList, nameOf);
+  const tie = { payerIds: payers.map((p) => p.memberId), nameOf };
+
+  const method = inferMethod(input);
+  let intent: SplitIntent;
+  if (method === "equal") intent = { method, among: input.splitAmong ?? people.map((m) => m.id) };
+  else if (method === "exact") intent = { method, splits: input.splits ?? [] };
+  else if (method === "percent") intent = { method, percents: input.percents ?? [] };
+  else intent = { method, shares: input.shares ?? [] };
+  const ids = intent.method === "equal" ? intent.among : intent.method === "exact" ? intent.splits.map((r) => r.memberId) : intent.method === "percent" ? intent.percents.map((r) => r.memberId) : intent.shares.map((r) => r.memberId);
+  for (const id of ids) known(id, "share");
+  const { rows, weights } = computeShares(input.cents, intent, tie);
+  if (rows.length === 0) throw new SplitError("Nobody ends up with a share. Who's in this one?");
+
+  return {
+    cents: input.cents,
+    description,
+    method,
+    payers,
+    rows,
+    weights,
+    category: isCategory(input.category) ? input.category : guessCategory(description, input.source),
+    note: input.note?.trim() ? input.note.trim().slice(0, 500) : null,
+    occurredOn: input.occurredOn ? checkDay(input.occurredOn) : await todayIn(ctx.groupId),
+    recurring: input.recurring ?? null,
+    receiptUrl: input.receiptUrl ?? null,
+    nameOf,
+  };
+}
+
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+async function writeShares(tx: Tx, expenseId: string, b: Pick<BuiltExpense, "payers" | "rows" | "weights">) {
+  await tx.insert(expensePayers).values(b.payers.map((p) => ({ expenseId, memberId: p.memberId, cents: p.cents })));
+  await tx.insert(expenseSplits).values(b.rows.map((r) => ({ expenseId, memberId: r.memberId, cents: r.cents, weight: b.weights.has(r.memberId) ? String(b.weights.get(r.memberId)) : null })));
 }
 
 /**
- * Record a shared Expense. payerId defaults to ctx.memberId.
- * - `splits` (explicit rows) wins when provided; they must sum to `cents`. cart.ts uses this for weighted splits.
- * - Otherwise `splitAmong` (member ids; default = everyone active) is split evenly, remainder cents to the payer first.
+ * Internal (recurring copies, Splitwise import): write an already-validated Expense. Skips the active-member check
+ * because imported people may still be Pending. Returns null when `onConflictSkip` hit an existing recurring copy.
+ */
+export async function insertExpenseRows(
+  groupId: string,
+  createdBy: string | null,
+  b: Omit<BuiltExpense, "weights"> & { weights?: Map<string, number>; source: ExpenseSource; recurringParentId?: string | null; createdAt?: Date },
+  tx?: Tx,
+): Promise<string | null> {
+  const run = async (t: Tx) => {
+    const [e] = await t
+      .insert(expenses)
+      .values({
+        groupId,
+        payerId: b.payers[0].memberId,
+        cents: b.cents,
+        description: b.description,
+        category: b.category,
+        note: b.note,
+        occurredOn: b.occurredOn,
+        splitMethod: b.method,
+        recurring: b.recurring,
+        recurringParentId: b.recurringParentId ?? null,
+        receiptUrl: b.receiptUrl,
+        source: b.source,
+        createdBy,
+        ...(b.createdAt ? { createdAt: b.createdAt } : {}),
+      })
+      .onConflictDoNothing()
+      .returning({ id: expenses.id });
+    if (!e) return null;
+    await writeShares(t, e.id, { payers: b.payers, rows: b.rows, weights: b.weights ?? new Map() });
+    return e.id;
+  };
+  return tx ? run(tx) : db.transaction(run);
+}
+
+const howSplit = (b: Pick<BuiltExpense, "method" | "rows" | "payers">, nameOf: (id: string) => string) => {
+  const by = b.payers.length > 1 ? ` (paid by ${b.payers.map((p) => `${nameOf(p.memberId)} ${dollars(p.cents)}`).join(", ")})` : "";
+  return b.method === "equal" ? by : `, split by ${b.method}${by}`;
+};
+
+/**
+ * Record a shared Expense. One Payer (payerId, default the sender) or several (`payers`, must add up). The split is
+ * equal (`splitAmong`, default everyone active), exact (`splits`), percent (`percents`) or shares (`shares`); the
+ * cents are always computed here, leftover cents to the Payer first. Category defaults to a guess.
  */
 export async function logExpense(ctx: Ctx, input: ExpenseInput): Promise<Expense> {
   await requireActive(ctx);
-  const { rows, payerId, payer, description, byId } = await shareRows(ctx, input);
+  const b = await build(ctx, input);
   const source = input.source ?? (ctx.source === "ui" ? "ui" : "chat");
-  const created = await db.transaction(async (tx) => {
-    const [e] = await tx
-      .insert(expenses)
-      .values({ groupId: ctx.groupId, payerId, cents: input.cents, description, source, createdBy: ctx.memberId })
-      .returning();
-    await tx.insert(expenseSplits).values(rows.map((r) => ({ expenseId: e.id, memberId: r.memberId, cents: r.cents })));
-    return e;
-  });
-  await record(ctx.groupId, ctx.memberId, "expense.added", `added ${description}, ${dollars(input.cents)}`, { table: "expenses", id: created.id });
-
-  return {
-    id: created.id,
-    payerId,
-    payerName: payer.displayName,
-    cents: created.cents,
-    description: created.description,
-    createdAt: created.createdAt,
-    createdBy: created.createdBy,
-    source: created.source,
-    splits: rows.map((r) => ({ memberId: r.memberId, name: byId.get(r.memberId)!.displayName, cents: r.cents })),
-  };
+  const id = (await insertExpenseRows(ctx.groupId, ctx.memberId, { ...b, source }))!;
+  await record(ctx.groupId, ctx.memberId, "expense.added", `added ${b.description}, ${dollars(b.cents)}${howSplit(b, b.nameOf)}`, { table: "expenses", id });
+  await enqueueSplitwisePush(ctx.groupId, id, "upsert");
+  return (await getExpense(ctx, id))!;
 }
 
 /** The Expense plus the ownership check: added it, paid it, has a Share in it, or Admin. */
 async function changeable(ctx: Ctx, expenseId: string, opts: { deleted?: boolean } = {}) {
   const actor = await requireActive(ctx);
+  if (!/^[0-9a-f-]{36}$/i.test(expenseId)) throw new Error("That expense isn't here anymore.");
   const [e] = await db
     .select()
     .from(expenses)
-    .where(and(eq(expenses.id, expenseId), eq(expenses.groupId, ctx.groupId), opts.deleted ? sql`${expenses.deletedAt} is not null` : isNull(expenses.deletedAt)));
-  if (!e) throw new Error("That expense isn't here anymore.");
-  const participants = await db.select({ id: expenseSplits.memberId }).from(expenseSplits).where(eq(expenseSplits.expenseId, e.id));
-  if (!canChangeExpense(actor, { createdBy: e.createdBy, payerId: e.payerId, participantIds: participants.map((p) => p.id) })) {
-    throw new NotAllowedError(`Only someone in "${e.description}" (or an admin) can change it.`, "not-yours");
-  }
+    .where(and(eq(expenses.id, expenseId), eq(expenses.groupId, ctx.groupId), opts.deleted ? isNotNull(expenses.deletedAt) : isNull(expenses.deletedAt)));
+  if (!e) throw new Error(opts.deleted ? "That expense isn't in the bin anymore." : "That expense isn't here anymore.");
+  const [participants, payers] = await Promise.all([
+    db.select({ id: expenseSplits.memberId }).from(expenseSplits).where(eq(expenseSplits.expenseId, e.id)),
+    db.select({ id: expensePayers.memberId }).from(expensePayers).where(eq(expensePayers.expenseId, e.id)),
+  ]);
+  const payerIds = payers.length ? payers.map((p) => p.id) : [e.payerId];
+  const allowed = payerIds.some((payerId) => canChangeExpense(actor, { createdBy: e.createdBy, payerId, participantIds: participants.map((p) => p.id) }));
+  if (!allowed) throw new NotAllowedError(`Only someone in "${e.description}" (or an admin) can change it.`, "not-yours");
   return e;
 }
 
-/** Change an Expense's amount, description, payer or (equal) split. Same rules as logExpense. */
-export async function updateExpense(ctx: Ctx, input: { expenseId: string } & ExpenseInput): Promise<Expense> {
-  const before = await changeable(ctx, input.expenseId);
-  const { rows, payerId, payer, description, byId } = await shareRows(ctx, input);
-  await db.transaction(async (tx) => {
-    await tx.update(expenses).set({ payerId, cents: input.cents, description }).where(eq(expenses.id, before.id));
-    await tx.delete(expenseSplits).where(eq(expenseSplits.expenseId, before.id));
-    await tx.insert(expenseSplits).values(rows.map((r) => ({ expenseId: before.id, memberId: r.memberId, cents: r.cents })));
-  });
-  await record(ctx.groupId, ctx.memberId, "expense.changed", `changed ${description}`, { table: "expenses", id: before.id });
-  return {
-    id: before.id,
-    payerId,
-    payerName: payer.displayName,
-    cents: input.cents,
-    description,
-    createdAt: before.createdAt,
-    createdBy: before.createdBy,
+export type ExpensePatch = { expenseId: string } & Partial<ExpenseInput>;
+
+/**
+ * Change an Expense. Anything left out keeps its current value, including the split method: a new total re-splits
+ * equal/percent/shares Expenses the same way. Exact amounts or several Payers can't be re-scaled, so changing the
+ * total of one of those needs the new amounts too.
+ */
+export async function updateExpense(ctx: Ctx, input: ExpensePatch): Promise<Expense> {
+  const row = await changeable(ctx, input.expenseId);
+  const before = (await getExpense(ctx, row.id))!;
+  const cents = input.cents ?? before.cents;
+  const totalChanged = cents !== before.cents;
+
+  let payers = input.payers;
+  if (!payers && input.payerId) payers = [{ memberId: input.payerId, cents }];
+  if (!payers) {
+    const old = before.payers ?? [];
+    if (old.length > 1 && totalChanged) throw new SplitError(`Several people paid for ${before.description}. Who paid how much of the new ${dollars(cents)}?`);
+    payers = old.length > 1 ? old.map((p) => ({ memberId: p.memberId, cents: p.cents })) : [{ memberId: old[0]?.memberId ?? row.payerId, cents }];
+  }
+
+  const splitGiven = input.method || input.splits || input.percents || input.shares || input.splitAmong;
+  const method = splitGiven ? inferMethod(input) : (before.method ?? "equal");
+  const old = before.splits ?? [];
+  let split: Pick<ExpenseInput, "splitAmong" | "splits" | "percents" | "shares"> = {};
+  if (method === "equal") split = { splitAmong: input.splitAmong ?? old.map((s) => s.memberId) };
+  else if (method === "exact") {
+    if (input.splits) split = { splits: input.splits };
+    else if (totalChanged || before.method !== "exact") throw new SplitError(`${before.description} is split by exact amounts. Give me each person's amount for ${dollars(cents)}.`);
+    else split = { splits: old.map((s) => ({ memberId: s.memberId, cents: s.cents })) };
+  } else if (method === "percent") {
+    split = { percents: input.percents ?? (before.method === "percent" ? old.map((s) => ({ memberId: s.memberId, percent: Number(s.weight ?? 0) })) : undefined) };
+    if (!split.percents) throw new SplitError(`What percentage is each person's share of ${before.description}?`);
+  } else {
+    split = { shares: input.shares ?? (before.method === "shares" ? old.map((s) => ({ memberId: s.memberId, shares: Number(s.weight ?? 0) })) : undefined) };
+    if (!split.shares) throw new SplitError(`How many shares does each person get in ${before.description}?`);
+  }
+
+  const b = await build(ctx, {
+    cents,
+    description: input.description ?? before.description,
+    method,
+    ...split,
+    payers,
+    category: input.category ?? before.category,
+    note: input.note !== undefined ? input.note : before.note,
+    occurredOn: input.occurredOn ?? before.occurredOn,
+    recurring: input.recurring !== undefined ? input.recurring : before.recurring,
+    receiptUrl: input.receiptUrl !== undefined ? input.receiptUrl : before.receiptUrl,
     source: before.source,
-    splits: rows.map((r) => ({ memberId: r.memberId, name: byId.get(r.memberId)!.displayName, cents: r.cents })),
-  };
+  });
+  await db.transaction(async (tx) => {
+    await tx
+      .update(expenses)
+      .set({
+        payerId: b.payers[0].memberId,
+        cents: b.cents,
+        description: b.description,
+        category: b.category,
+        note: b.note,
+        occurredOn: b.occurredOn,
+        splitMethod: b.method,
+        recurring: b.recurring,
+        receiptUrl: b.receiptUrl,
+      })
+      .where(eq(expenses.id, row.id));
+    await tx.delete(expensePayers).where(eq(expensePayers.expenseId, row.id));
+    await tx.delete(expenseSplits).where(eq(expenseSplits.expenseId, row.id));
+    await writeShares(tx, row.id, b);
+  });
+  const what = totalChanged ? `changed ${b.description}: ${dollars(before.cents)} -> ${dollars(cents)}` : `changed ${b.description}`;
+  await record(ctx.groupId, ctx.memberId, "expense.changed", what, { table: "expenses", id: row.id });
+  await enqueueSplitwisePush(ctx.groupId, row.id, "upsert");
+  return (await getExpense(ctx, row.id))!;
 }
 
 /** Soft delete, so undo can bring it back. */
-export async function deleteExpense(ctx: Ctx, input: { expenseId: string }): Promise<void> {
+export async function deleteExpense(ctx: Ctx, input: { expenseId: string }): Promise<{ id: string; description: string; cents: number }> {
   const e = await changeable(ctx, input.expenseId);
   await db.update(expenses).set({ deletedAt: new Date() }).where(eq(expenses.id, e.id));
-  await record(ctx.groupId, ctx.memberId, "expense.deleted", `deleted ${e.description}`, { table: "expenses", id: e.id });
+  await record(ctx.groupId, ctx.memberId, "expense.deleted", `deleted ${e.description}, ${dollars(e.cents)}`, { table: "expenses", id: e.id });
+  await enqueueSplitwisePush(ctx.groupId, e.id, "delete");
+  return { id: e.id, description: e.description, cents: e.cents };
 }
 
-export async function restoreExpense(ctx: Ctx, input: { expenseId: string }): Promise<void> {
+export async function restoreExpense(ctx: Ctx, input: { expenseId: string }): Promise<{ id: string; description: string; cents: number }> {
   const e = await changeable(ctx, input.expenseId, { deleted: true });
   await db.update(expenses).set({ deletedAt: null }).where(eq(expenses.id, e.id));
-  await record(ctx.groupId, ctx.memberId, "expense.restored", `restored ${e.description}`, { table: "expenses", id: e.id });
+  await record(ctx.groupId, ctx.memberId, "expense.restored", `restored ${e.description}, ${dollars(e.cents)}`, { table: "expenses", id: e.id });
+  await enqueueSplitwisePush(ctx.groupId, e.id, "upsert");
+  return { id: e.id, description: e.description, cents: e.cents };
 }
+
+/** The most recently deleted Expense in the Group (what "undo" brings back), from the last 7 days. */
+export async function lastDeletedExpense(ctx: GroupCtx): Promise<{ id: string; description: string; cents: number } | undefined> {
+  const [e] = await db
+    .select({ id: expenses.id, description: expenses.description, cents: expenses.cents })
+    .from(expenses)
+    .where(and(eq(expenses.groupId, ctx.groupId), isNotNull(expenses.deletedAt), sql`${expenses.deletedAt} > now() - interval '7 days'`))
+    .orderBy(desc(expenses.deletedAt))
+    .limit(1);
+  return e;
+}
+
+/** Expenses whose description matches `query` (exact, then contains), newest first. */
+export async function findExpenses(ctx: GroupCtx, query: string, opts: { deleted?: boolean } = {}): Promise<{ id: string; description: string; cents: number; occurredOn: string }[]> {
+  const q = query.trim().toLowerCase();
+  const rows = await db
+    .select({ id: expenses.id, description: expenses.description, cents: expenses.cents, occurredOn: expenses.occurredOn })
+    .from(expenses)
+    .where(and(eq(expenses.groupId, ctx.groupId), opts.deleted ? isNotNull(expenses.deletedAt) : isNull(expenses.deletedAt)))
+    .orderBy(desc(expenses.occurredOn), desc(expenses.createdAt))
+    .limit(200);
+  if (/^[0-9a-f-]{36}$/i.test(q)) return rows.filter((r) => r.id === q);
+  const exact = rows.filter((r) => r.description.toLowerCase() === q);
+  if (exact.length) return exact;
+  const words = q.replace(/^(the|my|our)\s+/, "").split(/\s+/).filter(Boolean);
+  return rows.filter((r) => words.every((w) => r.description.toLowerCase().includes(w)));
+}
+
+/* ---------- Balances and the Settle plan ---------- */
 
 /**
  * Per Member: paid - owed + settlements sent - settlements received. Positive = is owed.
@@ -207,7 +445,12 @@ export async function getBalances(ctx: GroupCtx): Promise<Balance[]> {
   const gid = ctx.groupId;
   const live = and(eq(expenses.groupId, gid), isNull(expenses.deletedAt));
   const [paid, owed, sent, received, everyone] = await Promise.all([
-    db.select({ id: expenses.payerId, cents: sql<number>`coalesce(sum(${expenses.cents}), 0)::int` }).from(expenses).where(live).groupBy(expenses.payerId),
+    db
+      .select({ id: expensePayers.memberId, cents: sql<number>`coalesce(sum(${expensePayers.cents}), 0)::int` })
+      .from(expensePayers)
+      .innerJoin(expenses, eq(expensePayers.expenseId, expenses.id))
+      .where(live)
+      .groupBy(expensePayers.memberId),
     db
       .select({ id: expenseSplits.memberId, cents: sql<number>`coalesce(sum(${expenseSplits.cents}), 0)::int` })
       .from(expenseSplits)
@@ -242,12 +485,42 @@ export async function getBalances(ctx: GroupCtx): Promise<Balance[]> {
     .sort((a, b) => b.cents - a.cents || a.name.localeCompare(b.name));
 }
 
+async function memberNames(groupId: string): Promise<(id: string) => string> {
+  const rows = await db.select({ id: members.id, name: members.displayName, status: members.status }).from(members).where(eq(members.groupId, groupId));
+  const names = new Map(rows.map((r) => [r.id, r.status === "removed" ? `${r.name} (moved out)` : r.name]));
+  return (id) => names.get(id) ?? "Someone";
+}
+
+/** Who owes whom with "simplify debts" off: each pair's net from the Expenses they shared and their Settlements. */
+export async function pairwiseDebts(ctx: GroupCtx): Promise<Transfer[]> {
+  const gid = ctx.groupId;
+  const live = and(eq(expenses.groupId, gid), isNull(expenses.deletedAt));
+  const [payers, shares, paid, nameOf] = await Promise.all([
+    db.select({ expenseId: expensePayers.expenseId, memberId: expensePayers.memberId, cents: expensePayers.cents }).from(expensePayers).innerJoin(expenses, eq(expensePayers.expenseId, expenses.id)).where(live),
+    db.select({ expenseId: expenseSplits.expenseId, memberId: expenseSplits.memberId, cents: expenseSplits.cents }).from(expenseSplits).innerJoin(expenses, eq(expenseSplits.expenseId, expenses.id)).where(live),
+    db.select({ fromId: settlements.fromId, toId: settlements.toId, cents: settlements.cents }).from(settlements).where(eq(settlements.groupId, gid)),
+    memberNames(gid),
+  ]);
+  const ledger = new Map<string, LedgerExpense>();
+  const of = (id: string) => ledger.get(id) ?? (ledger.set(id, { payers: [], shares: [] }), ledger.get(id)!);
+  for (const p of payers) of(p.expenseId).payers.push(p);
+  for (const s of shares) of(s.expenseId).shares.push(s);
+  return computePairwiseDebts([...ledger.values()], paid, nameOf);
+}
+
+/** The Settle plan: simplified (fewest payments) or pairwise, following the Group's "simplify debts" setting. */
 export async function getSettlePlan(ctx: GroupCtx): Promise<Transfer[]> {
-  return computeSettlePlan(await getBalances(ctx));
+  const [g] = await db.select({ simplify: groups.simplifyDebts }).from(groups).where(eq(groups.id, ctx.groupId));
+  return g && !g.simplify ? pairwiseDebts(ctx) : computeSettlePlan(await getBalances(ctx));
+}
+
+/** The Settle plan row between two Members, whichever way it goes. */
+export async function debtBetween(ctx: GroupCtx, a: string, b: string): Promise<Transfer | undefined> {
+  return (await getSettlePlan(ctx)).find((t) => (t.fromId === a && t.toId === b) || (t.fromId === b && t.toId === a));
 }
 
 /** Record that `from` paid `to` back. fromId defaults to ctx.memberId. */
-export async function settleUp(ctx: Ctx, input: { fromId?: string; toId: string; cents: number }): Promise<void> {
+export async function settleUp(ctx: Ctx, input: { fromId?: string; toId: string; cents: number }): Promise<{ id: string; fromId: string; toId: string; cents: number }> {
   await requireActive(ctx);
   assertWholeCents(input.cents, "Payment");
   const fromId = input.fromId ?? ctx.memberId;
@@ -259,9 +532,12 @@ export async function settleUp(ctx: Ctx, input: { fromId?: string; toId: string;
   const [s] = await db.insert(settlements).values({ groupId: ctx.groupId, fromId, toId: input.toId, cents: input.cents }).returning();
   const summary = fromId === ctx.memberId ? `paid ${byId.get(input.toId)} ${dollars(input.cents)}` : `recorded ${byId.get(fromId)} paying ${byId.get(input.toId)} ${dollars(input.cents)}`;
   await record(ctx.groupId, ctx.memberId, "settlement.added", summary, { table: "settlements", id: s.id });
+  return { id: s.id, fromId, toId: input.toId, cents: input.cents };
 }
 
-/** Newest first, with payer name and per-person splits. Deleted Expenses are left out. */
+/* ---------- reads ---------- */
+
+/** Newest first (by the day it happened), with Payers, Shares, method and category. Deleted Expenses are left out. */
 export async function listExpenses(ctx: GroupCtx, limit = 50, opts: { expenseId?: string } = {}): Promise<Expense[]> {
   const rows = await db
     .select({
@@ -273,28 +549,52 @@ export async function listExpenses(ctx: GroupCtx, limit = 50, opts: { expenseId?
       createdAt: expenses.createdAt,
       createdBy: expenses.createdBy,
       source: expenses.source,
+      method: expenses.splitMethod,
+      category: expenses.category,
+      note: expenses.note,
+      occurredOn: expenses.occurredOn,
+      recurring: expenses.recurring,
+      recurringParentId: expenses.recurringParentId,
+      receiptUrl: expenses.receiptUrl,
+      splitwiseId: expenseExternalRefs.externalId,
+      deletedAt: expenses.deletedAt,
     })
     .from(expenses)
     .innerJoin(members, eq(expenses.payerId, members.id))
-    .where(and(eq(expenses.groupId, ctx.groupId), isNull(expenses.deletedAt), opts.expenseId ? eq(expenses.id, opts.expenseId) : undefined))
-    .orderBy(desc(expenses.createdAt), desc(expenses.id))
+    .leftJoin(expenseExternalRefs, and(eq(expenseExternalRefs.expenseId, expenses.id), eq(expenseExternalRefs.provider, "splitwise")))
+    .where(and(eq(expenses.groupId, ctx.groupId), opts.expenseId ? eq(expenses.id, opts.expenseId) : isNull(expenses.deletedAt)))
+    .orderBy(desc(expenses.occurredOn), desc(expenses.createdAt), desc(expenses.id))
     .limit(limit);
   if (rows.length === 0) return [];
 
-  const splitRows = await db
-    .select({ expenseId: expenseSplits.expenseId, memberId: expenseSplits.memberId, name: members.displayName, cents: expenseSplits.cents })
-    .from(expenseSplits)
-    .innerJoin(members, eq(expenseSplits.memberId, members.id))
-    .where(inArray(expenseSplits.expenseId, rows.map((r) => r.id)));
-  const splitsByExpense = new Map<string, ExpenseSplit[]>();
-  for (const s of splitRows) {
-    const list = splitsByExpense.get(s.expenseId) ?? [];
-    list.push({ memberId: s.memberId, name: s.name, cents: s.cents });
-    splitsByExpense.set(s.expenseId, list);
-  }
-  return rows.map((r) => ({ ...r, splits: splitsByExpense.get(r.id) ?? [] }));
+  const ids = rows.map((r) => r.id);
+  const [splitRows, payerRows] = await Promise.all([
+    db
+      .select({ expenseId: expenseSplits.expenseId, memberId: expenseSplits.memberId, name: members.displayName, cents: expenseSplits.cents, weight: expenseSplits.weight })
+      .from(expenseSplits)
+      .innerJoin(members, eq(expenseSplits.memberId, members.id))
+      .where(inArray(expenseSplits.expenseId, ids)),
+    db
+      .select({ expenseId: expensePayers.expenseId, memberId: expensePayers.memberId, name: members.displayName, cents: expensePayers.cents })
+      .from(expensePayers)
+      .innerJoin(members, eq(expensePayers.memberId, members.id))
+      .where(inArray(expensePayers.expenseId, ids)),
+  ]);
+  const group = <T extends { expenseId: string }>(list: T[]) => {
+    const m = new Map<string, T[]>();
+    for (const x of list) (m.get(x.expenseId) ?? (m.set(x.expenseId, []), m.get(x.expenseId)!)).push(x);
+    return m;
+  };
+  const splitsBy = group(splitRows);
+  const payersBy = group(payerRows);
+  return rows.map((r) => ({
+    ...r,
+    splits: (splitsBy.get(r.id) ?? []).map((s) => ({ memberId: s.memberId, name: s.name, cents: s.cents, weight: s.weight === null ? null : Number(s.weight) })),
+    payers: (payersBy.get(r.id) ?? []).map((p) => ({ memberId: p.memberId, name: p.name, cents: p.cents })).sort((a, b) => b.cents - a.cents),
+  }));
 }
 
+/** One Expense by id, deleted ones included (the detail page and undo need them). */
 export async function getExpense(ctx: GroupCtx, expenseId: string): Promise<Expense | undefined> {
   if (!/^[0-9a-f-]{36}$/i.test(expenseId)) return undefined;
   return (await listExpenses(ctx, 1, { expenseId }))[0];

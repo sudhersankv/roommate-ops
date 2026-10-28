@@ -156,6 +156,14 @@ export async function updateGroupSettings(ctx: Ctx, patch: SettingsPatch & { too
   return { group, toolkits: await enabledToolkits(ctx) };
 }
 
+/** Admin: the "simplify debts" switch (getSettlePlan follows it). Unlike updateGroupSettings it never ends Onboarding. */
+export async function setSimplifyDebts(ctx: Ctx, input: { on: boolean }): Promise<boolean> {
+  await requireAdmin(ctx);
+  await db.update(groups).set({ simplifyDebts: input.on }).where(eq(groups.id, ctx.groupId));
+  await record(ctx.groupId, ctx.memberId, "group.settings", `turned simplify debts ${input.on ? "on" : "off"}`, { table: "groups", id: ctx.groupId });
+  return input.on;
+}
+
 /** Admin: switch one Toolkit on or off. Nothing is deleted when it's off. */
 export async function setToolkit(ctx: Ctx, input: { toolkit: ToolkitId; enabled: boolean }): Promise<ToolkitId[]> {
   await requireAdmin(ctx);
@@ -168,11 +176,11 @@ export async function setToolkit(ctx: Ctx, input: { toolkit: ToolkitId; enabled:
   return enabledToolkits(ctx);
 }
 
-const DATA_TABLES = [schema.expenses, schema.settlements, schema.cartItems, schema.chores, schema.reminders, schema.maintenance, schema.chatMessages, schema.activity] as const;
+const DATA_TABLES = [schema.outboxJobs, schema.splitwiseLinks, schema.expenses, schema.settlements, schema.cartItems, schema.chores, schema.reminders, schema.maintenance, schema.chatMessages, schema.activity] as const;
 
 /**
  * Admin "delete group data" (ADR 0006): every Expense, Settlement, Cart item, chore, reminder, upkeep item, chat
- * line, Activity row, Member note and Roomie's memory for the Group. The Group, its Chat, Members and settings
+ * line, Activity row, Member note, Splitwise link and Roomie's memory for the Group. The Group, its Chat, Members and settings
  * stay, so Roomie keeps working from the next message.
  */
 export async function deleteGroupData(ctx: Ctx): Promise<void> {

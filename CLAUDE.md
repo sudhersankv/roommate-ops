@@ -2,7 +2,7 @@
 
 Roomie is an AI groupmate that lives in a group chat and on a per-group dashboard. It splits costs, keeps the shared grocery cart, tracks chores and upkeep, and sets reminders. Persona: a friendly, witty, brief groupmate; exact about facts.
 
-**Read first:** the rebuild plan is in `docs/plan.md`, the vocabulary in `GLOSSARY.md`, and the decisions in `docs/adr/`. They are the spec; where they conflict with this file, they win. Steps 1 (rename), 3 (Mastra agent) and 4 (identity, Groups, dashboard) are done; the code below is what exists today. WhatsApp (step 2) isn't: `npm run dev-chat` stands in for it.
+**Read first:** the rebuild plan is in `docs/plan.md`, the vocabulary in `GLOSSARY.md`, and the decisions in `docs/adr/`. They are the spec; where they conflict with this file, they win. Steps 1 (rename), 3 (Mastra agent), 4 (identity, Groups, dashboard) and 5 (Splitting) are done; the code below is what exists today. WhatsApp (step 2) isn't: `npm run dev-chat` stands in for it.
 
 Agent skills for this repo live in `.agents/skills/`.
 
@@ -15,8 +15,10 @@ Agent skills for this repo live in `.agents/skills/`.
 ```
 src/
   db/schema.ts          Drizzle tables: groups, chats, accounts, members, claim_tokens, group_toolkits, chat_messages,
-                        member_notes, activity + the Toolkit tables (expenses, expense_splits, settlements, cart_items,
-                        chores, chore_logs, reminders, maintenance), all keyed by group_id
+                        member_notes, activity + the Toolkit tables (expenses, expense_payers, expense_splits,
+                        settlements, splitwise_links, expense/settlement_external_refs, outbox_jobs, cart_items, chores,
+                        chore_logs, reminders, maintenance), all keyed by group_id
+  db/enums.ts           categories, split methods, recurrences, sources (no drizzle import: client code uses them)
   db/index.ts           db client
   services/             (ctx: Ctx, input) => result. Source of truth. index.ts re-exports as namespaces.
     types.ts            Ctx { groupId, memberId, source }, GroupCtx { groupId }, dollars()
@@ -26,8 +28,16 @@ src/
     claims.ts           Claim links: issueDashboardLink, createClaimToken, consumeClaim, upsertAccount
     activity.ts         record() + listActivity(): who added, changed or deleted what
     chatlog.ts          chat_messages: log, recent chatter, follow-up window facts, retention delete
-    split.ts            splitEvenly (pure, no DB import, so the dashboard previews with it)
-    money.ts cart.ts chores.ts reminders.ts upkeep.ts report.ts
+    split.ts            pure split math (no DB import, so the drawer previews with it): splitEvenly, splitExact,
+                        splitPercent, splitShares, checkPayers, apportion (largest remainder), computeShares
+    money.ts            Expenses (logExpense/updateExpense take intent: method + splitAmong|splits|percents|shares,
+                        payers, category, note, occurredOn, recurring), delete/restore, Balances (from expense_payers),
+                        getSettlePlan (simplified or pairwiseDebts per groups.simplify_debts), settleUp, debtBetween
+    categories.ts       guessCategory (fallback when nobody picked one)   recurring.ts  latestOccurrence + runRecurring
+    receipts.ts         photo -> parsed receipt (vision on the gateway, sums recomputed), receiptSplits, saveUpload
+    splitwise.ts        connect / import / export / live mirror (ADR 0004) + runSplitwiseOutbox
+    outbox.ts           outbox_jobs: enqueue, due, done/failed with backoff (ADR 0009)
+    cart.ts chores.ts reminders.ts upkeep.ts report.ts
   onboarding.ts         onGroupJoined (Group + Chat + Members, adder = Admin, intro + setup questions) and
                         onParticipantJoined (Pending + "approve X?"). Called by Channel adapters (ADR 0008)
   pipeline.ts           the message flow, channel-agnostic: handleIncoming(msg) resolves Group/Member itself (unknown
@@ -52,7 +62,9 @@ src/
     core/               members (list, list_pending, approve/decline/promote, set_payment_handle, forget_me),
                         settings (set_group_settings, toggle_toolkit), dashboard (get_dashboard_link), reminders, report
     splitting/ groceries/ chores/ upkeep/   manifest.ts + the tools
-  channels/types.ts     IncomingMessage { channel, chatExternalId, userExternalId, userName, text, ... }, Outgoing, Channel
+  integrations/         composio.ts (client + cached key health), splitwise.ts (SplitwiseClient: ComposioSplitwise and
+                        FakeSplitwise, splitwiseClient(), splitwiseAvailability())
+  channels/types.ts     IncomingMessage { channel, chatExternalId, userExternalId, userName, text, imageUrl?, ... }, Outgoing, Channel
   channels/index.ts     registry: registerChannel(); deliver(groupId, out) and deliverPrivate(memberId, out) go through
                         the Chat's adapter (only log when none is registered)
   channels/dev.ts       the dev adapter used by scripts/dev-chat.ts
@@ -64,8 +76,9 @@ src/
   lib/dates.ts          day strings and labels in the Group's time zone (client-safe)
   lib/money.ts          formatMoney / parseMoney (client-safe)
   lib/voice.ts lib/prices.ts lib/style-note.ts
+  lib/pay-links.ts      Venmo / PayPal / Cash App links with the amount (settle_up and the settle drawer)
   jobs/scheduler.ts     60 s tick: due reminders, weekly Group Report, upkeep nudge -> channels.deliver; Group style
-                        refresh; daily retention
+                        refresh; recurring Expenses (hourly check); Splitwise outbox; daily retention
   jobs/retention.ts     deletes chat_messages older than 30 days (ADR 0006)
   jobs/style-note.ts    Haiku rewrites the Group style note every 50 chat lines
   proxy.ts              Neon Auth middleware on /g/* (the dev bypass skips it)
@@ -79,8 +92,9 @@ src/
     g/[groupId]/        layout (session + GroupProvider + shell; Pending members see a waiting screen), Home, money
                         (+ ?tab=, [expenseId]), cart, chores, members, settings; actions.ts = every server action;
                         _components/data.ts = services -> screen shapes; _components/screens/*
+                        settings/splitwise/callback = Composio's return URL (route handler)
     design/             the design-system page (dev only unless SHOW_DESIGN_PAGE=1)
-    api/auth/[...path]  Neon Auth proxy; api/chat = Ask Roomie (session Member, 401/403)
+    api/auth/[...path]  Neon Auth proxy; api/chat = Ask Roomie (session Member, 401/403); api/receipts = Scan receipt
 drizzle/                generated migrations (0000 baseline drops the pre-step-4 tables)
 scripts/migrate.ts      npm run db:migrate
 scripts/seed.ts         demo Group "Apt 4B" (dev Chat dev-apt-4b); prints its id, a Claim link for Maya, a Studio requestContext
@@ -98,6 +112,17 @@ spikes/                 throwaway experiments (WhatsApp/Baileys)
 - **Dashboard:** every page and action goes through `lib/session.ts`; nothing trusts a member id from the client. Non-Admins don't see admin controls, and the actions return 403 anyway.
 - **Dev sign-in bypass:** with `NODE_ENV !== "production"` and `DEV_AUTH_EMAIL` set, that email is the signed-in Account (loud warning in the log). For automated browser checks only.
 - **Privacy** (ADR 0006): chat_messages live 30 days; `forget_me` deletes a Member's chat lines, note and memory lines (ledger stays; a removed Member becomes "Former member"); "delete group data" wipes the Group's data and Roomie's memory but keeps the Group, Chat and Members.
+## Splitting (step 5)
+
+- **The model passes intent, never computed cents** (ADR 0007). "50/25/25" is `percents`, "2:2:1" is `shares`, "Dev 30, Sam 15" is `exact` (as said), "Alex paid 60 and I paid 40" is `payers`. The service computes every Share; a split that doesn't add up throws a `SplitError` whose message says what's left or over, and Roomie asks.
+- **Rounding:** equal splits give leftover cents to the (primary) Payer first, then list order; percent and shares use largest remainder, ties by Payer first, then name. Percents must sum to 100 ± 0.01. Everything sums to exactly the total.
+- **Payers:** `expense_payers` is the truth (Balances = Σ paid − Σ owed ± Settlements). `expenses.payer_id` is the primary Payer (paid the most), kept in sync for display. `expense_splits.weight` keeps the typed percent/shares so an edit re-renders the method, and `updateExpense` with only a new total re-splits equal/percent/shares the same way (exact or multi-payer need new amounts).
+- **Categories** are always set: Roomie picks one (`log_expense.category` is required), the dashboard guesses from the description until you choose, `guessCategory` covers old rows and imports. `occurred_on` is the day it happened in the Group's time zone; lists sort by it.
+- **Recurring** (`monthly` on the start's day of month clamped to 28, `weekly` on its weekday): the scheduler copies the parent with `recurring_parent_id`; (parent, day) is unique, so a copy is made once per period, deleted copies included.
+- **Settle plan** follows `groups.simplify_debts`: on = fewest payments (`computeSettlePlan`), off = pairwise (`pairwiseDebts`). `settle_up` with `paid: false` records nothing and returns pay buttons (`lib/pay-links.ts`) for the payee's handles; `paid: true` records a Settlement. Handles live in `member_notes.note.handles` and are merged in SQL so two saved at once both stick.
+- **Receipts:** `services/receipts.ts` sends the photo (always as a data URL; our own `/uploads/...` files are read from disk) to `RECEIPT_MODEL ?? LLM_MODEL` on the gateway's `/v1/chat/completions` with an `image_url` part (no `temperature`: claude-sonnet-5-5 rejects it). The model only transcribes; zod validates, prices are parsed as strings, the total is recomputed (items + tax + tip) and a mismatch is flagged so Roomie asks. `expense_from_receipt` builds exact Shares per item (unclaimed items shared, tax and tip proportional), shows the breakdown first unless they explicitly asked to log it. Photos go to `public/uploads/<folder>/` (gitignored). `RECEIPT_FAKE=1` (evals) or `setReceiptReader()` (tests) skip the model.
+- **Splitwise** (ADR 0004, 0009): `SplitwiseClient` with a Composio implementation (`composio.tools.execute(slug, { userId: accounts.id, arguments })`, `connectedAccounts.link(userId, authConfigId, { callbackUrl })` for OAuth) and `FakeSplitwise`. `splitwiseClient()` returns the fake when `SPLITWISE_FAKE=1` (tests inject one with `setSplitwiseClient`); dev-chat switches to the fake by itself when `COMPOSIO_API_KEY` is missing or rejected and says so once. A 401 / missing key / no connection is `SplitwiseNotConnectedError` ("Splitwise isn't connected yet"), relayed as text, never a crash; Settings shows the card disabled with the reason. Import maps people by email, then name, else adds them as Pending; owed_share -> exact Shares, paid_share -> Payers, payments -> Settlements, refs dedupe per Group. Export is a one-time copy of what has no ref; the live mirror queues `outbox_jobs` that the scheduler pushes (create/update/delete by ref, retried with backoff).
+
 ## The Gate (when Roomie speaks)
 
 `mastra/gate/policy.ts`, ADR 0002. In order: hard trigger (voice note, reply to Roomie, @mention, the word "roomie", the dashboard) always speaks; Jev error or > 2.5 s means hard triggers only; p(act) over the Group's threshold acts; in the follow-up window (3 min / 3 messages after Roomie spoke) the agent decides with permission to answer `[silent]`, unless Jev is sure it's chatter; p(clarify) over its threshold asks. Thresholds (act / clarify): quiet .9/.8, **normal .75/.6** (default), chatty .6/.45. If nobody addressed Roomie and it's not a follow-up, the agent is told to ask before logging anything. Jev's toolkit narrows the agent's tools only at p ≥ 0.6. While Onboarding is open (`groups.onboarded_at` null), an active Member's message in the follow-up window counts as a hard trigger, so "roommates, USD, Chicago" reaches `set_group_settings`.
@@ -106,11 +131,11 @@ spikes/                 throwaway experiments (WhatsApp/Baileys)
 
 - Money is **integer cents** everywhere in services and the DB. Tools accept dollars from the model and convert with `toCents()`. The LLM never does math: balances, splits and totals come from services ([ADR 0007](docs/adr/0007-money-is-integer-cents-computed-in-code.md)).
 - Every service takes `ctx: Ctx` first. `ctx.memberId` is the sender in chat or the signed-in Member on the dashboard; use it as the default payer/doer/adder. Group-level reads take `GroupCtx`.
-- Tools resolve names to ids with `memberIdByName()` and throw a helpful error on unknown names (the model then asks).
+- Tools resolve names to ids with `memberIdByName()` and throw a helpful error on unknown names (the model then asks). Money tools return amounts as ready-to-say strings ("$22.50", `expenseSummary`), so the model never formats cents.
 - Tools get the Group and sender from `ctxOf(context)` (the RequestContext), never from closures.
 - Tools attach buttons by returning `links: [{ text, url }]` (see `cart_add` / `dashboardLinks()`); the pipeline collects them from every tool result into `Outgoing.buttons`. Never paste URLs. Buttons need an absolute `APP_URL`.
 - A new Toolkit = a folder with `manifest.ts` + tools, added to `TOOLKITS` in `toolkits/registry.ts`, `TOOLKIT_IDS`, and the Gate's toolkit choice in `gate/jev.ts` + `GATE_TOOLKITS`.
-- Dashboard pattern: a page (server) calls `currentMember(groupId)`, reads services through `_components/data.ts` and renders a client screen; writes are server actions in `g/[groupId]/actions.ts` that call a service with the session's Ctx and `revalidatePath`. They return `{ ok, error, status }`, so screens toast errors. Features of steps 5-7 stay visible but disabled with a "Coming soon" hint.
+- Dashboard pattern: a page (server) calls `currentMember(groupId)`, reads services through `_components/data.ts` and renders a client screen; writes are server actions in `g/[groupId]/actions.ts` that call a service with the session's Ctx and `revalidatePath`. They return `{ ok, error, status }`, so screens toast errors. Features of steps 6-7 stay visible but disabled with a "Coming soon" hint.
 - Schema changes: edit `src/db/schema.ts`, `npm run db:generate`, commit the SQL in `drizzle/`, `npm run db:migrate`. Never `drizzle-kit push`.
 - Roomie's replies are 1 to 3 short lines unless someone asks for more. The trigger word is "roomie".
 - Use the glossary's words in code and UI text (Member, Group, Expense, Cart...), and avoid the words it lists under _Avoid_.
@@ -123,7 +148,8 @@ spikes/                 throwaway experiments (WhatsApp/Baileys)
 - **Observability:** traces go to Postgres (`mastra_ai_spans`, visible in Studio) and to the Mastra platform when `MASTRA_PLATFORM_ACCESS_TOKEN` + `MASTRA_PROJECT_ID` are set. API routes call `mastra.observability.flush()` at the end.
 - **Voice:** no Whisper on the gateway. `lib/voice.ts` sends the audio to OpenRouter (`OPENROUTER_API_KEY`, `STT_MODEL`, an audio-capable chat model) as an `input_audio` chat part and uses the text reply as the transcript. Optional; nothing calls it until a channel exists.
 - **Neon Auth** (Managed Better Auth, `@neondatabase/auth`): `lib/auth/server.ts` = `createNeonAuth({ baseUrl, cookies: { secret } })`; `app/api/auth/[...path]` = `auth.handler()`; `proxy.ts` = `auth.middleware({ loginUrl: "/" })` matched to `/g/:path*` only; browser `createAuthClient()` (no args) and `signIn.social({ provider: "google", callbackURL })` with an absolute callback. `auth.getSession()` returns `{ data }`, user is `data.user`. Users live in `neon_auth` (Neon owns it; never write there). Dev Google uses Neon's shared OAuth keys.
-- **Next 16:** Mastra and pg are in `serverExternalPackages`. Read `node_modules/next/dist/docs/` before using Next APIs.
+- **Composio** (`@composio/core`, TS SDK v3): `new Composio({ apiKey })`; direct execution (`tools.execute`) needs a toolkit version, so we pass `COMPOSIO_SPLITWISE_VERSION` or `dangerouslySkipVersionCheck`. `connectedAccounts.initiate` is retired for Composio-managed OAuth; use `connectedAccounts.link`. The Splitwise auth config comes from `COMPOSIO_SPLITWISE_AUTH_CONFIG_ID`, else the first Composio-managed one, else one is created (`authConfigs.create("splitwise", { type: "use_composio_managed_auth" })`) and its id logged for `.env`.
+- **Next 16:** Mastra, pg and Composio are in `serverExternalPackages`. Read `node_modules/next/dist/docs/` before using Next APIs.
 
 ## Commands
 
@@ -138,8 +164,8 @@ npm run dev-chat              # terminal group chat through the real pipeline (d
 npm run mastra:dev            # Mastra Studio at localhost:4111, with request-context presets for Apt 4B's Members
 npm run db:generate           # after a schema change: write the next migration
 npm run typecheck && npm test # tsc + unit tests (no .env); CI runs both
-npm run test:tools            # every tool against the dev DB in a throwaway Group, no LLM
-npm run evals                 # ~33 chat scenarios through the real Gate + Sonnet; prints a table and the pass rate
+npm run test:tools            # every tool against the dev DB in throwaway Groups (Splitwise on the fake), no LLM
+npm run evals                 # ~45 chat scenarios through the real Gate + Sonnet; prints a table and the pass rate
                               # (npx tsx scripts/evals.ts --only id,id   or   --baseline to rewrite docs/evals-baseline.md)
 ```
 

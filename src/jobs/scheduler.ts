@@ -1,13 +1,16 @@
 // Started once from instrumentation.ts (one long-running process; DISABLE_SCHEDULER=1 skips it).
 // Every 60 s: due reminders, the weekly Group Report (Sun 18:00 in the Group's time zone) and a 9 AM upkeep nudge,
-// all through deliver() (the Channel registry), plus the Group style refresh (jobs/style-note.ts, posts nothing) and
-// the daily chat retention sweep (jobs/retention.ts). The tick never rejects: every job is wrapped.
+// all through deliver() (the Channel registry), plus the Group style refresh (jobs/style-note.ts, posts nothing),
+// recurring Expenses, Splitwise mirror pushes and the daily chat retention sweep (jobs/retention.ts). The tick never
+// rejects: every job is wrapped.
 import { deliver } from "@/channels";
 import { groupsWithChat } from "@/services/groups";
 import { runRetention } from "./retention";
 import { refreshStyleNote } from "./style-note";
 import { dueReminders, markSent, type Reminder } from "@/services/reminders";
 import { dueMaintenance } from "@/services/upkeep";
+import { runRecurring } from "@/services/recurring";
+import { runSplitwiseOutbox } from "@/services/splitwise";
 import { formatGroupReport, groupReport, localParts, shouldPostUpkeepNudge, shouldPostWeeklyReport } from "@/services/report";
 
 const TICK_MS = 60_000;
@@ -20,6 +23,7 @@ type State = {
   upkeepPostedDay: Map<string, string>; // groupId -> "YYYY-MM-DD" (Group time zone) of last nudge
   reminderFailures: Map<string, number>; // reminderId -> failed send attempts
   retentionDay?: string; // UTC day of the last retention sweep
+  recurringHour?: string; // UTC hour of the last recurring-expense check
 };
 function state(): State {
   const g = globalThis as { __roomieSchedulerState?: State };
@@ -154,11 +158,39 @@ async function dailyRetention(now: Date) {
   }
 }
 
+/**
+ * Recurring Expenses: a daily job, checked once an hour so each Group gets its copy on its own local day. Copies are
+ * unique per period (services/recurring.ts), so a restart or a second process can't double them.
+ */
+async function recurringExpenses(now: Date) {
+  const s = state();
+  const hour = now.toISOString().slice(0, 13);
+  if (s.recurringHour === hour) return;
+  s.recurringHour = hour;
+  try {
+    const made = await runRecurring(now);
+    if (made) console.log(`scheduler: ${made} recurring expense${made === 1 ? "" : "s"} added`);
+  } catch (e) {
+    console.error("scheduler: recurring expenses failed", e);
+  }
+}
+
+/** Splitwise mirror pushes from the outbox (ADR 0009); failures are retried with backoff on later ticks. */
+async function splitwiseOutbox(now: Date) {
+  try {
+    await runSplitwiseOutbox(now);
+  } catch (e) {
+    console.error("scheduler: splitwise outbox failed", e);
+  }
+}
+
 /** One scheduler pass. Never rejects. */
 export async function tick(now = new Date()): Promise<void> {
   try {
     await sendDueReminders(now);
     await runGroupJobs(now);
+    await recurringExpenses(now);
+    await splitwiseOutbox(now);
     await dailyRetention(now);
   } catch (e) {
     console.error("scheduler: tick failed", e);

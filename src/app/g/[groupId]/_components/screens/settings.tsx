@@ -1,8 +1,9 @@
 "use client"
 
 import { useRouter } from "next/navigation"
-import { useState, useTransition } from "react"
+import { useEffect, useState, useTransition } from "react"
 
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -25,9 +26,20 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { useThemePreference, type ThemePreference } from "@/components/app/theme"
 import type { ToolkitId } from "@/toolkits/types"
 import type { SettingsPatch } from "@/services/groups"
-import { deleteGroupData, setToolkit, updateSettings } from "../../actions"
+import {
+  connectSplitwise,
+  deleteGroupData,
+  exportSplitwise,
+  importSplitwise,
+  listSplitwiseGroups,
+  setSimplifyDebts,
+  setSplitwiseMirror,
+  setToolkit,
+  updateSettings,
+} from "../../actions"
 import { useGroup } from "../group-context"
 import { PageHeader, TopBar } from "../shell"
+import type { SplitwiseView } from "../types"
 
 const currencies = [
   { label: "US dollar (USD)", value: "USD" },
@@ -75,9 +87,13 @@ const toolkits: { id: ToolkitId | string; name: string; description: string; soo
 /** Pick the list entry, or add the Group's own value so the Select can show it. */
 const withCurrent = (list: { label: string; value: string }[], value: string) => (list.some((x) => x.value === value) ? list : [...list, { label: value, value }])
 
-export function SettingsScreen() {
+export function SettingsScreen({ splitwise, notice }: { splitwise: SplitwiseView | null; notice: string | null }) {
   const { group, isAdmin, active } = useGroup()
   const admins = active.filter((m) => m.role === "admin").map((m) => m.name)
+  useEffect(() => {
+    if (notice === "connected") toast.add({ title: "Splitwise connected", description: "Pick a Splitwise group to import or copy to.", type: "success" })
+    if (notice === "failed") toast.add({ title: "Splitwise didn't connect", description: "Try Connect again.", type: "error" })
+  }, [notice])
   return (
     <>
       <TopBar title="Settings" />
@@ -87,7 +103,7 @@ export function SettingsScreen() {
         </p>
       </PageHeader>
       <div className="flex flex-col gap-10 px-5 pb-6">
-        {isAdmin ? <AdminSettings /> : null}
+        {isAdmin ? <AdminSettings splitwise={splitwise} /> : null}
         <Appearance />
         {isAdmin ? <DangerZone /> : null}
       </div>
@@ -95,7 +111,7 @@ export function SettingsScreen() {
   )
 }
 
-function AdminSettings() {
+function AdminSettings({ splitwise }: { splitwise: SplitwiseView | null }) {
   const { group, toolkits: on } = useGroup()
   const [name, setName] = useState(group.name)
   const [, start] = useTransition()
@@ -186,14 +202,24 @@ function AdminSettings() {
             </Select>
             <FieldDescription>Reminders and chore days follow this.</FieldDescription>
           </Field>
-          <Field orientation="horizontal" data-disabled>
+          <Field orientation="horizontal">
             <FieldContent>
-              <FieldLabel htmlFor="simplify">
-                Simplify debts <Badge variant="secondary">Coming soon</Badge>
-              </FieldLabel>
-              <FieldDescription>Settle with the fewest payments, even between people who didn&apos;t share an expense. Always on for now.</FieldDescription>
+              <FieldLabel htmlFor="simplify">Simplify debts</FieldLabel>
+              <FieldDescription>
+                On: settle with the fewest payments, even between people who didn&apos;t share an expense. Off: each pair settles what they shared.
+              </FieldDescription>
             </FieldContent>
-            <Switch id="simplify" checked disabled />
+            <Switch
+              id="simplify"
+              checked={group.simplifyDebts}
+              onCheckedChange={(on) =>
+                start(async () => {
+                  const res = await setSimplifyDebts(group.id, on)
+                  if (!res.ok) return void toast.add({ title: "Couldn't save that", description: res.error, type: "error" })
+                  toast.add({ title: on ? "Simplify debts on" : "Simplify debts off", description: on ? "The Settle plan uses the fewest payments." : "The Settle plan is pairwise now." })
+                })
+              }
+            />
           </Field>
         </FieldGroup>
       </FieldSet>
@@ -241,19 +267,145 @@ function AdminSettings() {
         </FieldGroup>
       </FieldSet>
 
+      {splitwise ? <SplitwiseSettings sw={splitwise} /> : null}
+    </>
+  )
+}
+
+const TERMS = "Splitwise's free API is for personal, non-commercial use. Roomie only copies what you ask it to, one way."
+
+function SplitwiseSettings({ sw }: { sw: SplitwiseView }) {
+  const { group } = useGroup()
+  const router = useRouter()
+  const [pending, start] = useTransition()
+  const [options, setOptions] = useState<{ id: string; name: string; memberNames: string[] }[] | null>(null)
+  const [picked, setPicked] = useState<string | null>(sw.group?.id ?? null)
+
+  const fail = (title: string, error: string) => void toast.add({ title, description: error, type: "error" })
+  const connect = () =>
+    start(async () => {
+      const res = await connectSplitwise(group.id)
+      if (!res.ok) return fail("Couldn't connect Splitwise", res.error)
+      if (res.data && !res.data.connected) return void (window.location.href = res.data.url)
+      toast.add({ title: "Splitwise connected", type: "success" })
+      router.refresh()
+    })
+  const loadGroups = () =>
+    start(async () => {
+      const res = await listSplitwiseGroups(group.id)
+      if (!res.ok) return fail("Couldn't load your Splitwise groups", res.error)
+      setOptions(res.data ?? [])
+      if (!picked && res.data?.[0]) setPicked(res.data[0].id)
+    })
+  const doImport = () =>
+    picked &&
+    start(async () => {
+      const res = await importSplitwise(group.id, picked)
+      if (!res.ok) return fail("Import didn't work", res.error)
+      const r = res.data!
+      const extra = [r.settlements ? `${r.settlements} payments` : "", r.newMembers.length ? `${r.newMembers.join(", ")} added as pending` : "", r.skipped.duplicate ? `${r.skipped.duplicate} already here` : ""].filter(Boolean)
+      toast.add({ title: `Imported ${r.expenses} expenses from ${r.splitwiseGroup}`, description: extra.join(" · ") || undefined, type: "success" })
+    })
+  const doExport = () =>
+    start(async () => {
+      const res = await exportSplitwise(group.id, picked ?? undefined)
+      if (!res.ok) return fail("Export didn't work", res.error)
+      const r = res.data!
+      toast.add({ title: `Copied ${r.expenses} expenses to ${r.splitwiseGroup}`, description: r.skipped.length ? `${r.skipped.length} skipped: ${r.skipped[0].why}` : undefined, type: "success" })
+    })
+  const mirror = (on: boolean) =>
+    start(async () => {
+      const res = await setSplitwiseMirror(group.id, on, picked ?? undefined)
+      if (!res.ok) return fail("Couldn't switch the mirror", res.error)
+      toast.add({ title: on ? "Live mirror on" : "Live mirror off", description: on ? "New, changed and deleted expenses are copied to Splitwise within a minute." : undefined })
+    })
+
+  if (!sw.ready) {
+    return (
       <FieldSet>
         <FieldLegend className="type-heading">Splitwise</FieldLegend>
         <Field orientation="horizontal" data-disabled>
           <FieldContent>
             <FieldLabel htmlFor="splitwise">Connect Splitwise</FieldLabel>
-            <FieldDescription>Bring in your old Splitwise group, or keep one in sync. Coming soon.</FieldDescription>
+            <FieldDescription>Bring in your old Splitwise group, copy this one over, or keep one in sync.</FieldDescription>
           </FieldContent>
           <Button id="splitwise" variant="outline" size="sm" disabled>
             Connect
           </Button>
         </Field>
+        <Alert>
+          <AlertTitle>Splitwise isn&apos;t available here yet</AlertTitle>
+          <AlertDescription>{sw.hint}</AlertDescription>
+        </Alert>
+        <FieldDescription>{TERMS}</FieldDescription>
       </FieldSet>
-    </>
+    )
+  }
+
+  return (
+    <FieldSet>
+      <FieldLegend className="type-heading">Splitwise</FieldLegend>
+      {!sw.connected ? (
+        <Field orientation="horizontal">
+          <FieldContent>
+            <FieldLabel htmlFor="splitwise">Connect Splitwise</FieldLabel>
+            <FieldDescription>Sign in with your own Splitwise. Then bring in a Splitwise group, copy this one over, or keep one in sync.</FieldDescription>
+          </FieldContent>
+          <Button id="splitwise" variant="outline" size="sm" disabled={pending} onClick={connect}>
+            Connect
+          </Button>
+        </Field>
+      ) : (
+        <FieldGroup className="gap-4">
+          <FieldDescription>
+            Connected{sw.connectedBy ? ` by ${sw.connectedBy}` : ""}
+            {sw.group ? `, linked to ${sw.group.name}` : ""}
+            {sw.lastSynced ? `. Last copied ${sw.lastSynced}` : ""}.{sw.pendingPushes ? ` ${sw.pendingPushes} change${sw.pendingPushes === 1 ? "" : "s"} waiting to go to Splitwise.` : ""}
+            {sw.fake ? " (In-memory test Splitwise.)" : ""}
+          </FieldDescription>
+          <Field>
+            <FieldLabel htmlFor="sw-group">Splitwise group</FieldLabel>
+            {options ? (
+              <Select items={options.map((o) => ({ label: o.name, value: o.id }))} value={picked} onValueChange={(v) => v && setPicked(v)}>
+                <SelectTrigger id="sw-group" className="w-full">
+                  <SelectValue placeholder="Pick a group" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    {options.map((o) => (
+                      <SelectItem key={o.id} value={o.id}>
+                        {o.name}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            ) : (
+              <Button id="sw-group" variant="outline" disabled={pending} onClick={loadGroups} className="justify-start">
+                {sw.group ? sw.group.name : "Choose a Splitwise group"}
+              </Button>
+            )}
+            {options && picked ? <FieldDescription>People: {options.find((o) => o.id === picked)?.memberNames.join(", ")}</FieldDescription> : null}
+          </Field>
+          <div className="flex flex-wrap gap-2">
+            <Button disabled={pending || !picked} onClick={doImport}>
+              Import its history
+            </Button>
+            <Button variant="secondary" disabled={pending || !picked} onClick={doExport}>
+              Copy ours to Splitwise
+            </Button>
+          </div>
+          <Field orientation="horizontal">
+            <FieldContent>
+              <FieldLabel htmlFor="sw-mirror">Live mirror</FieldLabel>
+              <FieldDescription>Every expense added, changed or deleted here is copied to Splitwise. Changes in Splitwise don&apos;t come back.</FieldDescription>
+            </FieldContent>
+            <Switch id="sw-mirror" checked={sw.mirror} disabled={pending || (!picked && !sw.group)} onCheckedChange={mirror} />
+          </Field>
+        </FieldGroup>
+      )}
+      <FieldDescription>{TERMS}</FieldDescription>
+    </FieldSet>
   )
 }
 
