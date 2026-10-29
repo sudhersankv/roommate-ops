@@ -47,6 +47,8 @@ How Roomie uses it (sentences in its instructions, from `learnedBlock`):
 
 Always: never more emoji than the group uses; call members by name or by a nickname seen used by others 3+ times, never an invented one; reply in the language of the message (and mix only when they mix).
 
+**The adaptation stays implicit.** Nothing a person reads says Roomie adapts to how the group talks or learns its slang: not the intro, `/help`, the landing copy in the app, Settings or Roomie's own replies (`CORE_RULES`: "Never explain that you pick up how the group talks"). It's a discovery. The one place it shows is Settings -> Personality's low-key "What Roomie has picked up" card (no explainer line; "Start fresh" clears it). Likewise "pet" appears in at most two places in the app: `/pet` and the Personality subtitle. What Roomie *learns* in user-facing words is Tricks (GLOSSARY).
+
 ## Pet behaviours
 
 All of them go through the pipeline and the Channel adapter, so ADR 0001's rate limits apply.
@@ -68,4 +70,4 @@ All of them go through the pipeline and the Channel adapter, so ADR 0001's rate 
 
 ## For Toolkits
 
-A Toolkit manifest may carry `persona: string`, one line about how Roomie behaves with that Toolkit on. Enabled Toolkits' lines are added at the `/* TOOLKIT_PERSONA */` insertion point in `composePersona` (`toolkitPersona()` in `mastra/agents/roomie.ts` reads the optional field).
+A Toolkit manifest may carry `persona: string`, one line about how Roomie behaves with that Toolkit on. Enabled Toolkits' lines are added under the TRICKS header at the `/* TOOLKIT_PERSONA */` insertion point in `composePersona` (`toolkitPersona()` in `mastra/agents/roomie.ts` reads the optional field).

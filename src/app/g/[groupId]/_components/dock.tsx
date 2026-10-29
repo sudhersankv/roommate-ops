@@ -227,7 +227,7 @@ function Tile({
         aria-label={ariaLabel}
         className={cn(
           "flex min-w-0 flex-1 flex-col items-center gap-1.5 rounded-2xl px-1 py-3 text-center outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50",
-          muted ? "border border-dashed border-foreground/15 bg-transparent hover:bg-muted/50" : "bg-card hover:bg-muted",
+          muted ? "border border-dashed border-foreground/15 bg-transparent hover:bg-muted/50" : "bg-muted/60 hover:bg-muted",
           state === "teach" && "border border-dashed border-primary/50 bg-primary/8",
           active && "bg-primary/18 ring-2 ring-primary/60"
         )}
