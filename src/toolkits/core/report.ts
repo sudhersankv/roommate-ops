@@ -1,18 +1,14 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
-import { groups, report } from "@/services";
+import { groupReportText } from "@/jobs/report-text";
 import { ctxOf } from "../util";
 
 export const reportTools = {
   group_report: createTool({
     id: "group_report",
     description:
-      "The full Group Report: balances, settle plan, chores, Hall of Shame, upcoming reminders, upkeep. Returns ready-to-post text; reply with it verbatim.",
+      "The Group Report ('weekly report', 'how are we doing'): who owes whom, chores this week, streaks, the chart, upkeep due soon, the Cart, what's coming up. Returns ready-to-post text: reply with exactly that text, nothing before or after.",
     inputSchema: z.object({}),
-    execute: async (_input, context) => {
-      const ctx = ctxOf(context);
-      const group = await groups.getGroup(ctx.groupId);
-      return { text: report.formatGroupReport(await report.groupReport(ctx), { tz: group?.timezone }) };
-    },
+    execute: async (_input, context) => ({ text: await groupReportText(ctxOf(context).groupId) }),
   }),
 };

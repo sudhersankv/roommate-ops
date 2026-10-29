@@ -1,17 +1,21 @@
 // Started once from instrumentation.ts (one long-running process; DISABLE_SCHEDULER=1 skips it).
-// Every 60 s: due reminders, the weekly Group Report (Sun 18:00 in the Group's time zone) and a 9 AM upkeep nudge,
-// all through deliver() (the Channel registry), plus the Group style refresh (jobs/style-note.ts, posts nothing),
-// recurring Expenses, Splitwise mirror pushes and the daily chat retention sweep (jobs/retention.ts). The tick never
-// rejects: every job is wrapped.
-import { deliver } from "@/channels";
+// Every 60 s: due reminders (the whole Group's in the Chat, a Member's privately), then per Group the daily chores
+// nudge and the weekly Group Report at their local hours (services/schedule.ts), the Group style refresh
+// (jobs/style-note.ts, posts nothing), recurring Expenses, Splitwise mirror pushes and the daily chat retention sweep.
+// Posts Roomie makes on its own are claimed in scheduled_posts first, so each goes out once per day / week even across
+// restarts (ADR 0001: at most one chores nudge per Group per day, nothing when nothing is due). The tick never rejects.
+import { deliver, deliverPrivate } from "@/channels";
+import { CantMessagePrivatelyError } from "@/channels/types";
 import { groupsWithChat } from "@/services/groups";
-import { runRetention } from "./retention";
-import { refreshStyleNote } from "./style-note";
-import { dueReminders, markSent, type Reminder } from "@/services/reminders";
-import { dueMaintenance } from "@/services/upkeep";
+import { choresDue } from "@/services/chores";
+import { dueReminders, markSent, reminderLine, type Reminder } from "@/services/reminders";
+import { choresNudgeText } from "@/services/report";
+import { choresNudgeWindow, claimPost, getSchedule, releasePost, weeklyReportWindow, type PostKind } from "@/services/schedule";
 import { runRecurring } from "@/services/recurring";
 import { runSplitwiseOutbox } from "@/services/splitwise";
-import { formatGroupReport, groupReport, localParts, shouldPostUpkeepNudge, shouldPostWeeklyReport } from "@/services/report";
+import { groupReportText } from "./report-text";
+import { runRetention } from "./retention";
+import { refreshStyleNote } from "./style-note";
 
 const TICK_MS = 60_000;
 const MAX_SEND_ATTEMPTS = 3;
@@ -19,103 +23,107 @@ const MAX_SEND_ATTEMPTS = 3;
 /* ---------- in-memory state (one process, so globalThis is enough; survives Next HMR) ---------- */
 
 type State = {
-  weeklyPostedAt: Map<string, Date>; // groupId -> last weekly report
-  upkeepPostedDay: Map<string, string>; // groupId -> "YYYY-MM-DD" (Group time zone) of last nudge
   reminderFailures: Map<string, number>; // reminderId -> failed send attempts
   retentionDay?: string; // UTC day of the last retention sweep
   recurringHour?: string; // UTC hour of the last recurring-expense check
 };
 function state(): State {
   const g = globalThis as { __roomieSchedulerState?: State };
-  return (g.__roomieSchedulerState ??= {
-    weeklyPostedAt: new Map(),
-    upkeepPostedDay: new Map(),
-    reminderFailures: new Map(),
-  });
+  return (g.__roomieSchedulerState ??= { reminderFailures: new Map() });
 }
 
-/* ---------- reminder lines (pure, deterministic by reminder id) ---------- */
+type GroupRow = Awaited<ReturnType<typeof groupsWithChat>>[number];
 
-const REMINDER_LINES = [
-  "⏰ {text}. You're up, {who}",
-  "⏰ Hey {who}: {text} 👀",
-  "⏰ Reminder for {who}: {text}",
-  "⏰ {who}, quick one: {text} ✨",
-  "⏰ {text}. Just saying, {who}",
-];
+/* ---------- reminders ---------- */
 
-/** Small stable string hash so the same reminder always gets the same line. */
-export function hashId(s: string): number {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
-  return h;
-}
-
-export function reminderLine(r: Pick<Reminder, "id" | "text" | "memberName">): string {
-  const who = r.memberName ?? "everyone";
-  return REMINDER_LINES[hashId(r.id) % REMINDER_LINES.length].replaceAll("{text}", r.text).replaceAll("{who}", who);
-}
-
-/* ---------- helpers ---------- */
-
-async function safeSend(groupId: string, text: string, what: string): Promise<boolean> {
+/**
+ * One reminder: the whole Group's into the Chat, a Member's privately, never both. When Roomie can't DM that Member
+ * yet (they never pressed Start), it goes to the Chat instead, addressed to them, with the one-line fix.
+ */
+export async function deliverReminder(r: Reminder): Promise<"chat" | "private"> {
+  const text = reminderLine(r);
+  if (!r.memberId) {
+    await deliver(r.groupId, { text });
+    return "chat";
+  }
   try {
-    await deliver(groupId, { text });
-    return true;
-  } catch (e) {
-    console.error(`scheduler: ${what} send failed for group ${groupId}`, e);
-    return false;
+    await deliverPrivate(r.memberId, { text });
+    return "private";
+  } catch (err) {
+    if (!(err instanceof CantMessagePrivatelyError)) throw err;
+    await deliver(r.groupId, { text: `${text} (for ${r.memberName ?? "you"}. ${err.message.replace(/, then ask me again\.?$/, ".")})` });
+    return "chat";
   }
 }
 
-/* ---------- the jobs ---------- */
-
-async function sendDueReminders(now: Date) {
+export async function sendDueReminders(now: Date, groupId?: string): Promise<number> {
   const s = state();
   let due: Reminder[];
   try {
-    due = await dueReminders(now);
+    due = await dueReminders(now, groupId);
   } catch (e) {
     console.error("scheduler: dueReminders failed", e);
-    return;
+    return 0;
   }
+  let sent = 0;
   for (const r of due) {
     const failures = s.reminderFailures.get(r.id) ?? 0;
     if (failures >= MAX_SEND_ATTEMPTS) continue; // gave up; stays unsent so a restart may retry
-    const ok = await safeSend(r.groupId, reminderLine(r), "reminder");
-    if (!ok) {
+    try {
+      await deliverReminder(r);
+    } catch (e) {
+      console.error(`scheduler: reminder ${r.id} send failed`, e);
       s.reminderFailures.set(r.id, failures + 1);
       if (failures + 1 >= MAX_SEND_ATTEMPTS) console.error(`scheduler: giving up on reminder ${r.id} after ${MAX_SEND_ATTEMPTS} attempts`);
       continue;
     }
     s.reminderFailures.delete(r.id);
+    sent++;
     try {
-      await markSent(r.id);
+      await markSent(r.id, now);
     } catch (e) {
       console.error(`scheduler: markSent failed for reminder ${r.id}`, e);
     }
   }
+  return sent;
 }
 
-/** Post the Group Report to a Group's Chat now. Returns the text. */
-export async function postWeeklyReport(groupId: string, groupName?: string, tz?: string): Promise<string> {
-  const text = formatGroupReport(await groupReport({ groupId }), { groupName, tz });
-  if (await safeSend(groupId, text, "weekly report")) state().weeklyPostedAt.set(groupId, new Date());
-  return text;
+/* ---------- posts Roomie makes on its own ---------- */
+
+/** Claim, send, and give the claim back if the send failed (a later tick in the same hour retries). */
+async function postOnce(g: GroupRow, kind: PostKind, period: string, text: string): Promise<boolean> {
+  if (!(await claimPost(g.id, kind, period))) return false;
+  try {
+    await deliver(g.id, { text });
+    return true;
+  } catch (e) {
+    await releasePost(g.id, kind, period).catch(() => {});
+    throw e;
+  }
 }
 
-/** Post one line about overdue upkeep, if any. Returns the line or null when nothing is overdue. */
-export async function postUpkeepNudge(groupId: string, now = new Date(), tz?: string): Promise<string | null> {
-  const overdue = (await dueMaintenance({ groupId })).filter((m) => m.status === "overdue");
-  if (overdue.length === 0) return null;
-  const text = `🔧 Overdue: ${overdue.map((m) => m.item).join(", ")}. Anyone free today?`;
-  if (await safeSend(groupId, text, "upkeep nudge")) state().upkeepPostedDay.set(groupId, localParts(now, tz).day);
-  return text;
+/** The daily chores nudge, in the Group's nudge hour, only when something is due or late. Returns the text posted. */
+export async function choresNudgeJob(g: GroupRow, now: Date): Promise<string | null> {
+  if (!g.toolkits.includes("chores")) return null;
+  const { nudgeHour } = await getSchedule({ groupId: g.id });
+  const w = choresNudgeWindow(now, g.timezone, nudgeHour);
+  if (!w.open) return null;
+  const text = choresNudgeText(await choresDue({ groupId: g.id }, now));
+  if (!text) return null;
+  return (await postOnce(g, "chores.nudge", w.period, text)) ? text : null;
+}
+
+/** The weekly Group Report, on the Group's report day and hour. Returns the text posted. */
+export async function weeklyReportJob(g: GroupRow, now: Date): Promise<string | null> {
+  const { reportWeekday, reportHour } = await getSchedule({ groupId: g.id });
+  const w = weeklyReportWindow(now, g.timezone, reportWeekday, reportHour);
+  if (!w.open) return null;
+  const text = await groupReportText(g.id, now);
+  return (await postOnce(g, "report.weekly", w.period, text)) ? text : null;
 }
 
 async function runGroupJobs(now: Date) {
-  const s = state();
-  let all: Awaited<ReturnType<typeof groupsWithChat>>;
+  let all: GroupRow[];
   try {
     all = await groupsWithChat();
   } catch (e) {
@@ -124,18 +132,14 @@ async function runGroupJobs(now: Date) {
   }
   for (const g of all) {
     try {
-      if (shouldPostWeeklyReport(now, s.weeklyPostedAt.get(g.id) ?? null, g.timezone)) await postWeeklyReport(g.id, g.name, g.timezone);
+      await weeklyReportJob(g, now);
     } catch (e) {
       console.error(`scheduler: weekly report failed for ${g.name}`, e);
     }
     try {
-      if (shouldPostUpkeepNudge(now, s.upkeepPostedDay.get(g.id) ?? null, g.timezone)) {
-        // Mark the day even when nothing is overdue so we don't re-query every minute of the 9 o'clock hour.
-        s.upkeepPostedDay.set(g.id, localParts(now, g.timezone).day);
-        await postUpkeepNudge(g.id, now, g.timezone);
-      }
+      await choresNudgeJob(g, now);
     } catch (e) {
-      console.error(`scheduler: upkeep nudge failed for ${g.name}`, e);
+      console.error(`scheduler: chores nudge failed for ${g.name}`, e);
     }
     try {
       await refreshStyleNote(g.id, g.styleNoteAt, now);
