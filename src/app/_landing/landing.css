@@ -1,0 +1,36 @@
+/* The landing page's motion: chat lines pop in. The hero plays once on load; the demos play as they scroll into view
+   (only where scroll-driven animations exist; elsewhere they're simply there). Nothing moves with reduced motion. */
+
+@keyframes lp-pop {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .lp-play .lp-msg {
+    transform-origin: left bottom;
+    animation: lp-pop 0.45s cubic-bezier(0.2, 0.8, 0.3, 1.15) both;
+    animation-delay: calc(0.35s + var(--i, 0) * 0.85s);
+  }
+  .lp-play .lp-msg[data-align="end"] {
+    transform-origin: right bottom;
+  }
+
+  @supports (animation-timeline: view()) {
+    .lp-reveal .lp-msg {
+      transform-origin: left bottom;
+      animation: lp-pop linear both;
+      animation-timeline: view();
+      animation-range: entry 5% entry 55%;
+    }
+    .lp-reveal .lp-msg[data-align="end"] {
+      transform-origin: right bottom;
+    }
+  }
+}
