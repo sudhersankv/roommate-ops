@@ -14,33 +14,42 @@ import { haveNeed } from "@/services/recipe-math"
 import type { Recipe } from "@/services/recipes"
 import { toolkitStates } from "@/toolkits/catalog"
 import { toolkitById } from "@/toolkits/registry"
-import { MANIFESTS, TOOLKIT_IDS, type ToolkitId } from "@/toolkits/manifests"
+import { CATALOG, COMING_SOON, MANIFESTS, TOOLKIT_IDS, type ToolkitId } from "@/toolkits/manifests"
+import type { IconName } from "@/toolkits/types"
 import type { GroupView, MemberView } from "./group-context"
 import type { ActivityView, CartItemView, CartPageView, ChoreView, ExpenseView, NarrationView, RecipeView, ReminderView, ScheduleView, SplitwiseView, ToolkitCardView, Transfer, UpkeepView } from "./types"
 
-/** Bottom-nav tabs after Home; the rest go in the avatar menu. Home + 3 + the Ask Roomie button = 5 slots. */
+/** Trick tabs in the dock between Home and More. Home + 3 + More, with the Ask Roomie button in the middle. */
 export const NAV_TABS = 3
 
 /**
- * The shell from the manifests: enabled Toolkits' nav entries sorted by `order` (one per page, the first owner
- * wins), split into tabs and overflow; and every owned page with its owners' on/off state.
+ * The shell from the manifests. The dock: the learned Tricks' nav entries sorted by `order` (one per page, the
+ * first owner wins), at most NAV_TABS. The More drawer: every learned Trick (its own tab, so Upkeep is reachable
+ * even next to Chores), then the ones not learned yet and the coming-soon ones as greyed slots. And every owned
+ * page with its owners' on/off state.
  */
-function shellView(groupId: string, on: Record<string, boolean>): Pick<GroupView, "nav" | "moreNav" | "ownedPages"> {
+function shellView(groupId: string, on: Record<string, boolean>): Pick<GroupView, "nav" | "drawer" | "ownedPages"> {
+  const icon = (name: IconName) => createElement(ToolkitIcon, { name })
   const entries = MANIFESTS.filter((m) => on[m.id] && m.dashboard?.nav)
     .map((m) => ({ m, nav: m.dashboard!.nav! }))
     .sort((a, b) => a.nav.order - b.nav.order)
+  const all = entries.map(({ m, nav }) => ({ toolkit: m.id, label: nav.label, href: nav.href(groupId), icon: icon(nav.icon) }))
   const seen = new Set<string>()
-  const items = entries.flatMap(({ m, nav }) => {
-    const href = nav.href(groupId)
-    const path = href.split("?")[0]
-    if (seen.has(path)) return []
+  const tabs = all.filter((item) => {
+    const path = item.href.split("?")[0]
+    if (seen.has(path)) return false
     seen.add(path)
-    return [{ toolkit: m.id, label: nav.label, href, icon: createElement(ToolkitIcon, { name: nav.icon }) }]
+    return true
   })
+  const slot = (m: (typeof CATALOG)[number]) => ({ id: m.id, name: m.name, icon: icon(m.icon) })
   const prefixes = [...new Set(MANIFESTS.flatMap((m) => m.dashboard?.pages ?? []))]
   return {
-    nav: items.slice(0, NAV_TABS),
-    moreNav: items.slice(NAV_TABS),
+    nav: tabs.slice(0, NAV_TABS),
+    drawer: {
+      learned: all,
+      notYet: MANIFESTS.filter((m) => !on[m.id]).map(slot),
+      soon: COMING_SOON.map(slot),
+    },
     ownedPages: prefixes.map((prefix) => ({
       prefix,
       owners: MANIFESTS.filter((m) => m.dashboard?.pages?.includes(prefix)).map((m) => ({ id: m.id, name: m.name, summary: m.summary, enabled: !!on[m.id], icon: createElement(ToolkitIcon, { name: m.icon }) })),

@@ -134,7 +134,7 @@ function ChoresTabView({ chores, onDone, onSkip, pending, onAdd, disabled }: { c
             <ListChecks />
           </EmptyMedia>
           <EmptyTitle>No chores on the chart</EmptyTitle>
-          <EmptyDescription>{disabled ? "Chores are switched off in Settings." : "Add one here, or tell Roomie in the chat: “roomie add dishes every day”."}</EmptyDescription>
+          <EmptyDescription>{disabled ? "Roomie hasn't learned Chores here yet." : "Add one here, or tell Roomie in the chat: “roomie add dishes every day”."}</EmptyDescription>
         </EmptyHeader>
         <EmptyContent>
           <Button onClick={onAdd}>Add a chore</Button>
@@ -366,7 +366,7 @@ function UpkeepTabView({ upkeep, onAdd, disabled }: { upkeep: UpkeepView[]; onAd
             <WrenchIcon />
           </EmptyMedia>
           <EmptyTitle>Nothing tracked yet</EmptyTitle>
-          <EmptyDescription>{disabled ? "Upkeep is switched off in Settings." : "Filters, smoke alarms, the dryer vent: Roomie remembers so nobody has to."}</EmptyDescription>
+          <EmptyDescription>{disabled ? "Roomie hasn't learned Upkeep here yet." : "Filters, smoke alarms, the dryer vent: Roomie remembers so nobody has to."}</EmptyDescription>
         </EmptyHeader>
         <EmptyContent className="flex-row justify-center">
           <Button disabled={pending} onClick={usual}>

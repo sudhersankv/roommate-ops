@@ -100,18 +100,18 @@ export function SettingsScreen({ zones, schedule, personality, children }: { zon
   )
 }
 
-/** Which Toolkits are on, and the way to the marketplace (switching happens there). */
+/** Which Tricks Roomie knows here, and the way to the Tricks page (teaching happens there). */
 function ToolkitsSummary() {
   const { base, toolkitNames, isAdmin } = useGroup()
   return (
     <FieldSet>
-      <FieldLegend className="type-heading">Toolkits</FieldLegend>
+      <FieldLegend className="type-heading">Tricks</FieldLegend>
       <Field orientation="horizontal">
         <FieldContent>
-          <FieldLabel htmlFor="browse-toolkits">{toolkitNames.length ? `On: ${toolkitNames.join(", ")}` : "None on yet"}</FieldLabel>
-          <FieldDescription>What Roomie can do in this Group. {isAdmin ? "Add more or switch them off on the Toolkits page." : "Admins switch them on and off."}</FieldDescription>
+          <FieldLabel htmlFor="browse-toolkits">{toolkitNames.length ? `Learned: ${toolkitNames.join(", ")}` : "No Tricks learned yet"}</FieldLabel>
+          <FieldDescription>What Roomie knows in this Group. {isAdmin ? "Teach it more or make it forget one on the Tricks page." : "Admins teach Roomie new Tricks."}</FieldDescription>
         </FieldContent>
-        <Button id="browse-toolkits" variant="outline" size="sm" nativeButton={false} render={<Link href={`${base}/toolkits`} />}>
+        <Button id="browse-toolkits" variant="outline" size="sm" nativeButton={false} render={<Link href={`${base}/tricks`} />}>
           Browse
         </Button>
       </Field>
