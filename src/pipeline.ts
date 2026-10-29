@@ -132,6 +132,7 @@ export async function respond(input: RespondInput): Promise<PipelineResult> {
     hardTrigger,
     inWindow,
     chattiness: (group?.chattiness ?? "normal") as Chattiness,
+    toolkits,
   });
   const gateMeta = {
     gateDecision: gate.decision,

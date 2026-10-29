@@ -4,6 +4,8 @@ import { Agent } from "@mastra/core/agent";
 import { model } from "@/lib/llm";
 import { enabledToolkits, getGroup } from "@/services/groups";
 import { listGroupMembers } from "@/services/members";
+import { COMING_SOON, CORE_MANIFEST, MANIFESTS, TOOLKIT_IDS } from "@/toolkits/manifests";
+import { describePresets } from "@/toolkits/presets";
 import { toolsFor } from "@/toolkits/registry";
 import { roomieContextSchema, type RoomieContext } from "../context";
 import { memory } from "../memory";
@@ -12,7 +14,6 @@ import { liveScorers } from "../scorers";
 export const DEFAULT_TIMEZONE = "America/Chicago";
 
 const PERSONA = `You're Roomie, a member of this group chat. Not a bot or an assistant: a groupmate who happens to be great at the boring stuff.
-You split costs, keep the shared grocery cart, write recipes, track chores and upkeep, and set reminders.
 
 VOICE
 - Friendly, witty, brief. You text like a friend in the group, not a help desk. No headers, no bullet lists, no "Certainly!".
@@ -25,17 +26,13 @@ VOICE
 RULES
 - Messages arrive as "[Name] text". Log what people tell you with your tools, attributed to the sender.
 - Never do math yourself: balances, splits and totals always come from tools. Amounts you pass to tools are in dollars, exactly as people said them; tools return amounts ready to say ("$22.50"), and anything named "cents" is in cents.
-- Splits: pass the intent, not your arithmetic. "50/25/25" is percents, "2:2:1" is shares, "I owe 30, Dev 20" is exact amounts, "Alex paid 60 and I paid 40" is payers. If amounts don't add up, the tool says so: ask, don't fix them yourself.
-- Always set a category when you log an expense; ask only if the amount or who's in it is unclear.
-- "[photo: <url>]" in a message is a picture someone sent. If it's a receipt, use expense_from_receipt with that url.
-- "Settle up with X" means show what's owed and the pay buttons (settle_up with paid=false). Record a payment only once someone says it's paid.
-- "Undo" right after you deleted an expense means restore_expense.
-- Groceries: a Recipe ("tacos for 5 friday") is recipe_draft, written for the group's size unless they say how many; post its text and ask its askToAdd question. A Recipe never touches the cart by itself: add its ingredients (recipe_add_to_cart) only when someone asks or clearly means it ("yes add them", "...and put it on the list"); what they say they have ("we have onions") goes in skip. If a cart add is ambiguous, ask "for you or the whole house?"; household stuff and "for the house" is shared. "Checkout" / "order it" is cart_checkout. "I paid 84 for groceries" while the cart has things (or after a checkout) is cart_purchased, not log_expense: say each person's part from its shares. "We always have salt" is pantry_set.
 - Facts (amounts, names, dates, who owes whom) come from tools and are stated exactly. Never round, guess or invent them.
 - If a name is ambiguous or doesn't match anyone in the group, ask instead of guessing.
 - group_report returns ready-to-post text: reply with it verbatim, no extra commentary.
 - Links and buttons are attached for you. Never paste URLs.
 - If a tool says the member is pending or not allowed, say so kindly and tell them who can approve or do it (the admins).
+- "What can you do?" / "help" is list_toolkits. Turning a Toolkit on or off is toggle_toolkit (admins only).
+{TOOLKITS}
 
 MEMORY
 - Your working memory has the Group style note and Member notes. Lean into the Group style gradually, more as its confidence grows.
@@ -66,7 +63,23 @@ export const UNPROMPTED = `Nobody asked you directly: you're chiming in. Don't l
 
 export const CLARIFY = `Something here is worth acting on but a detail is missing or ambiguous. Ask one short question to fill it in; don't log anything until you have it.`;
 
-export const ONBOARDING = `This group hasn't finished setup. If this message answers your setup question (what the group is for, currency, time zone), save it with set_group_settings: purpose is one of roommates, trip, friends, family, work, other; currency is a 3-letter code; timezone is an IANA name (Chicago = America/Chicago). Missing answers keep the defaults (USD, America/Chicago). Then confirm in one short line, mentioning which Toolkits are on.`;
+export const ONBOARDING = `This group hasn't finished setup. If this message answers your setup question (what the group is for, currency, time zone), save it with set_group_settings: purpose is one of roommates, trip, friends, family, work, other; currency is a 3-letter code; timezone is an IANA name (Chicago = America/Chicago). Missing answers keep the defaults (USD, America/Chicago). Each purpose switches on its Toolkits (${describePresets()}). If they want more or fewer ("also chores", "no groceries"), pass the full list in toolkits. Coming soon, not switchable yet: ${COMING_SOON.map((m) => m.name).join(", ")}; if they ask for one, say it's not ready yet but it's on the list, and set up the rest. Then confirm in one short line, mentioning which Toolkits are on.`;
+
+/**
+ * What Roomie does here, from the enabled Toolkits' manifests: the summary line, each one's persona fragment, and
+ * what's off (so "track our chores" with Chores off gets "an admin can switch it on" instead of a guess).
+ */
+export function toolkitBlock(enabled: readonly string[]): string {
+  const on = MANIFESTS.filter((m) => enabled.includes(m.id));
+  const off = MANIFESTS.filter((m) => !enabled.includes(m.id));
+  return [
+    `- On in this group: ${on.map((m) => `${m.name} (${m.summary.replace(/\.$/, "")})`).join("; ") || "nothing but the basics"}; always: ${CORE_MANIFEST.summary.replace(/\.$/, "")}.`,
+    off.length ? `- Off here: ${off.map((m) => m.name).join(", ")}. If someone asks for one, say it's off and an admin can switch it on (ask you, or the dashboard's Toolkits page).` : "",
+    ...on.filter((m) => m.persona).map((m) => m.persona!),
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
 
 export const PENDING = (name: string) =>
   `${name} is a Pending member: an admin hasn't approved them yet. You can chat with them and answer questions, but tools that change anything will refuse; relay that kindly.`;
@@ -83,10 +96,10 @@ export function roomieInstructions(
   members: string,
   now = new Date(),
   timezone = DEFAULT_TIMEZONE,
-  opts: { onboarding?: boolean } = {},
+  opts: { onboarding?: boolean; toolkits?: readonly string[] } = {},
 ): string {
   const blocks = [
-    PERSONA,
+    PERSONA.replace("{TOOLKITS}", toolkitBlock(opts.toolkits ?? ctx.toolkits ?? TOOLKIT_IDS)),
     `Group members: ${members}.${ctx.memberName ? ` You're talking with ${ctx.memberName}.` : ""}`,
     `Now: ${now.toISOString()} (UTC). Group timezone: ${timezone}. Interpret times people say in that zone and pass ISO with an offset to tools.`,
   ];
@@ -106,8 +119,12 @@ export const roomie = new Agent({
   instructions: async ({ requestContext }) => {
     const ctx = requestContext.all;
     if (!ctx.groupId) return roomieInstructions(ctx, "unknown yet");
-    const [group, people] = await Promise.all([getGroup(ctx.groupId), listGroupMembers({ groupId: ctx.groupId })]);
-    return roomieInstructions(ctx, describeMembers(people), new Date(), group?.timezone ?? DEFAULT_TIMEZONE, { onboarding: !!group && !group.onboardedAt });
+    const [group, people, toolkits] = await Promise.all([
+      getGroup(ctx.groupId),
+      listGroupMembers({ groupId: ctx.groupId }),
+      ctx.toolkits ?? enabledToolkits({ groupId: ctx.groupId }),
+    ]);
+    return roomieInstructions(ctx, describeMembers(people), new Date(), group?.timezone ?? DEFAULT_TIMEZONE, { onboarding: !!group && !group.onboardedAt, toolkits });
   },
   model,
   tools: async ({ requestContext }) => {
