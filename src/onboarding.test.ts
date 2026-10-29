@@ -12,6 +12,11 @@ test("intro: the group's new pet, names the Admin and asks purpose, currency, ti
   assert.match(text, /USD, Chicago time, chill/, "says what the defaults are");
   assert.match(text, /Splitting, Groceries, Chores and Upkeep/, "lists the roommates preset");
   assert.match(introMessage("Maya", { petName: "Dino" }), /I'm Dino, your group's new pet/);
+  for (const unknown of ["+16235550123", "Someone"]) {
+    const t = introMessage(unknown);
+    assert.match(t, /Whoever added me is my admin\./, "no name yet (WhatsApp before anyone has spoken)");
+    assert.ok(!t.includes(unknown), "never reads a phone number out in the group");
+  }
   assert.ok(text.split("\n").length <= 3, "one short message");
   assert.ok(!/https?:\/\//.test(text), "no links at join time (ADR 0001)");
 });

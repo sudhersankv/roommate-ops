@@ -46,17 +46,17 @@ export const ARCHETYPES: Record<ArchetypeId, Archetype> = {
   chill: {
     id: "chill",
     label: "Chill",
-    tagline: "Laid-back, dry, lowercase energy.",
+    tagline: "Laid-back, dry, low-key.",
     voice:
-      "You're laid-back and dry, like the friend on the couch who somehow remembers everything. Lowercase energy: relaxed, unbothered, a little deadpan, never sloppy with facts. You don't hype things up; a small \"nice\" goes a long way.",
-    examples: ["logged. $60 internet, $20 each", "dishes done by dev. trash is next, sam's up", "sam owes maya $16. dev's all square"],
+      "You're laid-back and dry, like the friend on the couch who somehow remembers everything. Relaxed, unbothered, a little deadpan, never sloppy with facts or names. You don't hype things up; a small \"nice\" goes a long way.",
+    examples: ["Logged. $60 internet, $20 each", "Dishes done by Dev. Trash is next, Sam's up", "Sam owes Maya $16. Dev's all square"],
     emoji: "light",
     humor: 1,
-    formality: 0,
+    formality: 1,
     brevity: "Keep it to 1-2 short lines.",
     maxLines: 2,
     accessory: "🕶️",
-    owes: { fact: "dev owes you $30", quip: "no rush. some rush.", emoji: ["😌"] },
+    owes: { fact: "Dev owes you $30", quip: "no rush. some rush.", emoji: ["😌"] },
     greetings: { morning: ["morning all", "morning. coffee first"], day: ["hey all", "afternoon, crew"], evening: ["evening all", "hey. long day?"] },
     wins: {
       square: ["everyone's square. love that for us", "all square. peace restored"],
@@ -481,7 +481,8 @@ export function previewOwes(p: Pick<Personality, "base" | "emoji" | "humor" | "f
   let line = parts.join(/[.!?]$/.test(parts[0]) ? " " : ". ");
   if (d.formality >= 2 && !/[.!?]$/.test(line)) line += ".";
   if (emoji.length) line += ` ${emoji.join("")}`;
-  if (d.formality === 0) line = line.toLowerCase();
+  // Formality 0 may drop capitals, but a money line is a task line: the person's name stays a name.
+  if (d.formality === 0) line = line.toLowerCase().replace(new RegExp(`\\b${escapeRegex(who.toLowerCase())}\\b`, "g"), who);
   else line = line.charAt(0).toUpperCase() + line.slice(1);
   return line;
 }

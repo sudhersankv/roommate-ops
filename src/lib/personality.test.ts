@@ -115,7 +115,7 @@ test("mood: worried > $100 owed, sleepy after 5 quiet days, happy when square, e
   assert.equal(moodFrom({ maxOwedCents: 0, allSquare: true, lastMessageAt: null, now }).mood, "sleepy");
 });
 
-test("lines follow the dials: deadpan and butler never use emoji, chill is lowercase, light has at most one", () => {
+test("lines follow the dials: deadpan and butler never use emoji, chill keeps names capitalized, light has at most one", () => {
   for (const base of ["deadpan", "butler"] as const) {
     const p = { ...defaultPersonality(), base };
     for (let h = 0; h < 24; h++) assert.equal(countEmoji(greetingLine(p, h, `s${h}`)), 0);
@@ -123,7 +123,7 @@ test("lines follow the dials: deadpan and butler never use emoji, chill is lower
     assert.equal(countEmoji(previewOwes(p)), 0);
   }
   const chill = defaultPersonality();
-  assert.equal(previewOwes(chill), previewOwes(chill).toLowerCase());
+  assert.match(previewOwes(chill), /^Dev owes you \$30\./, "a money line is a task line: the name stays a name, even under chill");
   assert.ok(countEmoji(previewOwes(chill)) <= 1);
   assert.ok(countEmoji(previewOwes({ ...chill, base: "hype" })) >= 1);
   assert.ok(!/remind/i.test(previewOwes({ ...chill, base: "gremlin", humor: 0 })), "humor 0 drops the quip");
