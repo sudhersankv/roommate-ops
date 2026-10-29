@@ -82,7 +82,7 @@ async function failures(x: Expect, r: PipelineResult, env: EvalEnv): Promise<str
   if (x.gateReason && r.gate.reason !== x.gateReason) out.push(`gate ${r.gate.reason}`);
   if (shape.bullets || shape.headers) out.push("bullets/headers");
   if (x.check) {
-    const err = await x.check(env);
+    const err = await x.check(env, reply);
     if (err) out.push(err);
   }
   return out;

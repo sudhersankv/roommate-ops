@@ -16,7 +16,7 @@ In Telegram, open [@BotFather](https://t.me/BotFather):
    > I'm Roomie, an AI groupmate. Add me to your group chat and I'll split costs, keep a shared cart, track chores and remind people. Press Start so I can DM you your dashboard link.
 6. `/setabouttext` (the profile blurb):
    > Your group chat's groupmate: splits costs, keeps the cart, tracks chores. Brief, a bit witty, exact about money.
-7. Optional: `/setcommands` → nothing. Roomie talks in plain language ("roomie ..."), not slash commands.
+7. Optional: `/setcommands` → `help - What Roomie can do`. Roomie talks in plain language ("roomie ..."); `/help` (in a group or a DM) is the only command it answers, with five lines of examples. Other slash commands are ignored.
 
 ## 2. `.env`
 
@@ -33,11 +33,21 @@ REPLY_DELAY_MS=                           # pause after "typing" before a reply 
 ## 3. Run it
 
 ```sh
-npm run telegram      # long polling; prints "@roomie_house_bot is polling". Ctrl+C stops it
-npm run dev           # the dashboard (also posts reminders and the weekly report to Telegram)
+npm run telegram:check   # read-only: getMe (privacy mode), the webhook, APP_URL, delays, DB, gateway, Jev; exits 1 with the fix
+npm run telegram         # long polling; prints "@roomie_house_bot is polling". Ctrl+C stops it
+npm run dev              # the dashboard (its scheduler posts reminders, the chores nudge and the weekly report to Telegram)
 ```
 
-Only one process receives updates. `npm run telegram` deletes any webhook when it starts. Without a token it exits with `TELEGRAM_BOT_TOKEN missing; see docs/telegram.md`.
+Only one process receives updates. `npm run telegram` deletes any webhook when it starts (so a deployed bot on that webhook stops getting messages until `npm run telegram:webhook -- --set` again). Without a token it exits with `TELEGRAM_BOT_TOKEN missing; see docs/telegram.md`.
+
+Every message prints two lines, which is what to paste into a bug report:
+
+```
+[roomie] chat -1001234567890 Maya: "roomie I paid 60 for internet" | gate act/hard-trigger/splitting | tools log_expense | 6.2s | trace 4f0c...
+[roomie]   -> "Logged: $60 internet, Maya paid, split 2 ways, $30 each 💸"
+```
+
+If handling a message fails, the log gets `[roomie] couldn't handle a message from ...` with the stack; the chat gets one friendly line, and only when Roomie was being talked to.
 
 ## 4. Try it in a test group
 
@@ -59,7 +69,7 @@ Telegram bots can't list a group's members. Roomie knows the person who added it
 
 ## Private messages
 
-A DM to the bot from someone who is a Member of exactly one Group is handled as that Group's conversation (Roomie answers in the DM; nothing is logged in the group chat). In no Group: "Add me to your group chat first"; in several: "ask me in the group chat you mean". `/start` just confirms that DMs work now.
+A DM to the bot from someone who is a Member of exactly one Group is handled as that Group's conversation (Roomie answers in the DM; nothing is logged in the group chat). In no Group: "Add me to your group chat first"; in several: "ask me in the group chat you mean". `/start` answers with one line: for a Member, that DMs work now and how to get the dashboard; for anyone else, how to add Roomie to a group. Never a link (Claim links only go out when someone asks, ADR 0003). Reminders for one Member arrive here too.
 
 ## Webhook (public URL later)
 

@@ -29,8 +29,13 @@ export function telegramChannel(): TelegramChannel | null {
 }
 
 /** The app behind the adapter. Imported lazily so instrumentation doesn't load the agent just to register a Channel. */
+const clip = (s: string, n = 90) => {
+  const one = s.replace(/\s+/g, " ").trim();
+  return JSON.stringify(one.length > n ? `${one.slice(0, n - 1)}…` : one);
+};
+
 export async function telegramDeps(): Promise<TelegramDeps> {
-  const [{ handleIncoming }, onboarding, groups, { saveUpload }, voice] = await Promise.all([
+  const [{ respondToIncoming }, onboarding, groups, { saveUpload }, voice] = await Promise.all([
     import("@/pipeline"),
     import("@/onboarding"),
     import("@/services/groups"),
@@ -38,9 +43,26 @@ export async function telegramDeps(): Promise<TelegramDeps> {
     import("@/lib/voice"),
   ]);
   return {
-    handleIncoming,
-    onGroupJoined: onboarding.onGroupJoined,
-    onParticipantJoined: onboarding.onParticipantJoined,
+    // One "[roomie]" line per message (what the Gate decided, the tools, the time) and one per reply, for bug reports.
+    handleIncoming: async (msg) => {
+      const started = Date.now();
+      const r = await respondToIncoming(msg);
+      const tools = r.toolCalls.filter((t) => t !== "updateWorkingMemory");
+      const gate = `${r.gate.decision}/${r.gate.reason}${r.gate.toolkit ? `/${r.gate.toolkit}` : ""}`;
+      console.log(`[roomie] ${msg.isPrivate ? "dm" : "chat"} ${msg.chatExternalId} ${msg.userName}: ${clip(msg.text)} | gate ${gate}${tools.length ? ` | tools ${tools.join(",")}` : ""} | ${((Date.now() - started) / 1000).toFixed(1)}s${r.traceId ? ` | trace ${r.traceId}` : ""}`);
+      console.log(`[roomie]   ${r.out ? `-> ${clip(r.out.text, 140)}${r.out.buttons?.length ? ` [${r.out.buttons.length} button${r.out.buttons.length === 1 ? "" : "s"}]` : ""}` : "(stays quiet)"}`);
+      return r.out;
+    },
+    onGroupJoined: async (chat, participants, addedBy, opts) => {
+      const res = await onboarding.onGroupJoined(chat, participants, addedBy, opts);
+      console.log(`[roomie] joined ${clip(chat.title ?? "")} (${chat.externalId}), added by ${addedBy.name}; ${res.created ? `new Group ${res.group.id}, intro queued` : "already known"}`);
+      return res;
+    },
+    onParticipantJoined: async (groupId, user) => {
+      const res = await onboarding.onParticipantJoined(groupId, user);
+      console.log(`[roomie] ${user.name} joined group ${groupId}: ${res.member.status}${res.announce ? ", asked the Admins to approve" : ""}`);
+      return res;
+    },
     groupIdOfChat: async (id) => (await groups.chatFor("telegram", id))?.group.id,
     chatsOfUser: async (userId) => (await groups.chatsOfChannelUser("telegram", userId)).map((c) => c.externalId),
     moveChat: (from, to) => groups.moveChat("telegram", from, to),

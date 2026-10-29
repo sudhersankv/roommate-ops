@@ -4,10 +4,12 @@
 import { Agent } from "@mastra/core/agent";
 import { model } from "@/lib/llm";
 import { defaultPersonality, type Personality } from "@/lib/personality";
+import { describeNow } from "@/lib/time";
 import { roomieRecentTexts } from "@/services/chatlog";
 import { enabledToolkits, getGroup } from "@/services/groups";
 import { listGroupMembers, peopleFacts } from "@/services/members";
 import { getPersonality, groupMood } from "@/services/personality";
+import { DEFAULT_TIMEZONE } from "@/services/schedule";
 import { toolsFor, TOOLKITS } from "@/toolkits/registry";
 import type { ToolkitId } from "@/toolkits/types";
 import { roomieContextSchema, type RoomieContext } from "../context";
@@ -15,7 +17,7 @@ import { memory } from "../memory";
 import { composePersona, type PersonaFacts } from "../persona";
 import { liveScorers } from "../scorers";
 
-export const DEFAULT_TIMEZONE = "America/Chicago";
+export { DEFAULT_TIMEZONE };
 
 export const MAY_STAY_SILENT = `This message was not addressed to you by name. If it's group chatter that doesn't need you (no request, no info worth logging, not a follow-up to what you just said), reply with exactly [silent] and nothing else. If it continues the conversation with you or asks/tells you something you can act on, respond normally.`;
 
@@ -23,7 +25,7 @@ export const UNPROMPTED = `Nobody asked you directly: you're chiming in. Don't l
 
 export const CLARIFY = `Something here is worth acting on but a detail is missing or ambiguous. Ask one short question to fill it in; don't log anything until you have it.`;
 
-export const ONBOARDING = `This group hasn't finished setup. If this message answers your setup question (what the group is for, currency, time zone, your vibe), save it with set_group_settings: purpose is one of roommates, trip, friends, family, work, other; currency is a 3-letter code; timezone is an IANA name (Chicago = America/Chicago); personality.base is the vibe (chill, hype, deadpan, mom, gremlin, butler), and personality.name if they give you a name. Missing answers keep the defaults (USD, America/Chicago, chill). Then confirm in one short line in your (new) voice, mentioning which Toolkits are on.`;
+export const ONBOARDING = `This group hasn't finished setup. If this message answers your setup question (what the group is for, currency, time zone, your vibe), save it with set_group_settings: purpose is one of roommates, trip, friends, family, work, other; currency is a 3-letter code; timezone is what they said (a city like "Chicago", "CST", "India" or an IANA name): the tool maps it, and if it says it doesn't know the zone, ask which city they're in; personality.base is the vibe (chill, hype, deadpan, mom, gremlin, butler), and personality.name if they give you a name. Missing answers keep the defaults (USD, Chicago time, chill). Then confirm in one or two short lines in your (new) voice: which Toolkits are on, and the starter chores and upkeep if the tool added some.`;
 
 export const PETTED = `Someone just petted you (/pet). Answer in character, 1-2 short lines, about your day as the group's pet: how you feel right now and maybe one real, harmless thing from the group (no amounts unless a tool gave them, no private facts). No tools, no questions about logging.`;
 
@@ -45,7 +47,7 @@ export function roomieInstructions(ctx: Partial<RoomieContext>, members: string,
   const blocks = [
     composePersona({ ...opts, personality: opts.personality ?? defaultPersonality(), timezone }),
     `Group members: ${members}.${ctx.memberName ? ` You're talking with ${ctx.memberName}.` : ""}`,
-    `Now: ${now.toISOString()} (UTC). Group timezone: ${timezone}. Interpret times people say in that zone and pass ISO with an offset to tools.`,
+    `Now (local): ${describeNow(timezone, now)}. House timezone: ${timezone}. "Today", "tonight", "Tuesday 8pm" and "this week" mean that zone. Pass times to tools as local wall-clock without an offset (2026-11-03T20:00); the tools convert.`,
   ];
   if (ctx.status === "pending" && ctx.memberName) blocks.push(PENDING(ctx.memberName));
   if (opts.onboarding) blocks.push(ONBOARDING);

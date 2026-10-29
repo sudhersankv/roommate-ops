@@ -32,7 +32,12 @@ In dev, Google sign-in uses Neon's shared OAuth credentials (the consent screen 
 1. Create the bot with [@BotFather](https://t.me/BotFather): `/newbot`, then `/setprivacy` → **Disable** and `/setjoingroups` → **Enable** (full checklist in [docs/telegram.md](docs/telegram.md)).
 2. Put `TELEGRAM_BOT_TOKEN` and `TELEGRAM_BOT_USERNAME` (no @) in `.env`.
 3. `npm run telegram` (long polling; no public URL needed), and `npm run dev` for the dashboard.
-4. Add the bot to a test group. After a minute (`JOIN_DELAY_MS`) it introduces itself; whoever added it is the Admin. Try `roomie who's here`, `I paid 20 for pizza`, and `send me the dashboard` (press **Start** in a DM with the bot first, so it can send you the link).
+4. `npm run telegram:check` (read-only) says whether the bot, privacy mode, `APP_URL`, the database and the gateway are ready.
+5. Add the bot to a test group. After a minute (`JOIN_DELAY_MS`) it introduces itself; whoever added it is the Admin. Try `roomie who's here`, `I paid 20 for pizza`, `/help`, and `send me the dashboard` (press **Start** in a DM with the bot first, so it can send you the link). The 15-minute script for a first real group is [docs/first-group-test.md](docs/first-group-test.md).
+
+### Chores, upkeep and reminders
+
+Each Group has a time zone (Settings, or the setup answer: "Chicago", "CST", "India" all work), and "today", "Tuesday 8pm" and "this week" follow it. Chores can have a Rotation ("mopping every 3 days: Sam, then Dev, then me"); "skip my turn" passes it on. Roomie posts at most one chores nudge a day (default 9 AM, only when something is due) and a weekly Group Report (default Sunday 6 PM); Admins change both in Settings. Reminders for everyone go to the group chat, reminders for one person go to them privately. The scheduler that sends all of this runs inside `npm run dev`.
 
 ### Splitwise (optional)
 
@@ -50,6 +55,7 @@ Other tools:
 ```sh
 npm run telegram         # Roomie on Telegram by long polling (docs/telegram.md)
 npm run telegram:webhook -- --set|--delete|--info   # the webhook, once APP_URL is a public https URL
+npm run telegram:check   # read-only readiness: bot, privacy mode, webhook, APP_URL, DB, gateway, Jev (before a real group)
 npm run dev-chat         # a pretend group chat: join, add, say, photo, approve, link, ledger, cart (docs/dev-chat.md)
 npm run mastra:dev       # Mastra Studio at http://localhost:4111: chat with Roomie, see traces and scores
 npm run db:generate      # after changing src/db/schema.ts: write the next migration into drizzle/
@@ -63,7 +69,7 @@ npm run db:generate      # after changing src/db/schema.ts: write the next migra
 npm run typecheck     # tsc --noEmit
 npm test              # unit tests for the pure functions (split math, Gate, permissions, receipts...), no .env needed
 npm run test:tools    # every agent tool against the dev DB in throwaway Groups (Splitwise and Instacart on fakes), no LLM
-npm run evals         # ~55 chat scenarios through the real Gate and agent; baseline in docs/evals-baseline.md
+npm run evals         # ~65 chat scenarios through the real Gate and agent; baseline in docs/evals-baseline.md
 ```
 
 CI runs `typecheck` and `npm test` on every push and pull request.

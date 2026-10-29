@@ -141,3 +141,41 @@ _Avoid_: Staples, inventory
 **Checkout**:
 The open Cart as it was when someone asked for the Instacart list, kept so that "I paid" can point at what was ordered.
 _Avoid_: Order, purchase
+
+## Chores and upkeep
+
+**Chore**:
+Something on the Group's chart that comes around every few days, such as the dishes or the trash.
+_Avoid_: Task, job, todo
+
+**Rotation**:
+The order in which Members take turns on one Chore. Without one, everyone takes turns and whoever did it least recently goes next.
+_Avoid_: Schedule, roster, queue
+
+**Pass**:
+Giving up your turn on a Chore: the next Member in the Rotation is up, and the Chore stays due.
+_Avoid_: Skip (in user-facing text "pass your turn" reads better), swap
+
+**Streak**:
+How many of a Member's own turns on a Chore in a row they did on time. A Pass or a late done ends it.
+_Avoid_: Combo, score
+
+**The chart**:
+Who did how many chores this week, least first. Roomie keeps it friendly.
+_Avoid_: Hall of shame (in user-facing text), leaderboard
+
+**Upkeep item**:
+House care that comes around every few weeks or months, such as the air filter or the smoke alarms. "Due soon" means within 7 days.
+_Avoid_: Maintenance task, ticket
+
+**Reminder**:
+A message Roomie sends at a set time, once or repeating daily, weekly or monthly: to the Chat when it's for everyone, privately when it's for one Member.
+_Avoid_: Alarm, notification
+
+**Nudge**:
+The one line Roomie posts on its own each morning (at the Group's nudge hour) when chores are due or late. Never more than one a day, and none when nothing is due.
+_Avoid_: Ping, alert
+
+**Group Report**:
+One message with who owes whom, chores this week, upkeep due soon, the Cart and what's coming up. Posted weekly at the Group's report day and hour, and on request.
+_Avoid_: Digest, summary, newsletter

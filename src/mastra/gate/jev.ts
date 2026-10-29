@@ -30,10 +30,10 @@ export const QUESTIONS = {
     criteria: {
       splitting: "Money other than the grocery run: shared expenses, who paid, balances, who owes what, paying someone back, receipts, Venmo/PayPal/Cash App, Splitwise.",
       groceries: "Groceries and food at home: the shared grocery cart (adding or removing items, being out of something, shopping, checking out, what the grocery shop cost), recipes, cooking, meal planning ('tacos for 5 friday'), and the pantry of things the group always has.",
-      chores: "Chores: dishes, trash, cleaning, whose turn it is.",
+      chores: "Chores: dishes, trash, cleaning, whose turn it is, passing a turn, who's slacking on the chart.",
       upkeep: "Home maintenance on a schedule: filters, smoke alarms, gutters, repairs.",
       reminders: "Reminders at a time or date.",
-      none: "None of these, or several at once.",
+      none: "None of these, or several at once, such as 'what's due this week' (chores and upkeep), 'how are we doing' or a weekly report.",
     },
   },
 } as const;

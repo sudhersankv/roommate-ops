@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { Fragment, useEffect, useState, useTransition } from "react"
-import { ChevronRightIcon, ShoppingCart } from "lucide-react"
+import { ChevronRightIcon, ShoppingCart, WrenchIcon } from "lucide-react"
 
 import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { Button } from "@/components/ui/button"
@@ -21,12 +21,13 @@ import { markChoreDone } from "../../actions"
 import { useGroup } from "../group-context"
 import { SettleDrawer } from "../settle-drawer"
 import { TopBar } from "../shell"
-import type { CartItemView, ChoreView, NarrationView, Transfer } from "../types"
+import type { CartItemView, ChoreView, NarrationView, Transfer, UpkeepView } from "../types"
 
 export function HomeScreen({
   you,
   plan,
   chores,
+  upkeep,
   cart,
   narration,
   nextRecipe,
@@ -35,6 +36,7 @@ export function HomeScreen({
   you: number
   plan: Transfer[]
   chores: ChoreView[]
+  upkeep: UpkeepView[]
   cart: CartItemView[]
   narration: NarrationView[]
   nextRecipe: { title: string; plannedFor: string } | null
@@ -70,7 +72,7 @@ export function HomeScreen({
         ) : null}
       </section>
 
-      <Today chores={chores} cart={cart} nextRecipe={nextRecipe} />
+      <Today chores={chores} upkeep={upkeep} cart={cart} nextRecipe={nextRecipe} />
 
       <section aria-labelledby="activity-title" className="flex flex-col gap-4 px-4 pt-8">
         <div className="flex items-baseline justify-between px-1">
@@ -115,10 +117,11 @@ function Breakdown({ plan }: { plan: Transfer[] }) {
   return <>{sentence.charAt(0).toUpperCase() + sentence.slice(1)}.</>
 }
 
-function Today({ chores, cart, nextRecipe }: { chores: ChoreView[]; cart: CartItemView[]; nextRecipe: { title: string; plannedFor: string } | null }) {
-  const { group, me, base, name, dates, cheer } = useGroup()
+function Today({ chores, upkeep, cart, nextRecipe }: { chores: ChoreView[]; upkeep: UpkeepView[]; cart: CartItemView[]; nextRecipe: { title: string; plannedFor: string } | null }) {
+  const { group, me, base, name, dates, cheer, toolkits } = useGroup()
   const [pending, start] = useTransition()
-  const mineToday = chores.filter((c) => c.turn === me.id && c.due <= dates.today)
+  const mineToday = toolkits.chores ? chores.filter((c) => c.turn === me.id && c.due <= dates.today) : []
+  const house = toolkits.upkeep ? upkeep.find((u) => u.status !== "ok") : undefined
   const yourCart = cart.filter((c) => c.addedBy === me.id && !c.shared).length
   const yours = cart.length === 0 ? "Nothing to buy right now." : yourCart ? `${yourCart} of them ${yourCart === 1 ? "is" : "are"} just for you.` : "None of them are just for you."
   const recipeHint = nextRecipe ? `${nextRecipe.title} is ${dates.dueLabel(nextRecipe.plannedFor)}.` : null
@@ -128,7 +131,8 @@ function Today({ chores, cart, nextRecipe }: { chores: ChoreView[]; cart: CartIt
       const res = await markChoreDone(group.id, c.id)
       if (!res.ok) return void toast.add({ title: "Couldn't mark it done", description: res.error, type: "error" })
       cheer()
-      toast.add({ title: `${c.name}: done`, description: `Streak is ${res.data?.streak ?? 1}. Nice.`, type: "success" })
+      const streak = res.data?.streak ?? 1
+      toast.add({ title: `${c.name}: done`, description: streak > 1 ? `That's ${streak} on time in a row.` : "Logged. The chart is happy.", type: "success" })
     })
 
   return (
@@ -168,6 +172,23 @@ function Today({ chores, cart, nextRecipe }: { chores: ChoreView[]; cart: CartIt
             </Fragment>
           ))
         )}
+        {house ? (
+          <>
+            <Item render={<Link href={`${base}/chores?tab=upkeep`} />} className="py-3">
+              <ItemMedia variant="icon" className="size-8 justify-center">
+                <WrenchIcon aria-hidden />
+              </ItemMedia>
+              <ItemContent>
+                <ItemTitle>{house.name}</ItemTitle>
+                <ItemDescription>{house.status === "overdue" ? `Upkeep, ${dates.dueLabel(house.due)}.` : `Upkeep, due ${dates.dueLabel(house.due)}.`}</ItemDescription>
+              </ItemContent>
+              <ItemActions>
+                <ChevronRightIcon className="size-4 text-muted-foreground" aria-hidden />
+              </ItemActions>
+            </Item>
+            <Separator className="mx-4 data-horizontal:w-auto" />
+          </>
+        ) : null}
         <Item render={<Link href={`${base}/cart`} />} className="py-3">
           <ItemMedia variant="icon" className="size-8 justify-center">
             <ShoppingCart aria-hidden />

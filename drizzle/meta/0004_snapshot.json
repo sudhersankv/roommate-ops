@@ -1,5 +1,5 @@
 {
-  "id": "f6f514a5-5b20-4c7d-b421-38297e2502f7",
+  "id": "8c5be967-8445-4692-8086-931daf0a1989",
   "prevId": "47777929-dd71-4616-8370-54f4c30b63eb",
   "version": "7",
   "dialect": "postgresql",
@@ -678,6 +678,13 @@
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
+        },
+        "skipped": {
+          "name": "skipped",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
         }
       },
       "indexes": {},
@@ -744,6 +751,12 @@
           "primaryKey": false,
           "notNull": true,
           "default": 7
+        },
+        "rotation": {
+          "name": "rotation",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {},
@@ -1396,13 +1409,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "personality": {
-          "name": "personality",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'{}'::jsonb"
-        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -1779,67 +1785,6 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.pet_moments": {
-      "name": "pet_moments",
-      "schema": "",
-      "columns": {
-        "group_id": {
-          "name": "group_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "kind": {
-          "name": "kind",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "key": {
-          "name": "key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "pet_moments_group_id_groups_id_fk": {
-          "name": "pet_moments_group_id_groups_id_fk",
-          "tableFrom": "pet_moments",
-          "tableTo": "groups",
-          "columnsFrom": [
-            "group_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "pet_moments_group_id_kind_key_pk": {
-          "name": "pet_moments_group_id_kind_key_pk",
-          "columns": [
-            "group_id",
-            "kind",
-            "key"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
     "public.recipes": {
       "name": "recipes",
       "schema": "",
@@ -2032,11 +1977,24 @@
           "primaryKey": false,
           "notNull": false
         },
+        "created_by": {
+          "name": "created_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
         "sent_at": {
           "name": "sent_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
         }
       },
       "indexes": {},
@@ -2066,9 +2024,83 @@
           ],
           "onDelete": "cascade",
           "onUpdate": "no action"
+        },
+        "reminders_created_by_members_id_fk": {
+          "name": "reminders_created_by_members_id_fk",
+          "tableFrom": "reminders",
+          "tableTo": "members",
+          "columnsFrom": [
+            "created_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.scheduled_posts": {
+      "name": "scheduled_posts",
+      "schema": "",
+      "columns": {
+        "group_id": {
+          "name": "group_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "period": {
+          "name": "period",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "scheduled_posts_group_id_groups_id_fk": {
+          "name": "scheduled_posts_group_id_groups_id_fk",
+          "tableFrom": "scheduled_posts",
+          "tableTo": "groups",
+          "columnsFrom": [
+            "group_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "scheduled_posts_group_id_kind_period_pk": {
+          "name": "scheduled_posts_group_id_kind_period_pk",
+          "columns": [
+            "group_id",
+            "kind",
+            "period"
+          ]
+        }
+      },
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},

@@ -370,6 +370,8 @@ export const chores = pgTable("chores", {
   groupId: uuid("group_id").notNull().references(() => groups.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   everyDays: integer("every_days").notNull().default(7),
+  // Member ids in turn order. Null = everyone active, whoever did it least recently goes next.
+  rotation: jsonb("rotation").$type<string[]>(),
 });
 
 export const choreLogs = pgTable("chore_logs", {
@@ -377,17 +379,41 @@ export const choreLogs = pgTable("chore_logs", {
   choreId: uuid("chore_id").notNull().references(() => chores.id, { onDelete: "cascade" }),
   memberId: uuid("member_id").notNull().references(() => members.id),
   doneAt: timestamp("done_at", { withTimezone: true }).notNull().defaultNow(),
+  // A passed turn: moves the rotation on, but isn't a done (no streak, the due date stays).
+  skipped: boolean("skipped").notNull().default(false),
 });
+
+export const REMINDER_REPEATS = ["daily", "weekly", "monthly"] as const;
+export type ReminderRepeat = (typeof REMINDER_REPEATS)[number];
 
 export const reminders = pgTable("reminders", {
   id: id(),
   groupId: uuid("group_id").notNull().references(() => groups.id, { onDelete: "cascade" }),
   text: text("text").notNull(),
   dueAt: timestamp("due_at", { withTimezone: true }).notNull(),
+  // Set = a private reminder for that Member; null = the whole Group, posted in the Chat.
   memberId: uuid("member_id").references(() => members.id, { onDelete: "cascade" }),
-  recurring: text("recurring", { enum: ["monthly"] }),
+  recurring: text("recurring", { enum: REMINDER_REPEATS }),
+  createdBy: uuid("created_by").references(() => members.id, { onDelete: "set null" }),
   sentAt: timestamp("sent_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
+
+/**
+ * What the scheduler posted on its own (the daily chores nudge, the weekly Group Report), one row per Group, kind and
+ * local period. The row is claimed before sending, so a restart or a second process can't post it twice (ADR 0001).
+ */
+export const scheduledPosts = pgTable(
+  "scheduled_posts",
+  {
+    groupId: uuid("group_id").notNull().references(() => groups.id, { onDelete: "cascade" }),
+    kind: text("kind", { enum: ["chores.nudge", "report.weekly"] }).notNull(),
+    // The Group's local day ("2026-10-28") for the nudge, the report's local day for the report.
+    period: text("period").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [primaryKey({ columns: [t.groupId, t.kind, t.period] })],
+);
 
 export const maintenance = pgTable("maintenance", {
   id: id(),

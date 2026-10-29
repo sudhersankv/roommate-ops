@@ -216,6 +216,98 @@ Notes:
 - The checkout recorded a `cart_checkouts` row with the fake shopping-list link; "I paid 84" marked it paid with the new Expense's id. Balances moved from Maya +$42.50 / Dev -$30.00 / Sam -$12.50 by exactly the Shares.
 - Between the checkout and "I paid", the dashboard's Cart (`npx next dev -p 3500`, `DISABLE_SCHEDULER=1`, `DEV_AUTH_EMAIL`, headless Chrome) showed the 11 items under "From Tacos for 5", the Get Instacart link button disabled with "Composio rejected COMPOSIO_API_KEY", and the "I paid" drawer at $84 previewed Dev $27.73, Maya $29.75, Sam $26.52: the same cents as `cart 84` and the saved Expense. On the same page the New recipe sheet drafted "Shakshuka for 3" through Sonnet (10 need, olive oil and salt have), and the Pantry chips took "cumin, olive oil" and dropped rice (hence the last line). Screenshots: `design/screens/real-cart-*.jpeg`.
 
+## Walkthrough: chores, upkeep, reminders and the report (step 7, recorded 2026-10-28)
+
+Onboarding a household (starter chores, the usual five, Chicago time), logging chores for yourself and for someone else, passing a turn (refused for the wrong person), a chore with a Rotation, upkeep done by a loose name, "what's due", reminders for everyone / for me / for Dev, the chart and the weekly report. Fresh Chat, `--cleanup` (the script is piped in; in PowerShell call `npx tsx scripts/dev-chat.ts --chat walk7 --cleanup` directly, because `npm run dev-chat -- --chat` loses the `--`).
+
+```
+> join Maya Dev Sam
+[Roomie] Hey all, I'm Roomie 👋 Maya added me, so Maya's my admin. I split costs, keep a shared Cart, track chores and set reminders.
+         Quick setup, one reply is plenty: what's this group for (roommates, a trip, friends, family, work), which currency, and which
+         time zone (a city is fine)? Just "roommates" works too: I'll go with USD, Chicago time and switch everything on.
+
+> say Maya "roommates, USD, Chicago"
+         (gate act/hard-trigger, tools set_group_settings, 23.1s)
+[Roomie] You're all set: roommates, USD, Chicago time. Splitting, groceries, chores and upkeep are all on. I added 3 starter chores and
+         5 upkeep items, plus a daily chores nudge at 9 AM and a weekly report on Sundays at 6 PM. Just tell me what you paid for or did
+         around the house 🏠
+
+> say Sam "roomie whose turn is trash?"
+         (gate act/hard-trigger, tools chore_status, 6.3s)
+[Roomie] Trash is Dev's turn, and it's due today. Nobody's done it yet, since it's brand new. Dev is also up for dishes and the bathroom 👀
+
+> say Dev "roomie I did the dishes"
+         (gate act/hard-trigger, tools log_chore, 6.3s)
+[Roomie] Dishes done by Dev ✨ Maya's up next. Trash and the bathroom are still waiting on you, Dev 😏
+
+> say Maya "roomie Dev took out the trash"
+         (gate act/hard-trigger, tools log_chore, 33.1s)
+[Roomie] Trash done by Dev ✨ Maya's up next. Only the bathroom is left for Dev today.
+
+> say Sam "roomie skip my turn on trash"
+         (gate act/hard-trigger, tools chore_skip, 44.5s)
+[Roomie] Nothing to skip, Sam. Trash is Maya's turn, not yours. You're in the clear 😄
+
+> say Maya "roomie skip my turn on trash, I'm out tonight"
+         (gate act/hard-trigger, tools chore_skip, 29.8s)
+[Roomie] Skipped. Trash passes to Sam now, so enjoy your night out, Maya 🌙
+
+> say Maya "roomie add mopping every 3 days: Sam first, then Dev, then me"
+         (gate act/hard-trigger, tools chore_add, 9.5s)
+[Roomie] Mopping is on the chart, every 3 days. The order is Sam, then Dev, then Maya, so Sam's up first 🧽
+         [button] Open chores -> <APP_URL>/g/cb5fce9f-…/chores
+
+> say Sam "roomie changed the air filter"
+         (gate act/hard-trigger, tools upkeep_done, 5.5s)
+[Roomie] Air filter logged, Sam 👏 Next one's due Jan 26, 2027.
+
+> say Dev "roomie what's due this week?"
+         (gate act/hard-trigger, tools chore_status,upkeep_status, 6.7s)
+[Roomie] Due today: bathroom (Dev) and mopping (Sam). Dishes are Maya's tomorrow, and trash is Sam's by Saturday.
+         Upkeep is also due: fire extinguisher check, dryer vent, coffee maker descale and smoke alarm test. None of them have ever been
+         marked done 🔧
+
+> say Sam "roomie remind everyone trash goes out Tuesday 8pm"
+         (gate act/hard-trigger, tools set_reminder, 6.4s)
+[Roomie] Done. Tue Nov 3, 8:00 PM: trash out, everyone. It's a one-time reminder. Want it weekly?
+
+> say Maya "roomie remind me to pay rent on the 1st, every month"
+         (gate act/hard-trigger, tools set_reminder, 7.0s)
+[Roomie] Set, Maya. I'll DM you "pay rent" on the 1st of every month at 9:00 AM, starting Sun Nov 1. I picked 9 AM because you didn't
+         give a time. Want a different one?
+
+> say Maya "roomie remind Dev to pay me back for brunch on Friday at 6pm"
+         (gate act/hard-trigger, tools set_reminder, 6.8s)
+[Roomie] Done. I'll DM Dev on Fri Oct 30 at 6:00 PM to pay you back for brunch 🥞
+
+> say Dev "roomie what reminders do we have?"
+         (gate act/hard-trigger, tools list_reminders, 5.7s)
+[Roomie] Two coming up for you, Dev. Fri Oct 30, 6:00 PM: pay Maya back for brunch (just you). Tue Nov 3, 8:00 PM: trash goes out
+         (everyone) 🗑️
+
+> say Maya "roomie who's slacking on chores?"
+         (gate act/hard-trigger, tools hall_of_shame, 5.7s)
+[Roomie] The chart this week: Dev has 2, Maya 0 and Sam 0. Dev's carrying the house so far 👀 Maya has dishes tomorrow and Sam has
+         mopping and trash, so there's time to catch up.
+
+> say Maya "roomie weekly report"
+         (gate act/hard-trigger, tools group_report, 32.3s)
+[Roomie] Group report · Dev chat:
+         All square. Love that for us. Chores this week: Dev 2, Maya 0, Sam 0. Up now: Clean the bathroom (Dev, today), Mopping (Sam,
+         today). The chart says Maya and Sam have some catching up to do.
+         Upkeep due soon: Check fire extinguisher (today), Clean dryer vent (today), Descale coffee maker (today), +1 more. The Cart's
+         empty. Coming up: Trash goes out (Tue 8 PM).
+```
+
+Notes:
+
+- "Chicago" became `America/Chicago`; the setup answer also added Take out the trash, Dishes and Clean the bathroom (no Rotation, so everyone takes turns, least recent first) and the usual five upkeep items. A "CST" or "India" answer maps the same way; an unknown place gets "Which city are you in?".
+- "Tuesday 8pm" was said on Wednesday Oct 28 (CDT, UTC-5) and stored as 2026-11-04T02:00Z: 8 PM on Nov 3 in CST (UTC-6), after the Nov 1 switch. The rent reminder is Maya's own and private; Dev's says "(set by Maya)" when it goes out to him privately. Dev's list shows his and the group's reminders, not Maya's rent.
+- Sam's pass was refused (it was Maya's turn); Maya's pass moved trash to Sam and left an Activity row ("passed their turn on Take out the trash to Sam").
+- The report came out casual here (sentences, no emoji lines) because the agent had written a casual tone into this Group's style note; the earlier run of the same script, with no style note yet, printed the emoji-line version (`📋 Group report`, `💸`, `🧹`, `⏳`, `📉`, `🔧`, `🛒`, `⏰`, one per line). Same text as the weekly post either way.
+- The 30-45 s turns were the gateway being slow at that moment (the evals were running alongside); the usual is 5-9 s.
+- The same Group on the dashboard (`npx next dev -p 3700`, `DISABLE_SCHEDULER=1`, `DEV_AUTH_EMAIL`, headless Chrome, on Apt 4B from `npm run seed:demo`): the Chores tab with whose turn, the Rotation, cadence, streak and last done; Mark done (the dino cheers, "That's 2 on time in a row. Dev's up next."); Pass it on ("Passed recycling", Dev up); the Add chore sheet with "In this order" (Sam moved to the top); Upkeep with "5 days late" / "Due today" / "Due Sunday" badges; Reminders with "For Dev, set by you" and "Every month"; Home's Today with your chore and a late upkeep item; Settings with the time zone by region, the nudge hour and the report day and hour. Screenshots: `design/screens/real-chores-*.jpeg`.
+
 ## Walkthrough: the group pet (recorded 2026-10-28)
 
 The personality branch end to end: the new intro, the default chill voice, the same question after switching the vibe to hype, a new name that works as a trigger, "remember I'm vegetarian" shaping a recipe later, `/pet`, and what Roomie knows about you.

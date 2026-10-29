@@ -15,5 +15,5 @@ export default async function GroupHomePage({ params }: { params: Promise<{ grou
     nextRecipeView(s),
     personality.groupMood(s.ctx),
   ])
-  return <HomeScreen you={money.you} plan={money.plan} chores={chores.chores} cart={cart} narration={narration} nextRecipe={nextRecipe} mood={mood} />
+  return <HomeScreen you={money.you} plan={money.plan} chores={chores.chores} upkeep={chores.upkeep} cart={cart} narration={narration} nextRecipe={nextRecipe} mood={mood} />
 }

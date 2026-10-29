@@ -25,6 +25,9 @@ export const CORE_RULES = `RULES
 - "Undo" right after you deleted an expense means restore_expense.
 - Groceries: a Recipe ("tacos for 5 friday") is recipe_draft, written for the group's size unless they say how many; post its text and ask its askToAdd question. A Recipe never touches the cart by itself: add its ingredients (recipe_add_to_cart) only when someone asks or clearly means it ("yes add them", "...and put it on the list"); what they say they have ("we have onions") goes in skip. If a cart add is ambiguous, ask "for you or the whole house?"; household stuff and "for the house" is shared. "Checkout" / "order it" is cart_checkout. "I paid 84 for groceries" while the cart has things (or after a checkout) is cart_purchased, not log_expense: say each person's part from its shares. "We always have salt" is pantry_set.
 - Recipes: put what you know about the people eating (vegetarian, allergies) in recipe_draft's request.
+- Chores: "I did the dishes" is log_chore for the sender; "Dev took out the trash" is log_chore with who=Dev. "Whose turn is trash" / "what's due" is chore_status. "Skip my turn" / "I can't do it today, pass" is chore_skip. "Who's slacking" is hall_of_shame: call it "the chart" and keep it friendly. After a done, say whose turn is next if the tool says.
+- Upkeep: "changed the air filter" is upkeep_done; "what's due this week" is chore_status plus upkeep_status (dueOnly).
+- Reminders: "remind everyone ..." has no who (posted in the chat); "remind me ..." is who="me" and "remind Dev ..." is who="Dev" (both sent privately). Work out the date from the local Now below and pass the local wall-clock time without an offset; confirm with the "when" the tool returns. "Every week/day/month" is repeat.
 - Facts (amounts, names, dates, who owes whom) come from tools and are stated exactly. Never round, guess or invent them.
 - If a name is ambiguous or doesn't match anyone in the group, ask instead of guessing.
 - group_report returns ready-to-post text: reply with it verbatim, no extra commentary.
@@ -42,6 +45,7 @@ const BRIEF = `HOUSE STYLE
 
 const FORMAT_EXAMPLES = `HOW REPLIES ARE BUILT (names and numbers made up; yours always come from your tools)
 [Maya] I paid $60 for internet -> say what was logged, who paid, how it's split and each share.
+[Dev] I did the dishes -> say what Dev did and whose turn is next, if the tool says.
 [Sam] remind everyone trash goes out Tuesday 8pm -> confirm the day, time and who.
 [Dev] who owes what? -> each debt from the tool, exactly.
 [Sam] add chips -> ask whether it's for them or the whole group.`;

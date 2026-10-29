@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { dropMemberLines, readSection, replaceSection, shouldRefreshStyle, STYLE_EVERY } from "./style-note";
+import { dropMemberLines, isCasualStyle, readSection, replaceSection, shouldRefreshStyle, STYLE_EVERY } from "./style-note";
 
 const WM = `# Group
 ## Group style
@@ -28,6 +28,13 @@ test("replaceSection appends a missing section", () => {
   const out = replaceSection("# Group\n## Member notes\n- Dev: pays with venmo\n", "## Group style", "- Tone: chill");
   assert.equal(readSection(out, "## Group style"), "- Tone: chill");
   assert.equal(readSection(out, "## Member notes"), "- Dev: pays with venmo");
+});
+
+test("isCasualStyle: a casual tone with some confidence; formal or unsure is not", () => {
+  assert.equal(isCasualStyle("- Languages: English\n- Tone: chill, teasing, lots of emoji\n- Confidence (0-1): 0.5"), true);
+  assert.equal(isCasualStyle("- Tone: chill\n- Confidence (0-1): 0.1"), false);
+  assert.equal(isCasualStyle("- Tone: polite, a bit formal\n- Confidence (0-1): 0.8"), false);
+  assert.equal(isCasualStyle(""), false);
 });
 
 test("readSection of a missing heading is empty", () => {

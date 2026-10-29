@@ -13,6 +13,7 @@
     "dev-chat": "tsx scripts/dev-chat.ts",
     "telegram": "tsx scripts/telegram.ts",
     "telegram:webhook": "tsx scripts/telegram-webhook.ts",
+    "telegram:check": "tsx scripts/telegram-check.ts",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test \"src/**/*.test.ts\"",
     "test:tools": "tsx --test src/toolkits/tools.dbtest.ts",
