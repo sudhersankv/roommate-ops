@@ -29,7 +29,10 @@ export const settingsTools = {
     }),
     execute: async ({ personality: pet, ...input }, context) => {
       const ctx = ctxOf(context);
-      const { group, toolkits } = await groups.updateGroupSettings(ctx, input);
+      const before = await groups.getGroup(ctx.groupId);
+      // Only a personality change after Onboarding: nothing else to save (an empty patch still ends Onboarding).
+      const settingsChanged = Object.values(input).some((v) => v !== undefined) || !before?.onboardedAt || !pet;
+      const { group, toolkits } = settingsChanged || !before ? await groups.updateGroupSettings(ctx, input) : { group: before, toolkits: await groups.enabledToolkits(ctx) };
       const p = pet && Object.keys(pet).length ? await personality.updatePersonality(ctx, pet) : await personality.getPersonality(ctx);
       return {
         name: group.name,

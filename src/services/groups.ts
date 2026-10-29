@@ -192,7 +192,7 @@ export async function setToolkit(ctx: Ctx, input: { toolkit: ToolkitId; enabled:
   return enabledToolkits(ctx);
 }
 
-const DATA_TABLES = [schema.outboxJobs, schema.splitwiseLinks, schema.cartCheckouts, schema.expenses, schema.settlements, schema.cartItems, schema.recipes, schema.chores, schema.reminders, schema.maintenance, schema.chatMessages, schema.activity] as const;
+const DATA_TABLES = [schema.outboxJobs, schema.splitwiseLinks, schema.cartCheckouts, schema.expenses, schema.settlements, schema.cartItems, schema.recipes, schema.chores, schema.reminders, schema.maintenance, schema.chatMessages, schema.activity, schema.petMoments] as const;
 
 /**
  * Admin "delete group data" (ADR 0006): every Expense, Settlement, Cart item, chore, reminder, upkeep item, chat
@@ -213,6 +213,8 @@ async function wipeGroupRows(groupId: string) {
     const ids = tx.select({ id: members.id }).from(members).where(eq(members.groupId, groupId));
     await tx.delete(schema.memberNotes).where(inArray(schema.memberNotes.memberId, ids));
     await tx.delete(schema.claimTokens).where(inArray(schema.claimTokens.memberId, ids));
+    // What Roomie learned about how the Group talks is memory too; the Admin's personality choices stay.
+    await tx.update(groups).set({ personality: sql`${groups.personality} - 'learned'` }).where(eq(groups.id, groupId));
   });
 }
 
