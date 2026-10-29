@@ -2,14 +2,13 @@
 // Money is always integer cents. Accounts point at Neon Auth users (schema neon_auth) by id, as text; we never
 // write to neon_auth.
 import { sql } from "drizzle-orm";
-import { EXPENSE_CATEGORIES, EXPENSE_SOURCES, RECURRENCES, SPLIT_METHODS } from "./enums";
+import { BETA_GROUP_SIZES, BETA_STATUSES, EXPENSE_CATEGORIES, EXPENSE_SOURCES, GROUP_PURPOSES, RECURRENCES, SPLIT_METHODS } from "./enums";
 import { boolean, char, date, index, integer, jsonb, numeric, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid, type AnyPgColumn } from "drizzle-orm/pg-core";
 
 const id = () => uuid("id").primaryKey().defaultRandom();
 const createdAt = () => timestamp("created_at", { withTimezone: true }).notNull().defaultNow();
 
-export const GROUP_PURPOSES = ["roommates", "trip", "friends", "family", "work", "other"] as const;
-export type GroupPurpose = (typeof GROUP_PURPOSES)[number];
+export { GROUP_PURPOSES, type GroupPurpose } from "./enums";
 export const CHATTINESS_LEVELS = ["quiet", "normal", "chatty"] as const;
 export const CHANNELS = ["whatsapp", "telegram", "dev"] as const;
 export type ChannelName = (typeof CHANNELS)[number];
@@ -443,6 +442,30 @@ export const waContacts = pgTable("wa_contacts", {
   name: text("name"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/* ---------- Beta requests (services/beta.ts, docs/landing.md) ---------- */
+
+/**
+ * Someone asking for Roomie on WhatsApp from the landing page's form. Not tied to a Group or an Account: the operator
+ * follows up by hand (/admin/beta). `ip_hash` is an HMAC of the address (for spotting abuse), never the address.
+ */
+export const betaRequests = pgTable(
+  "beta_requests",
+  {
+    id: id(),
+    createdAt: createdAt(),
+    name: text("name").notNull(),
+    email: text("email").notNull(),
+    groupSize: text("group_size", { enum: BETA_GROUP_SIZES }).notNull(),
+    purpose: text("purpose", { enum: GROUP_PURPOSES }).notNull(),
+    phone: text("phone"),
+    notes: text("notes"),
+    status: text("status", { enum: BETA_STATUSES }).notNull().default("new"),
+    userAgent: text("user_agent"),
+    ipHash: text("ip_hash"),
+  },
+  (t) => [index("beta_requests_created_at").on(t.createdAt)],
+);
 
 export const maintenance = pgTable("maintenance", {
   id: id(),

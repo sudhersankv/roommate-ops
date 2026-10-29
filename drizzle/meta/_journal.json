@@ -50,6 +50,13 @@
       "when": 1793258033196,
       "tag": "0006_whatsapp",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1793263234817,
+      "tag": "0007_beta_requests",
+      "breakpoints": true
     }
   ]
 }
