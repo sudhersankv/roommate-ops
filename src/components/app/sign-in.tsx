@@ -1,11 +1,14 @@
 "use client"
 
 import { useState, type ReactNode } from "react"
+import { TriangleAlertIcon } from "lucide-react"
 
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { toast } from "@/components/ui/toast"
 import { authClient } from "@/lib/auth/client"
+import { callbackPathFor } from "@/lib/auth/oauth-paths"
 
 function GoogleMark() {
   return (
@@ -18,7 +21,7 @@ function GoogleMark() {
   )
 }
 
-/** "Continue with Google" through Neon Auth; comes back to `returnTo` (a path on this site). */
+/** "Continue with Google" through Neon Auth; comes back via /auth/callback to `returnTo` (a path on this site). */
 export function GoogleButton({ returnTo = "/" }: { returnTo?: string }) {
   const [busy, setBusy] = useState(false)
   return (
@@ -29,7 +32,8 @@ export function GoogleButton({ returnTo = "/" }: { returnTo?: string }) {
       disabled={busy}
       onClick={async () => {
         setBusy(true)
-        const { error } = await authClient.signIn.social({ provider: "google", callbackURL: `${window.location.origin}${returnTo}` })
+        const callbackURL = `${window.location.origin}${callbackPathFor(returnTo)}`
+        const { error } = await authClient.signIn.social({ provider: "google", callbackURL })
         if (error) {
           setBusy(false)
           toast.add({ title: "Couldn't start Google sign-in", description: error.message ?? "Try again in a moment.", type: "error" })
@@ -39,6 +43,19 @@ export function GoogleButton({ returnTo = "/" }: { returnTo?: string }) {
       {busy ? <Spinner data-icon="inline-start" /> : <GoogleMark />}
       Continue with Google
     </Button>
+  )
+}
+
+/** Shown above the Google button when the last Google sign-in came back without a session (`?auth_error=`). */
+export function SignInFailed({ reason }: { reason: string }) {
+  return (
+    <Alert variant="destructive">
+      <TriangleAlertIcon />
+      <AlertTitle>Sign-in didn&apos;t complete. Try again.</AlertTitle>
+      <AlertDescription>
+        Google sent you back, but Roomie didn&apos;t get a session. If it keeps happening, send a screenshot of this (code: {reason}).
+      </AlertDescription>
+    </Alert>
   )
 }
 
