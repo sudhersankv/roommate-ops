@@ -2,34 +2,36 @@ import { NextResponse, type NextRequest } from "next/server"
 
 import { auth } from "@/lib/auth/server"
 import { devAuthEmail } from "@/lib/auth/dev"
+import { CALLBACK_PATH, VERIFIER_PARAM, withoutParam } from "@/lib/auth/oauth-paths"
 
-// Neon Auth's middleware does two jobs:
-//  1. After Google, the browser lands on `<callbackURL>?neon_auth_session_verifier=…`; only the middleware exchanges
-//     that verifier for the session cookie. Without it the page renders signed out and sign-in loops forever.
-//  2. Signed-out visitors to a Group's dashboard are sent to the sign-in screen (loginUrl "/").
-// `/` is the loginUrl, so it is always allowed and still gets the exchange. `/claim/*` must stay reachable signed out
-// (it shows the Google button), and the SDK's middleware can't be told to skip it, so /claim only goes through the
-// middleware when it is carrying a verifier. /api/auth and static assets are never matched.
+// The only middleware file: the app lives under src/, so Next loads src/proxy.ts and ignores a root proxy.ts.
+//  1. Signed-out visitors to a Group's dashboard are sent to the sign-in screen (loginUrl "/").
+//  2. Google sign-in returns to /auth/callback, which exchanges the session verifier (lib/auth/oauth-return.ts). A
+//     return that lands on a page instead (a sign-in started before /auth/callback existed, or any other
+//     callbackURL) is bounced there too. The SDK's middleware can't do it for `/` (it never exchanges on its own
+//     loginUrl) and must not run on /claim (signed-out visitors need the Google button), so it only guards /g.
+// /api/auth, /auth/callback and static assets are never matched.
 const neonAuth = auth.middleware({ loginUrl: "/" })
-const VERIFIER_PARAM = "neon_auth_session_verifier"
 
 export default async function proxy(request: NextRequest) {
   if (devAuthEmail()) return NextResponse.next()
-  const { pathname, searchParams } = request.nextUrl
-  if (pathname.startsWith("/claim/") && !searchParams.has(VERIFIER_PARAM)) {
+  const { pathname, search, searchParams } = request.nextUrl
+  const verifier = searchParams.get(VERIFIER_PARAM)
+  if (verifier) {
+    const to = new URL(CALLBACK_PATH, request.url)
+    to.searchParams.set("next", withoutParam(`${pathname}${search}`, VERIFIER_PARAM))
+    to.searchParams.set(VERIFIER_PARAM, verifier)
+    const res = NextResponse.redirect(to)
+    res.headers.set("x-roomie-proxy", "oauth-return")
+    return res
+  }
+  if (pathname === "/" || pathname.startsWith("/claim/")) {
     const pass = NextResponse.next()
-    pass.headers.set("x-roomie-proxy", "claim-pass")
+    pass.headers.set("x-roomie-proxy", "pass")
     return pass
   }
   const res = await neonAuth(request)
-  res.headers.set("x-roomie-proxy", searchParams.has(VERIFIER_PARAM) ? "oauth-return" : "guard")
-  if (searchParams.has(VERIFIER_PARAM)) {
-    // One line per OAuth return so a failed exchange is visible in the server logs.
-    const cookie = request.headers.get("cookie") ?? ""
-    console.log(
-      `[auth] oauth return ${pathname}: challenge_cookie=${/session_challen?ge=/.test(cookie)} -> ${res.status} ${res.headers.get("location") ?? ""} set_cookie=${res.headers.has("set-cookie")}`,
-    )
-  }
+  res.headers.set("x-roomie-proxy", "guard")
   return res
 }
 
