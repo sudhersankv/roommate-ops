@@ -158,6 +158,9 @@ Each step gets its own branch and PR, and you test locally before it's merged. S
 - **Done when:** a request from the form lands in the table, the operator hears about it and can mark it contacted.
   - [x] form -> row -> `[beta]` fallback log, in a local smoke test (`design/screens/landing-*.jpeg`) · [ ] the Telegram DM on Fly (needs `ROOMIE_OPERATOR_EMAILS` and the operator's claimed Telegram Member who pressed Start)
 
+### Landing reframe: Tricks, any group, /help (`feat/landing-tricks`)
+- [x] `/` reframed as an AI that joins any group chat and learns **Tricks** (the user-facing word for Toolkits): new headline, one hero chat with a reacting dino, Trick-labelled demos (+ a trip group), the Tricks strip from the catalog with coming-soon votes (`trick_votes`, migration 0008), a vibe strip, "What's your group?" from `PRESETS`, a share row, ember accents and CSS motion with reduced-motion fallbacks. `/help` with a 14-question FAQ ([docs/landing.md](./landing.md)).
+
 ## Parked (v2 / v3)
 
 - **v2:** Research (web search), PDF generation (itineraries, receipts, summaries), and Trip planning, which builds on Research, PDF and Splitting.

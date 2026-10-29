@@ -1,5 +1,72 @@
-/* The landing page's motion: chat lines pop in. The hero plays once on load; the demos play as they scroll into view
-   (only where scroll-driven animations exist; elsewhere they're simply there). Nothing moves with reduced motion. */
+/* The landing page's motion and its ember accents (docs/landing.md, "Motion"). CSS only, transform and opacity only,
+   nothing that moves layout. Everything here sits behind prefers-reduced-motion: no-preference; with reduced motion
+   the page is the final frame (lines shown, embers still, the 🔥 glowing but not flickering). */
+
+.lp-hero,
+.lp-trick,
+.lp-chip,
+.lp-share {
+  --ember-1: #ffb547;
+  --ember-2: #ff7a59;
+  --ember-3: #ff4f9a;
+}
+
+/* ---------- hero: a warm glow and embers ---------- */
+
+.lp-embers .lp-glow {
+  position: absolute;
+  inset: auto -20% -35% 10%;
+  height: 90%;
+  background:
+    radial-gradient(40% 45% at 70% 60%, color-mix(in oklab, var(--ember-2) 30%, transparent), transparent 70%),
+    radial-gradient(35% 40% at 30% 70%, color-mix(in oklab, #4fcb78 22%, transparent), transparent 70%),
+    radial-gradient(30% 35% at 85% 40%, color-mix(in oklab, var(--ember-3) 18%, transparent), transparent 70%);
+  filter: blur(10px);
+  opacity: 0.9;
+}
+.lp-embers i {
+  position: absolute;
+  bottom: -12px;
+  left: var(--x);
+  width: var(--s);
+  height: var(--s);
+  border-radius: 999px;
+  background: radial-gradient(circle, #fff3c4 0 20%, var(--ember-1) 45%, transparent 72%);
+  opacity: 0;
+}
+.lp-embers i:nth-child(3n) {
+  background: radial-gradient(circle, #ffe0d1 0 20%, var(--ember-2) 45%, transparent 72%);
+}
+.lp-embers i:nth-child(4n) {
+  background: radial-gradient(circle, #ffd6ea 0 20%, var(--ember-3) 45%, transparent 72%);
+}
+
+@keyframes lp-rise {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1);
+    opacity: 0;
+  }
+  12% {
+    opacity: 0.85;
+  }
+  70% {
+    opacity: 0.5;
+  }
+  100% {
+    transform: translate3d(18px, -78vh, 0) scale(0.4);
+    opacity: 0;
+  }
+}
+@keyframes lp-drift {
+  from {
+    transform: translate3d(-4%, 0, 0) rotate(-4deg);
+  }
+  to {
+    transform: translate3d(4%, -3%, 0) rotate(4deg);
+  }
+}
+
+/* ---------- chats: lines pop in ---------- */
 
 @keyframes lp-pop {
   from {
@@ -12,25 +79,189 @@
   }
 }
 
+/* ---------- the win: ember ring and a flickering 🔥 ---------- */
+
+.lp-win > [data-slot="bubble-content"] {
+  box-shadow:
+    0 0 0 1.5px color-mix(in oklab, var(--ember-2, #ff7a59) 70%, transparent),
+    0 8px 28px -10px color-mix(in oklab, var(--ember-3, #ff4f9a) 70%, transparent);
+}
+.lp-fire {
+  display: inline-block;
+  filter: drop-shadow(0 0 6px #ff7a59) drop-shadow(0 0 2px #ffb547);
+  transform-origin: 50% 90%;
+}
+@keyframes lp-flicker {
+  0%,
+  100% {
+    transform: scale(1) rotate(0);
+  }
+  30% {
+    transform: scale(1.18, 1.1) rotate(-6deg);
+  }
+  60% {
+    transform: scale(0.94, 1.06) rotate(5deg);
+  }
+}
+@keyframes lp-ring {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in oklab, #ffb547 80%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 14px transparent;
+  }
+}
+
+/* ---------- Trick cards: a soft glow in each Trick's color ---------- */
+
+.lp-trick {
+  transition:
+    transform 0.25s cubic-bezier(0.2, 0.8, 0.3, 1.2),
+    box-shadow 0.25s ease,
+    border-color 0.25s ease;
+}
+.lp-trick.is-soon {
+  filter: saturate(0.35);
+}
+.lp-trick.is-soon .lp-soon-icon {
+  opacity: 0.7;
+}
+@media (hover: hover) {
+  .lp-trick:hover {
+    border-color: color-mix(in oklab, var(--accent) 55%, var(--border));
+    box-shadow: 0 18px 48px -20px var(--accent);
+  }
+  .lp-trick.is-soon:hover {
+    filter: saturate(0.7);
+  }
+}
+.lp-trick:active {
+  border-color: color-mix(in oklab, var(--accent) 55%, var(--border));
+  box-shadow: 0 14px 40px -20px var(--accent);
+}
+
+/* "Noted ✨": a spark when the vote lands. */
+.lp-spark {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  width: 6px;
+  height: 6px;
+  margin: -3px;
+  border-radius: 999px;
+  pointer-events: none;
+  opacity: 0;
+}
+
+/* ---------- vibes: confetti on the hype card ---------- */
+
+.lp-confetti {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.lp-confetti i {
+  position: absolute;
+  width: 7px;
+  height: 11px;
+  border-radius: 2px;
+  transform: rotate(var(--r));
+  opacity: 0.9;
+}
+@keyframes lp-confetti {
+  0%,
+  100% {
+    transform: translateY(0) rotate(var(--r));
+  }
+  50% {
+    transform: translateY(-5px) rotate(calc(var(--r) + 40deg));
+  }
+}
+
+/* ---------- the share card: a warm edge ---------- */
+
+.lp-share {
+  background-image: radial-gradient(70% 120% at 100% 0%, color-mix(in oklab, var(--ember-1) 14%, transparent), transparent 60%);
+}
+
+/* ---------- motion, only for those who want it ---------- */
+
 @media (prefers-reduced-motion: no-preference) {
-  .lp-play .lp-msg {
+  .lp-embers .lp-glow {
+    animation: lp-drift 14s ease-in-out infinite alternate;
+    will-change: transform;
+  }
+  .lp-embers i {
+    animation: lp-rise var(--t) linear var(--d) infinite;
+    will-change: transform, opacity;
+  }
+
+  .lp-play .lp-msg,
+  .lp-stage[data-state="play"] .lp-msg {
     transform-origin: left bottom;
     animation: lp-pop 0.45s cubic-bezier(0.2, 0.8, 0.3, 1.15) both;
     animation-delay: calc(0.35s + var(--i, 0) * 0.85s);
   }
-  .lp-play .lp-msg[data-align="end"] {
+  .lp-play .lp-msg[data-align="end"],
+  .lp-stage[data-state="play"] .lp-msg[data-align="end"] {
     transform-origin: right bottom;
   }
+  .lp-stage[data-state="armed"] .lp-msg {
+    opacity: 0;
+  }
 
-  @supports (animation-timeline: view()) {
-    .lp-reveal .lp-msg {
-      transform-origin: left bottom;
-      animation: lp-pop linear both;
-      animation-timeline: view();
-      animation-range: entry 5% entry 55%;
-    }
-    .lp-reveal .lp-msg[data-align="end"] {
-      transform-origin: right bottom;
-    }
+  /* The win's ring pulses once as the line lands (then the resting glow stays); its 🔥 flickers a few times. */
+  .lp-stage[data-state="play"] .lp-win > [data-slot="bubble-content"] {
+    animation: lp-ring 0.9s ease-out calc(0.6s + var(--i, 0) * 0.85s);
+  }
+  .lp-stage[data-state="play"] .lp-fire {
+    animation: lp-flicker 0.7s ease-in-out calc(0.7s + var(--i, 0) * 0.85s) 6;
+  }
+
+  .lp-trick:hover,
+  .lp-trick:active {
+    transform: translateY(-4px);
+  }
+
+  .lp-vibe:hover .lp-confetti i,
+  .lp-vibe:focus-within .lp-confetti i {
+    animation: lp-confetti 0.9s ease-in-out calc(var(--k) * 0.06s) 2;
+  }
+
+  .lp-voted.is-fresh {
+    animation: lp-ring 0.8s ease-out;
+  }
+  .lp-voted.is-fresh .lp-spark {
+    animation: lp-spark 0.7s ease-out both;
+  }
+}
+
+@keyframes lp-spark {
+  0% {
+    opacity: 1;
+    box-shadow:
+      0 0 0 0 #ffb547,
+      0 0 0 0 #ff7a59,
+      0 0 0 0 #ff4f9a,
+      0 0 0 0 #86efa0,
+      0 0 0 0 #ffb547,
+      0 0 0 0 #ff4f9a;
+  }
+  100% {
+    opacity: 0;
+    box-shadow:
+      -26px -14px 0 -1px #ffb547,
+      24px -16px 0 -1px #ff7a59,
+      -18px 14px 0 -1px #ff4f9a,
+      30px 10px 0 -1px #86efa0,
+      2px -24px 0 -1px #ffb547,
+      6px 20px 0 -1px #ff4f9a;
+  }
+}
+
+/* Reduced motion: a few embers resting in the glow instead of rising. */
+@media (prefers-reduced-motion: reduce) {
+  .lp-embers i:nth-child(odd) {
+    opacity: 0.55;
+    transform: translateY(calc(-40px - var(--s) * 18));
   }
 }

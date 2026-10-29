@@ -24,7 +24,8 @@ src/
                         cart_checkouts, chores,
                         chore_logs, reminders, maintenance), all keyed by group_id; wa_sessions (the WhatsApp login,
                         BufferJSON rows "creds" / "<type>-<id>") and wa_contacts (LID -> phone JID + name); beta_requests
-                        (the landing page's WhatsApp beta form, not tied to a Group)
+                        (the landing page's WhatsApp beta form, not tied to a Group); trick_votes ("I want this" on a
+                        coming-soon Trick, migration 0008)
   db/enums.ts           categories, split methods, recurrences, sources, Group purposes, beta sizes / statuses (no drizzle
                         import: client code uses them)
   db/index.ts           db client
@@ -73,6 +74,7 @@ src/
     beta.ts             Beta requests (docs/landing.md): submitBetaRequest (honeypot, zod, 3 per IP-hash per hour, store,
                         then notifyOperator: Telegram DM to the first ROOMIE_OPERATOR_EMAILS Account's Telegram Member, else
                         a "[beta]" log line); list / setBetaStatus / delete take the operator (NotAllowedError otherwise)
+    trick-votes.ts      voteForTrick (coming-soon ids only, 1 per Trick per IP-hash a day, 12 an hour) + trickVoteCounts
   onboarding.ts         onGroupJoined (Group + Chat + Members, adder = Admin, intro + setup questions),
                         onParticipantJoined (Pending + "approve X?") and onUnknownSender (Pending, or active inside a
                         Channel's roster grace, ADR 0010). Called by Channel adapters (ADR 0008)
@@ -188,6 +190,9 @@ src/
                         signed out -> /signin. The default `next` after sign-in (APP_PATH)
     _landing/           landing.tsx (sections), demos.ts (the fake chats; Roomie's lines from ARCHETYPES), chat.tsx
                         (ChatWindow), landing.css (CSS-only motion), beta-form.tsx + actions.ts (the WhatsApp beta form)
+                        tricks.ts (Tricks + group presets from the manifests/PRESETS, accents), stage.tsx (the dino
+                        watching a chat), vote-button.tsx, share-row.tsx, marks.tsx (links, share links, logos)
+    help/               /help: how Roomie works + FAQ (public, indexable; reuses _landing/tricks.ts and marks.tsx)
     signin/             the sign-in screen: Google + paste a Claim link + "Sign-in didn't complete"; ?next= afterwards
     privacy/            the short privacy page (what's kept, per Group, forget me)
     claim/[token]/      Claim link: sign in, consume, link the Account, -> /g/<id>

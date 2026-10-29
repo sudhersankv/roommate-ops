@@ -49,8 +49,8 @@ async function main() {
   </svg>`;
 
   const [bold, semi] = await Promise.all([font(800), font(600)]);
-  const headline = await text(`<span foreground="${MINT}" letter_spacing="-1600">The groupmate who remembers who paid.</span>`, bold, "Figtree ExtraBold 70", 600);
-  const sub = await text(`<span foreground="${SPROUT}">An AI groupmate for your Telegram or WhatsApp group chat.</span>`, semi, "Figtree SemiBold 28", 560);
+  const headline = await text(`<span foreground="${MINT}" letter_spacing="-1600">Your group chat finally has a brain.</span>`, bold, "Figtree ExtraBold 70", 600);
+  const sub = await text(`<span foreground="${SPROUT}">An AI for your group chat that learns Tricks.</span>`, semi, "Figtree SemiBold 28", 640);
   const headMeta = await sharp(headline).metadata();
 
   await sharp(Buffer.from(base))

@@ -4,10 +4,12 @@ import { redirect } from "next/navigation"
 import { AUTH_ERROR_PARAM, SIGNIN_PATH, authErrorFrom, withParam } from "@/lib/auth/oauth-paths"
 import { currentAccount } from "@/lib/session"
 import { appUrl, isAbsoluteUrl } from "@/lib/urls"
+import { trickVoteCounts } from "@/services/trick-votes"
 import { Landing } from "./_landing/landing"
 
-const TITLE = "Roomie — the AI groupmate for your group chat"
-const DESCRIPTION = "Roomie is a pet dino that lives in your Telegram or WhatsApp group. It splits costs, keeps the shared Cart, tracks chores and gives every group its own dashboard."
+const TITLE = "Roomie — your group chat finally has a brain"
+const DESCRIPTION =
+  "Roomie is an AI that joins your Telegram or WhatsApp group chat and learns Tricks: splitting costs and receipts, the shared grocery Cart, chores. Every group gets its own dashboard."
 
 export function generateMetadata(): Metadata {
   const base = appUrl()
@@ -22,7 +24,7 @@ export function generateMetadata(): Metadata {
       title: TITLE,
       description: DESCRIPTION,
       url: "/",
-      images: [{ url: "/landing/og.png", width: 1200, height: 630, alt: "Roomie, the dino groupmate, in its doorway." }],
+      images: [{ url: "/landing/og.png", width: 1200, height: 630, alt: "Your group chat finally has a brain. Roomie, the dino, in its doorway." }],
     },
     twitter: { card: "summary_large_image", title: TITLE, description: DESCRIPTION, images: ["/landing/og.png"] },
   }
@@ -32,11 +34,11 @@ export function generateMetadata(): Metadata {
 export const dynamic = "force-dynamic"
 
 export default async function Home({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
-  const account = await currentAccount()
+  const [account, votes] = await Promise.all([currentAccount(), trickVoteCounts()])
   if (!account) {
     // A Google sign-in that came back here without a session: /signin explains it.
     const failed = authErrorFrom(await searchParams)
     if (failed) redirect(withParam(SIGNIN_PATH, AUTH_ERROR_PARAM, failed))
   }
-  return <Landing signedIn={!!account} />
+  return <Landing signedIn={!!account} votes={votes} />
 }
