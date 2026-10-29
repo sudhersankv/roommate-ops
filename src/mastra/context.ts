@@ -27,6 +27,8 @@ export const roomieContextSchema = z.object({
     .optional(),
   /** Follow-up window grey zone: the agent may answer exactly [silent]. */
   mayStaySilent: z.boolean().optional(),
+  /** A pet behaviour for this reply (services/pet.ts): "/pet", or the day's first message (open with a hello). */
+  pet: z.enum(["petted", "greet"]).optional(),
 });
 
 export type RoomieContext = z.infer<typeof roomieContextSchema>;
