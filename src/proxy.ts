@@ -2,17 +2,19 @@ import { NextResponse, type NextRequest } from "next/server"
 
 import { auth } from "@/lib/auth/server"
 import { devAuthEmail } from "@/lib/auth/dev"
-import { CALLBACK_PATH, VERIFIER_PARAM, withoutParam } from "@/lib/auth/oauth-paths"
+import { CALLBACK_PATH, SIGNIN_PATH, VERIFIER_PARAM, signInPath, withoutParam } from "@/lib/auth/oauth-paths"
 
 // The only middleware file: the app lives under src/, so Next loads src/proxy.ts and ignores a root proxy.ts.
-//  1. Signed-out visitors to a Group's dashboard or an operator page (/admin/*) are sent to the sign-in screen
-//     (loginUrl "/"). Whether a signed-in user may see /admin is up to the page (lib/operator.ts: 404 otherwise).
+//  1. Signed-out visitors to a Group's dashboard are sent to the sign-in screen (/signin?next=<where they were
+//     going>). Operator pages (/admin/*) are not guarded here: the page answers 404 to anyone who isn't a signed-in
+//     operator (lib/operator.ts), signed out included, so they don't reveal they exist. Operators sign in at
+//     /signin?next=/admin/…. `/` is the public landing page and is never guarded.
 //  2. Google sign-in returns to /auth/callback, which exchanges the session verifier (lib/auth/oauth-return.ts). A
 //     return that lands on a page instead (a sign-in started before /auth/callback existed, or any other
-//     callbackURL) is bounced there too. The SDK's middleware can't do it for `/` (it never exchanges on its own
-//     loginUrl) and must not run on /claim (signed-out visitors need the Google button), so it only guards /g and /admin.
+//     callbackURL) is bounced there too. The SDK's middleware can't do it for /signin (it never exchanges on its own
+//     loginUrl) and must not run on /, /claim or /admin (signed-out visitors see those), so it only guards /g.
 // /api/auth, /auth/callback and static assets are never matched.
-const neonAuth = auth.middleware({ loginUrl: "/" })
+const neonAuth = auth.middleware({ loginUrl: SIGNIN_PATH })
 
 export default async function proxy(request: NextRequest) {
   if (devAuthEmail()) return NextResponse.next()
@@ -26,16 +28,21 @@ export default async function proxy(request: NextRequest) {
     res.headers.set("x-roomie-proxy", "oauth-return")
     return res
   }
-  if (pathname === "/" || pathname.startsWith("/claim/")) {
+  if (pathname === "/" || pathname === SIGNIN_PATH || pathname.startsWith("/claim/") || /^\/admin(\/|$)/.test(pathname)) {
     const pass = NextResponse.next()
     pass.headers.set("x-roomie-proxy", "pass")
     return pass
   }
   const res = await neonAuth(request)
+  // The SDK sends you to the bare loginUrl; remember where you were going so /signin can take you back.
+  const location = res.headers.get("location")
+  if (location && new URL(location, request.url).pathname === SIGNIN_PATH) {
+    res.headers.set("location", new URL(signInPath(`${pathname}${search}`), request.url).toString())
+  }
   res.headers.set("x-roomie-proxy", "guard")
   return res
 }
 
 export const config = {
-  matcher: ["/", "/g/:path*", "/admin/:path*", "/claim/:path*"],
+  matcher: ["/", "/signin", "/g/:path*", "/admin/:path*", "/claim/:path*"],
 }
