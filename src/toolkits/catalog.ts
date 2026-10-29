@@ -28,3 +28,7 @@ export async function isEnabled(groupId: string, id: string): Promise<boolean> {
 /** Order on Home and Settings: the nav order, then registry order. */
 export const byOrder = <T extends Pick<Toolkit, "dashboard">>(list: readonly T[]): T[] =>
   [...list].sort((a, b) => (a.dashboard?.nav?.order ?? 100) - (b.dashboard?.nav?.order ?? 100));
+
+/** Order on Home: a Toolkit's homeOrder, else its nav order (standing, then today, then the rest). */
+export const byHomeOrder = <T extends Pick<Toolkit, "dashboard">>(list: readonly T[]): T[] =>
+  [...list].sort((a, b) => (a.dashboard?.homeOrder ?? a.dashboard?.nav?.order ?? 100) - (b.dashboard?.homeOrder ?? b.dashboard?.nav?.order ?? 100));

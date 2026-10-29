@@ -6,7 +6,7 @@ export const defineManifest = <const Id extends string>(m: ToolkitManifest<Id>):
 /** The server entry: the manifest plus tools, dashboard sections and hooks. Keeps each tool's own types. */
 export function defineToolkit<Id extends string, T extends Record<string, AnyTool>>(
   manifest: ToolkitManifest<Id>,
-  server: Pick<Toolkit<Id>, "onEnable" | "onDisable"> & { tools: T; dashboard?: Pick<NonNullable<Toolkit["dashboard"]>, "home" | "settings" | "mood"> },
+  server: Pick<Toolkit<Id>, "onEnable" | "onDisable"> & { tools: T; dashboard?: Pick<NonNullable<Toolkit["dashboard"]>, "home" | "homeOrder" | "settings" | "mood"> },
 ): Omit<Toolkit<Id>, "tools"> & { tools: T } {
   return { ...manifest, ...server, dashboard: { ...manifest.dashboard, ...server.dashboard } };
 }

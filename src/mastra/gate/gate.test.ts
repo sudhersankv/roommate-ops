@@ -4,6 +4,7 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  callsPet,
   decideGate,
   FOLLOW_UP_MAX,
   FOLLOW_UP_WINDOW_MS,
@@ -298,6 +299,13 @@ describe("saysRoomie", () => {
 
   test("not inside other words", () => {
     for (const t of ["my roomies are out", "roomiebot", "add milk", ""]) assert.equal(saysRoomie(t), false, t);
+  });
+
+  test("callsPet: 'roomie' always, and the Group's own name for its pet", () => {
+    assert.equal(callsPet("dino add milk", "Dino"), true);
+    assert.equal(callsPet("roomie add milk", "Dino"), true, "the species name keeps working");
+    assert.equal(callsPet("dinosaurs rule", "Dino"), false);
+    assert.equal(callsPet("dino add milk"), false, "no custom name: only roomie");
   });
 });
 

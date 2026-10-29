@@ -24,7 +24,7 @@ import { choresNudgeJob, sendDueReminders, weeklyReportJob } from "@/jobs/schedu
 import { addDaysInZone, addDaysToDay, dayInZone, nextWeekday, zonedParts, zonedTimeToUtc } from "@/lib/time";
 import { onGroupJoined, onParticipantJoined } from "@/onboarding";
 import { deleteGroup, groupsWithChat } from "@/services/groups";
-import { cart, chatlog, chores, members, money, receipts, recipes, recurring, splitwise, toolkits as toolkitsSvc } from "@/services";
+import { cart, chatlog, chores, members, money, personality as personalitySvc, receipts, recipes, recurring, splitwise, toolkits as toolkitsSvc } from "@/services";
 import { composioHealth } from "@/integrations/composio";
 import { FakeSplitwise, setSplitwiseClient } from "@/integrations/splitwise";
 import { ComposioInstacart, FakeInstacart, setInstacartClient } from "@/integrations/instacart";
@@ -105,6 +105,7 @@ describe("Roomie tools against the dev DB", () => {
         ["chores", schema.chores],
         ["chats", schema.chats],
         ["group_toolkits", schema.groupToolkits],
+        ["pet_moments", schema.petMoments],
       ];
       for (const [name, t] of tables) assert.equal(await count(t), 0, `leftover rows in ${name}`);
       const [orphans] = await db
@@ -1066,6 +1067,64 @@ describe("Roomie tools against the dev DB", () => {
       await db.delete(schema.accounts).where(eq(schema.accounts.authUserId, user.id));
       await db.delete(schema.accounts).where(eq(schema.accounts.authUserId, `${user.id}-other`));
     }
+  });
+
+  test("set_group_settings personality (Admin): vibe, name, quirks; bad ones explained; others refused", async () => {
+    const alex = contextFor(member.Alex, "Alex", "member", "active");
+    assert.equal((await run("set_group_settings", { personality: { base: "hype" } }, alex)).reason, "admin-only");
+    const s = await run("set_group_settings", { personality: { base: "gremlin", name: "Dino", quirks: ["obsessed with the plant"] } });
+    assert.deepEqual(s.personality, { vibe: "gremlin", yourName: "Dino", quirks: ["obsessed with the plant"] });
+    const p = await personalitySvc.getPersonality({ groupId });
+    assert.equal(p.base, "gremlin");
+    assert.equal(p.name, "Dino");
+    await assert.rejects(run("set_group_settings", { personality: { name: "the" } }), /too common/);
+    await assert.rejects(run("set_group_settings", { personality: { base: "pirate" as never } }), /rejected input|Vibe/);
+    await personalitySvc.updatePersonality(ctx, { base: "chill", name: "Roomie", quirks: [] });
+  });
+
+  test("the Learned style: the job counts what the model proposes, resets on an Admin's word; pet moments are claimed once", async () => {
+    const { refreshStyleNote, setCandidateReader } = await import("@/jobs/style-note");
+    const lines = ["bet", "bet lol", "no cap", "ryry you coming", "ok ryry", "ryry!!", "fr"];
+    // Everything this Group logged so far stays out of the batch (rounded up past the microseconds).
+    const [{ since }] = await db
+      .select({ since: sql<string | null>`ceil(extract(epoch from max(${schema.chatMessages.createdAt})) * 1000) + 1` })
+      .from(schema.chatMessages)
+      .where(eq(schema.chatMessages.groupId, groupId));
+    await db.insert(schema.chatMessages).values(lines.map((text) => ({ groupId, memberId: member.Sudhersan, text })));
+    setCandidateReader(async () => ({ languages: [{ name: "English", share: 1 }], codeSwitching: 0, slang: ["bet", "no cap", "fr"], tone: ["dry"], nicknames: [{ nickname: "ryry", member: "Ryan" }], insideJokes: [] }));
+    try {
+      assert.equal(await refreshStyleNote(groupId, since ? new Date(Number(since)) : null, new Date(), true), true);
+    } finally {
+      setCandidateReader(null);
+    }
+    const learned = (await personalitySvc.getPersonality({ groupId })).learned;
+    assert.deepEqual(learned.slang, [{ phrase: "bet", count: 2 }], "no cap and fr were said once");
+    assert.deepEqual(learned.nicknames, [{ nickname: "ryry", member: "Ryan", count: 3 }]);
+    assert.equal(learned.messagesSeen, lines.length);
+    assert.ok(learned.confidence > 0 && learned.confidence < 0.1);
+    const alex = contextFor(member.Alex, "Alex", "member", "active");
+    await assert.rejects(personalitySvc.resetLearned({ groupId, memberId: member.Alex }), /Only an admin/);
+    assert.equal((await run("set_group_settings", { personality: { base: "mom" } }, alex)).reason, "admin-only");
+    assert.equal((await personalitySvc.resetLearned(ctx)).learned.messagesSeen, 0);
+
+    const { dbMoments } = await import("@/services/pet");
+    assert.equal(await dbMoments.claim(groupId, "greeting", "2026-10-28"), true);
+    assert.equal(await dbMoments.claim(groupId, "greeting", "2026-10-28"), false, "the primary key makes it once");
+    assert.equal(await dbMoments.claim(groupId, "win", "streak:dishes:alex:3:2026-10-28"), true);
+  });
+
+  test("remember and what_do_you_know_about_me: your own note; someone else's only as an Admin", async () => {
+    const alex = contextFor(member.Alex, "Alex", "member", "active");
+    const r = await run("remember", { diet: "vegetarian", caresAbout: "the plant" }, alex);
+    assert.match(r.remembered, /diet: vegetarian; cares about the plant/);
+    await run("remember", { allergies: "peanuts" }, alex);
+    const mine = await run("what_do_you_know_about_me", {}, alex);
+    assert.equal(mine.name, "Alex");
+    assert.match(mine.facts, /vegetarian.*peanuts.*the plant/);
+    assert.equal((await run("what_do_you_know_about_me", { who: "Sudhersan" }, alex)).reason, "admin-only");
+    const asAdmin = await run("what_do_you_know_about_me", { who: "Alex" });
+    assert.match(asAdmin.facts, /vegetarian/);
+    assert.ok((await members.peopleFacts({ groupId })).some((l) => l.startsWith("Alex: ") && /vegetarian/.test(l)), "in the instructions' people block");
   });
 
   test("set_payment_handle and forget_me: chat lines and the note go, the ledger stays", async () => {

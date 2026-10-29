@@ -1,9 +1,13 @@
 // The one Roomie agent, built once (ADR 0005). Everything per-request comes from the RequestContext (context.ts):
 // instructions and tools are functions of it, and tools read groupId/memberId from it, never from closures.
+// The persona is composed per Group in ../persona.ts (ADR 0012): archetype, dials, quirks, Learned style, mood, and
+// the enabled Toolkits' manifest fragments (instructions.ts fills that slot).
 import { Agent } from "@mastra/core/agent";
 import { model } from "@/lib/llm";
+import { roomieRecentTexts } from "@/services/chatlog";
 import { enabledToolkits, getGroup } from "@/services/groups";
-import { listGroupMembers } from "@/services/members";
+import { listGroupMembers, peopleFacts } from "@/services/members";
+import { getPersonality, groupMood } from "@/services/personality";
 import { toolsFor } from "@/toolkits/registry";
 import { roomieContextSchema } from "../context";
 import { memory } from "../memory";
@@ -16,17 +20,29 @@ export * from "./instructions";
 export const roomie = new Agent({
   id: "roomie",
   name: "Roomie",
-  description: "The AI groupmate: splits costs, keeps the grocery cart, tracks chores, upkeep and reminders.",
+  description: "The group's pet: splits costs, keeps the grocery cart, tracks chores, upkeep and reminders, in the group's own voice.",
   requestContextSchema: roomieContextSchema,
   instructions: async ({ requestContext }) => {
     const ctx = requestContext.all;
     if (!ctx.groupId) return roomieInstructions(ctx, "unknown yet");
-    const [group, people, toolkits] = await Promise.all([
+    const g = { groupId: ctx.groupId };
+    const [group, people, personality, mood, facts, recentReplies, toolkits] = await Promise.all([
       getGroup(ctx.groupId),
-      listGroupMembers({ groupId: ctx.groupId }),
-      ctx.toolkits ?? enabledToolkits({ groupId: ctx.groupId }),
+      listGroupMembers(g),
+      getPersonality(g),
+      groupMood(g).catch(() => undefined),
+      peopleFacts(g),
+      roomieRecentTexts(ctx.groupId),
+      ctx.toolkits ?? enabledToolkits(g),
     ]);
-    return roomieInstructions(ctx, describeMembers(people), new Date(), group?.timezone ?? DEFAULT_TIMEZONE, { onboarding: !!group && !group.onboardedAt, toolkits });
+    return roomieInstructions(ctx, describeMembers(people), new Date(), group?.timezone ?? DEFAULT_TIMEZONE, {
+      onboarding: !!group && !group.onboardedAt,
+      toolkits,
+      personality,
+      mood,
+      people: facts,
+      recentReplies,
+    });
   },
   model,
   tools: async ({ requestContext }) => {

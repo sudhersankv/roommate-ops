@@ -33,7 +33,7 @@ Business logic still goes in `src/services/` (CLAUDE.md, "The one rule"). Tables
 | `worksWith` | `{ integrations }`: optional extras, shown in the sheet, never blocking |
 | `status` | `stable`, `beta` (badge) or `coming-soon` (listed, can't be switched on) |
 | `gate` | `{ criterion, examples }`: `criterion` is the Jev `toolkit` choice text (which messages belong here); `examples[0]` is what Roomie suggests when it's switched on ("Groceries is on. Try: ...") |
-| `persona` | lines appended to Roomie's RULES while it's on. Put the Toolkit's tool-routing rules here, not in `agents/roomie.ts` |
+| `persona` | lines in the TOOLKITS block of Roomie's composed persona (`mastra/persona.ts`, the `/* TOOLKIT_PERSONA */` slot) while it's on. Put the Toolkit's tool-routing rules here, not in `persona.ts` `CORE_RULES` |
 | `abilities` | plain words per tool id for the sheet's "What it can do" (tools without one show their description) |
 | `dashboard.nav` | `{ label, href: (groupId) => path, icon, order }`: a bottom-nav tab. Home + the first 3 by `order` are tabs; the rest go under More in the avatar menu. Two Toolkits pointing at the same path share one tab |
 | `dashboard.pages` | route prefixes under `/g/<id>/` it owns (`["cart"]`). While every owner is off, the page shows "X is off for this group" with Turn on / Ask an admin |
@@ -46,7 +46,8 @@ export const groceries = defineToolkit(manifest, {
   dashboard: {
     home: () => import("./dashboard").then((m) => m.GroceriesHome),        // Home section
     settings: () => import("./dashboard").then((m) => m.GroceriesSettings), // Settings section
-    mood: () => import("./dashboard").then((m) => m.someMood),              // optional: Roomie's mood in the doorway
+    mood: () => import("./dashboard").then((m) => m.someMood),              // optional: doorway mood if the Group's mood can't be read
+    homeOrder: 15,                                                          // optional: Home position (default: nav order)
   },
   onEnable: (ctx) => seedPantry(ctx), // off -> on, and for the Onboarding preset. Must be idempotent
   onDisable: async (ctx) => {},
@@ -54,7 +55,7 @@ export const groceries = defineToolkit(manifest, {
 ```
 
 - Dashboard sections are lazy imports so the agent runtime (tsx, evals, Mastra) never loads React. They are async server components taking `{ ctx: { session, isAdmin, base } }`; read through `app/g/[groupId]/_components/data.ts` and render a client piece. Settings sections decide for themselves what non-Admins see (return `null` for nothing).
-- Home and Settings render sections in nav `order`, only for enabled Toolkits.
+- Home and Settings render sections in nav `order` (Home: `homeOrder` first, so it reads standing, today, then the rest), only for enabled Toolkits. Home's doorway mood is the Group's (`services/personality.groupMood`); a Toolkit's `mood` is the fallback.
 - Hooks get `{ groupId, memberId | null }`. They run once per real change (`services/toolkits.setToolkit`) and for every Toolkit in the Onboarding preset (`groups.updateGroupSettings`).
 
 ## What you get for free

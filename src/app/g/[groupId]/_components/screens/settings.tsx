@@ -73,10 +73,10 @@ const chattiness = {
 const withCurrent = (list: { label: string; value: string }[], value: string) => (list.some((x) => x.value === value) ? list : [...list, { label: value, value }])
 
 /**
- * Core settings (Group, Chattiness, which Toolkits are on, Appearance, Danger zone) with each enabled Toolkit's own
+ * Core settings (Group, Chattiness, Personality, which Toolkits are on, Appearance, Danger zone) with each enabled Toolkit's own
  * settings section (children, from the manifests) in between.
  */
-export function SettingsScreen({ zones, schedule, children }: { zones: ZoneGroup[]; schedule: ScheduleView; children?: ReactNode }) {
+export function SettingsScreen({ zones, schedule, personality, children }: { zones: ZoneGroup[]; schedule: ScheduleView; personality?: ReactNode; children?: ReactNode }) {
   const { group, isAdmin, active } = useGroup()
   const admins = active.filter((m) => m.role === "admin").map((m) => m.name)
   return (
@@ -89,6 +89,8 @@ export function SettingsScreen({ zones, schedule, children }: { zones: ZoneGroup
       </PageHeader>
       <div className="flex flex-col gap-10 px-5 pb-6">
         {isAdmin ? <AdminSettings zones={zones} schedule={schedule} /> : null}
+        {/* Settings -> Personality: a self-contained server component (components/app/personality-section.tsx) */}
+        {personality}
         <ToolkitsSummary />
         {children}
         <Appearance />

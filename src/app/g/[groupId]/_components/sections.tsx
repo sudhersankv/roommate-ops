@@ -4,7 +4,7 @@ import type { ReactNode } from "react"
 
 import type { RoomieMood } from "@/components/roomie/mascot"
 import type { GroupSession } from "@/lib/session"
-import { byOrder, enabledFor } from "@/toolkits/catalog"
+import { byHomeOrder, byOrder, enabledFor } from "@/toolkits/catalog"
 import type { ToolkitSectionCtx } from "@/toolkits/types"
 
 export const sectionCtx = (s: GroupSession): ToolkitSectionCtx => ({
@@ -15,7 +15,7 @@ export const sectionCtx = (s: GroupSession): ToolkitSectionCtx => ({
 
 async function render(s: GroupSession, slot: "home" | "settings"): Promise<ReactNode[]> {
   const ctx = sectionCtx(s)
-  const on = byOrder(await enabledFor(s.group.id)).filter((t) => t.dashboard?.[slot])
+  const on = (slot === "home" ? byHomeOrder : byOrder)(await enabledFor(s.group.id)).filter((t) => t.dashboard?.[slot])
   const sections = await Promise.all(on.map(async (t) => ({ id: t.id, Section: await t.dashboard![slot]!() })))
   return sections.map(({ id, Section }) => <Section key={id} ctx={ctx} />)
 }
@@ -23,7 +23,7 @@ async function render(s: GroupSession, slot: "home" | "settings"): Promise<React
 export const homeSections = (s: GroupSession) => render(s, "home")
 export const settingsSections = (s: GroupSession) => render(s, "settings")
 
-/** Roomie's mood in the Home doorway: the first enabled Toolkit that has an opinion, else calm. */
+/** Roomie's mood in the Home doorway when the Group's mood can't be read: the first enabled Toolkit with an opinion, else calm. */
 export async function homeMood(s: GroupSession): Promise<RoomieMood> {
   const ctx = sectionCtx(s)
   for (const t of byOrder(await enabledFor(s.group.id))) {

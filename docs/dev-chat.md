@@ -307,3 +307,72 @@ Notes:
 - The report came out casual here (sentences, no emoji lines) because the agent had written a casual tone into this Group's style note; the earlier run of the same script, with no style note yet, printed the emoji-line version (`📋 Group report`, `💸`, `🧹`, `⏳`, `📉`, `🔧`, `🛒`, `⏰`, one per line). Same text as the weekly post either way.
 - The 30-45 s turns were the gateway being slow at that moment (the evals were running alongside); the usual is 5-9 s.
 - The same Group on the dashboard (`npx next dev -p 3700`, `DISABLE_SCHEDULER=1`, `DEV_AUTH_EMAIL`, headless Chrome, on Apt 4B from `npm run seed:demo`): the Chores tab with whose turn, the Rotation, cadence, streak and last done; Mark done (the dino cheers, "That's 2 on time in a row. Dev's up next."); Pass it on ("Passed recycling", Dev up); the Add chore sheet with "In this order" (Sam moved to the top); Upkeep with "5 days late" / "Due today" / "Due Sunday" badges; Reminders with "For Dev, set by you" and "Every month"; Home's Today with your chore and a late upkeep item; Settings with the time zone by region, the nudge hour and the report day and hour. Screenshots: `design/screens/real-chores-*.jpeg`.
+
+## Walkthrough: the group pet (recorded 2026-10-28)
+
+The personality branch end to end: the new intro, the default chill voice, the same question after switching the vibe to hype, a new name that works as a trigger, "remember I'm vegetarian" shaping a recipe later, `/pet`, and what Roomie knows about you.
+
+```
+> join Maya Dev Sam
+[Roomie] Hey all, I'm Roomie, your group's new pet 🦖 Maya added me, so Maya's my admin. I split costs, keep a
+         shared Cart, track chores, and slowly pick up how you all talk.
+         Quick setup, one reply is plenty: what's this group for (roommates, a trip, friends, family, work), which
+         currency, which time zone, and what vibe should I have (chill / hype / deadpan / mom / gremlin / butler)? Just
+         "roommates" works too: I'll go with USD, Chicago time, chill, and switch everything on.
+
+> say Maya "roommates, USD, Chicago"
+         (gate act/hard-trigger, tools set_group_settings, 10.0s)
+[Roomie] all set: roommates, USD, Chicago time, chill vibe. splitting, groceries, chores and upkeep are all on.
+
+> say Maya "roomie I paid $60 for internet"
+         (gate act/hard-trigger, tools log_expense, 6.6s)
+[Roomie] logged. maya paid $60 for internet, $20 each for maya, dev and sam.
+
+> say Dev "roomie who owes what?"
+         (gate act/hard-trigger, tools get_balances, 5.5s)
+[Roomie] dev owes maya $20 and sam owes maya $20. maya's up $40 total.
+
+> say Maya "roomie switch your vibe to hype"
+         (gate act/hard-trigger, tools set_group_settings, 6.3s)
+[Roomie] vibe switched to hype! let's gooo 🎉
+
+> say Dev "roomie who owes what?"
+         (gate act/hard-trigger, tools get_balances, 5.5s)
+[Roomie] Same as before! Dev owes Maya $20 and Sam owes Maya $20. Maya's up $40 🎉 Dev, want the pay buttons?
+
+> say Maya "roomie from now on your name is Dino"
+         (gate act/hard-trigger, tools set_group_settings, 6.5s)
+[Roomie] Dino it is! 🦖 Love it, Maya. Name's locked in ✨
+
+> say Sam "dino add oat milk for me"
+         (gate act/hard-trigger, tools cart_add, 6.0s)
+[Roomie] Oat milk's in the cart for you, Sam! 🥛 Est. $4.99, and that's the whole cart so far ✨
+
+> say Maya "dino remember I'm vegetarian"
+         (gate act/hard-trigger, tools remember, 7.1s)
+[Roomie] Got it, Maya, you're vegetarian! 🌱 I'll keep that in mind for recipes.
+
+> say Maya "dino write me a dinner recipe for tonight, just for me"
+         (gate act/hard-trigger, tools recipe_draft, 12.4s)
+[Roomie] Tonight's a Vegetarian Black Bean Quesadilla for 1, Maya! 🌮 20 minutes, 8 easy steps. You need tortillas,
+         black beans, cheddar, bell pepper, red onion, corn, cumin, olive oil, lime, salsa and sour cream. Full steps are on
+         the recipe page 🎉
+         Want me to add the 11 missing ingredients to the cart, just for you or for the whole house?
+
+> say Dev "/pet"
+         (gate act/hard-trigger, 5.9s)
+[Roomie] Aww, thanks Dev!! 🦖 Today's been a good one: I got a new name, Maya's quesadilla plan sounds delicious,
+         and Sam's oat milk is waiting in the cart 🥛✨
+
+> say Maya "dino what do you know about me?"
+         (gate act/hard-trigger, tools what_do_you_know_about_me, 6.4s)
+[Roomie] Here's what I've got on you, Maya: you're vegetarian 🌱 That's all so far!
+```
+
+Notes:
+
+- The same "who owes what?" came back lowercase and dry under chill, and with exclamation marks and emoji under hype; the numbers came from `get_balances` both times.
+- "dino ..." never says "roomie": the Group's name for its pet is a hard trigger (`callsPet`), next to "roomie" and the @mention.
+- `remember` saved `diet: vegetarian` to Maya's Member note; the instructions' "what you know about people" block made the recipe request vegetarian without being told again.
+- No greeting on the join day: Roomie had already posted its intro. On a later day the first message gets one line in the pet's voice (`services/pet.ts`).
+- The dashboard's Settings -> Personality (headless Chrome, `DEV_AUTH_EMAIL`, `DISABLE_SCHEDULER=1`): an Admin picks a vibe and the preview line changes at once ("Dev owes you $30! Pay day incoming! 🎉💸" for hype, "Dev owes you $30. He knows." for deadpan); a Member sees the same section read-only, with no reset button. Screenshots: `design/screens/real-personality-*.jpeg`.

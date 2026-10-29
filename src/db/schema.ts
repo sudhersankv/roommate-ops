@@ -31,8 +31,26 @@ export const groups = pgTable("groups", {
   createdBy: uuid("created_by"),
   // Set when Onboarding's questions (purpose, currency, time zone) have been answered.
   onboardedAt: timestamp("onboarded_at", { withTimezone: true }),
+  // Roomie's personality (lib/personality.ts, ADR 0012): archetype, name, quirks, dials and the Learned style.
+  // {} = the defaults (chill, "Roomie"); read it through normalizePersonality.
+  personality: jsonb("personality").$type<Record<string, unknown>>().notNull().default({}),
   createdAt: createdAt(),
 });
+
+/**
+ * Pet moments said once (services/pet.ts): the day's greeting ("greeting", "2026-10-28") and wins ("win",
+ * "streak:dishes:dev:7:2026-10-28"). The primary key makes "once" hold across retries and processes.
+ */
+export const petMoments = pgTable(
+  "pet_moments",
+  {
+    groupId: uuid("group_id").notNull().references(() => groups.id, { onDelete: "cascade" }),
+    kind: text("kind", { enum: ["greeting", "win"] }).notNull(),
+    key: text("key").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [primaryKey({ columns: [t.groupId, t.kind, t.key] })],
+);
 
 /** The conversation on a Channel. One Chat per Group. */
 export const chats = pgTable(
@@ -114,7 +132,18 @@ export const chatMessages = pgTable(
 );
 
 export type PaymentApp = "venmo" | "paypal" | "cashapp";
-export type MemberNote = { handles?: Partial<Record<PaymentApp, string>>; [key: string]: unknown };
+/** What Roomie knows about one Member ("knows you"): set by `remember`, shown by `what_do_you_know_about_me`, wiped by "forget me". */
+export type MemberFacts = {
+  preferredName?: string;
+  diet?: string;
+  allergies?: string;
+  timezone?: string;
+  /** 1-3 things they care about. */
+  caresAbout?: string[];
+  birthday?: string;
+  other?: string[];
+};
+export type MemberNote = MemberFacts & { handles?: Partial<Record<PaymentApp, string>>; [key: string]: unknown };
 
 export const memberNotes = pgTable("member_notes", {
   memberId: uuid("member_id")

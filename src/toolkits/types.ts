@@ -68,7 +68,7 @@ export type ToolkitSectionCtx = { session: GroupSession; isAdmin: boolean; base:
 export type ToolkitSection = (props: { ctx: ToolkitSectionCtx }) => ReactNode | Promise<ReactNode>;
 /** A lazy reference to a React server component, so the agent runtime never loads dashboard code. */
 export type ComponentRef = () => Promise<ToolkitSection>;
-/** Roomie's mood in the Home doorway, from this Toolkit's data (Splitting: your Balance). */
+/** Roomie's mood in the Home doorway from this Toolkit's data (Splitting: your Balance), when the Group's mood can't be read. */
 export type MoodRef = () => Promise<(ctx: ToolkitSectionCtx) => Promise<RoomieMood | null>>;
 
 /** Who switched a Toolkit on or off (null: Roomie itself, e.g. Onboarding). */
@@ -78,7 +78,13 @@ export type HookCtx = { groupId: string; memberId: string | null };
 export type Toolkit<Id extends string = string> = Omit<ToolkitManifest<Id>, "dashboard"> & {
   /** Keyed by tool id. */
   tools: Record<string, AnyTool>;
-  dashboard?: NonNullable<ToolkitManifest["dashboard"]> & { home?: ComponentRef; settings?: ComponentRef; mood?: MoodRef };
+  dashboard?: NonNullable<ToolkitManifest["dashboard"]> & {
+    home?: ComponentRef;
+    /** Where the Home section sits (default: nav order). Home reads standing, then today, then the rest. */
+    homeOrder?: number;
+    settings?: ComponentRef;
+    mood?: MoodRef;
+  };
   /** Runs when the Toolkit goes from off to on (and for the Onboarding preset). Must be idempotent. */
   onEnable?(ctx: HookCtx): Promise<void>;
   onDisable?(ctx: HookCtx): Promise<void>;

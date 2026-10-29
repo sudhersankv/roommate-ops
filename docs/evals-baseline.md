@@ -1,75 +1,89 @@
 # Eval baseline
 
-`npm run evals` on 2026-10-29: **66/67 (99%)**, 7.1 s per scenario on average.
+`npm run evals` on 2026-10-29: **80/81 (99%)**, 7.4 s per scenario on average.
 Agent `claude-sonnet-5-5`, Gate `typesafeai-jev-1-14-0` (normal Chattiness), through the Neon AI Gateway.
 Scenarios are in `src/mastra/evals/scenarios.ts`; gate = decision/reason/toolkit, tools = what the agent called.
 
 | scenario | area | gate | tools | pass | why | reply |
 |---|---|---|---|---|---|---|
-| split-basic | splitting | act/hard-trigger/splitting | log_expense | ✅ |  | Logged: $60 internet, Maya paid, split 3 ways, $20 each 💸 |
-| split-subset | splitting | act/hard-trigger/splitting | log_expense | ✅ |  | Logged: $30 uber, Sam paid, split with Dev. Dev owes Sam $15.00 🚕 |
-| split-uneven-50-25-25 | splitting | act/hard-trigger/splitting | log_expense | ✅ |  | Logged: $90 dinner, Maya paid. Maya's share is $45.00 (steak 🥩), Dev and Sam owe $22.50 each. |
-| split-shares-2-2-1 | splitting | act/hard-trigger/splitting | log_expense | ✅ |  | Logged: $41.25 wine and cheese, Maya paid, split 2:2:1. Maya and Dev owe $16.50 each, Sam $8.25 🍷🧀 |
-| split-exact-doesnt-add-up-asks | splitting | act/hard-trigger/groceries | - | ✅ |  | Those add up to $55, not $50 (Dev 30 + Sam 15 + you 10). Which is off: the total or someone's share? |
-| multi-payer | splitting | act/hard-trigger/splitting | log_expense | ✅ |  | Logged: $100 concert tickets 🎟️ Dev paid $60, Maya paid $40, split 3 ways. Maya's share is $33.33, Dev's is $ |
-| delete-expense | splitting | act/hard-trigger/splitting | delete_expense | ✅ |  | Deleted the pizza expense ($24.00). Say "undo" if you want it back. 🍕 |
-| delete-then-undo | splitting | act/hard-trigger/splitting | restore_expense | ✅ |  | Pizza's back, $24.00, all as it was 🍕 |
-| set-venmo | core | act/hard-trigger/splitting | set_payment_handle | ✅ |  | Done, your Venmo is set to @maya. Settle-up links will point there now 💸 |
-| owes-pairwise-simplify-off | splitting | act/hard-trigger/splitting | get_balances | ✅ |  | Sam, you owe $30.00 to Maya and $30.00 to Dev. Dev owes Maya $30.00. Dev nets out to $0 overall, and Maya is o |
-| owes-simplified | splitting | act/hard-trigger/splitting | get_balances | ✅ |  | Sam owes Maya $60.00. Dev's all square. Want the pay buttons? |
-| category-utilities | splitting | act/hard-trigger/splitting | log_expense | ✅ |  | Logged: $54 water bill, Maya paid, split 3 ways, $18 each 💧 |
-| settle-up-pay-links | splitting | act/hard-trigger/splitting | settle_up | ✅ |  | You owe Maya $20.00. The Venmo pay button is below. Tell me once you've paid and I'll record it 💸 |
-| receipt-photo | splitting | act/hard-trigger/splitting | expense_from_receipt | ✅ |  | Logged Luigi's Trattoria, $137.97, you paid. Dev owes $78.65 (steak plus his share of the rest, with tax and t |
-| owes-named | splitting | act/hard-trigger/splitting | get_balances | ✅ |  | Dev owes Maya $20.00, and Sam owes Maya $20.00 too. Maya's up $40.00 overall. Want the pay buttons for Maya? |
-| owes-unaddressed-question | splitting | act/jev-act/splitting | get_balances | ✅ |  | Maya's owed $40.00 total: Dev owes her $20.00 and you owe her $20.00. Want the pay buttons, Sam? |
-| settle-up | splitting | act/hard-trigger/splitting | settle_up | ✅ |  | Logged: Dev paid Maya $20. You two are square now ✅ |
-| list-expenses | splitting | act/hard-trigger/splitting | list_expenses | ✅ |  | Lately: pizza $24 (Dev paid) and internet $60 (you paid), both split 3 ways. That's $8 each for the pizza and  |
-| unknown-name | splitting | act/hard-trigger/splitting | - | ✅ |  | I don't see a Jordan in this group (just Dev, Maya and Sam). Did you mean one of them, or does Jordan still ne |
-| unprompted-pizza-asks-first | splitting | act/jev-act/splitting | - | ✅ |  | Want me to log $40 pizza, Dev paid, split 3 ways? |
-| spanish | splitting | act/hard-trigger/splitting | log_expense | ✅ |  | Listo: Uber $30, pagó Maya, entre 3 a $10 cada uno 🚕 |
-| add-milk-eggs | groceries | act/hard-trigger/groceries | - | ✅ |  | Milk and eggs for just you, or for the whole house? |
-| add-shared | groceries | act/hard-trigger/groceries | cart_add | ✅ |  | Dish soap's in the cart as a shared item, about $3.49 estimated. 🧼 |
-| view-cart | groceries | act/hard-trigger/groceries | cart_view | ✅ |  | Cart's got 2 items, both Dev's: 6 bananas and 1 oat milk. Estimated total is $13.93 🛒 |
-| remove-item | groceries | act/hard-trigger/groceries | cart_remove | ✅ |  | Milk's off the list ✅ |
-| checkout-link | groceries | act/hard-trigger/groceries | cart_checkout | ✅ |  | Instacart list is ready: 2 items, about $8.78 estimated. Tap the button to order. Once someone pays, tell me t |
-| paid-84-after-checkout | groceries | act/hard-trigger/groceries | cart_purchased | ✅ |  | Logged: $84.00 groceries (4 items), Maya paid. Split by what each person added: Dev owes $36.00, Sam owes $15. |
-| add-chicken-for-house | groceries | act/hard-trigger/groceries | cart_add | ✅ |  | Added 2 lb chicken to the house cart, est. $8.99 🍗 |
-| out-of-dish-soap | groceries | act/hard-trigger/groceries | cart_add | ✅ |  | Dish soap's in the cart as a shared item, about $3.49 🧼 It's the only thing in there so far. |
-| recipe-tacos-friday | groceries | act/hard-trigger/groceries | recipe_draft | ✅ |  | Tacos for 5 (serves 5, 35 min) Need: 1.5 lb ground beef, 1 yellow onion, 1 head garlic, 2 tbsp chili powder, 2 |
-| recipe-yes-add-them | groceries | act/jev-act/groceries | recipe_add_to_cart | ✅ |  | Added 12 items to the shared cart, about $47.75 total. I left out the onions. Want me to order it through Inst |
-| recipe-explicit-add | groceries | act/hard-trigger/groceries | recipe_draft,recipe_add_to_cart | ✅ |  | They asked to add to cart explicitly.Garlic Tomato Spaghetti for 3 is up. It takes 25 min, and the full steps  |
-| recipe-instacart-link | groceries | act/hard-trigger/groceries | recipe_link | ✅ |  | Here's the Instacart page for Tacos for 5, Dev. The button's attached 🌮 |
-| view-cart-recipe | groceries | act/hard-trigger/groceries | cart_view | ✅ |  | Cart's at 12 items, est. $46.82. Dev has oat milk, and the other 11 are shared taco stuff from Maya's Tacos fo |
-| pantry-set | groceries | act/hard-trigger/groceries | pantry_set | ✅ |  | Got it, salt and oil are in the pantry now. I'll leave them off any recipe shopping lists. 🧂 |
-| pantry-list | groceries | act/hard-trigger/groceries | pantry_list | ✅ |  | Pantry staples: oil, rice and salt. Tell me if anything should be added or taken off. |
-| cart-purchased | groceries | act/hard-trigger/groceries | cart_purchased | ✅ |  | Logged: $42 groceries, Sam paid. Maya owes $22.24 and Dev owes $19.76, and the cart is cleared 🛒 |
-| follow-up-window-chips | groceries | maybe/follow-up/groceries | - | ✅ |  | Got it, salsa and 2 bags of chips. Are those both just for you, or for the whole house? |
-| did-dishes | chores | act/hard-trigger/chores | log_chore | ✅ |  | Dishes done by Dev ✨ Maya's up next. |
-| did-dishes-unprompted-asks | chores | act/jev-act/chores | - | ✅ |  | Want me to log the dishes as done by you, Dev? |
-| whose-turn | chores | act/hard-trigger/chores | chore_status | ✅ |  | Dev's up. Maya did it today, so it isn't due until Sunday. |
-| add-chore | chores | act/hard-trigger/chores | chore_add | ✅ |  | Added vacuuming to the chart, every 7 days. Rotation is Dev, then Maya, then Sam 🧹 |
-| chore-for-someone-else | chores | act/hard-trigger/chores | log_chore | ✅ |  | Trash is done by Dev ✨ Maya, you're up next. |
-| whose-turn-rotation | chores | act/hard-trigger/chores | chore_status | ✅ |  | Dev's up on trash. Maya just did it today, and it's next due Saturday. |
-| skip-my-turn | chores | act/hard-trigger/chores | chore_skip | ✅ |  | Done, skipped your turn on trash. Sam's up next. Enjoy the trip 👋 |
-| add-chore-rotation | chores | act/hard-trigger/chores | chore_add | ✅ |  | Mopping's on the chart: every 3 days, Sam → Dev → Maya. Sam's up first 🧽 |
-| the-chart | chores | act/hard-trigger/chores | hall_of_shame | ✅ |  | Sam's at the bottom with 0 chores this week, while you and Maya have 1 each. The chart has spoken 👀 Nothing p |
-| track-ac-filter | upkeep | act/hard-trigger/upkeep | upkeep_add | ✅ |  | Tracking it: AC filter, every 90 days. Tell me when it's changed and I'll reset the clock 🛠️ |
-| maintenance-done | upkeep | act/hard-trigger/upkeep | upkeep_done | ✅ |  | Nice, HVAC filter marked done. Next one's due Jan 27, 2027 🧼 |
-| air-filter-done | upkeep | act/hard-trigger/upkeep | upkeep_done | ✅ |  | Air filter marked done ✅ Next one's due Jan 27, 2027 (every 90 days). |
-| whats-due-this-week | upkeep | act/hard-trigger | chore_status,upkeep_status | ✅ |  | Dishes are due today, and it's Dev's turn. 🍽️ On upkeep, all five items are due and have never been marked do |
-| remind-trash-tuesday | reminders | act/hard-trigger/chores | set_reminder | ✅ |  | Done. Tue Nov 3, 8:00 PM: trash goes out, everyone 🗑️ |
-| remind-rent-monthly | reminders | act/hard-trigger/core | set_reminder | ✅ |  | Done, Maya. I'll DM you "Pay rent" on the 1st of every month at 9:00 AM. The first one is Sun Nov 1. 🏠 |
-| remind-dev-private | reminders | act/hard-trigger/splitting | set_reminder | ✅ |  | Done. I'll ping Dev privately on Fri Oct 30 at 6:00 PM to pay you back for brunch. |
-| weekly-report-verbatim | core | act/hard-trigger/core | group_report | ✅ |  | 📋 Group report · Eval weekly-report-verbatim 1793250154243 💸 Dev pays Maya $20.00 and Sam pays Maya $20.00.  |
-| setup-india-household | core | act/hard-trigger/core | set_group_settings | ✅ |  | All set: roommates, INR, India time. Splitting, Groceries, Chores and Upkeep are on, with 3 starter chores and |
-| list-reminders | reminders | act/hard-trigger/core | list_reminders | ✅ |  | Just one coming up: "Rent is due" for everyone, Mon Nov 2 at 11:03 PM. Want me to move it or add another? |
-| group-report | core | act/hard-trigger | group_report | ✅ |  | 📋 Group report · Eval group-report 1793250188804 💸 Dev pays Maya $20.00 and Sam pays Maya $20.00. 🛒 The Car |
-| members | core | act/hard-trigger/core | list_members | ❌ | reply lacks Dev | Three of us: you, Maya (admin), and Sam. All active ✅ |
-| what-can-you-do | core | act/hard-trigger/core | list_toolkits | ✅ |  | Here's what I've got on: splitting costs ("I paid 60 for internet"), groceries ("tacos for 5 friday", "add mil |
-| turn-on-research | core | act/hard-trigger/core | toggle_toolkit | ✅ |  | Research isn't ready yet, Maya. It's on the list, but I can't switch it on for now. Splitting, groceries, chor |
-| groceries-off-member | core | act/hard-trigger/groceries | - | ✅ |  | Only admins can switch Toolkits, and that's Maya in this group. Maya, want me to turn Groceries off? Just say  |
+| split-basic | splitting | act/hard-trigger/splitting | log_expense | ✅ |  | logged. $60 internet, paid by maya, $20 each for her, dev and sam. |
+| split-subset | splitting | act/hard-trigger/splitting | log_expense | ✅ |  | logged. $30 uber, sam paid, split with dev, $15 each. dev owes sam $15. |
+| split-uneven-50-25-25 | splitting | act/hard-trigger/splitting | log_expense | ✅ |  | logged. $90 dinner, you paid. you're at $45 (steak), dev and sam $22.50 each. |
+| split-shares-2-2-1 | splitting | act/hard-trigger/splitting | log_expense | ✅ |  | logged. $41.25 wine and cheese, you paid. split 2:2:1: you $16.50, dev $16.50, sam $8.25. |
+| split-exact-doesnt-add-up-asks | splitting | act/hard-trigger/groceries | - | ✅ |  | hmm, dev's 30 + sam's 15 + your 10 comes out to more than the $50 you paid. which part is off: the total or on |
+| multi-payer | splitting | act/hard-trigger/splitting | log_expense | ✅ |  | logged. concert tickets $100, dev paid $60 and you paid $40. split three ways: maya $33.33, sam $33.33, dev $3 |
+| delete-expense | splitting | act/hard-trigger/splitting | delete_expense | ✅ |  | deleted the pizza expense ($24.00). say "undo" if that was a mistake. |
+| delete-then-undo | splitting | act/hard-trigger/splitting | restore_expense | ✅ |  | pizza's back, $24.00. |
+| set-venmo | core | act/hard-trigger/splitting | set_payment_handle | ✅ |  | done, venmo's set to @maya. settle up links will use it now. |
+| owes-pairwise-simplify-off | splitting | act/hard-trigger/splitting | get_balances | ✅ |  | sam owes dev $30 and maya $30. dev owes maya $30. net: maya's up $60, dev's even, you're down $60. |
+| owes-simplified | splitting | act/hard-trigger/splitting | get_balances | ✅ |  | sam owes maya $60. dev's all square. |
+| category-utilities | splitting | act/hard-trigger/splitting | log_expense | ✅ |  | logged. $54 water bill, maya paid, $18 each. dev and sam owe her $18 apiece. |
+| settle-up-pay-links | splitting | act/hard-trigger/splitting | settle_up | ✅ |  | you owe maya $20.00. venmo button's attached, tell me once you've paid and i'll log it. |
+| receipt-photo | splitting | act/hard-trigger/splitting | expense_from_receipt | ✅ |  | logged. luigi's trattoria, $137.97, you paid. dev owes $78.65 (steak plus his cut of the rest), you and sam $2 |
+| owes-named | splitting | act/hard-trigger/splitting | get_balances | ✅ |  | dev owes maya $20 and sam owes maya $20. maya's up $40 overall. |
+| owes-unaddressed-question | splitting | act/jev-act/splitting | get_balances | ✅ |  | dev owes maya $20 and you owe maya $20. maya's up $40 overall. |
+| settle-up | splitting | act/hard-trigger/splitting | settle_up | ✅ |  | logged. dev paid maya $20, you two are square now. |
+| list-expenses | splitting | act/hard-trigger/splitting | list_expenses | ✅ |  | lately: pizza $24 (Dev, $8 each) and internet $60 (you, $20 each). that's all so far. |
+| unknown-name | splitting | act/hard-trigger/splitting | - | ✅ |  | jordan's not in this group (just dev, maya and sam). did you mean one of them, or does jordan need to be added |
+| unprompted-pizza-asks-first | splitting | act/jev-act/splitting | - | ✅ |  | want me to log $40 pizza (food), paid by you and split 3 ways? |
+| spanish | splitting | act/hard-trigger/splitting | log_expense | ✅ |  | anotado. uber $30, pagó maya, $10 cada uno (maya, dev y sam). |
+| add-milk-eggs | groceries | act/hard-trigger/groceries | - | ✅ |  | for you or the whole house? |
+| add-shared | groceries | act/hard-trigger/groceries | cart_add | ✅ |  | added dish soap to the cart as a shared item, about $3.49. that's the only thing in there so far. |
+| view-cart | groceries | act/hard-trigger/groceries | cart_view | ✅ |  | dev's got 6 bananas and an oat milk in there, est. $13.93 total. nothing shared yet. |
+| remove-item | groceries | act/hard-trigger/groceries | cart_remove | ✅ |  | took milk off the list. |
+| checkout-link | groceries | act/hard-trigger/groceries | cart_checkout | ✅ |  | checkout's ready: 2 items, est. $8.78. tell me the real total once you've paid and i'll split it up. order's i |
+| paid-84-after-checkout | groceries | act/hard-trigger/groceries | cart_purchased | ✅ |  | logged. $84 groceries (4 items), you paid. your part is $32.57, dev owes $36.00, sam owes $15.43. cart's clear |
+| add-chicken-for-house | groceries | act/hard-trigger/groceries | cart_add | ✅ |  | added 2 lb chicken to the shared cart, about $8.99. cart's at $8.99 total so far. |
+| out-of-dish-soap | groceries | act/hard-trigger/groceries | cart_add | ✅ |  | added dish soap to the shared cart, about $3.49. it's the only thing in there so far. |
+| recipe-tacos-friday | groceries | act/hard-trigger/groceries | recipe_draft | ✅ |  | tacos for 5 are set for friday, 35 min. you'd need beef, tortillas, cheese, and veggies, 13 things in all, ste |
+| recipe-yes-add-them | groceries | act/jev-act/groceries | recipe_add_to_cart | ✅ |  | added 12 to the cart for $51.04 estimated, skipped the onion. shared with the house. |
+| recipe-explicit-add | groceries | act/hard-trigger/groceries | recipe_draft,recipe_add_to_cart | ✅ |  | garlic tomato spaghetti for 3, 25 min. needs spaghetti, olive oil, garlic, crushed tomatoes, red pepper flakes |
+| recipe-instacart-link | groceries | act/hard-trigger/groceries | recipe_link | ✅ |  | here's the instacart page for the tacos for 5, button's attached. |
+| view-cart-recipe | groceries | act/hard-trigger/groceries | cart_view | ✅ |  | cart's got 12 items, est. $46.82. most of it is the tacos for 5 stuff maya added (cilantro, limes, salsa verde |
+| pantry-set | groceries | act/hard-trigger/groceries | pantry_set | ✅ |  | got it, salt and oil are in the pantry. i'll leave them off recipe lists. |
+| pantry-list | groceries | act/hard-trigger/groceries | pantry_list | ✅ |  | we always have oil, rice and salt. tell me if anything else should go on there. |
+| cart-purchased | groceries | act/hard-trigger/groceries | cart_purchased | ✅ |  | logged. sam paid $42 for groceries (2 items), cart's cleared. maya owes $22.24 and dev owes $19.76. |
+| follow-up-window-chips | groceries | maybe/follow-up/groceries | - | ✅ |  | ignore my last msg, that came out weird. salsa and 2 bags of chips: are those just for you or for the whole ho |
+| did-dishes | chores | act/hard-trigger/chores | log_chore | ✅ |  | dishes done by dev, logged. maya's up next. |
+| did-dishes-unprompted-asks | chores | act/jev-act/chores | - | ✅ |  | want me to log dishes done by you, dev? |
+| whose-turn | chores | act/hard-trigger/chores | chore_status | ✅ |  | dev's up. maya just did it today, and it's not due till sun. |
+| add-chore | chores | act/hard-trigger/chores | chore_add | ✅ |  | vacuuming's on the chart, every 7 days. rotation is dev, maya, sam. |
+| chore-for-someone-else | chores | act/hard-trigger/chores | log_chore | ✅ |  | logged, dev took out the trash. maya's up next. |
+| whose-turn-rotation | chores | act/hard-trigger/chores | chore_status | ✅ |  | trash is dev's turn. maya did it today, and it's next due sat. |
+| skip-my-turn | chores | act/hard-trigger/chores | chore_skip | ✅ |  | skipped. trash is sam's now, enjoy the trip 🧳 |
+| add-chore-rotation | chores | act/hard-trigger/chores | chore_add | ✅ |  | mopping's on the chart, every 3 days. rotation is sam, then dev, then maya, so sam's up first. |
+| the-chart | chores | act/hard-trigger/chores | hall_of_shame | ✅ |  | the chart this week: sam's at 0, dev and maya have 1 each. sam's got a clear window to jump in 🙂 |
+| track-ac-filter | upkeep | act/hard-trigger/upkeep | upkeep_add | ✅ |  | got it, tracking the AC filter every 90 days. tell me when it's changed and i'll reset the clock. |
+| maintenance-done | upkeep | act/hard-trigger/upkeep | upkeep_done | ✅ |  | logged, hvac filter's done. next one's due jan 27, 2027. |
+| air-filter-done | upkeep | act/hard-trigger/upkeep | upkeep_done | ✅ |  | logged. air filter's done, next one's due jan 27, 2027. |
+| whats-due-this-week | upkeep | act/hard-trigger | chore_status,upkeep_status | ✅ |  | dishes are due today and it's dev's turn. upkeep-wise, all five are due and none have ever been marked done: f |
+| remind-trash-tuesday | reminders | act/hard-trigger/chores | set_reminder | ✅ |  | got it. i'll tell everyone "trash goes out" on tue nov 3 at 8:00 pm. one time only, say the word if you want i |
+| remind-rent-monthly | reminders | act/hard-trigger/core | set_reminder | ✅ |  | got it. i'll dm you on the 1st at 9am (sun nov 1), then every month after that. |
+| remind-dev-private | reminders | act/hard-trigger/splitting | set_reminder | ✅ |  | done. i'll ping dev privately friday at 6pm to pay you back for brunch. |
+| weekly-report-verbatim | core | act/hard-trigger/core | group_report | ✅ |  | 📋 Group report · Eval weekly-report-verbatim 1793252333616 💸 Dev pays Maya $20.00 and Sam pays Maya $20.00.  |
+| setup-india-household | core | act/hard-trigger/core | set_group_settings | ✅ |  | all set: roommates, INR, india time. splitting, groceries, chores and upkeep are on, and i added 3 starter cho |
+| list-reminders | reminders | act/hard-trigger/core | list_reminders | ✅ |  | just one: "rent is due" for everyone, mon nov 2 at 11:39 pm. |
+| group-report | core | act/hard-trigger/core | group_report | ✅ |  | 📋 Group report · Eval group-report 1793252370040 💸 Dev pays Maya $20.00 and Sam pays Maya $20.00. 🛒 The Car |
+| members | core | act/hard-trigger/core | list_members | ❌ | reply lacks Dev | it's you, maya, and sam. maya's the admin, and all three of you are active. |
+| what-can-you-do | core | act/hard-trigger/core | list_toolkits | ✅ |  | I've got splitting, groceries, chores and upkeep all on. Try "I paid 60 for internet", "tacos for 5 friday", " |
+| turn-on-research | core | act/hard-trigger/core | toggle_toolkit | ✅ |  | research isn't ready yet, it's still on the list. i can't flip it on for now. |
+| groceries-off-member | core | act/hard-trigger/groceries | toggle_toolkit | ✅ |  | only admins can flip toolkits, and that's maya. ask her to turn groceries off, or have her promote you. |
 | chatter-game | gate | ignore/jev-ignore | - | ✅ |  | (quiet) |
 | chatter-see-you | gate | ignore/jev-ignore | - | ✅ |  | (quiet) |
 | window-chatter-stays-quiet | gate | ignore/jev-ignore | - | ✅ |  | (quiet) |
-| thanks-roomie | gate | act/hard-trigger | - | ✅ |  | Anytime! Salsa still isn't in the cart, though. Is it for you or the whole house? |
-| vague-clarifies | gate | clarify/jev-clarify/splitting | - | ✅ |  | Who paid, for what, and how much? I'll log it once I have those, and I'll split it evenly three ways unless yo |
+| thanks-roomie | gate | act/hard-trigger/groceries | - | ✅ |  | np |
+| vague-clarifies | gate | clarify/jev-clarify/splitting | - | ✅ |  | who paid, and how much for what? i can log it once i've got that. |
+| vibe-chill | personality | act/hard-trigger/splitting | log_expense | ✅ |  | logged. $60 internet, maya paid, $20 each for her, dev and sam. |
+| vibe-hype | personality | act/hard-trigger/splitting | log_expense | ✅ |  | Logged! Maya paid $60 for internet, split three ways at $20 each 🎉 Dev and Sam each owe Maya $20. |
+| vibe-deadpan | personality | act/hard-trigger/splitting | log_expense | ✅ |  | Logged. $60 internet, Maya paid. $20 each, so Dev and Sam owe Maya $20. |
+| name-dino-triggers | personality | act/hard-trigger/groceries | cart_add | ✅ |  | added oat milk to your side of the cart, about $4.99. cart's at $4.99 total. |
+| nickname-not-before-3 | personality | act/hard-trigger/splitting | get_balances | ✅ |  | dev owes maya $20 and you owe maya $20, sam. maya's up $40 total. |
+| slang-low-confidence | personality | act/hard-trigger/splitting | log_expense | ✅ |  | logged. $30 pizza, dev paid, $10 each. maya and sam owe dev $10 apiece. |
+| slang-budget-spent | personality | act/hard-trigger/splitting | log_expense | ✅ |  | logged. $30 pizza from dev, $10 each. maya and sam owe dev $10 apiece. |
+| greeting-first-message | personality | ignore/jev-ignore | - | ✅ |  | evening all |
+| greeting-once-a-day | personality | ignore/jev-ignore | - | ✅ |  | (quiet) |
+| pet-command | personality | act/hard-trigger | - | ✅ |  | *purrs* been a good day. everyone's square, so i've just been chilling and watching the chore chart like it's  |
+| remember-vegetarian | personality | act/hard-trigger/core | remember | ✅ |  | got it, maya's vegetarian. i'll keep that in mind for recipes. |
+| recipe-respects-diet | personality | act/hard-trigger/groceries | recipe_draft | ✅ |  | black bean sweet potato tacos for 1, veggie and about 30 min. you'd need: sweet potato, black beans, corn tort |
+| what-do-you-know-about-me | personality | act/hard-trigger/core | what_do_you_know_about_me | ✅ |  | you're vegan and you care about the plant. that's all i've got. say "roomie forget me" if you want it wiped. |
+| what-do-you-know-about-others | personality | act/hard-trigger/core | - | ✅ |  | that's dev's to share, i don't pass along what people tell me about themselves. you can ask him directly. i ca |

@@ -1,6 +1,6 @@
 # Roomie
 
-Roomie is an AI groupmate that lives in a group chat and on a per-group dashboard. It splits costs, keeps the shared grocery cart, tracks chores and upkeep, and sets reminders. Persona: a friendly, witty, brief groupmate; exact about facts.
+Roomie is an AI groupmate that lives in a group chat and on a per-group dashboard. It splits costs, keeps the shared grocery cart, tracks chores and upkeep, and sets reminders. Persona: the group chat's pet. Each Group's Roomie takes its personality from the group (a vibe, a name, quirks, and the slang it slowly picks up); always brief and exact about facts (see "Personality" below).
 
 **Read first:** the rebuild plan is in `docs/plan.md`, the vocabulary in `GLOSSARY.md`, and the decisions in `docs/adr/`. They are the spec; where they conflict with this file, they win. Steps 1 (rename), 2b (Telegram), 3 (Mastra agent), 4 (identity, Groups, dashboard), 5 (Splitting), 6 (Groceries) and 7 (Chores, Upkeep, reminders, Group time zones) are done; the code below is what exists today. Before a real Telegram group: `npm run telegram:check`, then `docs/first-group-test.md`. WhatsApp (step 2) is parked until Roomie has a number; `npm run dev-chat` simulates a group chat without any app.
 
@@ -17,7 +17,7 @@ Agent skills for this repo live in `.agents/skills/`.
 ```
 src/
   db/schema.ts          Drizzle tables: groups, chats, accounts, members, claim_tokens, group_toolkits, chat_messages,
-                        member_notes, activity + the Toolkit tables (expenses, expense_payers, expense_splits,
+                        member_notes, activity, pet_moments + the Toolkit tables (expenses, expense_payers, expense_splits,
                         settlements, splitwise_links, expense/settlement_external_refs, outbox_jobs, recipes, cart_items,
                         cart_checkouts, chores,
                         chore_logs, reminders, maintenance), all keyed by group_id
@@ -30,7 +30,8 @@ src/
                         defaultOn), delete group data; Onboarding's preset runs the Toolkits' onEnable hooks
     toolkits.ts         setToolkit (Admins; by id or name; coming soon / unmet requires refused; hooks once per change;
                         a dashboard switch-on posts ONE line in the Chat, 10 min cooldown), catalogFor, checkRequirements
-    members.ts          list (active / active+pending), approve, decline, promote, payment handles, forgetMe
+    members.ts          list (active / active+pending), approve, decline, promote, payment handles, forgetMe, Member
+                        facts (rememberAboutMe, knownAbout: your own or an Admin, peopleFacts for the instructions)
     claims.ts           Claim links: issueDashboardLink, createClaimToken, consumeClaim, upsertAccount
     activity.ts         record() + listActivity(): who added, changed or deleted what
     chatlog.ts          chat_messages: log, recent chatter, follow-up window facts, retention delete
@@ -60,6 +61,9 @@ src/
                         choresNudgeText
     schedule.ts         groupTimezone, the nudge hour and report day/hour (getSchedule / updateSchedule, Admin), the
                         pure windows, claimPost / releasePost on scheduled_posts
+    personality.ts      groups.personality: getPersonality, updatePersonality (Admin), saveLearned (style job), resetLearned
+                        (Admin), groupMood (worried / sleepy / happy / calm), allSquare
+    pet.ts              say-once pet moments on pet_moments (MomentStore): dayGreeting, claimWins
   onboarding.ts         onGroupJoined (Group + Chat + Members, adder = Admin, intro + setup questions),
                         onParticipantJoined (Pending + "approve X?") and onUnknownSender (Pending, or active inside a
                         Channel's roster grace, ADR 0010). Called by Channel adapters (ADR 0008)
@@ -70,10 +74,14 @@ src/
   mastra/
     index.ts            `mastra`: the roomie agent, PostgresStore, Observability, scorers, logger
     context.ts          RequestContext schema { groupId, memberId, memberName, role, status, source, toolkits?,
-                        toolkit?, gate?, mayStaySilent? } + ctxOf()
-    agents/roomie.ts    ONE agent, built once. instructions(requestContext) = persona + what's on/off + each enabled
-                        manifest's persona fragment + members (roles, pending) + Group time zone + Pending / Onboarding
-                        (lists the presets) / Gate blocks; tools = toolsFor(toolkit, enabled Toolkits)
+                        toolkit?, gate?, mayStaySilent?, pet? ("petted" | "greet") } + ctxOf()
+    agents/roomie.ts    ONE agent, built once: fetches the facts (personality, mood, people, Roomie's last replies,
+                        enabled Toolkits); tools = toolsFor(toolkit, enabled Toolkits)
+    agents/instructions.ts  pure: roomieInstructions = composePersona(...) with its Toolkit slot filled from the enabled
+                        manifests (what's on/off + each one's persona fragment) + members + time zone + Pending /
+                        Onboarding (vibe + presets) / /pet / greeting / Gate blocks
+    persona.ts          pure: core rules + house style + archetype voice + sliders as sentences + quirks + learned
+                        style (gated by confidence) + /* TOOLKIT_PERSONA */ + mood + people (ADR 0012)
     memory.ts           Memory: thread group-<id>, resource <groupId>; last 30, semantic recall, working memory
     forget.ts           memory cleanup for "forget me" (a Member's lines + note) and "delete group data" (the thread)
     gate/               policy.ts (pure: decideGate, Chattiness thresholds, follow-up window, parseSilent), jev.ts
@@ -94,9 +102,10 @@ src/
     catalog.ts          server: allToolkits, enabledFor(groupId), isEnabled, toolkitStates (React-cached per request)
     util.ts             ctxOf, toCents, memberIdByName (opts.includePending), dashboardLinks
     core/               manifest.ts + server.ts; members (list, list_pending, approve/decline/promote, set_payment_handle,
-                        forget_me), settings (set_group_settings, toggle_toolkit, list_toolkits), dashboard
-                        (get_dashboard_link), reminders, report
-    splitting/ groceries/ chores/ upkeep/   manifest.ts + server.ts + the tools (+ dashboard.tsx: Home/Settings sections)
+                        forget_me), people (remember, what_do_you_know_about_me), settings (set_group_settings incl.
+                        personality, toggle_toolkit, list_toolkits), dashboard (get_dashboard_link), reminders, report
+    splitting/ groceries/ chores/ upkeep/   manifest.ts + server.ts + the tools (+ dashboard.tsx: Home/Settings sections;
+                        groceries: cart.ts + recipes.ts)
   integrations/         composio.ts (client + cached key health), splitwise.ts (SplitwiseClient: ComposioSplitwise and
                         FakeSplitwise, splitwiseClient(), splitwiseAvailability())
   channels/types.ts     IncomingMessage { channel, chatExternalId, userExternalId, userName, text, imageUrl?, isPrivate?,
@@ -122,13 +131,17 @@ src/
   lib/money.ts          formatMoney / parseMoney (client-safe)
   lib/units.ts          Instacart's units, synonyms (tbsp, lb, pcs), clove/pinch/slice -> buyable, parseAmount, formatAmount
   lib/voice.ts lib/prices.ts lib/style-note.ts
+  lib/personality.ts    pure, client-safe: ARCHETYPES, Personality (normalize / validate / apply patch), confidenceFor,
+                        slangBudget, usableNicknames, saysName, isPetCommand, moodFrom, greeting / win / preview lines
+  lib/style-stats.ts    pure: the Learned style's counts (countPhrase, countNickname, mergeLearned, activeHours)
   lib/pay-links.ts      Venmo / PayPal / Cash App links with the amount (settle_up and the settle drawer)
   jobs/scheduler.ts     60 s tick: due reminders (deliver for the Group, deliverPrivate for a Member), the daily chores
                         nudge and the weekly Group Report (claimed in scheduled_posts, once per period); Group style
                         refresh; recurring Expenses (hourly check); Splitwise outbox; daily retention
   jobs/report-text.ts   groupReportText: the same text for the weekly post and group_report (casual from the style note)
   jobs/retention.ts     deletes chat_messages older than 30 days (ADR 0006)
-  jobs/style-note.ts    Haiku rewrites the Group style note every 50 chat lines
+  jobs/style-note.ts    every 50 chat lines: Haiku proposes style candidates, style-stats counts them into
+                        groups.personality.learned (setCandidateReader() for tests)
   proxy.ts              THE middleware (a root proxy.ts is ignored because the app is under src/): Neon Auth guard on
                         /g/*; a stray neon_auth_session_verifier on / or /claim/* -> /auth/callback (dev bypass skips it)
   lib/auth/             server.ts (createNeonAuth, sameSite lax), client.ts, oauth-paths.ts (client-safe URL helpers),
@@ -136,7 +149,9 @@ src/
   instrumentation.ts    loads env, registers the Telegram Channel (outbound) when TELEGRAM_BOT_TOKEN is set, starts the
                         scheduler once (DISABLE_SCHEDULER=1 skips it)
   components/ui/        shadcn components; components/roomie/ the mascot; components/app/ shared app bits
-                        (sign-in, doorway, avatars, money-bits, categories, theme)
+                        (sign-in, doorway, avatars, money-bits, categories, theme) and the self-contained Settings ->
+                        Personality: personality-section.tsx (server, <PersonalitySection groupId />), -panel.tsx
+                        (client), -actions.ts (its own server actions)
   app/
     layout.tsx globals.css   Figtree, theme script, toasts; the design tokens
     page.tsx            signed out: sign-in; signed in: last/first Group, or "No groups yet" (+ paste a Claim link)
@@ -196,6 +211,7 @@ spikes/                 throwaway experiments (WhatsApp/Baileys)
 - **Checkout** (`cart_checkout`, "Get Instacart link"): snapshots the open Cart into `cart_checkouts`, builds an Instacart shopping list (structured `quantity`/`unit`, else parsed from `qty`), returns an "Open in Instacart" button. The same open items reuse the last unpaid Checkout. If Instacart can't be reached the Checkout is still saved with a null url and Roomie says the link isn't available yet.
 - **"I paid $84"** is `cart_purchased` (persona: not `log_expense`). `markPurchased` flips the open items (or a Checkout's) to purchased in a transaction, then `logExpense` with `method: "exact"`, `category: "groceries"` and `computeCartSplits` rows (personal to the adder, shared evenly, weighted by estimates, payer-first remainder); the newest unpaid Checkout it covers gets `expense_id` + `paid_at`. The drawer previews with the same function and the active Members in `listMembers` order, so it matches to the cent.
 - **Instacart** (ADR 0004): `InstacartClient` with `ComposioInstacart` (`tools.execute("INSTACART_CREATE_SHOPPING_LIST_PAGE" | "INSTACART_CREATE_RECIPE_PAGE", { userId: "roomie-app", arguments })`, Instacart IDP body shapes, `products_link_url` found at any depth) and `FakeInstacart` (deterministic `https://instacart.example/...`). Instacart is a "no auth" Composio toolkit: no auth config, no connection, only `COMPOSIO_API_KEY`. `INSTACART_FAKE=1` / `setInstacartClient()` pick the fake; dev-chat switches by itself when the key is missing or rejected; failures are `InstacartUnavailableError`, relayed as text. The dashboard button is enabled only for the real client with a healthy key. Recipe links are cached on the Recipe by `recipeKey` (title, servings, ingredients).
+
 ## Chores, upkeep and reminders (step 7)
 
 - **Time zones:** every "today", "tonight", "Tuesday 8pm", "this week", due day, nudge hour and report window is computed in `groups.timezone` with `lib/time.ts`. Never `new Date().getDay()`/`toISOString().slice(0,10)` for a Group's day. The agent's instructions carry the local now (`describeNow`); tools take local wall-clock without an offset (`parseInZone`: an offset is honoured, a bare `2026-11-03T20:00` is the Group's zone, a bare date is 9:00). `validateSettings` maps what people say ("Chicago", "CST", "India", any IANA city) with `resolveTimeZone`; unknown -> "Which city are you in?". Test DST with America/Chicago Nov 1 2026, Europe/Berlin Oct 25 2026 and Asia/Kolkata.
@@ -206,6 +222,17 @@ spikes/                 throwaway experiments (WhatsApp/Baileys)
 - **The Group Report** is one message of at most ~12 lines (`reportParts`): Settle plan, chores this week (counts, the best streak, what's up now, the chart), upkeep due soon, the Cart's size, the next week's whole-group reminders. Sections of switched-off Toolkits are left out. Emoji-led lines by default; when the Group style note's tone is casual (`isCasualStyle`) the same sentences run together without the list look. `group_report` returns the same text (`groupReportText`) and Roomie posts it verbatim.
 - **Onboarding** for roommates and families adds the three starter chores (no Rotation, so new people join in) and the usual five upkeep items, once, and only for Toolkits that are on. Family now also gets Upkeep.
 - **Telegram first contact:** `/help` (group or DM) is five lines (`helpText`), `/start` in a DM is one line and never a link, other slash commands are ignored, a failure while Roomie was addressed gets one friendly line (`OOPS`) and the stack goes to the log. `npm run telegram` prints a `[roomie]` line per message (gate, tools, time, trace id) and per reply.
+
+## Personality (the group pet)
+
+[docs/personality.md](docs/personality.md), [ADR 0012](docs/adr/0012-personality-archetype-sliders-learned-style.md). Personality = archetype (chill default, hype, deadpan, mom, gremlin, butler) + what an Admin sets (name, up to 3 quirks, languages, emoji / humor / formality sliders) + the Learned style, all in `groups.personality` (read it through `normalizePersonality`; `{}` is chill "Roomie").
+
+- **Instructions are composed in code** (`mastra/persona.ts`), never one free-text prompt: core rules (facts from tools, no math, brevity) first, then the voice, sliders as sentences, quirks, learned style, `/* TOOLKIT_PERSONA */` (enabled manifests' optional `persona: string`), mood, what Roomie knows about people. Jokes are a trait, not a Toolkit.
+- **Adaptation is bounded by code:** confidence comes from messages seen (`confidenceFor`); below 0.3 no slang, 0.3-0.6 one phrase per 5 replies (checked against Roomie's last 4 chat lines), above 0.6 free but never more than the group; nicknames only after 3 sightings by others. Counts come from the messages (`lib/style-stats.ts`); the model only proposes candidates. Change the rules there, with a test.
+- **Say-once behaviours** claim a `pet_moments` row (group, kind, key): the day's greeting (not when quiet, not after Roomie already posted that day, one line, no link) and win cheers (square after a Settlement, chore streak 3/7/30, a Checkout), appended as one short line in the archetype's voice. `/pet` (and "pet roomie") is a hard trigger with a 1-2 line in-character reply.
+- **Mood** (`groupMood`): worried if anyone owes > $100, sleepy after 5 quiet days, happy when everyone's square, calm otherwise; the Home dino and one line of the instructions.
+- **Member facts** (`remember`, `what_do_you_know_about_me`) live in `member_notes.note` next to the handles; only your own, or an Admin for anyone; "forget me" wipes them.
+- Evals: the runner claims the day's greeting for every scenario except `greet: true` ones, so a hello doesn't change other replies.
 
 ## The Gate (when Roomie speaks)
 
@@ -222,7 +249,7 @@ spikes/                 throwaway experiments (WhatsApp/Baileys)
 - The Toolkits page (`/g/<id>/toolkits`) is the one place Toolkits are switched in the UI; Settings only summarizes and links there. In UI text it's "Toolkits", not a store or marketplace (Roomie is a groupmate).
 - Dashboard pattern: a page (server) calls `currentMember(groupId)`, reads services through `_components/data.ts` and renders a client screen; writes are server actions in `g/[groupId]/actions.ts` that call a service with the session's Ctx and `revalidatePath`. They return `{ ok, error, status }`, so screens toast errors. Coming-soon Toolkits (Research, PDFs, Trips, Stickers, Household admin) are manifest-only stubs: listed on the Toolkits page and refused kindly.
 - Schema changes: edit `src/db/schema.ts`, `npm run db:generate`, commit the SQL in `drizzle/`, `npm run db:migrate`. Never `drizzle-kit push`.
-- Roomie's replies are 1 to 3 short lines unless someone asks for more. The trigger word is "roomie".
+- Roomie's replies are 1 to 3 short lines unless someone asks for more (the archetype can make that 1). The trigger words are "roomie" and the Group's name for its pet (`callsPet`); the @mention always works.
 - Use the glossary's words in code and UI text (Member, Group, Expense, Cart...), and avoid the words it lists under _Avoid_.
 ## Library notes (versions in package-lock)
 

@@ -143,6 +143,89 @@ export async function setPaymentHandles(ctx: Ctx, input: Partial<Record<PaymentA
   return row.note;
 }
 
+/* ---------- what Roomie knows about you ("remember", "what do you know about me") ---------- */
+
+export const MAX_CARES = 3;
+const FACT_KEYS = ["preferredName", "diet", "allergies", "timezone", "birthday"] as const;
+export type FactsPatch = Partial<Record<(typeof FACT_KEYS)[number], string>> & { caresAbout?: string; other?: string };
+
+/** "preferred name May; diet vegetarian; cares about the plant, climbing" (empty when nothing's known). Pure. */
+export function describeFacts(note: MemberNote): string {
+  const parts: string[] = [];
+  if (note.preferredName) parts.push(`goes by ${note.preferredName}`);
+  if (note.diet) parts.push(`diet: ${note.diet}`);
+  if (note.allergies) parts.push(`allergies: ${note.allergies}`);
+  if (note.timezone) parts.push(`time zone: ${note.timezone}`);
+  if (note.caresAbout?.length) parts.push(`cares about ${note.caresAbout.join(", ")}`);
+  if (note.birthday) parts.push(`birthday: ${note.birthday}`);
+  if (note.other?.length) parts.push(note.other.join("; "));
+  const apps = Object.entries(note.handles ?? {}).filter(([, h]) => h);
+  if (apps.length) parts.push(`pays with ${apps.map(([a]) => a).join(", ")}`);
+  return parts.join("; ");
+}
+
+/** Pure merge for remember: scalar facts replace, "cares about" keeps the newest 3, "other" the newest 5; "" clears. */
+export function mergeFacts(note: MemberNote, patch: FactsPatch): MemberNote {
+  const next: MemberNote = { ...note };
+  for (const k of FACT_KEYS) {
+    if (patch[k] === undefined) continue;
+    const v = patch[k]!.trim().slice(0, 80);
+    if (v) next[k] = v;
+    else delete next[k];
+  }
+  const push = (list: string[] | undefined, v: string | undefined, max: number) => {
+    if (v === undefined) return list;
+    const t = v.trim().slice(0, 80);
+    if (!t) return [];
+    return [...(list ?? []).filter((x) => x.toLowerCase() !== t.toLowerCase()), t].slice(-max);
+  };
+  const cares = push(note.caresAbout, patch.caresAbout, MAX_CARES);
+  if (cares !== undefined) next.caresAbout = cares;
+  const other = push(note.other, patch.other, 5);
+  if (other !== undefined) next.other = other;
+  return next;
+}
+
+/** The sender tells Roomie something lasting about themselves. Any status: it's their own data. */
+export async function rememberAboutMe(ctx: Ctx, patch: FactsPatch): Promise<MemberNote> {
+  const me = await getMember(ctx, ctx.memberId);
+  if (!me || me.status === "removed") throw new NotAllowedError("You're not in this group anymore.", "removed");
+  return db.transaction(async (tx) => {
+    const [row] = await tx.select().from(memberNotes).where(eq(memberNotes.memberId, me.id)).for("update");
+    const note = mergeFacts(row?.note ?? {}, patch);
+    await tx
+      .insert(memberNotes)
+      .values({ memberId: me.id, note })
+      .onConflictDoUpdate({ target: memberNotes.memberId, set: { note, updatedAt: new Date() } });
+    return note;
+  });
+}
+
+/**
+ * What Roomie knows about a Member: their own note for anyone, someone else's only for an Admin. Returns the name and
+ * the note's facts (payment handles included).
+ */
+export async function knownAbout(ctx: Ctx, input: { memberId?: string } = {}): Promise<{ name: string; note: MemberNote; summary: string }> {
+  const targetId = input.memberId ?? ctx.memberId;
+  if (targetId !== ctx.memberId) await requireAdmin(ctx);
+  const who = await getMember(ctx, targetId);
+  if (!who || who.status === "removed") throw new Error("That person isn't in this group.");
+  const note = await getNote(who.id);
+  return { name: who.displayName, note, summary: describeFacts(note) };
+}
+
+/** "Maya: diet: vegetarian; cares about the plant" for every Member Roomie knows something about (its instructions). */
+export async function peopleFacts(ctx: GroupCtx): Promise<string[]> {
+  const people = await listGroupMembers(ctx);
+  if (!people.length) return [];
+  const notes = await db.select().from(memberNotes).where(inArray(memberNotes.memberId, people.map((p) => p.id)));
+  const byId = new Map(notes.map((n) => [n.memberId, n.note]));
+  return people
+    .map((p) => ({ name: p.displayName, facts: describeFacts({ ...(byId.get(p.id) ?? {}), handles: undefined }) }))
+    .filter((x) => x.facts)
+    .map((x) => `${x.name}: ${x.facts}`);
+}
+
 /* ---------- forget me (ADR 0006) ---------- */
 
 /**

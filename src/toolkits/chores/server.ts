@@ -4,5 +4,6 @@ import { chores as manifest } from "./manifest";
 
 export const chores = defineToolkit(manifest, {
   tools: choreTools,
-  dashboard: { home: () => import("./dashboard").then((m) => m.ChoresHome) },
+  // Home: Today right after your standing (Splitting), before the Cart.
+  dashboard: { home: () => import("./dashboard").then((m) => m.ChoresHome), homeOrder: 15 },
 });

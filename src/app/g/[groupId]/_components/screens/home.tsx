@@ -24,12 +24,24 @@ import { TopBar } from "../shell"
 import type { CartItemView, ChoreView, NarrationView, Transfer, UpkeepView } from "../types"
 
 /**
- * Home: Roomie in the doorway, then each enabled Toolkit's Home section (children, in nav order, from their
- * manifests), then what Roomie said lately.
+ * Home: Roomie in the doorway with the Group's mood, then each enabled Toolkit's Home section (children, in nav
+ * order, from their manifests: standing, today, ...), then what Roomie said lately.
  */
-export function HomeScreen({ mood, narration, children }: { mood: RoomieMood; narration: NarrationView[]; children: ReactNode }) {
+export function HomeScreen({
+  mood,
+  moodReason,
+  narration,
+  children,
+}: {
+  mood: RoomieMood
+  /** Why (services/personality.ts groupMood); without one the mood came from a Toolkit (your own Balance). */
+  moodReason?: string | null
+  narration: NarrationView[]
+  children: ReactNode
+}) {
   const { group, base, cheers } = useGroup()
   const [cheering, cheer] = useCheer()
+  const moodWords = moodReason ? `${mood === "worried" ? "a little worried" : mood}: ${moodReason}` : mood === "happy" ? "happy because you're owed" : mood
 
   useEffect(() => {
     if (cheers > 0) cheer()
@@ -38,7 +50,7 @@ export function HomeScreen({ mood, narration, children }: { mood: RoomieMood; na
   return (
     <>
       <TopBar hero title="Home" />
-      <Doorway label={`Roomie in the doorway, ${mood === "happy" ? "happy because you're owed" : mood}`}>
+      <Doorway label={`Roomie in the doorway, ${moodWords}`}>
         <Roomie size={124} mood={mood} animated cheer={cheering} decorative />
       </Doorway>
       <h1 className="sr-only">{group.name}</h1>
