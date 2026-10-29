@@ -180,8 +180,9 @@ src/
                         (client), -actions.ts (its own server actions)
   app/
     layout.tsx globals.css   Figtree, theme script, toasts; the design tokens
-    page.tsx            signed out: the landing page (_landing/, docs/landing.md); signed in: last/first Group, or "No groups
-                        yet" (+ paste a Claim link)
+    page.tsx            the landing page for everyone (_landing/, docs/landing.md); signed in, the nav says "Open dashboard"
+    app/                /app: where a signed-in person lands: last/first Group, or "No groups yet" (+ paste a Claim link);
+                        signed out -> /signin. The default `next` after sign-in (APP_PATH)
     _landing/           landing.tsx (sections), demos.ts (the fake chats; Roomie's lines from ARCHETYPES), chat.tsx
                         (ChatWindow), landing.css (CSS-only motion), beta-form.tsx + actions.ts (the WhatsApp beta form)
     signin/             the sign-in screen: Google + paste a Claim link + "Sign-in didn't complete"; ?next= afterwards

@@ -6,6 +6,7 @@ import { cn } from "cn"
 
 import { Button } from "@/components/ui/button"
 import { Roomie } from "@/components/roomie/mascot"
+import { APP_PATH, SIGNIN_PATH } from "@/lib/auth/oauth-paths"
 import { ARCHETYPES, ARCHETYPE_IDS } from "@/lib/personality"
 import { BetaForm } from "./beta-form"
 import { ChatWindow, ReceiptPhoto } from "./chat"
@@ -21,14 +22,15 @@ export const telegramAddUrl = (username = process.env.TELEGRAM_BOT_USERNAME?.tri
 const link = "underline decoration-2 underline-offset-4 decoration-primary hover:decoration-foreground"
 
 /** The public landing page (`/` when signed out). Static content; only the beta form talks to the server. */
-export function Landing() {
+/** `signedIn` only swaps the nav's Sign in for Open dashboard; the page is the same for everyone. */
+export function Landing({ signedIn = false }: { signedIn?: boolean }) {
   const addUrl = telegramAddUrl()
   return (
     <>
       <a href="#main" className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50 focus:rounded-full focus:bg-background focus:px-4 focus:py-2">
         Skip to content
       </a>
-      <Hero addUrl={addUrl} />
+      <Hero addUrl={addUrl} signedIn={signedIn} />
       <main id="main">
         <Demos />
         <Vibes />
@@ -36,14 +38,14 @@ export function Landing() {
         <DashboardPeek />
         <Beta />
       </main>
-      <Footer />
+      <Footer signedIn={signedIn} />
     </>
   )
 }
 
 /* ---------- hero: the forest band, the promise, a chat playing ---------- */
 
-function Hero({ addUrl }: { addUrl: string }) {
+function Hero({ addUrl, signedIn }: { addUrl: string; signedIn: boolean }) {
   return (
     // Brand art: the band is forest in both themes, so its tokens are the dark ones.
     <div className="dark overflow-x-clip bg-forest text-foreground">
@@ -56,8 +58,8 @@ function Hero({ addUrl }: { addUrl: string }) {
           <Button variant="ghost" size="sm" nativeButton={false} render={<a href="#how" />} className="hidden sm:inline-flex">
             How it works
           </Button>
-          <Button variant="tint" size="sm" nativeButton={false} render={<Link href="/signin" />}>
-            Sign in
+          <Button variant="tint" size="sm" nativeButton={false} render={<Link href={signedIn ? APP_PATH : SIGNIN_PATH} />}>
+            {signedIn ? "Open dashboard" : "Sign in"}
           </Button>
         </nav>
       </header>
@@ -282,7 +284,7 @@ function Beta() {
 
 /* ---------- footer ---------- */
 
-function Footer() {
+function Footer({ signedIn }: { signedIn: boolean }) {
   return (
     <footer className="border-t">
       <div className="mx-auto flex max-w-6xl flex-col gap-6 px-5 py-10 sm:flex-row sm:items-center sm:justify-between sm:px-8">
@@ -294,8 +296,8 @@ function Footer() {
           <Link href="/privacy" className={link}>
             Privacy
           </Link>
-          <Link href="/signin" className={link}>
-            Sign in
+          <Link href={signedIn ? APP_PATH : SIGNIN_PATH} className={link}>
+            {signedIn ? "Open dashboard" : "Sign in"}
           </Link>
           <a href={GITHUB_URL} target="_blank" rel="noopener noreferrer" className={link}>
             GitHub

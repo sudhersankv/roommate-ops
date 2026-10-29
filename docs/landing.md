@@ -6,15 +6,16 @@
 
 | Route | What | Code |
 |---|---|---|
-| `/` | Signed out: the landing page. Signed in: redirect to your Group. A stray `?auth_error=` is sent on to `/signin`. | `src/app/page.tsx`, `src/app/_landing/` |
-| `/signin` | Google button, paste a Claim link, the "Sign-in didn't complete" alert. `?next=` is where to go afterwards. Signed in: straight to `next` (default `/`). | `src/app/signin/page.tsx` |
+| `/` | The landing page, for everyone. Signed in, the nav's "Sign in" becomes "Open dashboard" (`/app`). A stray `?auth_error=` is sent on to `/signin`. | `src/app/page.tsx`, `src/app/_landing/` |
+| `/app` | Where a signed-in person lands: the Group they were last in (or their first), else "no groups yet" with the paste-a-Claim-link form. Signed out: `/signin`. | `src/app/app/page.tsx` |
+| `/signin` | Google button, paste a Claim link, the "Sign-in didn't complete" alert. `?next=` is where to go afterwards. Signed in: straight to `next` (default `/app`; `/` is never a `next`). | `src/app/signin/page.tsx` |
 | `/privacy` | What Roomie keeps, per Group, "forget me", who else sees it. Static. | `src/app/privacy/page.tsx` |
 | `/admin/beta` | Operators only (`ROOMIE_OPERATOR_EMAILS`, 404 for everyone else, `noindex`): the beta requests, newest first, with a status. | `src/app/admin/beta/` |
 
 ## Sign-in paths
 
 - `src/proxy.ts` guards `/g/*` and `/admin/*` with `auth.middleware({ loginUrl: "/signin" })` and rewrites the SDK's bare redirect to `/signin?next=<the page you wanted>`. `/`, `/signin` and `/claim/*` pass signed out; a verifier landing on any of them is bounced to `/auth/callback`.
-- `lib/auth/oauth-paths.ts`: `SIGNIN_PATH`, `safeNext` (anything off-site becomes `/signin`), `afterSignIn` (never back to `/signin` itself), `signInPath(next)`.
+- `lib/auth/oauth-paths.ts`: `SIGNIN_PATH`, `APP_PATH`, `safeNext` (anything off-site becomes `/signin`), `afterSignIn` (never back to `/signin` or `/`; `/app` by default), `signInPath(next)`.
 - `GoogleButton` defaults to returning to `/signin`; on `/signin` it returns to `/signin?next=…`, so a failed sign-in shows its reason there and a good one continues to `next`. Claim links still return to `/claim/<token>`.
 - `currentMember()` redirects signed-out visitors to `/signin?next=/g/<id>`.
 

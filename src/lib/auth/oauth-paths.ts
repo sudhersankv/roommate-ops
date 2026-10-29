@@ -3,8 +3,10 @@
 export const VERIFIER_PARAM = "neon_auth_session_verifier"
 export const AUTH_ERROR_PARAM = "auth_error"
 export const CALLBACK_PATH = "/auth/callback"
-/** The sign-in screen (Google + paste a Claim link). `/` is the public landing page. */
+/** The sign-in screen (Google + paste a Claim link). `/` is the public landing page for everyone. */
 export const SIGNIN_PATH = "/signin"
+/** Where a signed-in person lands: their Group's dashboard, or "no groups yet" with the paste-a-Claim-link form. */
+export const APP_PATH = "/app"
 
 /** A path on this site to continue to. Anything else (absolute, protocol-relative, backslashes) becomes /signin. */
 export function safeNext(raw: string | null | undefined): string {
@@ -14,16 +16,16 @@ export function safeNext(raw: string | null | undefined): string {
 
 const isSignIn = (path: string) => path === SIGNIN_PATH || path.startsWith(`${SIGNIN_PATH}?`) || path.startsWith(`${SIGNIN_PATH}/`)
 
-/** Where /signin continues to once you're signed in: a path on this site, never /signin itself ("/" by default). */
+/** Where /signin continues to once you're signed in: a path on this site, never /signin or the landing page (/app by default). */
 export function afterSignIn(raw: string | null | undefined): string {
   const next = safeNext(raw)
-  return isSignIn(next) ? "/" : next
+  return isSignIn(next) || next === "/" ? APP_PATH : next
 }
 
-/** The sign-in screen, continuing to `next` afterwards (`/signin?next=/g/…`; plain /signin for "/"). */
-export function signInPath(next: string | null | undefined = "/"): string {
+/** The sign-in screen, continuing to `next` afterwards (`/signin?next=/g/…`; plain /signin for /app). */
+export function signInPath(next: string | null | undefined = APP_PATH): string {
   const to = afterSignIn(next)
-  return to === "/" ? SIGNIN_PATH : withParam(SIGNIN_PATH, "next", to)
+  return to === APP_PATH ? SIGNIN_PATH : withParam(SIGNIN_PATH, "next", to)
 }
 
 /** Where GoogleButton asks Neon Auth to send the browser back to. */

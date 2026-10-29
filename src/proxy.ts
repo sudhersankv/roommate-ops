@@ -8,7 +8,8 @@ import { CALLBACK_PATH, SIGNIN_PATH, VERIFIER_PARAM, signInPath, withoutParam } 
 //  1. Signed-out visitors to a Group's dashboard are sent to the sign-in screen (/signin?next=<where they were
 //     going>). Operator pages (/admin/*) are not guarded here: the page answers 404 to anyone who isn't a signed-in
 //     operator (lib/operator.ts), signed out included, so they don't reveal they exist. Operators sign in at
-//     /signin?next=/admin/…. `/` is the public landing page and is never guarded.
+//     /signin?next=/admin/…. `/` is the public landing page for everyone (signed in too) and is never guarded; /app
+//     is where a signed-in person lands (their Group, or "no groups yet") and redirects to /signin on its own.
 //  2. Google sign-in returns to /auth/callback, which exchanges the session verifier (lib/auth/oauth-return.ts). A
 //     return that lands on a page instead (a sign-in started before /auth/callback existed, or any other
 //     callbackURL) is bounced there too. The SDK's middleware can't do it for /signin (it never exchanges on its own

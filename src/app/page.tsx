@@ -1,15 +1,9 @@
 import type { Metadata } from "next"
-import { cookies } from "next/headers"
 import { redirect } from "next/navigation"
-import { MessageCircleIcon } from "lucide-react"
 
-import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
-import { ClaimLinkForm } from "@/components/app/claim-link-form"
-import { SignInScreen } from "@/components/app/sign-in"
 import { AUTH_ERROR_PARAM, SIGNIN_PATH, authErrorFrom, withParam } from "@/lib/auth/oauth-paths"
 import { currentAccount } from "@/lib/session"
 import { appUrl, isAbsoluteUrl } from "@/lib/urls"
-import { groups } from "@/services"
 import { Landing } from "./_landing/landing"
 
 const TITLE = "Roomie — the AI groupmate for your group chat"
@@ -34,7 +28,7 @@ export function generateMetadata(): Metadata {
   }
 }
 
-// Reads the session: signed out it's the landing page, signed in it's your Group.
+// The landing page, for everyone. Signed in, the nav offers your dashboard (/app) instead of Sign in.
 export const dynamic = "force-dynamic"
 
 export default async function Home({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
@@ -43,26 +37,6 @@ export default async function Home({ searchParams }: { searchParams: Promise<Rec
     // A Google sign-in that came back here without a session: /signin explains it.
     const failed = authErrorFrom(await searchParams)
     if (failed) redirect(withParam(SIGNIN_PATH, AUTH_ERROR_PARAM, failed))
-    return <Landing />
   }
-
-  const mine = await groups.groupsForAccount(account.id)
-  const last = (await cookies()).get("roomie-group")?.value
-  const target = mine.find((g) => g.id === last) ?? mine[0]
-  if (target) redirect(`/g/${target.id}`)
-
-  return (
-    <SignInScreen title={`Hi ${account.name?.split(" ")[0] ?? "there"}. No groups yet.`}>
-      <Empty className="rounded-3xl bg-card">
-        <EmptyHeader>
-          <EmptyMedia variant="icon">
-            <MessageCircleIcon />
-          </EmptyMedia>
-          <EmptyTitle>Add Roomie to your group chat</EmptyTitle>
-          <EmptyDescription>Then ask it for the dashboard (“roomie send me the dashboard”). It sends you a private link that connects you to that group.</EmptyDescription>
-        </EmptyHeader>
-      </Empty>
-      <ClaimLinkForm />
-    </SignInScreen>
-  )
+  return <Landing signedIn={!!account} />
 }

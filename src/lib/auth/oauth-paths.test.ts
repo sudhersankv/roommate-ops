@@ -8,15 +8,16 @@ test("safeNext keeps paths on this site, anything else is /signin", () => {
   for (const bad of [null, undefined, "", "https://evil.example", "//evil.example", "/\\evil.example", "g/abc"]) assert.equal(safeNext(bad), "/signin", String(bad))
 })
 
-test("afterSignIn never sends you back to /signin", () => {
+test("afterSignIn never sends you back to /signin or the landing page: /app by default", () => {
   assert.equal(afterSignIn("/g/abc"), "/g/abc")
-  assert.equal(afterSignIn("/"), "/")
-  for (const loop of ["/signin", "/signin?next=%2Fg%2Fx", "https://evil.example", undefined]) assert.equal(afterSignIn(loop), "/", String(loop))
+  assert.equal(afterSignIn("/app"), "/app")
+  for (const loop of ["/", "/signin", "/signin?next=%2Fg%2Fx", "https://evil.example", undefined]) assert.equal(afterSignIn(loop), "/app", String(loop))
   assert.equal(afterSignIn("/signinx"), "/signinx", "only /signin itself, not a lookalike path")
 })
 
-test("signInPath carries `next`, plain /signin for the home page", () => {
+test("signInPath carries `next`, plain /signin for /app (the default)", () => {
   assert.equal(signInPath(), "/signin")
+  assert.equal(signInPath("/app"), "/signin")
   assert.equal(signInPath("/"), "/signin")
   assert.equal(signInPath("/g/abc/money?tab=expenses"), "/signin?next=%2Fg%2Fabc%2Fmoney%3Ftab%3Dexpenses")
   assert.equal(signInPath("/signin?next=%2Fg%2Fx"), "/signin")
