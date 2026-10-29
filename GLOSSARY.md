@@ -70,10 +70,6 @@ _Avoid_ (in anything a person reads): Toolkit, capability, module, plugin, featu
 Switching a Trick on or off for a Group (Admins only): "roomie, learn chores" / "roomie, forget chores" in the chat, Teach / Forget on the Tricks page. In code: `toggle_toolkit`, `setToolkit`.
 _Avoid_: Enable, disable, install, turn on (in user-facing text)
 
-**Trick**:
-The user-facing name for a Toolkit (the landing page, /help, and what people say: "roomie, learn trips"). The code keeps saying Toolkit. Groups "teach" Roomie a Trick; it "learns" it.
-_Avoid_: Toolkit, capability, module, plugin, feature (in user-facing text)
-
 **Trick vote**:
 An "I want this" on a coming-soon Trick's card on the landing page: one row in `trick_votes` with an HMAC of the voter's IP, no Group or Account. Counts show from 5.
 _Avoid_: Upvote, like, waitlist
