@@ -115,7 +115,7 @@ export function BetaForm() {
           <FieldLabel htmlFor="beta-notes">
             Anything we should know? <span className="font-normal text-muted-foreground">(optional)</span>
           </FieldLabel>
-          <Textarea id="beta-notes" name="notes" rows={3} maxLength={1000} placeholder="We split rent four ways and nobody remembers whose turn the trash is." defaultValue={values.notes} aria-invalid={invalid("notes")} />
+          <Textarea id="beta-notes" name="notes" rows={3} maxLength={1000} placeholder="Eight of us, a lake house in June, and nobody knows who paid for what." defaultValue={values.notes} aria-invalid={invalid("notes")} />
           <FieldError>{errors.notes}</FieldError>
         </Field>
       </FieldGroup>
