@@ -29,3 +29,12 @@ export function loadEnv(): string | null {
 }
 
 loadEnv();
+
+/** ROOMIE_OPERATOR_EMAILS (comma-separated): who may run the server's admin pages (/admin/whatsapp). */
+export const operatorEmails = (): string[] =>
+  (process.env.ROOMIE_OPERATOR_EMAILS ?? "")
+    .split(",")
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+
+export const isOperator = (email: string | null | undefined): boolean => !!email && operatorEmails().includes(email.trim().toLowerCase());
