@@ -171,13 +171,26 @@ export async function dueReminders(now = new Date(), groupId?: string): Promise<
   return rows.map(toReminder);
 }
 
-/** Scheduler only: mark sent; a repeating one gets its next occurrence (after `now`) as a new row. */
-export async function markSent(reminderId: string, now = new Date()): Promise<Date | null> {
-  const [row] = await db
+/**
+ * Scheduler only: claim a due reminder by setting sent_at before sending, so two processes (or a restart) never send it
+ * twice. False = someone else has it. `releaseReminder` gives it back after a failed send.
+ */
+export async function claimReminder(reminderId: string, now = new Date()): Promise<boolean> {
+  const rows = await db
     .update(reminders)
     .set({ sentAt: now })
     .where(and(eq(reminders.id, reminderId), isNull(reminders.sentAt)))
-    .returning();
+    .returning({ id: reminders.id });
+  return rows.length > 0;
+}
+
+export async function releaseReminder(reminderId: string): Promise<void> {
+  await db.update(reminders).set({ sentAt: null }).where(eq(reminders.id, reminderId));
+}
+
+/** Scheduler only, after a claimed reminder went out: a repeating one gets its next occurrence (after `now`). */
+export async function scheduleNext(reminderId: string, now = new Date()): Promise<Date | null> {
+  const [row] = await db.select().from(reminders).where(eq(reminders.id, reminderId));
   if (!row?.recurring) return null;
   const tz = await groupTimezone(row.groupId);
   const dueAt = nextOccurrence(row.dueAt, row.recurring, tz, now);

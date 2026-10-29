@@ -8,7 +8,7 @@ import { deliver, deliverPrivate } from "@/channels";
 import { CantMessagePrivatelyError } from "@/channels/types";
 import { groupsWithChat } from "@/services/groups";
 import { choresDue } from "@/services/chores";
-import { dueReminders, markSent, reminderLine, type Reminder } from "@/services/reminders";
+import { claimReminder, dueReminders, releaseReminder, reminderLine, scheduleNext, type Reminder } from "@/services/reminders";
 import { choresNudgeText } from "@/services/report";
 import { choresNudgeWindow, claimPost, getSchedule, releasePost, weeklyReportWindow, type PostKind } from "@/services/schedule";
 import { runRecurring } from "@/services/recurring";
@@ -70,9 +70,16 @@ export async function sendDueReminders(now: Date, groupId?: string): Promise<num
     const failures = s.reminderFailures.get(r.id) ?? 0;
     if (failures >= MAX_SEND_ATTEMPTS) continue; // gave up; stays unsent so a restart may retry
     try {
+      if (!(await claimReminder(r.id, now))) continue; // another process has it
+    } catch (e) {
+      console.error(`scheduler: couldn't claim reminder ${r.id}`, e);
+      continue;
+    }
+    try {
       await deliverReminder(r);
     } catch (e) {
       console.error(`scheduler: reminder ${r.id} send failed`, e);
+      await releaseReminder(r.id).catch(() => {});
       s.reminderFailures.set(r.id, failures + 1);
       if (failures + 1 >= MAX_SEND_ATTEMPTS) console.error(`scheduler: giving up on reminder ${r.id} after ${MAX_SEND_ATTEMPTS} attempts`);
       continue;
@@ -80,9 +87,9 @@ export async function sendDueReminders(now: Date, groupId?: string): Promise<num
     s.reminderFailures.delete(r.id);
     sent++;
     try {
-      await markSent(r.id, now);
+      await scheduleNext(r.id, now);
     } catch (e) {
-      console.error(`scheduler: markSent failed for reminder ${r.id}`, e);
+      console.error(`scheduler: couldn't schedule the next "${r.text}" (reminder ${r.id})`, e);
     }
   }
   return sent;
