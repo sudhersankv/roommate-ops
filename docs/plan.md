@@ -12,7 +12,7 @@ Roomie is a groupmate, not a platform: brief, witty, exact about facts, and it s
 
 | Area | Decision |
 |---|---|
-| Channel | **Telegram first** (official Bot API, no ban risk; step 2b), then WhatsApp through **Baileys** (via the Evolution API) on a dedicated carrier number, both behind the Channel adapter ([ADR 0001](./adr/0001-baileys-for-whatsapp-groups.md)). |
+| Channel | **Telegram first** (official Bot API, no ban risk; step 2b), then WhatsApp through **Baileys**, in the Next process with its session in Postgres, on a dedicated carrier number, both behind the Channel adapter ([ADR 0001](./adr/0001-baileys-for-whatsapp-groups.md), [ADR 0013](./adr/0013-whatsapp-via-baileys.md)). |
 | Agent | One **Mastra** agent (`roomie`), built once. Per-request context goes through `RequestContext`, and tools come from the Group's Toolkits ([ADR 0005](./adr/0005-toolkits-and-one-agent.md)). |
 | Models (Neon AI Gateway) | `claude-sonnet-5-5` for the agent and recipes. `claude-haiku-5-5` for background summaries and Group style. `typesafeai-jev-1-14-0` for the Gate ([ADR 0002](./adr/0002-jev-gate-before-the-agent.md)). `qwen3-embedding-0-6b` for semantic recall. |
 | Observability | Mastra tracing to the **Mastra platform** (`MastraPlatformExporter`) and to local storage for Studio. About 10% of live replies are scored. `npm run evals` runs a fixed scenario set. |
@@ -24,7 +24,7 @@ Roomie is a groupmate, not a platform: brief, witty, exact about facts, and it s
 | Privacy | Raw chat is kept for 30 days. "roomie forget me" and an Admin "delete group data" are available ([ADR 0006](./adr/0006-chat-retention.md)). |
 | Dashboard | Next.js 16, mobile-first, **Tailwind + shadcn/ui**. One dashboard per Group, with a group switcher. |
 | Data | Fresh schema, using Drizzle **migrations** (`drizzle-kit generate` + `migrate`) instead of `push`. The new Neon database starts empty. |
-| Hosting | Local only for now: `npm run dev` (dashboard and API), `npm run telegram` (Telegram, long polling) and later `npm run wa` (WhatsApp). Fly and the deploy workflow are removed. CI runs typecheck and tests. |
+| Hosting | One always-on Fly machine (`fly.toml`, `Dockerfile`): Next serves the dashboard, API and Telegram webhook, runs the scheduler and, with `WHATSAPP_ENABLED=1`, holds the WhatsApp socket. Locally: `npm run dev`, `npm run telegram` (long polling), `npm run whatsapp`. CI runs typecheck and tests. |
 
 ## How a message flows
 
@@ -81,7 +81,7 @@ scripts/                  wa.ts, seed.ts, evals.ts
 
 ## Steps
 
-Each step gets its own branch and PR, and you test locally before it's merged. Steps 1 and 2b to 7 are done; step 2 (WhatsApp) is parked until Roomie has a number. Next: the first real Telegram group ([docs/first-group-test.md](./first-group-test.md)).
+Each step gets its own branch and PR, and you test locally before it's merged. Steps 1 to 7 are done (step 2, WhatsApp, waits for its live test on Fly). Next: the first real Telegram and WhatsApp groups ([docs/first-group-test.md](./first-group-test.md)).
 
 ### 1. Rename and clean slate (`step/1-roomie`) ✅ done
 - Rename Kevin to Roomie everywhere: package, code identifiers, UI text, docs. "roomie" becomes the trigger word, with a fresh neutral-witty persona. The full persona work happens in step 3.
@@ -89,13 +89,13 @@ Each step gets its own branch and PR, and you test locally before it's merged. S
 - Rewrite `.env.example`, `README.md` and `CLAUDE.md`. Add CI (typecheck + `npm test`).
 - **Done when:** typecheck and tests pass, `git grep -i kevin` finds only ADRs and history notes, and the dashboard boots against the empty database.
 
-### 2. WhatsApp channel (`step/2-whatsapp`), needs Roomie's number (parked)
-- Baileys adapter: QR pairing with the session stored in Postgres, inbound text, voice notes (transcribed by a Gemini model on the gateway if it accepts audio, otherwise OpenRouter as today), images, group join/leave events, and outbound text, images, documents and stickers, plus private 1:1 messages.
-- Anti-ban behaviour: join delay, typing indicators and human-like pauses, per-Chat and global send rate limits, and no bulk links.
-- `npm run wa` process, with reconnects and a health log. A channel-agnostic `pipeline.ts`, using today's agent for now.
+### 2. WhatsApp channel (`feat/whatsapp`) ✅ built, waiting for the live test
+- [x] Baileys 7 in the Next process (`src/channels/whatsapp.ts`, [ADR 0013](./adr/0013-whatsapp-via-baileys.md), [docs/whatsapp.md](./whatsapp.md)): Roomie added -> Onboarding with the whole member list (adder = Admin, everyone active), later joiners Pending + approval ask, text / captions / photos (receipts) / voice notes (OpenRouter when set), @-mentions and replies, DMs from a Member of one Group, subject changes.
+- [x] Session in Postgres (`wa_sessions`), reconnect with backoff, `loggedOut` clears it; login by QR or pairing code on `/admin/whatsapp` (operators only, `ROOMIE_OPERATOR_EMAILS`); `npm run whatsapp` for local runs.
+- [x] One canonical id per person: the phone JID when resolvable, else the LID; pairs in `wa_contacts`, Members moved when the number turns up.
+- [x] Anti-ban: join delay, "typing..." and pauses, per-Chat and global rate limits, links as trailing lines without previews, Claim links only in private chats. Replays after a reconnect are deduplicated.
 - **Done when:** Roomie in a test group answers "roomie hi", transcribes a voice note, and can send a private message to a Member.
-- If the number isn't ready, steps 2 and 3 swap.
-- **Parked** until Roomie has its number; step 2b validates the adapter and the flows on Telegram first.
+  - [x] all of it offline against a fake socket (`whatsapp.test.ts`) · [ ] live, on Fly with the real number ([first-group-test.md](./first-group-test.md#whatsapp-variant))
 
 ### 2b. Telegram channel (`step/2b-telegram`) ✅ done
 - [x] grammY adapter (`src/channels/telegram.ts`): Roomie added to a group -> Onboarding (adder = Admin, the group's Telegram admins active, intro after `JOIN_DELAY_MS`), `new_chat_members` -> Pending + approval ask, text / captions / photos (receipts) / voice notes (OpenRouter when set), @-mentions and replies to Roomie, DMs from a Member of one Group, supergroup upgrades.
@@ -160,7 +160,7 @@ Each step gets its own branch and PR, and you test locally before it's merged. S
 ## Your to-dos
 
 - [ ] Create the Telegram bot with BotFather (privacy off, join groups on) and put `TELEGRAM_BOT_TOKEN` + `TELEGRAM_BOT_USERNAME` in `.env` ([docs/telegram.md](./telegram.md)).
-- [ ] Roomie's WhatsApp number: a real prepaid eSIM or SIM you **keep** (for example Tello, about $5/month). Not Google Voice and not a rented SMS-verification number. Use the WhatsApp Business app, turn on two-step verification, warm it up for a few days, and open it at least weekly.
+- [ ] Roomie's WhatsApp number: a real prepaid eSIM or SIM you **keep** (for example Tello, about $5/month). Not Google Voice and not a rented SMS-verification number. Use the WhatsApp Business app, turn on two-step verification, warm it up for a few days, and open it at least weekly. Then link it on Fly ([docs/whatsapp.md](./whatsapp.md)): `fly secrets set WHATSAPP_ENABLED=1 ROOMIE_OPERATOR_EMAILS=<you>`, deploy, scan the QR at `/admin/whatsapp`.
 - [ ] Mastra platform: `MASTRA_PLATFORM_ACCESS_TOKEN` and `MASTRA_PROJECT_ID` in `.env`.
 - [ ] Composio: a valid `COMPOSIO_API_KEY` in `.env` (the current one is rejected with 401). Then connect Splitwise once from Settings and put the logged `COMPOSIO_SPLITWISE_AUTH_CONFIG_ID` in `.env`, and press "Get Instacart link" on the Cart page once to confirm Instacart works with no Instacart key.
 - [ ] Google Cloud OAuth client for Neon Auth, before anyone outside the dev team signs in (dev uses Neon's shared Google keys; the consent screen shows Neon). Add it under the branch's Auth -> OAuth providers. At the same time, turn off email+password sign-up on that branch (Neon enables it by default; Roomie only uses Google).
@@ -182,5 +182,7 @@ NEON_AUTH_COOKIE_SECRET          32+ chars, ours
 DEV_AUTH_EMAIL                   dev-only sign-in bypass for browser automation
 APP_URL=http://localhost:3000    links Roomie sends
 TELEGRAM_BOT_TOKEN, TELEGRAM_BOT_USERNAME, TELEGRAM_WEBHOOK_SECRET   Telegram (docs/telegram.md)
+WHATSAPP_ENABLED=1               this process holds the WhatsApp socket (docs/whatsapp.md); WA_LOG = Baileys' log level
+ROOMIE_OPERATOR_EMAILS           who may open /admin/whatsapp (comma-separated)
 JOIN_DELAY_MS, REPLY_DELAY_MS    pacing: intro delay after joining, pause before replies
 ```

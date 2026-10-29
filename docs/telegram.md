@@ -1,6 +1,6 @@
 # Roomie on Telegram
 
-Telegram is the first real Channel: the Bot API is official (no ban risk) and a bot can be added to a group people already have. The adapter is `src/channels/telegram.ts` (grammY); the app behind it is the same pipeline `npm run dev-chat` uses. WhatsApp comes later behind the same Channel interface ([ADR 0001](./adr/0001-baileys-for-whatsapp-groups.md)).
+Telegram is the first real Channel: the Bot API is official (no ban risk) and a bot can be added to a group people already have. The adapter is `src/channels/telegram.ts` (grammY); the app behind it is the same pipeline `npm run dev-chat` uses. WhatsApp sits behind the same Channel interface ([docs/whatsapp.md](./whatsapp.md)).
 
 Local dev uses **long polling** (`npm run telegram`), so no public URL is needed. The webhook (`/api/telegram`) is for when Roomie runs on a public https URL.
 

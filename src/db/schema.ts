@@ -415,6 +415,35 @@ export const scheduledPosts = pgTable(
   (t) => [primaryKey({ columns: [t.groupId, t.kind, t.period] })],
 );
 
+/* ---------- WhatsApp (channels/whatsapp*.ts, ADR 0013) ---------- */
+
+/**
+ * The WhatsApp login (Baileys' creds + Signal keys), so a redeploy doesn't log Roomie out. One row per key: "creds"
+ * and "<type>-<id>" (pre-key-12, session-...), values in Baileys' BufferJSON form. `id` names the session
+ * ("default"; one number per deployment).
+ */
+export const waSessions = pgTable(
+  "wa_sessions",
+  {
+    id: text("id").notNull().default("default"),
+    key: text("key").notNull(),
+    value: jsonb("value").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.id, t.key] })],
+);
+
+/**
+ * What Roomie learned about WhatsApp people: a LID (the privacy id WhatsApp shows in many groups) with the phone JID
+ * behind it when known, and the name they go by. members.channel_user_id is the phone JID when known (else the LID).
+ */
+export const waContacts = pgTable("wa_contacts", {
+  lid: text("lid").primaryKey(),
+  pn: text("pn"),
+  name: text("name"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const maintenance = pgTable("maintenance", {
   id: id(),
   groupId: uuid("group_id").notNull().references(() => groups.id, { onDelete: "cascade" }),

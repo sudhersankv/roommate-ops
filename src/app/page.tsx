@@ -22,7 +22,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<Rec
       <SignInScreen title="See what your group owes, needs and has to do.">
         {failed && <SignInFailed reason={failed} />}
         <GoogleButton />
-        <p className="type-caption text-center text-muted-foreground">Roomie sent you here from WhatsApp.</p>
+        <p className="type-caption text-center text-muted-foreground">Roomie sent you here from your group chat.</p>
       </SignInScreen>
     )
   }
@@ -39,7 +39,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<Rec
           <EmptyMedia variant="icon">
             <MessageCircleIcon />
           </EmptyMedia>
-          <EmptyTitle>Add Roomie to a WhatsApp group</EmptyTitle>
+          <EmptyTitle>Add Roomie to your group chat</EmptyTitle>
           <EmptyDescription>Then ask it for the dashboard (“roomie send me the dashboard”). It sends you a private link that connects you to that group.</EmptyDescription>
         </EmptyHeader>
       </Empty>

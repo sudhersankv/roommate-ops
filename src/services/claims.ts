@@ -14,7 +14,14 @@ const { claimTokens, members, accounts } = schema;
 export const CLAIM_TTL_MS = 24 * 60 * 60 * 1000;
 
 export type Account = typeof accounts.$inferSelect;
-export type AuthUser = { id: string; email: string; name?: string | null; image?: string | null };
+export type AuthUser = {
+  id: string;
+  email: string;
+  name?: string | null;
+  image?: string | null;
+  /** True when the identity provider vouched for the email (Google always does). Dev bypass leaves it unset. */
+  emailVerified?: boolean;
+};
 export type ClaimState = "ok" | "missing" | "used" | "expired";
 
 /** 32 random bytes, base64url (43 chars). */

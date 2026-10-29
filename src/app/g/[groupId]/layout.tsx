@@ -14,7 +14,7 @@ type Props = { children: ReactNode; params: Promise<{ groupId: string }> }
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { groupId } = await params
   const { group } = await currentMember(groupId)
-  return { title: { default: group.name, template: `%s | ${group.name}` } }
+  return { title: { default: group.name, template: `%s | ${group.name}` }, robots: { index: false, follow: false } }
 }
 
 export default async function GroupLayout({ children, params }: Props) {

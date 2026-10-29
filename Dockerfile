@@ -14,5 +14,6 @@ WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=build /app ./
 EXPOSE 3000
-# One machine: apply pending migrations, then serve. Next hosts the dashboard, API, Telegram webhook and scheduler.
+# One machine: apply pending migrations, then serve. Next hosts the dashboard, API, Telegram webhook, scheduler and
+# (WHATSAPP_ENABLED=1) the WhatsApp socket.
 CMD ["sh", "-c", "npm run db:migrate && npm start"]

@@ -21,7 +21,7 @@ export const sessionUser = cache(async (): Promise<AuthUser | null> => {
   }
   const { data } = await auth.getSession();
   const u = data?.user;
-  return u ? { id: u.id, email: u.email, name: u.name, image: u.image ?? null } : null;
+  return u ? { id: u.id, email: u.email, name: u.name, image: u.image ?? null, emailVerified: u.emailVerified === true } : null;
 });
 
 /** The signed-in Account (created on first sight, mirroring the neon_auth user), or null when signed out. */
