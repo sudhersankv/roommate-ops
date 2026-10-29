@@ -63,6 +63,24 @@ export async function linesSince(groupId: string, since: Date | null): Promise<n
   return Number(row?.n ?? 0);
 }
 
+/** Human lines after `since` (all when null), oldest first, at most `limit` of the newest: the Learned style's input. */
+export async function humanLinesSince(groupId: string, since: Date | null, limit = 200): Promise<{ name: string; text: string; at: Date }[]> {
+  const where = and(eq(chatMessages.groupId, groupId), isNotNull(chatMessages.memberId), ...(since ? [gt(chatMessages.createdAt, since)] : []));
+  const rows = await db
+    .select({ text: chatMessages.text, name: members.displayName, at: chatMessages.createdAt })
+    .from(chatMessages)
+    .innerJoin(members, eq(chatMessages.memberId, members.id))
+    .where(where)
+    .orderBy(desc(chatMessages.createdAt))
+    .limit(limit);
+  return rows.reverse();
+}
+
+/** Roomie's own chat lines, newest first (the slang budget looks at the last few). */
+export async function roomieRecentTexts(groupId: string, limit = 5): Promise<string[]> {
+  return (await roomieLines(groupId, limit)).map((r) => r.text);
+}
+
 /** Retention (ADR 0006): delete every chat line older than `days`. Returns how many went. */
 export async function deleteOlderThan(days = RETENTION_DAYS, now = new Date()): Promise<number> {
   const cutoff = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
