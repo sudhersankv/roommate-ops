@@ -16,8 +16,13 @@ const VERIFIER_PARAM = "neon_auth_session_verifier"
 export default async function proxy(request: NextRequest) {
   if (devAuthEmail()) return NextResponse.next()
   const { pathname, searchParams } = request.nextUrl
-  if (pathname.startsWith("/claim/") && !searchParams.has(VERIFIER_PARAM)) return NextResponse.next()
+  if (pathname.startsWith("/claim/") && !searchParams.has(VERIFIER_PARAM)) {
+    const pass = NextResponse.next()
+    pass.headers.set("x-roomie-proxy", "claim-pass")
+    return pass
+  }
   const res = await neonAuth(request)
+  res.headers.set("x-roomie-proxy", searchParams.has(VERIFIER_PARAM) ? "oauth-return" : "guard")
   if (searchParams.has(VERIFIER_PARAM)) {
     // One line per OAuth return so a failed exchange is visible in the server logs.
     const cookie = request.headers.get("cookie") ?? ""
