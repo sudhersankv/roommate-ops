@@ -6,7 +6,7 @@ import { db, schema } from "@/db";
 import { groupReportText } from "@/jobs/report-text";
 import { emptyLearned } from "@/lib/personality";
 import { nextWeekday, zonedParts } from "@/lib/time";
-import { cart, chatlog, chores, groups, members, money, pantry, personality, receipts, recipes, reminders, upkeep } from "@/services";
+import { cart, chatlog, chores, groups, members, money, pantry, personality, receipts, recipes, reminders, toolkits, upkeep } from "@/services";
 import type { Ctx } from "@/services/types";
 
 export const EVAL_MEMBERS = ["Maya", "Dev", "Sam"] as const;
@@ -78,6 +78,7 @@ export const READ_ONLY_TOOLS = new Set([
   "hall_of_shame",
   "group_report",
   "splitwise_status",
+  "list_toolkits",
   "what_do_you_know_about_me",
   "updateWorkingMemory",
 ]);
@@ -674,6 +675,33 @@ export const SCENARIOS: Scenario[] = [
     area: "core",
     turn: { text: "roomie who's in this group?", from: "Dev" },
     expect: { replyIncludes: ["Maya", "Dev", "Sam"] },
+  },
+
+  /* ---------- Toolkits (the marketplace from the chat) ---------- */
+  {
+    id: "what-can-you-do",
+    area: "core",
+    turn: { text: "roomie what can you do?", from: "Sam" },
+    expect: { tools: ["list_toolkits"], noTools: "actions", replyIncludes: [/split|expense|cost/i] },
+  },
+  {
+    id: "turn-on-research",
+    area: "core",
+    turn: { text: "roomie turn on research" },
+    expect: {
+      noTools: ["set_group_settings"],
+      replyIncludes: [/not (ready|yet|there)|on the list|coming soon/i],
+      check: async (e) => fail(!(await toolkits.catalogFor(e.ctx)).some((t) => t.manifest.id === "research" && t.enabled), "research stays off"),
+    },
+  },
+  {
+    id: "groceries-off-member",
+    area: "core",
+    turn: { text: "roomie turn off groceries", from: "Dev" },
+    expect: {
+      replyIncludes: [/admin|Maya/i],
+      check: async (e) => fail((await groups.enabledToolkits(e.ctx)).includes("groceries"), "groceries is still on"),
+    },
   },
 
   /* ---------- the Gate ---------- */

@@ -2,11 +2,14 @@
 // dynamic instructions/tools read it.
 import { z } from "zod";
 import type { Ctx } from "@/services/types";
-import { TOOLKIT_IDS } from "@/toolkits/types";
+import { TOOLKIT_IDS, type ToolkitId } from "@/toolkits/manifests";
 
-/** What the Gate can pick. "reminders" lives in core, so it narrows to core tools only; "none" means no narrowing. */
-export const GATE_TOOLKITS = ["splitting", "groceries", "chores", "upkeep", "reminders", "none"] as const;
-export type GateToolkit = (typeof GATE_TOOLKITS)[number];
+/**
+ * What the Gate can pick: a Toolkit, "core" (reminders, members, settings, what Roomie can do: core tools only) or
+ * "none" (no narrowing). Per request, Jev only sees the Group's enabled Toolkits (gate/jev.ts).
+ */
+export type GateToolkit = ToolkitId | "core" | "none";
+export const GATE_TOOLKITS = [...TOOLKIT_IDS, "core", "none"] as unknown as readonly [GateToolkit, ...GateToolkit[]];
 
 export const roomieContextSchema = z.object({
   groupId: z.string().min(1),

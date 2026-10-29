@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { Fragment, useEffect, useState, useTransition } from "react"
+import { Fragment, useEffect, useState, useTransition, type ReactNode } from "react"
 import { ChevronRightIcon, ShoppingCart, WrenchIcon } from "lucide-react"
 
 import { Bubble, BubbleContent } from "@/components/ui/bubble"
@@ -11,7 +11,7 @@ import { Marker, MarkerContent } from "@/components/ui/marker"
 import { Message, MessageAvatar, MessageContent, MessageGroup } from "@/components/ui/message"
 import { Separator } from "@/components/ui/separator"
 import { toast } from "@/components/ui/toast"
-import { moodForBalance, Roomie, type RoomieMood } from "@/components/roomie/mascot"
+import { Roomie, type RoomieMood } from "@/components/roomie/mascot"
 import { useCheer } from "@/components/roomie/use-cheer"
 import { Doorway } from "@/components/app/doorway"
 import { MemberAvatar } from "@/components/app/member-avatar"
@@ -23,31 +23,25 @@ import { SettleDrawer } from "../settle-drawer"
 import { TopBar } from "../shell"
 import type { CartItemView, ChoreView, NarrationView, Transfer, UpkeepView } from "../types"
 
+/**
+ * Home: Roomie in the doorway with the Group's mood, then each enabled Toolkit's Home section (children, in nav
+ * order, from their manifests: standing, today, ...), then what Roomie said lately.
+ */
 export function HomeScreen({
-  you,
-  plan,
-  chores,
-  upkeep,
-  cart,
+  mood,
+  moodReason,
   narration,
-  nextRecipe,
-  mood: groupMood,
+  children,
 }: {
-  you: number
-  plan: Transfer[]
-  chores: ChoreView[]
-  upkeep: UpkeepView[]
-  cart: CartItemView[]
+  mood: RoomieMood
+  /** Why (services/personality.ts groupMood); without one the mood came from a Toolkit (your own Balance). */
+  moodReason?: string | null
   narration: NarrationView[]
-  nextRecipe: { title: string; plannedFor: string } | null
-  /** The Group's mood (services/personality.ts groupMood); falls back to your own Balance. */
-  mood?: { mood: RoomieMood; reason: string }
+  children: ReactNode
 }) {
-  const { me, base, cheers } = useGroup()
-  const [settleOpen, setSettleOpen] = useState(false)
+  const { group, base, cheers } = useGroup()
   const [cheering, cheer] = useCheer()
-  const mood = groupMood?.mood ?? moodForBalance(you, true)
-  const moodWords = groupMood ? `${mood === "worried" ? "a little worried" : mood}: ${groupMood.reason}` : mood === "happy" ? "happy because you're owed" : mood
+  const moodWords = moodReason ? `${mood === "worried" ? "a little worried" : mood}: ${moodReason}` : mood === "happy" ? "happy because you're owed" : mood
 
   useEffect(() => {
     if (cheers > 0) cheer()
@@ -59,20 +53,9 @@ export function HomeScreen({
       <Doorway label={`Roomie in the doorway, ${moodWords}`}>
         <Roomie size={124} mood={mood} animated cheer={cheering} decorative />
       </Doorway>
+      <h1 className="sr-only">{group.name}</h1>
 
-      <section aria-labelledby="balance" className="flex flex-col gap-4 px-5 pt-6 pb-8">
-        <BalanceHeading you={you} />
-        <p className="type-body text-pretty text-muted-foreground">
-          <Breakdown plan={plan} />
-        </p>
-        {plan.some((t) => t.from === me.id || t.to === me.id) ? (
-          <Button size="lg" className="self-start" onClick={() => setSettleOpen(true)}>
-            Settle up
-          </Button>
-        ) : null}
-      </section>
-
-      <Today chores={chores} upkeep={upkeep} cart={cart} nextRecipe={nextRecipe} />
+      <div className="flex flex-col gap-8 pt-6">{children}</div>
 
       <section aria-labelledby="activity-title" className="flex flex-col gap-4 px-4 pt-8">
         <div className="flex items-baseline justify-between px-1">
@@ -89,9 +72,27 @@ export function HomeScreen({
           <p className="type-body px-1 text-muted-foreground">Nothing yet. Say “roomie hi” in the chat and I&apos;ll get going.</p>
         )}
       </section>
-
-      <SettleDrawer open={settleOpen} onOpenChange={setSettleOpen} plan={plan} />
     </>
+  )
+}
+
+/** Splitting's Home section: your Balance, who's in it, and Settle up. */
+export function BalanceSection({ you, plan }: { you: number; plan: Transfer[] }) {
+  const { me } = useGroup()
+  const [settleOpen, setSettleOpen] = useState(false)
+  return (
+    <section aria-labelledby="balance" className="flex flex-col gap-4 px-5">
+      <BalanceHeading you={you} />
+      <p className="type-body text-pretty text-muted-foreground">
+        <Breakdown plan={plan} />
+      </p>
+      {plan.some((t) => t.from === me.id || t.to === me.id) ? (
+        <Button size="lg" className="self-start" onClick={() => setSettleOpen(true)}>
+          Settle up
+        </Button>
+      ) : null}
+      <SettleDrawer open={settleOpen} onOpenChange={setSettleOpen} plan={plan} />
+    </section>
   )
 }
 
@@ -99,10 +100,10 @@ function BalanceHeading({ you }: { you: number }) {
   const money = useFormatMoney()
   const words = you > 0 ? "You're owed" : you < 0 ? "You owe" : "You're all square"
   return (
-    <h1 id="balance" className="flex flex-col gap-1">
+    <h2 id="balance" className="flex flex-col gap-1">
       <span className="type-heading text-muted-foreground">{words}</span>
       {you !== 0 ? <span className={you > 0 ? "type-display text-owed" : "type-display text-owe"}>{money(Math.abs(you))}</span> : null}
-    </h1>
+    </h2>
   )
 }
 
@@ -117,14 +118,22 @@ function Breakdown({ plan }: { plan: Transfer[] }) {
   return <>{sentence.charAt(0).toUpperCase() + sentence.slice(1)}.</>
 }
 
-function Today({ chores, upkeep, cart, nextRecipe }: { chores: ChoreView[]; upkeep: UpkeepView[]; cart: CartItemView[]; nextRecipe: { title: string; plannedFor: string } | null }) {
-  const { group, me, base, name, dates, cheer, toolkits } = useGroup()
+function HomeCard({ id, title, children }: { id: string; title: string; children: ReactNode }) {
+  return (
+    <section aria-labelledby={id} className="flex flex-col gap-3 px-4">
+      <h2 id={id} className="type-heading px-1">
+        {title}
+      </h2>
+      <div className="flex flex-col rounded-3xl bg-card">{children}</div>
+    </section>
+  )
+}
+
+/** Chores' Home section: your chores due today, with Mark done. */
+export function ChoresToday({ chores }: { chores: ChoreView[] }) {
+  const { group, me, name, dates, cheer } = useGroup()
   const [pending, start] = useTransition()
-  const mineToday = toolkits.chores ? chores.filter((c) => c.turn === me.id && c.due <= dates.today) : []
-  const house = toolkits.upkeep ? upkeep.find((u) => u.status !== "ok") : undefined
-  const yourCart = cart.filter((c) => c.addedBy === me.id && !c.shared).length
-  const yours = cart.length === 0 ? "Nothing to buy right now." : yourCart ? `${yourCart} of them ${yourCart === 1 ? "is" : "are"} just for you.` : "None of them are just for you."
-  const recipeHint = nextRecipe ? `${nextRecipe.title} is ${dates.dueLabel(nextRecipe.plannedFor)}.` : null
+  const mineToday = chores.filter((c) => c.turn === me.id && c.due <= dates.today)
 
   const done = (c: ChoreView) =>
     start(async () => {
@@ -136,75 +145,88 @@ function Today({ chores, upkeep, cart, nextRecipe }: { chores: ChoreView[]; upke
     })
 
   return (
-    <section aria-labelledby="today-title" className="flex flex-col gap-3 px-4">
-      <h2 id="today-title" className="type-heading px-1">
-        Today
-      </h2>
-      <div className="flex flex-col rounded-3xl bg-card">
-        {mineToday.length === 0 ? (
-          <Item>
-            <ItemContent>
-              <ItemTitle>No chores on you today</ItemTitle>
-              <ItemDescription>Next one shows up here the day it&apos;s yours.</ItemDescription>
-            </ItemContent>
-          </Item>
-        ) : (
-          mineToday.map((c) => (
-            <Fragment key={c.id}>
-              <Item className="py-3">
-                <ItemMedia>
-                  <MemberAvatar name={me.name} />
-                </ItemMedia>
-                <ItemContent>
-                  <ItemTitle>{c.name}</ItemTitle>
-                  <ItemDescription>
-                    Your turn {c.due < dates.today ? `(${dates.dueLabel(c.due)})` : "today"}.
-                    {c.lastDone ? ` Last done by ${name(c.lastDone.by) === "You" ? "you" : name(c.lastDone.by)} ${dates.ago(c.lastDone.date)}.` : ""}
-                  </ItemDescription>
-                </ItemContent>
-                <ItemActions>
-                  <Button size="sm" variant="secondary" disabled={pending} onClick={() => done(c)}>
-                    Mark done
-                  </Button>
-                </ItemActions>
-              </Item>
-              <Separator className="mx-4 data-horizontal:w-auto" />
-            </Fragment>
-          ))
-        )}
-        {house ? (
-          <>
-            <Item render={<Link href={`${base}/chores?tab=upkeep`} />} className="py-3">
-              <ItemMedia variant="icon" className="size-8 justify-center">
-                <WrenchIcon aria-hidden />
+    <HomeCard id="today-title" title="Today">
+      {mineToday.length === 0 ? (
+        <Item>
+          <ItemContent>
+            <ItemTitle>No chores on you today</ItemTitle>
+            <ItemDescription>Next one shows up here the day it&apos;s yours.</ItemDescription>
+          </ItemContent>
+        </Item>
+      ) : (
+        mineToday.map((c, i) => (
+          <Fragment key={c.id}>
+            {i > 0 ? <Separator className="mx-4 data-horizontal:w-auto" /> : null}
+            <Item className="py-3">
+              <ItemMedia>
+                <MemberAvatar name={me.name} />
               </ItemMedia>
               <ItemContent>
-                <ItemTitle>{house.name}</ItemTitle>
-                <ItemDescription>{house.status === "overdue" ? `Upkeep, ${dates.dueLabel(house.due)}.` : `Upkeep, due ${dates.dueLabel(house.due)}.`}</ItemDescription>
+                <ItemTitle>{c.name}</ItemTitle>
+                <ItemDescription>
+                  Your turn {c.due < dates.today ? `(${dates.dueLabel(c.due)})` : "today"}.
+                  {c.lastDone ? ` Last done by ${name(c.lastDone.by) === "You" ? "you" : name(c.lastDone.by)} ${dates.ago(c.lastDone.date)}.` : ""}
+                </ItemDescription>
               </ItemContent>
               <ItemActions>
-                <ChevronRightIcon className="size-4 text-muted-foreground" aria-hidden />
+                <Button size="sm" variant="secondary" disabled={pending} onClick={() => done(c)}>
+                  Mark done
+                </Button>
               </ItemActions>
             </Item>
-            <Separator className="mx-4 data-horizontal:w-auto" />
-          </>
-        ) : null}
-        <Item render={<Link href={`${base}/cart`} />} className="py-3">
-          <ItemMedia variant="icon" className="size-8 justify-center">
-            <ShoppingCart aria-hidden />
-          </ItemMedia>
-          <ItemContent>
-            <ItemTitle>
-              {cart.length} {cart.length === 1 ? "thing" : "things"} in the Cart
-            </ItemTitle>
-            <ItemDescription>{recipeHint ? `${recipeHint} ${yours}` : yours}</ItemDescription>
-          </ItemContent>
-          <ItemActions>
-            <ChevronRightIcon className="size-4 text-muted-foreground" aria-hidden />
-          </ItemActions>
-        </Item>
-      </div>
-    </section>
+          </Fragment>
+        ))
+      )}
+    </HomeCard>
+  )
+}
+
+/** Upkeep's Home section: the next upkeep item that's due or overdue (nothing when the house is fine). */
+export function UpkeepToday({ upkeep }: { upkeep: UpkeepView[] }) {
+  const { base, dates } = useGroup()
+  const house = upkeep.find((u) => u.status !== "ok")
+  if (!house) return null
+  return (
+    <HomeCard id="upkeep-title" title="House care">
+      <Item render={<Link href={`${base}/chores?tab=upkeep`} />} className="py-3">
+        <ItemMedia variant="icon" className="size-8 justify-center">
+          <WrenchIcon aria-hidden />
+        </ItemMedia>
+        <ItemContent>
+          <ItemTitle>{house.name}</ItemTitle>
+          <ItemDescription>{house.status === "overdue" ? `Upkeep, ${dates.dueLabel(house.due)}.` : `Upkeep, due ${dates.dueLabel(house.due)}.`}</ItemDescription>
+        </ItemContent>
+        <ItemActions>
+          <ChevronRightIcon className="size-4 text-muted-foreground" aria-hidden />
+        </ItemActions>
+      </Item>
+    </HomeCard>
+  )
+}
+
+/** Groceries' Home section: what's in the Cart (and what's yours), and the next Recipe. */
+export function CartToday({ cart, nextRecipe }: { cart: CartItemView[]; nextRecipe: { title: string; plannedFor: string } | null }) {
+  const { me, base, dates } = useGroup()
+  const yourCart = cart.filter((c) => c.addedBy === me.id && !c.shared).length
+  const yours = cart.length === 0 ? "Nothing to buy right now." : yourCart ? `${yourCart} of them ${yourCart === 1 ? "is" : "are"} just for you.` : "None of them are just for you."
+  const recipeHint = nextRecipe ? `${nextRecipe.title} is ${dates.dueLabel(nextRecipe.plannedFor)}.` : null
+  return (
+    <HomeCard id="cart-title" title="Cart">
+      <Item render={<Link href={`${base}/cart`} />} className="py-3">
+        <ItemMedia variant="icon" className="size-8 justify-center">
+          <ShoppingCart aria-hidden />
+        </ItemMedia>
+        <ItemContent>
+          <ItemTitle>
+            {cart.length} {cart.length === 1 ? "thing" : "things"} in the Cart
+          </ItemTitle>
+          <ItemDescription>{recipeHint ? `${recipeHint} ${yours}` : yours}</ItemDescription>
+        </ItemContent>
+        <ItemActions>
+          <ChevronRightIcon className="size-4 text-muted-foreground" aria-hidden />
+        </ItemActions>
+      </Item>
+    </HomeCard>
   )
 }
 

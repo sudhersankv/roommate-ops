@@ -16,6 +16,8 @@ import { logMessage } from "@/services/chatlog";
 import { chatFor, initToolkits, type Chat, type Group } from "@/services/groups";
 import { addMember, admins, memberByChannelUser, type Member } from "@/services/members";
 import { ARCHETYPE_IDS, DEFAULT_ARCHETYPE, DEFAULT_PET_NAME } from "@/lib/personality";
+import { manifestOf } from "@/toolkits/manifests";
+import { presetFor } from "@/toolkits/presets";
 
 export type ChatRef = { channel: ChannelName; externalId: string; title?: string };
 
@@ -31,7 +33,7 @@ export function introMessage(adderName: string, opts: { dmHandle?: string; petNa
   const name = opts.petName?.trim() || DEFAULT_PET_NAME;
   return [
     `Hey all, I'm ${name}, your group's new pet 🦖 ${adderName} added me, so ${adderName}'s my admin. I split costs, keep a shared Cart, track chores, set reminders, and slowly pick up how you all talk.`,
-    `Quick setup, one reply is plenty: what's this group for (roommates, a trip, friends, family, work), which currency, which time zone (a city is fine), and what vibe should I have (${ARCHETYPE_IDS.join(" / ")})? Just "roommates" works too: I'll go with USD, Chicago time, ${DEFAULT_ARCHETYPE}, and switch everything on.`,
+    `Quick setup, one reply is plenty: what's this group for (roommates, a trip, friends, family, work), which currency, which time zone (a city is fine), and what vibe should I have (${ARCHETYPE_IDS.join(" / ")})? Just "roommates" works too: I'll go with USD, Chicago time, ${DEFAULT_ARCHETYPE}, and switch on ${joinNames(presetFor("roommates").map((id) => manifestOf(id)!.name))} ("also ..." or "no ..." changes that).`,
     ...(opts.dmHandle ? [`One more thing: tap @${opts.dmHandle} and press Start, so I can DM you your dashboard link later.`] : []),
   ].join("\n");
 }

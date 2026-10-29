@@ -1,6 +1,7 @@
 "use client"
 
-import { useRouter } from "next/navigation"
+import Link from "next/link"
+import { useRouter, useSearchParams } from "next/navigation"
 import { useEffect, useState, useTransition, type ReactNode } from "react"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -15,7 +16,6 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel, FieldLegend, FieldSeparator, FieldSet } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
@@ -24,7 +24,6 @@ import { Switch } from "@/components/ui/switch"
 import { toast } from "@/components/ui/toast"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { useThemePreference, type ThemePreference } from "@/components/app/theme"
-import type { ToolkitId } from "@/toolkits/types"
 import type { SettingsPatch } from "@/services/groups"
 import {
   connectSplitwise,
@@ -34,7 +33,6 @@ import {
   listSplitwiseGroups,
   setSimplifyDebts,
   setSplitwiseMirror,
-  setToolkit,
   updateSchedule,
   updateSettings,
 } from "../../actions"
@@ -71,26 +69,16 @@ const chattiness = {
   chatty: "Jumps in more often with reminders, nudges and the odd joke.",
 } as const
 
-const toolkits: { id: ToolkitId | string; name: string; description: string; soon?: boolean }[] = [
-  { id: "splitting", name: "Splitting", description: "Expenses, Shares and settling up" },
-  { id: "groceries", name: "Groceries", description: "The Cart and Recipes" },
-  { id: "chores", name: "Chores", description: "Rotations, streaks and reminders" },
-  { id: "upkeep", name: "Upkeep", description: "Filters, batteries and other house care" },
-  { id: "research", name: "Research", description: "Roomie looks things up for the group", soon: true },
-  { id: "pdf", name: "PDFs", description: "Receipts, itineraries and summaries", soon: true },
-  { id: "trips", name: "Trips", description: "Plan a trip and split it as you go", soon: true },
-]
-
 /** Pick the list entry, or add the Group's own value so the Select can show it. */
 const withCurrent = (list: { label: string; value: string }[], value: string) => (list.some((x) => x.value === value) ? list : [...list, { label: value, value }])
 
-export function SettingsScreen({ splitwise, notice, zones, schedule, personality }: { splitwise: SplitwiseView | null; notice: string | null; zones: ZoneGroup[]; schedule: ScheduleView; personality?: ReactNode }) {
+/**
+ * Core settings (Group, Chattiness, Personality, which Toolkits are on, Appearance, Danger zone) with each enabled Toolkit's own
+ * settings section (children, from the manifests) in between.
+ */
+export function SettingsScreen({ zones, schedule, personality, children }: { zones: ZoneGroup[]; schedule: ScheduleView; personality?: ReactNode; children?: ReactNode }) {
   const { group, isAdmin, active } = useGroup()
   const admins = active.filter((m) => m.role === "admin").map((m) => m.name)
-  useEffect(() => {
-    if (notice === "connected") toast.add({ title: "Splitwise connected", description: "Pick a Splitwise group to import or copy to.", type: "success" })
-    if (notice === "failed") toast.add({ title: "Splitwise didn't connect", description: "Try Connect again.", type: "error" })
-  }, [notice])
   return (
     <>
       <TopBar title="Settings" />
@@ -100,9 +88,11 @@ export function SettingsScreen({ splitwise, notice, zones, schedule, personality
         </p>
       </PageHeader>
       <div className="flex flex-col gap-10 px-5 pb-6">
-        {isAdmin ? <AdminSettings splitwise={splitwise} zones={zones} schedule={schedule} /> : null}
+        {isAdmin ? <AdminSettings zones={zones} schedule={schedule} /> : null}
         {/* Settings -> Personality: a self-contained server component (components/app/personality-section.tsx) */}
         {personality}
+        <ToolkitsSummary />
+        {children}
         <Appearance />
         {isAdmin ? <DangerZone /> : null}
       </div>
@@ -110,7 +100,64 @@ export function SettingsScreen({ splitwise, notice, zones, schedule, personality
   )
 }
 
-function AdminSettings({ splitwise, zones, schedule }: { splitwise: SplitwiseView | null; zones: ZoneGroup[]; schedule: ScheduleView }) {
+/** Which Toolkits are on, and the way to the marketplace (switching happens there). */
+function ToolkitsSummary() {
+  const { base, toolkitNames, isAdmin } = useGroup()
+  return (
+    <FieldSet>
+      <FieldLegend className="type-heading">Toolkits</FieldLegend>
+      <Field orientation="horizontal">
+        <FieldContent>
+          <FieldLabel htmlFor="browse-toolkits">{toolkitNames.length ? `On: ${toolkitNames.join(", ")}` : "None on yet"}</FieldLabel>
+          <FieldDescription>What Roomie can do in this Group. {isAdmin ? "Add more or switch them off on the Toolkits page." : "Admins switch them on and off."}</FieldDescription>
+        </FieldContent>
+        <Button id="browse-toolkits" variant="outline" size="sm" nativeButton={false} render={<Link href={`${base}/toolkits`} />}>
+          Browse
+        </Button>
+      </Field>
+    </FieldSet>
+  )
+}
+
+/** Splitting's settings section (Admins): simplify debts and Splitwise. */
+export function SplittingSettingsSection({ splitwise }: { splitwise: SplitwiseView }) {
+  const { group } = useGroup()
+  const [, start] = useTransition()
+  const notice = useSearchParams().get("splitwise")
+  useEffect(() => {
+    if (notice === "connected") toast.add({ title: "Splitwise connected", description: "Pick a Splitwise group to import or copy to.", type: "success" })
+    if (notice === "failed") toast.add({ title: "Splitwise didn't connect", description: "Try Connect again.", type: "error" })
+  }, [notice])
+  return (
+    <>
+      <FieldSet>
+        <FieldLegend className="type-heading">Splitting</FieldLegend>
+        <Field orientation="horizontal">
+          <FieldContent>
+            <FieldLabel htmlFor="simplify">Simplify debts</FieldLabel>
+            <FieldDescription>
+              On: settle with the fewest payments, even between people who didn&apos;t share an expense. Off: each pair settles what they shared.
+            </FieldDescription>
+          </FieldContent>
+          <Switch
+            id="simplify"
+            checked={group.simplifyDebts}
+            onCheckedChange={(on) =>
+              start(async () => {
+                const res = await setSimplifyDebts(group.id, on)
+                if (!res.ok) return void toast.add({ title: "Couldn't save that", description: res.error, type: "error" })
+                toast.add({ title: on ? "Simplify debts on" : "Simplify debts off", description: on ? "The Settle plan uses the fewest payments." : "The Settle plan is pairwise now." })
+              })
+            }
+          />
+        </Field>
+      </FieldSet>
+      <SplitwiseSettings sw={splitwise} />
+    </>
+  )
+}
+
+function AdminSettings({ zones, schedule }: { zones: ZoneGroup[]; schedule: ScheduleView }) {
   const { group, toolkits: on } = useGroup()
   const [name, setName] = useState(group.name)
   const [, start] = useTransition()
@@ -135,13 +182,6 @@ function AdminSettings({ splitwise, zones, schedule }: { splitwise: SplitwiseVie
       const res = await updateSettings(group.id, patch)
       if (!res.ok) return void toast.add({ title: "Couldn't save that", description: res.error, type: "error" })
       toast.add(ok)
-    })
-
-  const toggle = (id: ToolkitId, label: string, enabled: boolean) =>
-    start(async () => {
-      const res = await setToolkit(group.id, id, enabled)
-      if (!res.ok) return void toast.add({ title: "Couldn't switch it", description: res.error, type: "error" })
-      toast.add({ title: `${label} ${enabled ? "on" : "off"}`, description: enabled ? "Roomie can use it in the chat now." : "Roomie stops using it. Nothing is deleted." })
     })
 
   return (
@@ -228,25 +268,6 @@ function AdminSettings({ splitwise, zones, schedule }: { splitwise: SplitwiseVie
               </Button>
             ) : null}
           </Field>
-          <Field orientation="horizontal">
-            <FieldContent>
-              <FieldLabel htmlFor="simplify">Simplify debts</FieldLabel>
-              <FieldDescription>
-                On: settle with the fewest payments, even between people who didn&apos;t share an expense. Off: each pair settles what they shared.
-              </FieldDescription>
-            </FieldContent>
-            <Switch
-              id="simplify"
-              checked={group.simplifyDebts}
-              onCheckedChange={(on) =>
-                start(async () => {
-                  const res = await setSimplifyDebts(group.id, on)
-                  if (!res.ok) return void toast.add({ title: "Couldn't save that", description: res.error, type: "error" })
-                  toast.add({ title: on ? "Simplify debts on" : "Simplify debts off", description: on ? "The Settle plan uses the fewest payments." : "The Settle plan is pairwise now." })
-                })
-              }
-            />
-          </Field>
         </FieldGroup>
       </FieldSet>
 
@@ -270,32 +291,6 @@ function AdminSettings({ splitwise, zones, schedule }: { splitwise: SplitwiseVie
       </FieldSet>
 
       <ScheduleSettings schedule={schedule} choresOn={on.chores} />
-
-      <FieldSet>
-        <FieldLegend className="type-heading">Toolkits</FieldLegend>
-        <FieldDescription>What Roomie can do in this Group. Switching one off stops its tools in the chat.</FieldDescription>
-        <FieldGroup className="gap-4">
-          {toolkits.map((t) => (
-            <Field key={t.id} orientation="horizontal" data-disabled={t.soon || undefined}>
-              <FieldContent>
-                <FieldLabel htmlFor={`tk-${t.id}`}>
-                  {t.name}
-                  {t.soon ? <Badge variant="secondary">Coming soon</Badge> : null}
-                </FieldLabel>
-                <FieldDescription>{t.description}</FieldDescription>
-              </FieldContent>
-              <Switch
-                id={`tk-${t.id}`}
-                disabled={t.soon}
-                checked={!t.soon && (on[t.id as ToolkitId] ?? false)}
-                onCheckedChange={(v) => toggle(t.id as ToolkitId, t.name, v)}
-              />
-            </Field>
-          ))}
-        </FieldGroup>
-      </FieldSet>
-
-      {splitwise ? <SplitwiseSettings sw={splitwise} /> : null}
     </>
   )
 }

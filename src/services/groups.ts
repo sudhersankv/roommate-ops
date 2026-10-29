@@ -4,7 +4,8 @@ import { and, asc, eq, inArray, ne, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { GROUP_PURPOSES, type ChannelName, type GroupPurpose } from "@/db/schema";
 import { resolveTimeZone } from "@/lib/time";
-import { TOOLKIT_IDS, type ToolkitId } from "@/toolkits/types";
+import { MANIFESTS, TOOLKIT_IDS, type ToolkitId } from "@/toolkits/manifests";
+import { presetFor } from "@/toolkits/presets";
 import { record } from "./activity";
 import { requireAdmin } from "./authz";
 import { addStarterChores } from "./chores";
@@ -19,22 +20,9 @@ export type Chattiness = Group["chattiness"];
 
 /* ---------- pure ---------- */
 
-/** What a Group gets switched on when it tells Roomie what it's for. Core is always on. */
+/** What a Group gets switched on when it tells Roomie what it's for (toolkits/presets.ts). Core is always on. */
 export function defaultToolkitsFor(purpose: GroupPurpose | null | undefined): ToolkitId[] {
-  switch (purpose) {
-    case "trip":
-      return ["splitting", "groceries"];
-    case "friends":
-    case "work":
-      return ["splitting"];
-    case "family":
-      return ["splitting", "groceries", "chores", "upkeep"];
-    case "other":
-      return ["splitting", "groceries"];
-    case "roommates":
-    default:
-      return [...TOOLKIT_IDS];
-  }
+  return presetFor(purpose);
 }
 
 export type SettingsPatch = Partial<Pick<Group, "name" | "purpose" | "currency" | "timezone" | "chattiness" | "simplifyDebts">>;
@@ -100,16 +88,16 @@ export async function groupsWithChat(onlyGroupId?: string): Promise<(Pick<Group,
   if (!rows.length) return [];
   const flags = await db.select().from(groupToolkits).where(inArray(groupToolkits.groupId, rows.map((r) => r.id)));
   return rows.map((r) => {
-    const off = new Set(flags.filter((f) => f.groupId === r.id && !f.enabled).map((f) => f.toolkit));
-    return { ...r, toolkits: TOOLKIT_IDS.filter((t) => !off.has(t)) };
+    const mine = new Map(flags.filter((f) => f.groupId === r.id).map((f) => [f.toolkit, f.enabled]));
+    return { ...r, toolkits: MANIFESTS.filter((m) => mine.get(m.id) ?? m.defaultOn).map((m) => m.id) };
   });
 }
 
-/** Every Toolkit with its on/off state. A Toolkit with no row is on (Groups made before Onboarding chose). */
+/** Every Toolkit with its on/off state. A Toolkit with no row follows its manifest's `defaultOn`. */
 export async function listToolkits(ctx: GroupCtx): Promise<{ id: ToolkitId; enabled: boolean }[]> {
   const rows = await db.select().from(groupToolkits).where(eq(groupToolkits.groupId, ctx.groupId));
   const byId = new Map(rows.map((r) => [r.toolkit, r.enabled]));
-  return TOOLKIT_IDS.map((id) => ({ id, enabled: byId.get(id) ?? true }));
+  return MANIFESTS.map((m) => ({ id: m.id, enabled: byId.get(m.id) ?? m.defaultOn }));
 }
 
 export async function enabledToolkits(ctx: GroupCtx): Promise<ToolkitId[]> {
@@ -151,8 +139,8 @@ async function writeToolkits(groupId: string, on: readonly ToolkitId[]) {
     .onConflictDoUpdate({ target: [groupToolkits.groupId, groupToolkits.toolkit], set: { enabled: sql`excluded.enabled` } });
 }
 
-/** Seed Toolkit rows for a new Group (Onboarding, seed, tests). */
-export async function initToolkits(groupId: string, on: readonly ToolkitId[] = TOOLKIT_IDS) {
+/** Seed Toolkit rows for a new Group (Onboarding, seed, tests). Default: every Toolkit that's on by default. */
+export async function initToolkits(groupId: string, on: readonly ToolkitId[] = presetFor(null)) {
   await writeToolkits(groupId, on);
 }
 
@@ -174,11 +162,18 @@ export async function updateGroupSettings(
     .set({ ...clean, ...(onboarding ? { onboardedAt: new Date() } : {}) })
     .where(eq(groups.id, ctx.groupId))
     .returning();
+  const wasOn = await enabledToolkits(ctx);
   if (patch.toolkits) await writeToolkits(ctx.groupId, patch.toolkits);
   else if (onboarding && clean.purpose) await writeToolkits(ctx.groupId, defaultToolkitsFor(clean.purpose));
   const changed = Object.keys(clean);
   if (changed.length) await record(ctx.groupId, ctx.memberId, "group.settings", `changed ${changed.join(", ")}`, { table: "groups", id: ctx.groupId });
   const toolkits = await enabledToolkits(ctx);
+  // Onboarding's preset counts as switching each of its Toolkits on; later, only the ones that just went on.
+  const choseNow = !!patch.toolkits || (onboarding && !!clean.purpose);
+  if (choseNow) {
+    const { runHooks } = await import("./toolkits");
+    await runHooks(ctx, onboarding ? toolkits : toolkits.filter((t) => !wasOn.includes(t)), wasOn.filter((t) => !toolkits.includes(t)));
+  }
   const starters = onboarding && isHousehold(clean.purpose) ? await startHousehold(ctx, toolkits) : undefined;
   return { group, toolkits, ...(starters ? { starters } : {}) };
 }
@@ -199,18 +194,6 @@ export async function setSimplifyDebts(ctx: Ctx, input: { on: boolean }): Promis
   await db.update(groups).set({ simplifyDebts: input.on }).where(eq(groups.id, ctx.groupId));
   await record(ctx.groupId, ctx.memberId, "group.settings", `turned simplify debts ${input.on ? "on" : "off"}`, { table: "groups", id: ctx.groupId });
   return input.on;
-}
-
-/** Admin: switch one Toolkit on or off. Nothing is deleted when it's off. */
-export async function setToolkit(ctx: Ctx, input: { toolkit: ToolkitId; enabled: boolean }): Promise<ToolkitId[]> {
-  await requireAdmin(ctx);
-  if (!TOOLKIT_IDS.includes(input.toolkit)) throw new Error(`Unknown Toolkit "${input.toolkit}". Toolkits: ${TOOLKIT_IDS.join(", ")}.`);
-  await db
-    .insert(groupToolkits)
-    .values({ groupId: ctx.groupId, toolkit: input.toolkit, enabled: input.enabled })
-    .onConflictDoUpdate({ target: [groupToolkits.groupId, groupToolkits.toolkit], set: { enabled: input.enabled } });
-  await record(ctx.groupId, ctx.memberId, "toolkit.toggled", `switched ${input.toolkit} ${input.enabled ? "on" : "off"}`);
-  return enabledToolkits(ctx);
 }
 
 const DATA_TABLES = [schema.outboxJobs, schema.splitwiseLinks, schema.cartCheckouts, schema.expenses, schema.settlements, schema.cartItems, schema.recipes, schema.chores, schema.reminders, schema.maintenance, schema.chatMessages, schema.activity, schema.petMoments] as const;

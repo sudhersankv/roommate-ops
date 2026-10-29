@@ -1,5 +1,6 @@
 // Business logic, one namespace per area. Tools (src/toolkits) and the dashboard (src/app) call these.
 export * as groups from "./groups";
+export * as toolkits from "./toolkits";
 export * as members from "./members";
 export * as claims from "./claims";
 export * as activity from "./activity";

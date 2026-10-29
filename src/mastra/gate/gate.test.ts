@@ -15,7 +15,8 @@ import {
   type Chattiness,
   type JevAnswers,
 } from "./policy";
-import { parseJev } from "./jev";
+import { parseJev, questionsFor, toolkitCriteria } from "./jev";
+import { MANIFESTS, TOOLKIT_IDS } from "@/toolkits/manifests";
 
 const jev = (act: number, clarify: number, chat: number, ignore: number, addressed: number, choice: JevAnswers["toolkit"]["choice"], p: number): JevAnswers => ({
   intent: { act, clarify, chat, ignore },
@@ -37,7 +38,7 @@ const REC = {
   vague: jev(0.02, 0.97, 0, 0.01, 0.17, "splitting", 1), // "[Maya] someone paid for something yesterday"
   trash: jev(0.99, 0.01, 0, 0, 0.58, "chores", 0.48), // "[Dev] remind everyone trash goes out tuesday 8pm"
   uber: jev(0.76, 0.24, 0, 0, 0.16, "splitting", 1), // "[Maya] pagué 30 por el uber"
-  seeYou: jev(0.01, 0.03, 0.01, 0.95, 0.04, "reminders", 0.79), // "[Sam] ok see you at 7"
+  seeYou: jev(0.01, 0.03, 0.01, 0.95, 0.04, "core", 0.79), // "[Sam] ok see you at 7" (recorded as "reminders", now core's choice)
   // Recorded with step 6's groceries wording (recipes, cooking, meal planning, pantry).
   tacosNamed: jev(0.35, 0.61, 0.01, 0.03, 0.6, "groceries", 0.99), // "[Maya] roomie tacos for 5 on friday"
   tacos: jev(0.22, 0.73, 0, 0.05, 0.25, "groceries", 0.99), // "[Dev] tacos for 5 friday"
@@ -178,6 +179,83 @@ describe("Chattiness", () => {
   });
 });
 
+// Recorded 2026-10-28 (jev-1.14.0) with questionsFor(enabled): the toolkit question only offers the Group's
+// enabled Toolkits, core and none.
+const ENABLED_REC = [
+  {
+    latest: "[Maya] I paid 40 for pizza",
+    enabled: ["groceries"],
+    toolkit: { type: "choice", choice: "none", confidence: 0.4, probabilities: { groceries: 0.38, core: 0.02, none: 0.6 } },
+    intent: { act: 0.81, clarify: 0.19, chat: 0, ignore: 0 },
+    addressed: 0.2,
+  },
+  {
+    latest: "[Maya] I paid 40 for pizza",
+    enabled: ["splitting", "groceries", "chores", "upkeep"],
+    toolkit: { type: "choice", choice: "splitting", confidence: 0.95, probabilities: { splitting: 0.96, groceries: 0.04, chores: 0, upkeep: 0, core: 0, none: 0 } },
+    intent: { act: 0.75, clarify: 0.25, chat: 0, ignore: 0 },
+    addressed: 0.22,
+  },
+  {
+    latest: "[Sam] I did the dishes",
+    enabled: ["splitting", "groceries"],
+    toolkit: { type: "choice", choice: "none", confidence: 0.88, probabilities: { splitting: 0, groceries: 0.01, core: 0.08, none: 0.91 } },
+    intent: { act: 0.89, clarify: 0.05, chat: 0.01, ignore: 0.05 },
+    addressed: 0.07,
+  },
+  {
+    latest: "[Sam] add milk and eggs",
+    enabled: ["splitting"],
+    toolkit: { type: "choice", choice: "none", confidence: 0.97, probabilities: { splitting: 0.01, core: 0.01, none: 0.98 } },
+    intent: { act: 0.94, clarify: 0.06, chat: 0, ignore: 0 },
+    addressed: 0.81,
+  },
+  {
+    latest: "[Maya] roomie what can you do?",
+    enabled: ["splitting", "groceries"],
+    toolkit: { type: "choice", choice: "core", confidence: 0.96, probabilities: { splitting: 0, groceries: 0, core: 0.97, none: 0.03 } },
+    intent: { act: 0.43, clarify: 0.05, chat: 0.52, ignore: 0 },
+    addressed: 0.99,
+  },
+] as const;
+
+describe("the toolkit question comes from the enabled manifests", () => {
+  test("criteria: each enabled Toolkit's gate criterion, then core and none", () => {
+    const c = toolkitCriteria(["groceries", "chores"]);
+    assert.deepEqual(Object.keys(c), ["groceries", "chores", "core", "none"]);
+    assert.equal(c.groceries, MANIFESTS.find((m) => m.id === "groceries")!.gate.criterion);
+    assert.deepEqual(Object.keys(questionsFor(["splitting"]).toolkit.criteria), ["splitting", "core", "none"]);
+    assert.deepEqual(Object.keys(questionsFor().toolkit.criteria), [...TOOLKIT_IDS, "core", "none"]);
+  });
+
+  test("recorded answers route only among enabled Toolkits; a disabled one is never picked or narrowed to", () => {
+    for (const r of ENABLED_REC) {
+      const parsed = parseJev(
+        { answers: { intent: { type: "choice", choice: "act", probabilities: r.intent }, addressed: { type: "noul", noul: r.addressed }, toolkit: r.toolkit } },
+        r.enabled,
+      );
+      assert.ok(parsed, r.latest);
+      assert.ok([...r.enabled, "core", "none"].includes(parsed.toolkit.choice), `${r.latest}: ${parsed.toolkit.choice}`);
+      for (const k of Object.keys(r.toolkit.probabilities)) assert.ok([...r.enabled, "core", "none"].includes(k), `Jev only saw enabled choices (${k})`);
+      const d = gate(parsed, { hardTrigger: r.latest.includes("roomie") });
+      if (d.toolkit) assert.ok([...r.enabled, "core"].includes(d.toolkit), `${r.latest} narrowed to ${d.toolkit}`);
+    }
+    // With Splitting off, the pizza goes nowhere in particular; with it on, to Splitting.
+    assert.equal(gate(parseJev({ answers: { intent: { type: "choice", choice: "act", probabilities: ENABLED_REC[0].intent }, addressed: { type: "noul", noul: 0.2 }, toolkit: ENABLED_REC[0].toolkit } }, ["groceries"])).toolkit, undefined);
+    assert.equal(gate(parseJev({ answers: { intent: { type: "choice", choice: "act", probabilities: ENABLED_REC[1].intent }, addressed: { type: "noul", noul: 0.22 }, toolkit: ENABLED_REC[1].toolkit } })).toolkit, "splitting");
+    // "what can you do?" goes to core, where list_toolkits lives.
+    assert.equal(gate(parseJev({ answers: { intent: { type: "choice", choice: "chat", probabilities: ENABLED_REC[4].intent }, addressed: { type: "noul", noul: 0.99 }, toolkit: ENABLED_REC[4].toolkit } }, ["splitting", "groceries"]), { hardTrigger: true }).toolkit, "core");
+  });
+
+  test("a choice for a Toolkit that's off (stale answer) never narrows", () => {
+    const parsed = parseJev(
+      { answers: { intent: { type: "choice", choice: "act", probabilities: { act: 0.9 } }, addressed: { type: "noul", noul: 0.9 }, toolkit: { type: "choice", choice: "chores", probabilities: { chores: 0.99 } } } },
+      ["splitting"],
+    );
+    assert.deepEqual(parsed?.toolkit, { choice: "none", p: 0 });
+  });
+});
+
 describe("parseJev", () => {
   test("the gateway's shape", () => {
     const parsed = parseJev({
@@ -190,19 +268,21 @@ describe("parseJev", () => {
     assert.deepEqual(parsed, REC.pizza);
   });
 
-  test("missing or unknown answers -> null (the Gate treats it as Jev unavailable)", () => {
+  test("missing answers -> null (the Gate treats it as Jev unavailable)", () => {
     assert.equal(parseJev({}), null);
     assert.equal(parseJev({ answers: { intent: { type: "choice", choice: "act" } } }), null);
-    assert.equal(
-      parseJev({
-        answers: {
-          intent: { type: "choice", choice: "act", probabilities: { act: 1 } },
-          addressed: { type: "noul", noul: 0.5 },
-          toolkit: { type: "choice", choice: "recipes", probabilities: { recipes: 1 } },
-        },
-      }),
-      null,
-    );
+  });
+
+  test("a toolkit choice that isn't offered -> 'none' at p 0 (no narrowing), the rest kept", () => {
+    const parsed = parseJev({
+      answers: {
+        intent: { type: "choice", choice: "act", probabilities: { act: 1 } },
+        addressed: { type: "noul", noul: 0.5 },
+        toolkit: { type: "choice", choice: "recipes", probabilities: { recipes: 1 } },
+      },
+    });
+    assert.deepEqual(parsed?.toolkit, { choice: "none", p: 0 });
+    assert.equal(parsed?.intent.act, 1);
   });
 });
 

@@ -8,8 +8,9 @@ test("intro: the group's new pet, names the Admin and asks purpose, currency, ti
   const text = introMessage("Maya");
   assert.match(text, /I'm Roomie, your group's new pet/);
   assert.match(text, /Maya added me, so Maya's my admin/);
-  for (const q of [/what's this group for/, /currency/, /time zone/, /what vibe should I have \(chill \/ hype \/ deadpan \/ mom \/ gremlin \/ butler\)/]) assert.match(text, q);
+  for (const q of [/what's this group for/, /currency/, /time zone \(a city is fine\)/, /what vibe should I have \(chill \/ hype \/ deadpan \/ mom \/ gremlin \/ butler\)/]) assert.match(text, q);
   assert.match(text, /USD, Chicago time, chill/, "says what the defaults are");
+  assert.match(text, /Splitting, Groceries, Chores and Upkeep/, "lists the roommates preset");
   assert.match(introMessage("Maya", { petName: "Dino" }), /I'm Dino, your group's new pet/);
   assert.ok(text.split("\n").length <= 3, "one short message");
   assert.ok(!/https?:\/\//.test(text), "no links at join time (ADR 0001)");
@@ -45,7 +46,7 @@ test("default Toolkits per purpose (core is always on and not listed)", () => {
   assert.deepEqual(defaultToolkitsFor("friends"), ["splitting"]);
   assert.deepEqual(defaultToolkitsFor("family"), ["splitting", "groceries", "chores", "upkeep"]);
   assert.deepEqual(defaultToolkitsFor("work"), ["splitting"]);
-  assert.deepEqual(defaultToolkitsFor(null), defaultToolkitsFor("roommates"), "no answer yet: everything on");
+  assert.deepEqual(defaultToolkitsFor(null), defaultToolkitsFor("roommates"), "no answer yet: every defaultOn Toolkit");
 });
 
 test("settings are normalized, and bad ones explained", () => {

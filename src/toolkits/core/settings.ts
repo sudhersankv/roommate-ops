@@ -3,9 +3,13 @@ import { z } from "zod";
 import { GROUP_PURPOSES } from "@/db/schema";
 import { ARCHETYPE_IDS, MAX_QUIRKS } from "@/lib/personality";
 import { WEEKDAY_NAMES } from "@/lib/time";
-import { groups, personality, schedule } from "@/services";
-import { TOOLKIT_IDS } from "../types";
-import { ctxOf } from "../util";
+import { groups, personality, schedule, toolkits as toolkitsSvc } from "@/services";
+import { CATALOG, CORE_MANIFEST, TOOLKIT_IDS } from "../manifests";
+import { ctxOf, dashboardLinks } from "../util";
+
+const NAMES = CATALOG.map((m) => m.id).join(", ");
+const SWITCHABLE = CATALOG.filter((m) => m.status !== "coming-soon").map((m) => m.id).join(", ");
+const SOON = CATALOG.filter((m) => m.status === "coming-soon").map((m) => m.id).join(", ");
 
 export const settingsTools = {
   set_group_settings: createTool({
@@ -64,8 +68,34 @@ export const settingsTools = {
   }),
   toggle_toolkit: createTool({
     id: "toggle_toolkit",
-    description: "Admin only: switch a Toolkit (splitting, groceries, chores, upkeep) on or off. Nothing is deleted.",
-    inputSchema: z.object({ toolkit: z.enum(TOOLKIT_IDS), enabled: z.boolean() }),
-    execute: async (input, context) => ({ toolkits: await groups.setToolkit(ctxOf(context), input) }),
+    description: `Admin only: switch a Toolkit on or off by name. Switchable: ${SWITCHABLE}. Coming soon, not switchable yet: ${SOON}. Nothing is deleted. Coming-soon ones and ones missing something they need come back with notAvailable + message: relay it, and don't offer another coming-soon one instead. When one goes on, mention tryThis as an example.`,
+    inputSchema: z.object({ toolkit: z.string().describe(`One of: ${NAMES}`), enabled: z.boolean() }),
+    execute: async (input, context) => {
+      try {
+        return await toolkitsSvc.setToolkit(ctxOf(context), input);
+      } catch (e) {
+        if (e instanceof toolkitsSvc.ToolkitUnavailableError) return { notAvailable: true, reason: e.code, message: e.message };
+        throw e;
+      }
+    },
+  }),
+  list_toolkits: createTool({
+    id: "list_toolkits",
+    description:
+      "What Roomie can do in this group ('what can you do?', 'help', 'which toolkits are there?'): the Toolkits that are on (with things to try), the ones an Admin could switch on, and what's coming soon. Answer in your own voice, in 1-3 lines: what's on with an example or two, then what else there is. A button to the Toolkits page is attached.",
+    inputSchema: z.object({}),
+    execute: async (_input, context) => {
+      const ctx = ctxOf(context);
+      const all = await toolkitsSvc.catalogFor(ctx);
+      const line = (s: (typeof all)[number]) => ({ name: s.manifest.name, what: s.manifest.summary, ...(s.enabled ? { try: s.manifest.gate.examples.slice(0, 2) } : {}) });
+      return {
+        on: all.filter((s) => s.enabled).map(line),
+        off: all.filter((s) => !s.enabled && s.manifest.status !== "coming-soon").map(line),
+        comingSoon: all.filter((s) => s.manifest.status === "coming-soon").map((s) => s.manifest.name),
+        always: CORE_MANIFEST.summary,
+        whoCanChange: "Admins: in the chat ('turn on chores') or on the dashboard's Toolkits page.",
+        ...dashboardLinks("Browse Toolkits", `/g/${ctx.groupId}/toolkits`),
+      };
+    },
   }),
 };

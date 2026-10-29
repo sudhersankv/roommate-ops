@@ -4,7 +4,7 @@ import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import { useEffect, type ReactNode } from "react"
 import { cn } from "cn"
-import { CheckIcon, ChevronDownIcon, House, ListChecks, ShoppingCart, Wallet } from "lucide-react"
+import { CheckIcon, ChevronDownIcon, House } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -22,6 +22,7 @@ import { MemberAvatar } from "@/components/app/member-avatar"
 import { authClient } from "@/lib/auth/client"
 import { AskRoomie } from "./ask-roomie"
 import { useGroup } from "./group-context"
+import { ToolkitOff } from "./toolkit-off"
 
 const LAST_GROUP_COOKIE = "roomie-group" // read by app/page.tsx
 
@@ -41,7 +42,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         Skip to content
       </a>
       <main id="main" className="flex flex-1 flex-col pb-32">
-        {children}
+        <OwnedPage>{children}</OwnedPage>
       </main>
       <BottomNav />
       <AskRoomie />
@@ -93,22 +94,55 @@ function GroupSwitcher() {
   )
 }
 
+/**
+ * A page a Toolkit owns (its manifest's `dashboard.pages`) while every owner is off: the off state instead of the
+ * page. Pages nobody owns (Home, Members, Settings, Toolkits) always render.
+ */
+function OwnedPage({ children }: { children: ReactNode }) {
+  const pathname = usePathname()
+  const { base, ownedPages } = useGroup()
+  const segment = pathname.startsWith(`${base}/`) ? pathname.slice(base.length + 1).split("/")[0] : ""
+  const owned = ownedPages.find((p) => p.prefix === segment)
+  if (!owned || owned.owners.some((o) => o.enabled)) return children
+  return (
+    <>
+      <TopBar title={owned.owners[0].name} />
+      <ToolkitOff toolkit={owned.owners[0]} />
+    </>
+  )
+}
+
 function MoreMenu() {
   const router = useRouter()
-  const { me, base, dev } = useGroup()
+  const { me, base, dev, moreNav } = useGroup()
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
-          <Button variant="ghost" size="icon" aria-label="More: Members, Settings, sign out">
+          <Button variant="ghost" size="icon" aria-label="More: Members, Toolkits, Settings, sign out">
             <MemberAvatar name={me.name} />
           </Button>
         }
       />
       <DropdownMenuContent align="end" className="min-w-52">
+        {moreNav.length ? (
+          <>
+            <DropdownMenuGroup>
+              <DropdownMenuLabel>More</DropdownMenuLabel>
+              {moreNav.map((n) => (
+                <DropdownMenuItem key={n.href} onClick={() => router.push(n.href)}>
+                  {n.icon}
+                  {n.label}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuGroup>
+            <DropdownMenuSeparator />
+          </>
+        ) : null}
         <DropdownMenuGroup>
           <DropdownMenuLabel>Signed in as {me.name}</DropdownMenuLabel>
           <DropdownMenuItem onClick={() => router.push(`${base}/members`)}>Members</DropdownMenuItem>
+          <DropdownMenuItem onClick={() => router.push(`${base}/toolkits`)}>Toolkits</DropdownMenuItem>
           <DropdownMenuItem onClick={() => router.push(`${base}/settings`)}>Settings</DropdownMenuItem>
           {dev ? <DropdownMenuItem onClick={() => router.push("/design")}>Design system</DropdownMenuItem> : null}
         </DropdownMenuGroup>
@@ -129,17 +163,14 @@ function MoreMenu() {
   )
 }
 
+/** Home, then the enabled Toolkits' tabs (from their manifests), with Ask Roomie in the middle. */
 function BottomNav() {
   const pathname = usePathname()
-  const { base, cheers, setAskOpen } = useGroup()
+  const { base, cheers, setAskOpen, nav } = useGroup()
   const [cheering, cheer] = useCheer()
-  const tabs = [
-    { href: base, label: "Home", icon: House, exact: true },
-    { href: `${base}/money`, label: "Money", icon: Wallet },
-    null,
-    { href: `${base}/cart`, label: "Cart", icon: ShoppingCart },
-    { href: `${base}/chores`, label: "Chores", icon: ListChecks },
-  ] as const
+  const links = [{ href: base, label: "Home", icon: <House />, exact: true }, ...nav.map((n) => ({ href: n.href, label: n.label, icon: n.icon, exact: false }))]
+  const middle = Math.ceil(links.length / 2)
+  const tabs = [...links.slice(0, middle), null, ...links.slice(middle)]
 
   // The nav dino hops whenever something good happens anywhere in the Group.
   useEffect(() => {
@@ -151,7 +182,7 @@ function BottomNav() {
       aria-label="Main"
       className="fixed inset-x-0 bottom-0 z-30 mx-auto w-full max-w-md border-t bg-card/95 pb-[env(safe-area-inset-bottom)] backdrop-blur-md md:border-x"
     >
-      <ul className="grid h-18 grid-cols-5 items-stretch">
+      <ul className="grid h-18 items-stretch" style={{ gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))` }}>
         {tabs.map((tab) => {
           if (!tab) {
             return (
@@ -169,8 +200,8 @@ function BottomNav() {
               </li>
             )
           }
-          const active = "exact" in tab ? pathname === tab.href : pathname.startsWith(tab.href)
-          const Icon = tab.icon
+          const path = tab.href.split("?")[0]
+          const active = tab.exact ? pathname === path : pathname.startsWith(path)
           return (
             <li key={tab.href} className="flex">
               <Link
@@ -183,11 +214,12 @@ function BottomNav() {
               >
                 <span
                   className={cn(
-                    "flex h-7 w-12 items-center justify-center rounded-full transition-colors",
+                    "flex h-7 w-12 items-center justify-center rounded-full transition-colors [&_svg]:size-5",
                     active && "bg-primary/18 text-foreground"
                   )}
+                  aria-hidden
                 >
-                  <Icon className="size-5" aria-hidden />
+                  {tab.icon}
                 </span>
                 {tab.label}
               </Link>
