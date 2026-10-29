@@ -33,6 +33,10 @@ export default async function SignInPage({ searchParams }: { searchParams: Promi
         New here?{" "}
         <Link href="/" className="underline decoration-primary decoration-2 underline-offset-4 hover:decoration-foreground">
           See what Roomie does
+        </Link>{" "}
+        or{" "}
+        <Link href="/help" className="underline decoration-primary decoration-2 underline-offset-4 hover:decoration-foreground">
+          how it works
         </Link>
       </p>
     </SignInScreen>

@@ -57,6 +57,13 @@
       "when": 1793263234817,
       "tag": "0007_beta_requests",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1793311652777,
+      "tag": "0008_trick_votes",
+      "breakpoints": true
     }
   ]
 }
