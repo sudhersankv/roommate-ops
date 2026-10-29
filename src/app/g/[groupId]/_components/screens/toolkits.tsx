@@ -174,8 +174,9 @@ function IconTile({ toolkit, className }: { toolkit: ToolkitCardView; className?
   )
 }
 
-function StatusBadge({ toolkit }: { toolkit: ToolkitCardView }) {
-  if (toolkit.status === "coming-soon") return <Badge variant="secondary">Coming soon</Badge>
+function StatusBadge({ toolkit, card = false }: { toolkit: ToolkitCardView; card?: boolean }) {
+  // On a card, "Coming soon" takes the switch's place instead.
+  if (toolkit.status === "coming-soon") return card ? null : <Badge variant="secondary">Coming soon</Badge>
   if (toolkit.status === "beta") return <Badge variant="outline">Beta</Badge>
   return null
 }
@@ -187,7 +188,7 @@ function ToolkitCard({ toolkit: t, onOpen, onToggle, pending }: { toolkit: Toolk
     <div className={cn("relative flex h-full flex-col gap-3 rounded-3xl bg-card p-4", soon && "opacity-80")}>
       <div className="flex items-start justify-between gap-2">
         <IconTile toolkit={t} />
-        <StatusBadge toolkit={t} />
+        <StatusBadge toolkit={t} card />
       </div>
       <button type="button" onClick={onOpen} className="flex flex-1 flex-col gap-1 text-left outline-none after:absolute after:inset-0 after:rounded-3xl focus-visible:after:ring-3 focus-visible:after:ring-ring/50">
         <span className="font-semibold">{t.name}</span>
@@ -195,7 +196,9 @@ function ToolkitCard({ toolkit: t, onOpen, onToggle, pending }: { toolkit: Toolk
       </button>
       <div className="relative z-10 flex items-center justify-between gap-2">
         <Badge variant="outline">{CATEGORY_LABEL[t.category]}</Badge>
-        {soon ? null : isAdmin ? (
+        {soon ? (
+          <span className="text-xs font-medium text-muted-foreground">Coming soon</span>
+        ) : isAdmin ? (
           t.enabled ? (
             <label className="flex items-center gap-1.5 text-xs font-medium">
               On
@@ -230,6 +233,9 @@ function ToolkitDetail({ toolkit: t, onToggle, pending }: { toolkit: ToolkitCard
           </DrawerTitle>
           <DrawerDescription>{t.summary}</DrawerDescription>
         </div>
+        <DrawerClose render={<Button variant="ghost" size="icon-sm" className="ml-auto self-start" aria-label="Close" />}>
+          <XIcon />
+        </DrawerClose>
       </DrawerHeader>
       <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto p-4">
         <p className="type-body text-pretty">{t.longDescription}</p>
@@ -277,8 +283,7 @@ function ToolkitDetail({ toolkit: t, onToggle, pending }: { toolkit: ToolkitCard
                   <span className="flex flex-col">
                     <span className="type-body">
                       {r.label}
-                      <span className="sr-only">{r.ok ? ": ready" : ": missing"}</span>
-                      {r.ok ? null : <span className={r.blocking ? "text-destructive" : "text-muted-foreground"}> · {r.blocking ? "missing" : "not set up"}</span>}
+                      <span className={r.ok ? "text-owed" : r.blocking ? "text-destructive" : "text-muted-foreground"}> · {r.ok ? "ready" : r.blocking ? "missing" : "not set up"}</span>
                     </span>
                     {r.detail && !r.ok ? <span className="type-caption text-muted-foreground">{r.detail}</span> : null}
                   </span>
@@ -300,27 +305,33 @@ function ToolkitDetail({ toolkit: t, onToggle, pending }: { toolkit: ToolkitCard
         ) : null}
       </div>
       <DrawerFooter className="border-t pt-4">
-        {soon ? (
-          <Button size="lg" disabled>
-            Coming soon
-          </Button>
-        ) : isAdmin ? (
-          t.enabled ? (
+        {!isAdmin && !t.enabled && !soon ? (
+          <p className="type-body text-center text-muted-foreground">Ask an admin{admins.length ? ` (${admins.join(" or ")})` : ""} to turn this on.</p>
+        ) : null}
+        {t.blocked.length && isAdmin && !t.enabled && !soon ? <p className="type-caption text-center text-destructive">Can&apos;t go on yet: {t.blocked.join("; ")}.</p> : null}
+        <div className="flex gap-2 *:flex-1">
+          {soon ? (
+            <Button size="lg" disabled>
+              Coming soon
+            </Button>
+          ) : isAdmin && t.enabled ? (
             <Button size="lg" variant="outline" disabled={pending} onClick={() => onToggle(t, false)}>
               {pending ? <Spinner data-icon="inline-start" /> : null}
               Turn off
             </Button>
-          ) : (
+          ) : isAdmin ? (
             <Button size="lg" disabled={pending || t.blocked.length > 0} onClick={() => onToggle(t, true)}>
               {pending ? <Spinner data-icon="inline-start" /> : null}
-              Turn on {t.name}
+              Turn on
             </Button>
-          )
-        ) : t.enabled ? null : (
-          <p className="type-body text-center text-muted-foreground">Ask an admin{admins.length ? ` (${admins.join(" or ")})` : ""} to turn this on.</p>
-        )}
-        {t.enabled && t.href ? <Button size="lg" variant="secondary" nativeButton={false} render={<Link href={t.href} />}>Open {t.name}</Button> : null}
-        <DrawerClose render={<Button variant="ghost" size="lg" />}>Close</DrawerClose>
+          ) : null}
+          {t.enabled && t.href ? (
+            <Button size="lg" variant="secondary" nativeButton={false} render={<Link href={t.href} />}>
+              Open {t.name}
+            </Button>
+          ) : null}
+          {!isAdmin && !(t.enabled && t.href) ? <DrawerClose render={<Button variant="secondary" size="lg" />}>Close</DrawerClose> : null}
+        </div>
       </DrawerFooter>
     </>
   )

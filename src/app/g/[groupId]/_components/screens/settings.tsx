@@ -103,17 +103,13 @@ export function SettingsScreen({ children }: { children?: ReactNode }) {
 
 /** Which Toolkits are on, and the way to the marketplace (switching happens there). */
 function ToolkitsSummary() {
-  const { base, nav, moreNav, toolkits, isAdmin } = useGroup()
-  const on = Object.values(toolkits).filter(Boolean).length
-  const names = [...nav, ...moreNav].map((n) => n.label)
+  const { base, toolkitNames, isAdmin } = useGroup()
   return (
     <FieldSet>
       <FieldLegend className="type-heading">Toolkits</FieldLegend>
       <Field orientation="horizontal">
         <FieldContent>
-          <FieldLabel htmlFor="browse-toolkits">
-            {on} on{names.length ? `: ${names.join(", ")}` : ""}
-          </FieldLabel>
+          <FieldLabel htmlFor="browse-toolkits">{toolkitNames.length ? `On: ${toolkitNames.join(", ")}` : "None on yet"}</FieldLabel>
           <FieldDescription>What Roomie can do in this Group. {isAdmin ? "Add or switch them off in the marketplace." : "Admins switch them on and off."}</FieldDescription>
         </FieldContent>
         <Button id="browse-toolkits" variant="outline" size="sm" nativeButton={false} render={<Link href={`${base}/toolkits`} />}>

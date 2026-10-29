@@ -76,6 +76,7 @@ export async function groupView(s: GroupSession): Promise<GroupView> {
     groups: s.groups,
     members: people.map(view),
     toolkits: on,
+    toolkitNames: MANIFESTS.filter((m) => on[m.id]).map((m) => m.name),
     ...shellView(s.group.id, on),
     today: localDay(new Date(), tz),
     dev: process.env.NODE_ENV !== "production",

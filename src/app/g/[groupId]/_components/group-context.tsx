@@ -33,6 +33,8 @@ export type GroupView = {
   groups: { id: string; name: string }[]
   members: MemberView[]
   toolkits: Record<ToolkitId, boolean>
+  /** Names of the enabled Toolkits, in marketplace order. */
+  toolkitNames: string[]
   /** Bottom-nav tabs after Home (at most NAV_TABS), then the rest for the avatar menu. */
   nav: NavItemView[]
   moreNav: NavItemView[]
