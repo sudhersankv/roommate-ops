@@ -5,7 +5,8 @@ import { LinkIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
-import { GoogleButton, SignInScreen } from "@/components/app/sign-in"
+import { GoogleButton, SignInFailed, SignInScreen } from "@/components/app/sign-in"
+import { authErrorFrom } from "@/lib/auth/oauth-paths"
 import { sessionUser } from "@/lib/session"
 import { claims } from "@/services"
 
@@ -16,15 +17,25 @@ export const dynamic = "force-dynamic"
  * A Claim link (ADR 0003). Signed out: sign in with Google and come back here. Signed in: the token is used up,
  * the Account is linked to the Member, and you land on the Group's dashboard.
  */
-export default async function ClaimPage({ params }: { params: Promise<{ token: string }> }) {
+export default async function ClaimPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ token: string }>
+  searchParams: Promise<Record<string, string | string[] | undefined>>
+}) {
   const { token } = await params
   const user = await sessionUser()
   const peek = await claims.peekClaim(token)
 
   if (!user) {
     if (peek.state !== "ok") return <Problem message={claims.CLAIM_PROBLEMS[peek.state]} />
+    // Back from Google without a session (lib/auth/oauth-return.ts says why): say so instead of silently re-asking.
+    const failed = authErrorFrom(await searchParams)
+    if (failed) console.warn(`[auth] claim page signed out after Google: ${failed}`)
     return (
       <SignInScreen title={`Hi ${peek.memberName}. Sign in to see your group.`}>
+        {failed && <SignInFailed reason={failed} />}
         <GoogleButton returnTo={`/claim/${token}`} />
         <p className="type-caption text-center text-muted-foreground">This link is just for you, works once, and expires 24 hours after Roomie sent it.</p>
       </SignInScreen>
