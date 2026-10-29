@@ -5,7 +5,7 @@ import { RoomieAvatar } from "@/components/app/roomie-avatar"
 import { currentOperator } from "@/lib/operator"
 import { WhatsAppPanel } from "./panel"
 
-export const metadata: Metadata = { title: "WhatsApp" }
+export const metadata: Metadata = { title: "WhatsApp", robots: { index: false, follow: false, nocache: true } }
 export const dynamic = "force-dynamic"
 
 /** The operator's page for Roomie's WhatsApp number: link it (QR or pairing code), see who it is, log it out. */

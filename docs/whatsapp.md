@@ -16,7 +16,7 @@ fly deploy   # applies migration 0006_whatsapp (wa_sessions, wa_contacts) on sta
 ```
 
 - `WHATSAPP_ENABLED=1`: the Next server holds the WhatsApp socket (in and out) next to the scheduler. Off by default.
-- `ROOMIE_OPERATOR_EMAILS`: comma-separated Google emails allowed on `/admin/whatsapp`. Everyone else gets a 404 there.
+- `ROOMIE_OPERATOR_EMAILS`: comma-separated Google emails allowed on `/admin/whatsapp`. Everyone else gets a 404 there, signed in or not, and so does the page's API. The match only counts for an email the identity provider verified (`lib/operator.ts`), and the Neon Auth branch has email+password sign-in turned off, so nobody can register an operator's address to get in. Unset = nobody. `/admin` is `noindex` and disallowed in `robots.txt`, and nothing in the app links to it.
 - Optional: `WA_LOG=info` (or `debug`) for Baileys' own logs; the default `warn` keeps the log readable. `JOIN_DELAY_MS` and `REPLY_DELAY_MS` work as on Telegram (WhatsApp's default reply pause is 1.2-3.2 s).
 
 ## 3. Log in (once)
