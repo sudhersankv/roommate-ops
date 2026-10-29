@@ -1,5 +1,7 @@
 # Baileys for WhatsApp groups, behind a Channel adapter
 
+_Update: [ADR 0013](./0013-whatsapp-via-baileys.md) runs Baileys directly inside the Next process (not through the Evolution API, not as a separate `npm run wa`), with the session in Postgres._
+
 Roomie has to be added to a Chat people already have. Meta's Cloud API (and Photon and Composio, which sit on top of it) can't do that: a Business account can only join groups it created itself, and only after becoming an Official Business Account (business verification, 30+ days on the platform, 8-member cap, no buttons in groups). So Roomie runs on Baileys, an unofficial WhatsApp Web client, on its own dedicated number. All WhatsApp code sits behind a Channel adapter, so the rest of the app never imports Baileys.
 
 **Telegram first (step 2b).** Telegram's Bot API is official (no ban risk) and a bot can be added to an existing group, so Roomie goes live there first to validate the Channel adapter and the flows (Onboarding, Pending members, private Claim links) with real people. The same anti-spam rules apply to it ([docs/telegram.md](../telegram.md)). WhatsApp follows when a dedicated number exists, through the Evolution API (a Baileys wrapper run in Docker: the same risk profile as raw Baileys, and swappable to the Cloud API later) behind the same adapter interface.

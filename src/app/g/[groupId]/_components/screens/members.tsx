@@ -35,7 +35,7 @@ export function MembersScreen() {
         cheer()
         toast.add({ title: `${m.name} is in`, description: "Roomie sends a private sign-in link when they ask for the dashboard.", type: "success" })
       } else {
-        toast.add({ title: `Declined ${m.name}`, description: "They stay in the WhatsApp group, but Roomie won't act for them." })
+        toast.add({ title: `Declined ${m.name}`, description: "They stay in the group chat, but Roomie won't act for them." })
       }
     })
 

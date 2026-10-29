@@ -13,7 +13,7 @@ One chat that Roomie has been added to, together with everything Roomie keeps fo
 _Avoid_: Household, house, space, workspace
 
 **Chat**:
-The conversation itself on a messaging app (a Telegram group today, WhatsApp later). A Group is linked to exactly one Chat.
+The conversation itself on a messaging app (a Telegram or WhatsApp group). A Group is linked to exactly one Chat.
 _Avoid_: Thread, channel (as a synonym for a single conversation)
 
 **Channel**:
@@ -43,6 +43,14 @@ _Avoid_: Magic link, invite link
 **Onboarding**:
 The short conversation after Roomie joins a Chat in which it creates the Group, learns what the Group is for, and proposes Toolkits.
 _Avoid_: Setup, profiling (in user-facing text)
+
+**LID**:
+The opaque id WhatsApp uses for a person in many groups (`…@lid`) instead of their phone number. Roomie keeps a Member under their phone number when it can find it, and under the LID only when it can't.
+_Avoid_: User id, WhatsApp id (ambiguous)
+
+**Pairing code**:
+The 8-character code that links Roomie's WhatsApp number to the server without scanning a QR: typed on the phone under Linked devices.
+_Avoid_: OTP, verification code
 
 ## Behaviour
 

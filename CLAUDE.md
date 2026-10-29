@@ -2,7 +2,7 @@
 
 Roomie is an AI groupmate that lives in a group chat and on a per-group dashboard. It splits costs, keeps the shared grocery cart, tracks chores and upkeep, and sets reminders. Persona: the group chat's pet. Each Group's Roomie takes its personality from the group (a vibe, a name, quirks, and the slang it slowly picks up); always brief and exact about facts (see "Personality" below).
 
-**Read first:** the rebuild plan is in `docs/plan.md`, the vocabulary in `GLOSSARY.md`, and the decisions in `docs/adr/`. They are the spec; where they conflict with this file, they win. Steps 1 (rename), 2b (Telegram), 3 (Mastra agent), 4 (identity, Groups, dashboard), 5 (Splitting), 6 (Groceries) and 7 (Chores, Upkeep, reminders, Group time zones) are done; the code below is what exists today. Before a real Telegram group: `npm run telegram:check`, then `docs/first-group-test.md`. WhatsApp (step 2) is parked until Roomie has a number; `npm run dev-chat` simulates a group chat without any app.
+**Read first:** the rebuild plan is in `docs/plan.md`, the vocabulary in `GLOSSARY.md`, and the decisions in `docs/adr/`. They are the spec; where they conflict with this file, they win. Steps 1 (rename), 2 (WhatsApp, waiting for its live test), 2b (Telegram), 3 (Mastra agent), 4 (identity, Groups, dashboard), 5 (Splitting), 6 (Groceries) and 7 (Chores, Upkeep, reminders, Group time zones) are done; the code below is what exists today. Before a real Telegram group: `npm run telegram:check`, then `docs/first-group-test.md`; WhatsApp: `docs/whatsapp.md` (link the number at `/admin/whatsapp`). `npm run dev-chat` simulates a group chat without any app.
 
 Agent skills for this repo live in `.agents/skills/`.
 
@@ -20,7 +20,8 @@ src/
                         member_notes, activity, pet_moments + the Toolkit tables (expenses, expense_payers, expense_splits,
                         settlements, splitwise_links, expense/settlement_external_refs, outbox_jobs, recipes, cart_items,
                         cart_checkouts, chores,
-                        chore_logs, reminders, maintenance), all keyed by group_id
+                        chore_logs, reminders, maintenance), all keyed by group_id; wa_sessions (the WhatsApp login,
+                        BufferJSON rows "creds" / "<type>-<id>") and wa_contacts (LID -> phone JID + name)
   db/enums.ts           categories, split methods, recurrences, sources (no drizzle import: client code uses them)
   db/index.ts           db client
   services/             (ctx: Ctx, input) => result. Source of truth. index.ts re-exports as namespaces.
@@ -31,7 +32,8 @@ src/
     toolkits.ts         setToolkit (Admins; by id or name; coming soon / unmet requires refused; hooks once per change;
                         a dashboard switch-on posts ONE line in the Chat, 10 min cooldown), catalogFor, checkRequirements
     members.ts          list (active / active+pending), approve, decline, promote, payment handles, forgetMe, Member
-                        facts (rememberAboutMe, knownAbout: your own or an Admin, peopleFacts for the instructions)
+                        facts (rememberAboutMe, knownAbout: your own or an Admin, peopleFacts for the instructions),
+                        rekeyChannelUser (WhatsApp LID -> phone JID), fillPlaceholderName
     claims.ts           Claim links: issueDashboardLink, createClaimToken, consumeClaim, upsertAccount
     activity.ts         record() + listActivity(): who added, changed or deleted what
     chatlog.ts          chat_messages: log, recent chatter, follow-up window facts, retention delete
@@ -118,7 +120,20 @@ src/
                         voice/DMs -> IncomingMessage, queued per Chat). Never imports the app: deps come in
   channels/telegram-boot.ts  real deps (pipeline, onboarding, services); telegramChannel() for instrumentation,
                         telegramBot() for the polling script and the webhook
-  channels/rate-limit.ts     token buckets (TokenBucket, SendLimiter) with an injectable clock
+  channels/whatsapp.ts  Baileys adapter (docs/whatsapp.md, ADR 0013): WhatsAppChannel (outbound: composing, pause, rate
+                        limits, chunks, links as trailing "text — url" lines, LID recipients -> phone JID) +
+                        createWhatsApp(opts) (connection: QR / pairing code, status(), reconnect with backoff, loggedOut
+                        clears the session, connectionReplaced stops; inbound: notify-only messages deduped, joins with the
+                        full roster, later joiners, subject changes, text/photo/voice/DMs -> IncomingMessage, queued per
+                        Chat; the canonical id is the phone JID when resolvable, else the LID). Socket, auth and deps come in
+  channels/whatsapp-auth.ts  makeAuthState(rows): Baileys' AuthenticationState over wa_sessions rows (BufferJSON, creds
+                        written behind creds.update); postgresAuthState() loads the store lazily
+  channels/whatsapp-store.ts pgAuthRows (wa_sessions) and pgContacts (wa_contacts); only imported lazily
+  channels/whatsapp-boot.ts  real deps; whatsappClient() (built once per process, registers the Channel) and
+                        whatsappChannel() for instrumentation (WHATSAPP_ENABLED=1; connects only with a saved login)
+  channels/text.ts      shared copy and cutting: chunkText, commandOf, helpText, startReply, OOPS, NO_GROUP, wasAddressed
+  channels/queue.ts     KeyedQueue: inbound work per Chat, in order
+  channels/rate-limit.ts     token buckets (TokenBucket, SendLimiter) with an injectable clock; envMs
   lib/auth/             server.ts (createNeonAuth), client.ts (createAuthClient), dev.ts (DEV_AUTH_EMAIL bypass)
   lib/session.ts        sessionUser -> currentAccount -> memberSession(groupId) / currentMember(groupId) (redirect/404)
   lib/env.ts            loads .env with override (import first in every entry point)
@@ -143,11 +158,13 @@ src/
   jobs/style-note.ts    every 50 chat lines: Haiku proposes style candidates, style-stats counts them into
                         groups.personality.learned (setCandidateReader() for tests)
   proxy.ts              THE middleware (a root proxy.ts is ignored because the app is under src/): Neon Auth guard on
-                        /g/*; a stray neon_auth_session_verifier on / or /claim/* -> /auth/callback (dev bypass skips it)
+                        /g/* and /admin/*; a stray neon_auth_session_verifier on / or /claim/* -> /auth/callback (dev bypass skips it)
   lib/auth/             server.ts (createNeonAuth, sameSite lax), client.ts, oauth-paths.ts (client-safe URL helpers),
                         oauth-return.ts (the verifier exchange behind /auth/callback), dev.ts (DEV_AUTH_EMAIL bypass)
-  instrumentation.ts    loads env, registers the Telegram Channel (outbound) when TELEGRAM_BOT_TOKEN is set, starts the
-                        scheduler once (DISABLE_SCHEDULER=1 skips it)
+  instrumentation.ts    loads env, registers the Telegram Channel (outbound) when TELEGRAM_BOT_TOKEN is set; unless
+                        DISABLE_SCHEDULER=1 (builds, tests), starts the WhatsApp socket (WHATSAPP_ENABLED=1) and the
+                        scheduler once
+  lib/operator.ts       currentOperator(): the signed-in user if their email is in ROOMIE_OPERATOR_EMAILS (lib/env.ts)
   components/ui/        shadcn components; components/roomie/ the mascot; components/app/ shared app bits
                         (sign-in, doorway, avatars, money-bits, categories, theme) and the self-contained Settings ->
                         Personality: personality-section.tsx (server, <PersonalitySection groupId />), -panel.tsx
@@ -168,7 +185,9 @@ src/
                         settings/splitwise/callback = Composio's return URL (route handler)
     design/             the design-system page (dev only unless SHOW_DESIGN_PAGE=1)
     api/auth/[...path]  Neon Auth proxy; api/chat = Ask Roomie (session Member, 401/403); api/receipts = Scan receipt;
-                        api/telegram = Telegram webhook (401 without TELEGRAM_WEBHOOK_SECRET in the header)
+                        api/telegram = Telegram webhook (401 without TELEGRAM_WEBHOOK_SECRET in the header);
+                        api/admin/whatsapp = status JSON + start / request-pairing-code / logout (operators, else 404)
+    admin/whatsapp/     the operator page: state, QR (refreshes every 5 s), pairing-code form, the linked number, Log out
 drizzle/                generated migrations (0000 baseline drops the pre-step-4 tables)
 scripts/migrate.ts      npm run db:migrate
 scripts/seed.ts         demo Group "Apt 4B" (dev Chat dev-apt-4b); prints its id, a Claim link for Maya, a Studio requestContext
@@ -176,9 +195,10 @@ scripts/dev-chat.ts     the terminal group chat stand-in (docs/dev-chat.md)
 scripts/telegram.ts     npm run telegram: long polling (deletes any webhook first); telegram-webhook.ts --set/--delete/--info
 scripts/telegram-check.ts  npm run telegram:check: read-only readiness (getMe, privacy mode, webhook, APP_URL, delays,
                         Toolkits, DB + migrations, a 1-token Haiku call, Jev); non-zero with the fix when something's off
+scripts/whatsapp.ts     npm run whatsapp: holds the WhatsApp session from a terminal (QR in the terminal, --pair <digits>
+                        for a pairing code, --timeout <s>); never while Fly holds it
 scripts/evals.ts        runs the scenarios in throwaway Groups; --baseline writes docs/evals-baseline.md
 scripts/studio-presets.ts  writes .mastra-presets.json for Studio (run by mastra:dev)
-spikes/                 throwaway experiments (WhatsApp/Baileys)
 ```
 
 ## Identity and permissions
@@ -186,6 +206,7 @@ spikes/                 throwaway experiments (WhatsApp/Baileys)
 - **Accounts and Claim links** (ADR 0003): a Member gets a single-use, 24-hour Claim link only when they ask for the dashboard (`get_dashboard_link`, which sends it privately and reuses a live one) or from `dev-chat link`. Never in bulk (ADR 0001). `/claim/<token>` signs them in with Google, upserts `accounts` from the session user (mirrored by `auth_user_id`, ADR 0008) and links `members.account_id`. One Account can be a Member of many Groups.
 - **Who is what** (ADR 0008): whoever adds Roomie is Admin; people already in the Chat are active; later joiners and unknown senders are Pending until an Admin approves (chat or Members page).
 - **Telegram can't list members** (ADR 0010): at join time Roomie knows the adder (Admin) and the group's Telegram admins (active). Anyone else becomes a Member on their first message: active if it's within 24 h of Roomie joining (`ROSTER_GRACE_MS`, from `chats.created_at`), Pending after. `new_chat_members` are Pending at once (with the approval ask), even inside the 24 h; people added together with Roomie count as already there.
+- **WhatsApp can list members** (ADR 0013): when Roomie is added, the whole group (from `groupMetadata`) becomes active Members, the adder the Admin; there is no roster window and no "press Start": Roomie can DM any Member. Later joiners are Pending, as everywhere. A Member's `channel_user_id` is the phone JID (`<number>@s.whatsapp.net`) when resolvable, else the LID (`…@lid`); learned pairs go to `wa_contacts` and LID Members move to the phone JID (`rekeyChannelUser`). Members named by their number (`+1555…`, or "Someone" for a hidden one) take the profile name from their first message.
 - **Private messages on Telegram:** a bot can't DM anyone first, so the intro asks people to tap @bot and press Start once. A refused DM is a `CantMessagePrivatelyError`; `get_dashboard_link` relays its "tap @bot and press Start" message and never posts the Claim link in the group. A DM from a Member of exactly one Group goes through the pipeline as that Group with `isPrivate`.
 - **Rules** (`services/authz.ts`): Pending members can chat and read, but every write service calls `requireActive` and refuses with "Hang on, an admin needs to approve you first. <Admin> can approve you." Members, roles, settings, Toolkits and delete-group-data call `requireAdmin`. Expenses can be changed by whoever added or paid them, anyone with a Share, or an Admin.
 - **Dashboard:** every page and action goes through `lib/session.ts`; nothing trusts a member id from the client. Non-Admins don't see admin controls, and the actions return 403 anyway.
@@ -221,7 +242,7 @@ spikes/                 throwaway experiments (WhatsApp/Baileys)
 - **Posts Roomie makes on its own (ADR 0001):** the chores nudge at `group_toolkits["chores"].settings.nudgeHour` (default 9, null = off), only when something is due or late; the weekly Group Report at `group_toolkits["core"].settings.report = { weekday, hour }` (default Sunday 18). Both are claimed in `scheduled_posts (group, kind, local period)` before sending, so at most one per day / week across restarts and processes; a failed send gives the claim back. Upkeep has no post of its own: it's a line in the report. The window is the whole hour; a scheduler that was off for it skips that day rather than posting late.
 - **The Group Report** is one message of at most ~12 lines (`reportParts`): Settle plan, chores this week (counts, the best streak, what's up now, the chart), upkeep due soon, the Cart's size, the next week's whole-group reminders. Sections of switched-off Toolkits are left out. Emoji-led lines by default; when the Group style note's tone is casual (`isCasualStyle`) the same sentences run together without the list look. `group_report` returns the same text (`groupReportText`) and Roomie posts it verbatim.
 - **Onboarding** for roommates and families adds the three starter chores (no Rotation, so new people join in) and the usual five upkeep items, once, and only for Toolkits that are on. Family now also gets Upkeep.
-- **Telegram first contact:** `/help` (group or DM) is five lines (`helpText`), `/start` in a DM is one line and never a link, other slash commands are ignored, a failure while Roomie was addressed gets one friendly line (`OOPS`) and the stack goes to the log. `npm run telegram` prints a `[roomie]` line per message (gate, tools, time, trace id) and per reply.
+- **First contact** (`channels/text.ts`, shared by both adapters): `/help` (group or DM) is five lines (`helpText`), `/start` in a DM is one line and never a link (on WhatsApp nobody needs either; they work when typed, and other text starting with "/" goes through as text there), on Telegram other slash commands are ignored, a failure while Roomie was addressed gets one friendly line (`OOPS`) and the stack goes to the log. `npm run telegram` prints a `[roomie]` line per message (gate, tools, time, trace id) and per reply.
 
 ## Personality (the group pet)
 
@@ -260,10 +281,12 @@ spikes/                 throwaway experiments (WhatsApp/Baileys)
 - **Observability:** traces go to Postgres (`mastra_ai_spans`, visible in Studio) and to the Mastra platform when `MASTRA_PLATFORM_ACCESS_TOKEN` + `MASTRA_PROJECT_ID` are set. API routes call `mastra.observability.flush()` at the end.
 - **Voice:** no Whisper on the gateway. `lib/voice.ts` sends the audio to OpenRouter (`OPENROUTER_API_KEY`, `STT_MODEL`, an audio-capable chat model) as an `input_audio` chat part and uses the text reply as the transcript. Optional; the Telegram adapter uses it for voice notes when `OPENROUTER_API_KEY` is set (otherwise Roomie says once per Chat that it can't hear them yet).
 - **grammY** (Telegram, `grammy` in `serverExternalPackages`): `new Bot(token, { botInfo })` skips getMe (the webhook builds botInfo from the token's id + `TELEGRAM_BOT_USERNAME`; tests do the same with a fake token). Polling: `bot.start({ allowed_updates, onStart })`; webhook: `webhookCallback(bot, "std/http", { secretToken })`. Outbound calls are captured in tests with `bot.api.config.use(transformer)`; `handleUpdate` + the adapter's `idle()` runs an update to the end. `my_chat_member` (Roomie added/removed) arrives without admin rights; `chat_member` doesn't, so we don't use it. Privacy mode must be off (BotFather `/setprivacy`) to see every group message. Groups upgraded to supergroups change id (`migrate_to_chat_id` -> `groups.moveChat`). Telegram refuses `localhost` URL buttons: the adapter sends those links as text.
-- **Env (pacing):** `JOIN_DELAY_MS` (intro after joining, default 60000) and `REPLY_DELAY_MS` (pause after "typing", default 600-1800 ms random); tests pass 0.
+- **Baileys** (WhatsApp, `baileys` pinned at `7.0.0-rc14`, in `serverExternalPackages`; docs/whatsapp.md, ADR 0013): `makeWASocket({ version: fetchLatestBaileysVersion(), auth: { creds, keys: makeCacheableSignalKeyStore(keys) }, markOnlineOnConnect: false, syncFullHistory: false, getMessage, cachedGroupMetadata })`. Don't set `shouldSyncHistoryMessage: () => false`: Baileys warns it loses its initial LID mappings. Only `messages.upsert` type `notify` is live; joins arrive as `group-participants.update` (`add` with us in `participants`, `author`/`authorPn` = the adder) or `groups.upsert` (added at creation); participants are `{ id, phoneNumber?, lid? }`; messages carry `key.participantAlt` / `key.remoteJidAlt` (the other form of the sender's id); `sock.signalRepository.lidMapping.getPNForLID(lid)`. Close codes: 401 `loggedOut` (clear, wait for login), 440 `connectionReplaced` (another process: stop), 515 `restartRequired` (right after pairing: reconnect at once), 408 while showing a QR (nobody scanned: stop). `requestPairingCode(digits)` only after the first `qr` event. Tests drive `createWhatsApp` with a fake socket and an in-memory `AuthRows`. One process per session.
+- **Env (pacing):** `JOIN_DELAY_MS` (intro after joining, default 60000) and `REPLY_DELAY_MS` (pause after "typing", default 600-1800 ms random on Telegram, 1200-3200 ms on WhatsApp); tests pass 0.
+- **Env (WhatsApp, operators):** `WHATSAPP_ENABLED=1` (this process holds the socket), `WA_LOG` (Baileys' log level, default warn), `ROOMIE_OPERATOR_EMAILS` (comma-separated; `/admin/*` is a 404 for anyone else).
 - **Neon Auth** (Managed Better Auth, `@neondatabase/auth`): `lib/auth/server.ts` = `createNeonAuth({ baseUrl, cookies: { secret, sameSite: "lax" } })` (the default `strict` drops the challenge cookie on the cross-site return from Google, so sign-in silently loops); `app/api/auth/[...path]` = `auth.handler()`; browser `createAuthClient()` (no args). The sign-in flow: `GoogleButton` calls `signIn.social({ provider: "google", callbackURL: <origin>/auth/callback?next=<path> })`; `/api/auth/sign-in/social` sets the `session_challenge` cookie; after Google, Neon Auth redirects to the callbackURL with `neon_auth_session_verifier=…` (or `error=…`); `app/auth/callback` (`lib/auth/oauth-return.ts`) exchanges verifier + challenge for the session cookies via `get-session` and 303s to `next`, or to `next?auth_error=<reason>`, which `/` and `/claim` show as "Sign-in didn't complete" (`authErrorFrom`). Logs `[auth] oauth return ok|failed: <reason>`; the response carries `x-roomie-auth`. `src/proxy.ts` is the only middleware file (Next loads it from `src/`; a root `proxy.ts` is silently ignored): `auth.middleware({ loginUrl: "/" })` guards `/g/*`, and a verifier landing on `/` or `/claim/*` is bounced to `/auth/callback` (the SDK middleware never exchanges on its own loginUrl, and must not run on /claim). Header `x-roomie-proxy: guard|pass|oauth-return`. Behind Fly, `request.url` is `https://localhost:3000`: never build redirects from it (use relative Locations). Tests: `app/auth/callback/route.test.ts` (fake Neon Auth server). Email+password sign-up is also enabled on the dev Auth branch (Neon's default; the app has no UI for it). `auth.getSession()` returns `{ data }`, user is `data.user`. Users live in `neon_auth` (Neon owns it; never write there). Dev Google uses Neon's shared OAuth keys.
 - **Composio** (`@composio/core`, TS SDK v3): `new Composio({ apiKey })`; direct execution (`tools.execute`) needs a toolkit version, so we pass `COMPOSIO_SPLITWISE_VERSION` or `dangerouslySkipVersionCheck`. `connectedAccounts.initiate` is retired for Composio-managed OAuth; use `connectedAccounts.link`. The Splitwise auth config comes from `COMPOSIO_SPLITWISE_AUTH_CONFIG_ID`, else the first Composio-managed one, else one is created (`authConfigs.create("splitwise", { type: "use_composio_managed_auth" })`) and its id logged for `.env`.
-- **Next 16:** Mastra, pg and Composio are in `serverExternalPackages`. Read `node_modules/next/dist/docs/` before using Next APIs.
+- **Next 16:** Mastra, pg, Composio, grammY and Baileys are in `serverExternalPackages`. Read `node_modules/next/dist/docs/` before using Next APIs.
 
 ## Commands
 
@@ -278,6 +301,8 @@ npm run dev-chat              # terminal group chat through the real pipeline (d
 npm run telegram              # Roomie on Telegram, long polling (TELEGRAM_BOT_TOKEN/_USERNAME; docs/telegram.md)
 npm run telegram:webhook -- --set|--delete|--info   # webhook at <APP_URL>/api/telegram (public https only)
 npm run telegram:check        # read-only readiness check before a real group (docs/first-group-test.md)
+npm run whatsapp              # Roomie on WhatsApp from this terminal (QR here; -- --pair <digits> for a code; docs/whatsapp.md)
+                              # one process per session: WHATSAPP_ENABLED=0 on Fly first. On PowerShell: npx tsx scripts/whatsapp.ts --pair ...
 npm run mastra:dev            # Mastra Studio at localhost:4111, with request-context presets for Apt 4B's Members
 npm run db:generate           # after a schema change: write the next migration
 npm run typecheck && npm test # tsc + unit tests (no .env); CI runs both

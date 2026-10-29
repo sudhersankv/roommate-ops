@@ -2,7 +2,7 @@
 
 Roomie is an AI groupmate. You add it to a group chat and it becomes part of the conversation: it splits costs, keeps the group's grocery cart, tracks chores and upkeep, and sets reminders. Each Group also gets a dashboard that everyone signs in to with Google.
 
-**Status: rebuild in progress.** See [docs/plan.md](docs/plan.md) for the plan, [GLOSSARY.md](GLOSSARY.md) for the vocabulary and [docs/adr/](docs/adr) for the decisions. Telegram is the first live Channel (`npm run telegram`, [docs/telegram.md](docs/telegram.md)); WhatsApp comes later behind the same adapter. `npm run dev-chat` simulates a group chat in the terminal, and the dashboard's "Ask Roomie" panel works locally.
+**Status: rebuild in progress.** See [docs/plan.md](docs/plan.md) for the plan, [GLOSSARY.md](GLOSSARY.md) for the vocabulary and [docs/adr/](docs/adr) for the decisions. Telegram (`npm run telegram`, [docs/telegram.md](docs/telegram.md)) and WhatsApp (Baileys, on Roomie's own number, [docs/whatsapp.md](docs/whatsapp.md)) sit behind the same Channel adapter. `npm run dev-chat` simulates a group chat in the terminal, and the dashboard's "Ask Roomie" panel works locally.
 
 Architecture and conventions: [CLAUDE.md](CLAUDE.md).
 
@@ -35,6 +35,10 @@ In dev, Google sign-in uses Neon's shared OAuth credentials (the consent screen 
 4. `npm run telegram:check` (read-only) says whether the bot, privacy mode, `APP_URL`, the database and the gateway are ready.
 5. Add the bot to a test group. After a minute (`JOIN_DELAY_MS`) it introduces itself; whoever added it is the Admin. Try `roomie who's here`, `I paid 20 for pizza`, `/help`, and `send me the dashboard` (press **Start** in a DM with the bot first, so it can send you the link). The 15-minute script for a first real group is [docs/first-group-test.md](docs/first-group-test.md).
 
+### WhatsApp
+
+Roomie is a linked device on a spare SIM number (unofficial client: ban risk, so not your own number). On Fly: `fly secrets set WHATSAPP_ENABLED=1 ROOMIE_OPERATOR_EMAILS=you@example.com`, deploy, open `/admin/whatsapp` and scan the QR (or use a pairing code). The login lives in Postgres, so redeploys stay linked. Then add the number to a group: everyone there becomes a Member, the adder its Admin. Locally: `npm run whatsapp` (only while Fly has it off). Details: [docs/whatsapp.md](docs/whatsapp.md).
+
 ### Chores, upkeep and reminders
 
 Each Group has a time zone (Settings, or the setup answer: "Chicago", "CST", "India" all work), and "today", "Tuesday 8pm" and "this week" follow it. Chores can have a Rotation ("mopping every 3 days: Sam, then Dev, then me"); "skip my turn" passes it on. Roomie posts at most one chores nudge a day (default 9 AM, only when something is due) and a weekly Group Report (default Sunday 6 PM); Admins change both in Settings. Reminders for everyone go to the group chat, reminders for one person go to them privately. The scheduler that sends all of this runs inside `npm run dev`.
@@ -56,6 +60,7 @@ Other tools:
 npm run telegram         # Roomie on Telegram by long polling (docs/telegram.md)
 npm run telegram:webhook -- --set|--delete|--info   # the webhook, once APP_URL is a public https URL
 npm run telegram:check   # read-only readiness: bot, privacy mode, webhook, APP_URL, DB, gateway, Jev (before a real group)
+npm run whatsapp         # Roomie on WhatsApp from this terminal: QR here, or -- --pair <digits> (docs/whatsapp.md)
 npm run dev-chat         # a pretend group chat: join, add, say, photo, approve, link, ledger, cart (docs/dev-chat.md)
 npm run mastra:dev       # Mastra Studio at http://localhost:4111: chat with Roomie, see traces and scores
 npm run db:generate      # after changing src/db/schema.ts: write the next migration into drizzle/

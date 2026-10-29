@@ -1,5 +1,7 @@
 # Roomie on Fly: one always-on machine runs the Next server, which also hosts the API, the Telegram webhook
-# (/api/telegram) and the in-process scheduler. One machine only (--ha=false): the scheduler must not run twice.
+# (/api/telegram), the in-process scheduler and, with WHATSAPP_ENABLED=1, the WhatsApp socket (session in Postgres;
+# docs/whatsapp.md). One machine only (--ha=false): the scheduler must not run twice, and a WhatsApp session can only
+# be open in one place. Secrets: fly secrets set WHATSAPP_ENABLED=1 ROOMIE_OPERATOR_EMAILS=you@example.com
 app = "roomie"
 primary_region = "iad"
 

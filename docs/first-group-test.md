@@ -76,3 +76,21 @@ For each problem, copy from terminal 2 the two `[roomie]` lines of that message,
 Add what you sent, what Roomie did, and what it should have done, plus a screenshot of the chat if the tone is the problem. The trace id opens the full run (Gate scores, prompt, tool calls) in Mastra Studio (`npm run mastra:dev`, Traces). Errors print as `[roomie] couldn't handle a message from ...` with the stack; the chat only ever sees "Something went sideways on my end...".
 
 When you're done: Ctrl+C both terminals, set `JOIN_DELAY_MS` back to empty, and if a webhook was set before, run `npm run telegram:webhook -- --set` again.
+
+## WhatsApp variant
+
+The same 15 minutes on WhatsApp, with Roomie's own number linked on Fly ([docs/whatsapp.md](./whatsapp.md)). Easiest on Fly itself, so nothing fights over the session.
+
+**Before you start:** `fly secrets set WHATSAPP_ENABLED=1 ROOMIE_OPERATOR_EMAILS=<your Google email> JOIN_DELAY_MS=0` (put `JOIN_DELAY_MS` back afterwards with `fly secrets unset JOIN_DELAY_MS`), deploy, open `https://<app>/admin/whatsapp`, and link the number (QR or pairing code) until it says **Connected**. Keep `fly logs` open: it shows the same `[roomie]` lines as terminal 2 above. Testing from your laptop instead: `fly secrets set WHATSAPP_ENABLED=0` first, then `npm run dev` + `npm run whatsapp` on the same database.
+
+Run the script above with these differences:
+
+| # | On WhatsApp |
+|---|---|
+| 1 | Create a WhatsApp group with Friend and add Roomie's number. The intro names you as admin and asks the setup questions, with **no** "press Start" line. Everyone in the group is already a Member (`roomie who's here` lists you both right away, not as they speak). |
+| 2 | Skip it: WhatsApp lets Roomie message you first. Typing `/start` to Roomie privately still gets one line, never a link. |
+| 4 | `/help` works if typed; nobody needs it. |
+| 13 | The reminder arrives as a private WhatsApp chat from Roomie. |
+| 16 | The Claim link arrives in a private chat from Roomie as a last line `Open dashboard — https://...` (no button), with no preview. Never in the group. |
+
+Also try: @mention Roomie (type `@` and pick it) instead of writing "roomie", reply to one of its messages, send a voice note, send a receipt photo, add a third person (Roomie asks you to approve them), and rename the group (Roomie keeps the new subject as the Chat's title; the Group's own name doesn't change). On `/admin/whatsapp`, nothing should change during the test: it stays **Connected**.
