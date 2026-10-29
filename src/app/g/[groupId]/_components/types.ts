@@ -1,6 +1,8 @@
 // Plain shapes the server pages hand to the client screens (dates as "YYYY-MM-DD" in the Group's time zone).
 import type { Category } from "@/components/app/categories"
+import type { ReactNode } from "react"
 import type { Recurrence, SplitMethod } from "@/db/enums"
+import type { ToolkitCategory, ToolkitStatus } from "@/toolkits/types"
 
 export type Transfer = { from: string; to: string; cents: number }
 
@@ -120,3 +122,27 @@ export type ChoreView = {
 }
 
 export type UpkeepView = { id: string; name: string; every: string; due: string; lastDone?: string }
+
+/** One marketplace card and its detail sheet, from the Toolkit's manifest and this Group's state. */
+export type ToolkitCardView = {
+  id: string
+  name: string
+  summary: string
+  longDescription: string
+  /** Rendered on the server (components/app/toolkit-icon.tsx). */
+  icon: ReactNode
+  category: ToolkitCategory
+  tags: string[]
+  status: ToolkitStatus
+  enabled: boolean
+  /** What it can do, in plain words (one per tool). */
+  abilities: string[]
+  /** Things to say in the chat (the Gate's examples). */
+  examples: string[]
+  requirements: { label: string; ok: boolean; detail?: string; blocking: boolean }[]
+  persona: string | null
+  /** Its dashboard page, when it has one. */
+  href: string | null
+  /** Unmet requirements that keep it from going on. */
+  blocked: string[]
+}

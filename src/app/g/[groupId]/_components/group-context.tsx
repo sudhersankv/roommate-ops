@@ -21,12 +21,22 @@ export type MemberView = {
   hasAccount: boolean
 }
 
+/** A tab or menu entry contributed by a Toolkit's manifest (`dashboard.nav`). The icon is rendered on the server. */
+export type NavItemView = { toolkit: string; label: string; href: string; icon: ReactNode }
+
+/** A route prefix a Toolkit owns (`dashboard.pages`): while every owner is off, the page shows the off state. */
+export type OwnedPageView = { prefix: string; owners: { id: string; name: string; summary: string; enabled: boolean; icon: ReactNode }[] }
+
 export type GroupView = {
   group: { id: string; name: string; currency: string; timezone: string; chattiness: "quiet" | "normal" | "chatty"; purpose: string | null; simplifyDebts: boolean }
   me: MemberView
   groups: { id: string; name: string }[]
   members: MemberView[]
   toolkits: Record<ToolkitId, boolean>
+  /** Bottom-nav tabs after Home (at most NAV_TABS), then the rest for the avatar menu. */
+  nav: NavItemView[]
+  moreNav: NavItemView[]
+  ownedPages: OwnedPageView[]
   today: string
   dev: boolean
 }

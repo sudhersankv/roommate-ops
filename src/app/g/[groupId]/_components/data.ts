@@ -1,20 +1,56 @@
 // Server-side: services -> the plain shapes the screens render. No business rules here; the numbers come from
 // services (balances, settle plan, shares, chores) and are only reshaped and dated in the Group's time zone.
+import { cache, createElement } from "react"
+
+import { ToolkitIcon } from "@/components/app/toolkit-icon"
 import { localDay } from "@/lib/dates"
 import type { GroupSession } from "@/lib/session"
 import { instacartAvailability } from "@/integrations/instacart"
-import { activity, cart, chatlog, chores, groups, members, money, pantry, recipes, splitwise, upkeep } from "@/services"
+import { activity, cart, chatlog, chores, members, money, pantry, recipes, splitwise, toolkits, upkeep } from "@/services"
 import { canChangeExpense } from "@/services/authz"
 import { guessCategory } from "@/services/categories"
 import type { Expense } from "@/services/money"
 import { haveNeed } from "@/services/recipe-math"
 import type { Recipe } from "@/services/recipes"
-import { TOOLKIT_IDS, type ToolkitId } from "@/toolkits/types"
+import { toolkitStates } from "@/toolkits/catalog"
+import { toolkitById } from "@/toolkits/registry"
+import { MANIFESTS, TOOLKIT_IDS, type ToolkitId } from "@/toolkits/manifests"
 import type { GroupView, MemberView } from "./group-context"
-import type { ActivityView, CartItemView, CartPageView, ChoreView, ExpenseView, NarrationView, RecipeView, SplitwiseView, Transfer, UpkeepView } from "./types"
+import type { ActivityView, CartItemView, CartPageView, ChoreView, ExpenseView, NarrationView, RecipeView, SplitwiseView, ToolkitCardView, Transfer, UpkeepView } from "./types"
+
+/** Bottom-nav tabs after Home; the rest go in the avatar menu. Home + 3 + the Ask Roomie button = 5 slots. */
+export const NAV_TABS = 3
+
+/**
+ * The shell from the manifests: enabled Toolkits' nav entries sorted by `order` (one per page, the first owner
+ * wins), split into tabs and overflow; and every owned page with its owners' on/off state.
+ */
+function shellView(groupId: string, on: Record<string, boolean>): Pick<GroupView, "nav" | "moreNav" | "ownedPages"> {
+  const entries = MANIFESTS.filter((m) => on[m.id] && m.dashboard?.nav)
+    .map((m) => ({ m, nav: m.dashboard!.nav! }))
+    .sort((a, b) => a.nav.order - b.nav.order)
+  const seen = new Set<string>()
+  const items = entries.flatMap(({ m, nav }) => {
+    const href = nav.href(groupId)
+    const path = href.split("?")[0]
+    if (seen.has(path)) return []
+    seen.add(path)
+    return [{ toolkit: m.id, label: nav.label, href, icon: createElement(ToolkitIcon, { name: nav.icon }) }]
+  })
+  const prefixes = [...new Set(MANIFESTS.flatMap((m) => m.dashboard?.pages ?? []))]
+  return {
+    nav: items.slice(0, NAV_TABS),
+    moreNav: items.slice(NAV_TABS),
+    ownedPages: prefixes.map((prefix) => ({
+      prefix,
+      owners: MANIFESTS.filter((m) => m.dashboard?.pages?.includes(prefix)).map((m) => ({ id: m.id, name: m.name, summary: m.summary, enabled: !!on[m.id], icon: createElement(ToolkitIcon, { name: m.icon }) })),
+    })),
+  }
+}
 
 export async function groupView(s: GroupSession): Promise<GroupView> {
-  const [people, toolkits] = await Promise.all([members.listMembersWithHandles({ groupId: s.group.id }), groups.listToolkits({ groupId: s.group.id })])
+  const [people, toolkits] = await Promise.all([members.listMembersWithHandles({ groupId: s.group.id }), toolkitStates(s.group.id)])
+  const on = Object.fromEntries(TOOLKIT_IDS.map((id) => [id, toolkits.find((t) => t.id === id)?.enabled ?? false])) as Record<ToolkitId, boolean>
   const tz = s.group.timezone
   const view = (m: (typeof people)[number]): MemberView => ({
     id: m.id,
@@ -39,20 +75,56 @@ export async function groupView(s: GroupSession): Promise<GroupView> {
     me: me ? view(me) : { id: s.member.id, name: s.member.displayName, role: s.member.role, status: s.member.status, joined: localDay(s.member.joinedAt, tz), handles: {}, hasAccount: true },
     groups: s.groups,
     members: people.map(view),
-    toolkits: Object.fromEntries(TOOLKIT_IDS.map((id) => [id, toolkits.find((t) => t.id === id)?.enabled ?? true])) as Record<ToolkitId, boolean>,
+    toolkits: on,
+    ...shellView(s.group.id, on),
     today: localDay(new Date(), tz),
     dev: process.env.NODE_ENV !== "production",
   }
 }
 
-export async function balancesView(s: GroupSession) {
+/** A tool's model-facing description as a short line, for tools without a plain-words `abilities` entry. */
+const plainLine = (description: string) => {
+  const admin = /^admin only:\s*/i.test(description)
+  const first = description.replace(/^admin only:\s*/i, "").split(/(?<=[a-z)'"])\.\s/)[0].replace(/\.$/, "")
+  return `${admin ? "Admins: " : ""}${first.charAt(0).toUpperCase()}${first.slice(1)}`
+}
+
+/** The marketplace: every catalog entry with this Group's on/off, requirements and the detail sheet's content. */
+export async function marketplaceView(s: GroupSession): Promise<ToolkitCardView[]> {
+  const catalog = await toolkits.catalogFor(s.ctx)
+  return catalog.map(({ manifest: m, enabled, requirements }) => {
+    const server = toolkitById(m.id)
+    const abilities = server ? Object.entries(server.tools).map(([id, tool]) => m.abilities?.[id] ?? plainLine(tool.description ?? id)) : []
+    const nav = m.dashboard?.nav
+    return {
+      id: m.id,
+      name: m.name,
+      summary: m.summary,
+      longDescription: m.longDescription,
+      icon: createElement(ToolkitIcon, { name: m.icon }),
+      category: m.category,
+      tags: m.tags,
+      status: m.status,
+      enabled,
+      abilities,
+      examples: m.gate.examples,
+      requirements,
+      persona: m.persona ?? null,
+      href: nav ? nav.href(s.group.id) : null,
+      blocked: toolkits.unmet(requirements).map((r) => r.label),
+    }
+  })
+}
+
+/** Cached per request: Home's doorway mood and Splitting's Home section both read it. */
+export const balancesView = cache(async (s: GroupSession) => {
   const [balances, plan] = await Promise.all([money.getBalances(s.ctx), money.getSettlePlan(s.ctx)])
   return {
     you: balances.find((b) => b.memberId === s.member.id)?.cents ?? 0,
     balances: Object.fromEntries(balances.map((b) => [b.memberId, b.cents])) as Record<string, number>,
     plan: plan.map((t): Transfer => ({ from: t.fromId, to: t.toId, cents: t.cents })),
   }
-}
+})
 
 /** Our own uploads render from this server, whatever APP_URL says. */
 const localPath = (url: string | null | undefined) => {

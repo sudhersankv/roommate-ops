@@ -1,17 +1,17 @@
 import type { Metadata } from "next"
 
 import { currentMember } from "@/lib/session"
-import { splitwiseView } from "../_components/data"
 import { SettingsScreen } from "../_components/screens/settings"
+import { settingsSections } from "../_components/sections"
 
 export const metadata: Metadata = { title: "Settings" }
 
-type Props = { params: Promise<{ groupId: string }>; searchParams: Promise<{ splitwise?: string }> }
+type Props = { params: Promise<{ groupId: string }> }
 
-// Admins get every setting; everyone else only Appearance. The server actions check the role again.
-export default async function SettingsPage({ params, searchParams }: Props) {
-  const [{ groupId }, { splitwise }] = await Promise.all([params, searchParams])
+// Core settings plus each enabled Toolkit's settings section (from its manifest). Admins get every control; the
+// sections and the server actions check the role again.
+export default async function SettingsPage({ params }: Props) {
+  const { groupId } = await params
   const s = await currentMember(groupId)
-  const admin = s.member.role === "admin" && s.member.status === "active"
-  return <SettingsScreen splitwise={admin ? await splitwiseView(s) : null} notice={splitwise ?? null} />
+  return <SettingsScreen>{s.member.status === "active" ? await settingsSections(s) : null}</SettingsScreen>
 }

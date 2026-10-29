@@ -7,7 +7,7 @@ import { revalidatePath } from "next/cache"
 import type { PaymentApp } from "@/db/schema"
 import { InstacartUnavailableError } from "@/integrations/instacart"
 import { memberSession } from "@/lib/session"
-import { cart, chores, groups, isNotAllowed, members, money, pantry, recipes, splitwise, upkeep, type Ctx } from "@/services"
+import { cart, chores, groups, isNotAllowed, members, money, pantry, recipes, splitwise, toolkits, upkeep, type Ctx } from "@/services"
 import type { SettingsPatch } from "@/services/groups"
 import type { ToolkitId } from "@/toolkits/types"
 import type { ActionResult } from "./_components/group-context"
@@ -22,7 +22,7 @@ async function act<T>(groupId: string, fn: (ctx: Ctx) => Promise<T>): Promise<Ac
     return { ok: true, data }
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e)
-    if (!isNotAllowed(e)) console.error("[action]", e)
+    if (!isNotAllowed(e) && !(e instanceof toolkits.ToolkitUnavailableError)) console.error("[action]", e)
     return { ok: false, error: message, status: isNotAllowed(e) ? 403 : 400 }
   }
 }
@@ -153,8 +153,12 @@ export async function updateSettings(groupId: string, patch: SettingsPatch) {
   return act(groupId, async (ctx) => (await groups.updateGroupSettings(ctx, patch)).group.name)
 }
 
+/** Marketplace and Settings switches. Switching one on runs its hook, records Activity and posts one line in the Chat. */
 export async function setToolkit(groupId: string, toolkit: ToolkitId, enabled: boolean) {
-  return act(groupId, (ctx) => groups.setToolkit(ctx, { toolkit, enabled }))
+  return act(groupId, async (ctx) => {
+    const res = await toolkits.setToolkit(ctx, { toolkit, enabled })
+    return { name: res.name, enabled: res.enabled, changed: res.changed, tryThis: res.tryThis ?? null }
+  })
 }
 
 export async function deleteGroupData(groupId: string) {
