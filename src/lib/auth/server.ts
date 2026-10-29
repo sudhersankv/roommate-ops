@@ -4,5 +4,11 @@ import { createNeonAuth } from "@neondatabase/auth/next/server";
 
 export const auth = createNeonAuth({
   baseUrl: process.env.NEON_AUTH_BASE_URL!,
-  cookies: { secret: process.env.NEON_AUTH_COOKIE_SECRET! },
+  cookies: {
+    secret: process.env.NEON_AUTH_COOKIE_SECRET!,
+    // The SDK defaults to `strict`, which drops the OAuth challenge cookie on the cross-site return from Google, so
+    // the verifier is never exchanged and sign-in silently loops. `lax` still blocks cross-site POSTs.
+    sameSite: "lax",
+  },
+
 });

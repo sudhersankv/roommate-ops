@@ -7,3 +7,8 @@ node_modules
 .git
 .github
 *.tsbuildinfo
+design
+spikes
+docs
+.agents
+public/uploads

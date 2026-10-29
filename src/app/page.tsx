@@ -4,18 +4,23 @@ import { redirect } from "next/navigation"
 import { MessageCircleIcon } from "lucide-react"
 
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
-import { GoogleButton, SignInScreen } from "@/components/app/sign-in"
+import { ClaimLinkForm } from "@/components/app/claim-link-form"
+import { GoogleButton, SignInFailed, SignInScreen } from "@/components/app/sign-in"
+import { authErrorFrom } from "@/lib/auth/oauth-paths"
 import { currentAccount } from "@/lib/session"
 import { groups } from "@/services"
 
 export const metadata: Metadata = { title: "Sign in" }
 export const dynamic = "force-dynamic"
 
-export default async function Home() {
+export default async function Home({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const account = await currentAccount()
   if (!account) {
+    const failed = authErrorFrom(await searchParams)
+    if (failed) console.warn(`[auth] home signed out after Google: ${failed}`)
     return (
       <SignInScreen title="See what your group owes, needs and has to do.">
+        {failed && <SignInFailed reason={failed} />}
         <GoogleButton />
         <p className="type-caption text-center text-muted-foreground">Roomie sent you here from WhatsApp.</p>
       </SignInScreen>
@@ -38,6 +43,7 @@ export default async function Home() {
           <EmptyDescription>Then ask it for the dashboard (“roomie send me the dashboard”). It sends you a private link that connects you to that group.</EmptyDescription>
         </EmptyHeader>
       </Empty>
+      <ClaimLinkForm />
     </SignInScreen>
   )
 }

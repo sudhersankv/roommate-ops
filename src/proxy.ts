@@ -2,16 +2,39 @@ import { NextResponse, type NextRequest } from "next/server"
 
 import { auth } from "@/lib/auth/server"
 import { devAuthEmail } from "@/lib/auth/dev"
+import { CALLBACK_PATH, VERIFIER_PARAM, withoutParam } from "@/lib/auth/oauth-paths"
 
-// Signed-out visitors to a Group's dashboard go to the sign-in screen. /claim handles its own sign-in (it has to be
-// reachable signed out to show the button), and /api/auth and static assets are never matched.
+// The only middleware file: the app lives under src/, so Next loads src/proxy.ts and ignores a root proxy.ts.
+//  1. Signed-out visitors to a Group's dashboard are sent to the sign-in screen (loginUrl "/").
+//  2. Google sign-in returns to /auth/callback, which exchanges the session verifier (lib/auth/oauth-return.ts). A
+//     return that lands on a page instead (a sign-in started before /auth/callback existed, or any other
+//     callbackURL) is bounced there too. The SDK's middleware can't do it for `/` (it never exchanges on its own
+//     loginUrl) and must not run on /claim (signed-out visitors need the Google button), so it only guards /g.
+// /api/auth, /auth/callback and static assets are never matched.
 const neonAuth = auth.middleware({ loginUrl: "/" })
 
-export default function proxy(request: NextRequest) {
+export default async function proxy(request: NextRequest) {
   if (devAuthEmail()) return NextResponse.next()
-  return neonAuth(request)
+  const { pathname, search, searchParams } = request.nextUrl
+  const verifier = searchParams.get(VERIFIER_PARAM)
+  if (verifier) {
+    const to = new URL(CALLBACK_PATH, request.url)
+    to.searchParams.set("next", withoutParam(`${pathname}${search}`, VERIFIER_PARAM))
+    to.searchParams.set(VERIFIER_PARAM, verifier)
+    const res = NextResponse.redirect(to)
+    res.headers.set("x-roomie-proxy", "oauth-return")
+    return res
+  }
+  if (pathname === "/" || pathname.startsWith("/claim/")) {
+    const pass = NextResponse.next()
+    pass.headers.set("x-roomie-proxy", "pass")
+    return pass
+  }
+  const res = await neonAuth(request)
+  res.headers.set("x-roomie-proxy", "guard")
+  return res
 }
 
 export const config = {
-  matcher: ["/g/:path*"],
+  matcher: ["/", "/g/:path*", "/claim/:path*"],
 }
