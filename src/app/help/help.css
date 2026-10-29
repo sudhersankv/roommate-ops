@@ -1,4 +1,4 @@
-/* /help's running text: lists, definitions and quotes, without a typography plugin. */
+/* /help's running text: lists, definitions and quotes, styled here instead of with Tailwind Typography. */
 
 .help-prose p {
   margin: 0;
