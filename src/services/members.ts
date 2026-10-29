@@ -1,7 +1,7 @@
 // Members: who is in a Group, approvals (Pending -> active), roles, payment handles and "forget me".
 import { and, asc, eq, inArray, ne, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
-import type { MemberNote, PaymentApp } from "@/db/schema";
+import type { ChannelName, MemberNote, PaymentApp } from "@/db/schema";
 import { record } from "./activity";
 import { NotAllowedError, requireAdmin } from "./authz";
 import type { Ctx, GroupCtx } from "./types";
@@ -67,6 +67,33 @@ export async function addMember(
     })
     .returning();
   return m;
+}
+
+/**
+ * A Channel learned that two ids are one person (WhatsApp: the phone JID behind a LID). Members stored under `from`
+ * move to `to` in that Channel's Groups, except where `to` is already a Member (the older row stays). Returns how many
+ * moved.
+ */
+export async function rekeyChannelUser(channel: ChannelName, from: string, to: string): Promise<number> {
+  if (from === to) return 0;
+  const moved = await db.execute(sql`
+    update ${members} m set channel_user_id = ${to}
+    where m.channel_user_id = ${from}
+      and m.group_id in (select c.group_id from ${schema.chats} c where c.channel = ${channel})
+      and not exists (select 1 from ${members} o where o.group_id = m.group_id and o.channel_user_id = ${to})`);
+  return moved.rowCount ?? 0;
+}
+
+/**
+ * The name a person goes by, once the Channel hears it: Members still named `placeholder` (what the adapter called
+ * them before, e.g. their phone number) take `name`. Names someone chose are never overwritten.
+ */
+export async function fillPlaceholderName(channel: ChannelName, channelUserId: string, placeholder: string, name: string): Promise<void> {
+  if (!name.trim() || name.trim() === placeholder) return;
+  await db.execute(sql`
+    update ${members} m set display_name = ${name.trim()}
+    where m.channel_user_id = ${channelUserId} and m.display_name = ${placeholder}
+      and m.group_id in (select c.group_id from ${schema.chats} c where c.channel = ${channel})`);
 }
 
 async function target(ctx: Ctx, memberId: string): Promise<Member> {

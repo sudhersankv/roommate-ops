@@ -1275,6 +1275,58 @@ describe("Splitwise tools against the fake client", () => {
   });
 });
 
+// ---------- WhatsApp's identity services and session store (a throwaway whatsapp Chat, wa_* rows cleaned up) ----------
+
+describe("WhatsApp: LID -> phone JID, placeholder names, the session and contact stores", () => {
+  const ts = Date.now();
+  const lid = `${ts}01@lid`;
+  const pn = `1555${String(ts).slice(-7)}@s.whatsapp.net`;
+  const session = `test-${ts}`;
+  let gid: string;
+
+  after(async () => {
+    if (gid) await deleteGroup(gid);
+    await db.delete(schema.waSessions).where(eq(schema.waSessions.id, session));
+    await db.delete(schema.waContacts).where(eq(schema.waContacts.lid, lid));
+  });
+
+  test("onboarded with a LID, the Member moves to the phone JID once it's known; a heard name replaces the placeholder", async () => {
+    const other = { userExternalId: `1555${String(ts).slice(-7, -1)}9@s.whatsapp.net`, name: "+15550000009" };
+    const joined = await onGroupJoined({ channel: "whatsapp", externalId: `${ts}@g.us`, title: `WA test ${ts}` }, [{ userExternalId: lid, name: "Someone" }, other], other);
+    gid = joined.group.id;
+    assert.equal(await members.rekeyChannelUser("whatsapp", lid, pn), 1);
+    assert.equal(await members.rekeyChannelUser("whatsapp", lid, pn), 0, "nothing left under the LID");
+    assert.equal((await members.memberByChannelUser(gid, pn))?.displayName, "Someone");
+    await members.fillPlaceholderName("whatsapp", pn, "Someone", "Dev");
+    await members.fillPlaceholderName("whatsapp", pn, "Someone", "Not Dev");
+    assert.equal((await members.memberByChannelUser(gid, pn))?.displayName, "Dev", "a real name is never overwritten");
+    assert.equal(await members.rekeyChannelUser("telegram", pn, lid), 0, "other Channels' Groups are untouched");
+  });
+
+  test("wa_sessions round-trips through jsonb; wa_contacts keeps what it learned", async () => {
+    const { pgAuthRows, pgContacts } = await import("@/channels/whatsapp-store");
+    const { makeAuthState } = await import("@/channels/whatsapp-auth");
+    const rows = pgAuthRows(session);
+    const first = await makeAuthState(rows);
+    first.state.creds.registered = true;
+    await first.saveCreds();
+    await first.state.keys.set({ session: { "x.0": Buffer.from([7, 8]) }, "pre-key": { "5": first.state.creds.signedIdentityKey } });
+    const again = await makeAuthState(rows);
+    assert.equal(again.hasSession, true);
+    assert.deepEqual(Buffer.from(again.state.creds.noiseKey.public), Buffer.from(first.state.creds.noiseKey.public));
+    assert.deepEqual((await again.state.keys.get("session", ["x.0"]))["x.0"], Buffer.from([7, 8]));
+    await again.state.keys.set({ session: { "x.0": null } });
+    assert.deepEqual(await again.state.keys.get("session", ["x.0"]), {});
+    await again.clear();
+    assert.equal((await rows.get(["creds", "pre-key-5"])).size, 0);
+
+    await pgContacts.save({ lid, pn: null, name: "Dev" });
+    await pgContacts.save({ lid, pn, name: null });
+    const mine = (await pgContacts.all()).find((c) => c.lid === lid);
+    assert.deepEqual(mine, { lid, pn, name: "Dev" }, "a later save fills in, never blanks");
+  });
+});
+
 describe("coverage", () => {
   test("every tool in the registry was exercised", () => {
     const all = Object.keys(tools).sort();

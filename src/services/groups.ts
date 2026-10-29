@@ -132,6 +132,11 @@ export async function moveChat(channel: ChannelName, fromExternalId: string, toE
   await db.update(chats).set({ externalId: toExternalId }).where(and(eq(chats.channel, channel), eq(chats.externalId, fromExternalId)));
 }
 
+/** The Chat's title changed on its Channel (a WhatsApp group subject). The Group's own name stays as the Group set it. */
+export async function renameChat(channel: ChannelName, externalId: string, title: string): Promise<void> {
+  await db.update(chats).set({ title }).where(and(eq(chats.channel, channel), eq(chats.externalId, externalId)));
+}
+
 async function writeToolkits(groupId: string, on: readonly ToolkitId[]) {
   await db
     .insert(groupToolkits)
