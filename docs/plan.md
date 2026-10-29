@@ -20,6 +20,7 @@ Roomie is a groupmate, not a platform: brief, witty, exact about facts, and it s
 | Identity | **Neon Auth** with Google. Members are linked to Accounts by **Claim links** sent in private messages ([ADR 0003](./adr/0003-neon-auth-and-claim-links.md)). Whoever adds Roomie is the first Admin. New Members are Pending until an Admin approves them in the chat or on the dashboard. |
 | Integrations | Instacart and Splitwise through **Composio**, wrapped in Roomie's own tools ([ADR 0004](./adr/0004-composio-for-instacart-and-splitwise.md)). |
 | Money | Integer cents, computed in code ([ADR 0007](./adr/0007-money-is-integer-cents-computed-in-code.md)). One currency per Group. |
+| Personality | Each Group's Roomie is its pet: an archetype (chill by default, hype, deadpan, mom, gremlin, butler), a name, quirks and sliders the Admin sets, plus a Learned style counted from the messages. It borrows slang gradually and never more than the group ([ADR 0012](./adr/0012-personality-archetype-sliders-learned-style.md), [docs/personality.md](./personality.md)). Jokes are a trait, not a Toolkit. |
 | Privacy | Raw chat is kept for 30 days. "roomie forget me" and an Admin "delete group data" are available ([ADR 0006](./adr/0006-chat-retention.md)). |
 | Dashboard | Next.js 16, mobile-first, **Tailwind + shadcn/ui**. One dashboard per Group, with a group switcher. |
 | Data | Fresh schema, using Drizzle **migrations** (`drizzle-kit generate` + `migrate`) instead of `push`. The new Neon database starts empty. |

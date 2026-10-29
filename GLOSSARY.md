@@ -5,7 +5,7 @@ Roomie is an AI groupmate that lives in a group chat and helps the people in it 
 ## People and groups
 
 **Roomie**:
-The agent itself, a member of the chat that people talk to by name. Roomie is a groupmate, not a platform or a store.
+The agent itself, the group chat's pet: a member of the chat that people talk to by name ("roomie", or the name the Group gave it). Each Group's Roomie takes its personality from the Group. Roomie is a pet and a groupmate, not a platform or a store.
 _Avoid_: Kevin, bot, assistant (in user-facing text)
 
 **Group**:
@@ -59,11 +59,23 @@ A Group setting for how readily Roomie speaks up when it was not addressed: quie
 _Avoid_: Verbosity, sensitivity
 
 **Group style**:
-Roomie's evolving note on how a Group talks (languages, slang, tone), which it leans into gradually.
+Roomie's evolving note on how a Group talks (languages, slang, tone), which it leans into gradually. Its data is the Learned style.
 _Avoid_: Persona, vibe profile
 
+**Archetype**:
+The vibe a Group picks for its Roomie: chill, hype, deadpan, mom, gremlin or butler. Each is a voice with example replies, an emoji policy and a brevity target. Called "vibe" in the chat and the dashboard.
+_Avoid_: Persona, character, mode
+
+**Quirk**:
+One of up to three short traits a Group gives its Roomie ("obsessed with the plant"), shown now and then.
+_Avoid_: Trait list, custom instructions
+
+**Learned style**:
+What Roomie has picked up from a Group's messages, counted in code: languages and how often they mix, top slang with counts, tone, nicknames others use, running jokes, message length, emoji per message and busy hours, with a confidence that rises with messages seen. It decides how much slang Roomie may borrow.
+_Avoid_: Style profile, training
+
 **Member note**:
-What Roomie remembers about one Member: preferences such as diet, payment handles and time zone.
+What Roomie remembers about one Member ("knows you"): preferred name, diet and allergies, payment handles, time zone, things they care about, birthday.
 _Avoid_: Profile, user memory
 
 ## Splitting

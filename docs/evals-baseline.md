@@ -3,6 +3,7 @@
 `npm run evals` on 2026-10-29: **66/68 (97%)**, 7.1 s per scenario on average.
 Agent `claude-sonnet-5-5`, Gate `typesafeai-jev-1-14-0` (normal Chattiness), through the Neon AI Gateway.
 Scenarios are in `src/mastra/evals/scenarios.ts`; gate = decision/reason/toolkit, tools = what the agent called.
+The 14 `personality` scenarios are new with the group pet (ADR 0012): 14/14. The two failures: `members` fails the same way as in the previous baseline (asked by Dev, the reply says "you" instead of "Dev"), and `unprompted-pizza-asks-first` was a Jev ignore that passed on the rerun (`--only unprompted-pizza-asks-first`: act/jev-act, asked first).
 
 | scenario | area | gate | tools | pass | why | reply |
 |---|---|---|---|---|---|---|
