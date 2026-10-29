@@ -18,6 +18,9 @@ import { respond, type PipelineResult } from "../src/pipeline";
 import { mastra } from "../src/mastra";
 import { deleteGroup } from "../src/services/groups";
 import { shapeOf } from "../src/mastra/scorers/brevity-tone";
+import { dbMoments } from "../src/services/pet";
+import { localDay } from "../src/lib/dates";
+import { countEmoji } from "../src/lib/personality";
 import { EVAL_MEMBERS, READ_ONLY_TOOLS, SCENARIOS, type EvalEnv, type EvalMember, type Expect, type Scenario, type Turn } from "../src/mastra/evals/scenarios";
 
 const args = process.argv.slice(2);
@@ -26,8 +29,10 @@ const writeBaseline = args.includes("--baseline");
 const MAX_ATTEMPTS = 3;
 const RATE_LIMIT_WAIT_MS = 30_000;
 
-async function createGroup(id: string): Promise<EvalEnv> {
+async function createGroup(id: string, greet = false): Promise<EvalEnv> {
   const [group] = await db.insert(schema.groups).values({ name: `Eval ${id} ${Date.now()}`, purpose: "roommates", onboardedAt: new Date() }).returning();
+  // The day's greeting would add a hello to every scenario's first message; only the greeting scenarios keep it.
+  if (!greet) await dbMoments.claim(group.id, "greeting", localDay(new Date(), group.timezone));
   const rows = await db
     .insert(schema.members)
     .values(EVAL_MEMBERS.map((name) => ({ groupId: group.id, displayName: name, role: name === "Maya" ? ("admin" as const) : ("member" as const), status: "active" as const })))
@@ -62,9 +67,19 @@ async function failures(x: Expect, r: PipelineResult, env: EvalEnv): Promise<str
     const ok = typeof s === "string" ? reply.toLowerCase().includes(s.toLowerCase()) : s.test(reply);
     if (!ok) out.push(`reply lacks ${s}`);
   }
+  for (const s of x.excludes ?? []) {
+    const hit = typeof s === "string" ? reply.toLowerCase().includes(s.toLowerCase()) : s.test(reply);
+    if (hit) out.push(`reply has ${s}`);
+  }
   if (x.asks && !reply.includes("?") && !reply.includes("¿")) out.push("doesn't ask");
   const shape = shapeOf(reply);
   if (!x.long && shape.tooLong) out.push(`${shape.lines} lines`);
+  if (x.maxLines !== undefined && shape.lines > x.maxLines) out.push(`${shape.lines} lines > ${x.maxLines}`);
+  const emoji = countEmoji(reply);
+  if (x.emoji?.min !== undefined && emoji < x.emoji.min) out.push(`${emoji} emoji < ${x.emoji.min}`);
+  if (x.emoji?.max !== undefined && emoji > x.emoji.max) out.push(`${emoji} emoji > ${x.emoji.max}`);
+  if (x.noButtons && r.out?.buttons?.length) out.push("has buttons");
+  if (x.gateReason && r.gate.reason !== x.gateReason) out.push(`gate ${r.gate.reason}`);
   if (shape.bullets || shape.headers) out.push("bullets/headers");
   if (x.check) {
     const err = await x.check(env, reply);
@@ -79,7 +94,7 @@ type Row = { s: Scenario; pass: boolean; why: string; gate: string; tools: strin
 
 async function runOne(s: Scenario): Promise<Row> {
   for (let attempt = 1; ; attempt++) {
-    const env = await createGroup(s.id);
+    const env = await createGroup(s.id, s.greet);
     const started = Date.now();
     let r: PipelineResult | null = null;
     let err: unknown;

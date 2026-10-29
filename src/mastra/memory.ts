@@ -1,10 +1,10 @@
 // Roomie's memory: one thread per Group ("group-<id>", resource = groupId), in the app's Postgres.
 //   - message history: the last 30 messages of the thread
 //   - semantic recall: pgvector over every message, embedded on the gateway (qwen3-embedding-0-6b, 1024 dims)
-//   - working memory, scoped to the resource (the Group): the Group style note and Member notes
-// Group style grows in the background, not in the reply path: jobs/style-note.ts asks Haiku to rewrite the Style
-// section from the latest ~50 chat lines whenever that many new lines have been logged since its last update. The
-// agent itself only edits Member notes (it's told so in its instructions).
+//   - working memory, scoped to the resource (the Group): a mirror of the Group style and the Member notes
+// The Learned style grows in the background, not in the reply path: jobs/style-note.ts folds every ~50 new chat lines
+// into groups.personality.learned (counts in code, candidates from Haiku) and mirrors a short note into the Style
+// section. The agent itself only edits Member notes (it's told so in its instructions).
 import "@/lib/env";
 import { Memory } from "@mastra/memory";
 import { PgVector, PostgresStore } from "@mastra/pg";
@@ -16,15 +16,19 @@ export const vector = new PgVector({ id: "roomie-vector", connectionString: proc
 
 export const STYLE_HEADING = "## Group style";
 
-export const WORKING_MEMORY_TEMPLATE = `# Group
-${STYLE_HEADING}
-- Languages:
-- Slang and in-jokes:
+/** The Group style section before anything is learned (and after "Reset what you've learned"). */
+export const EMPTY_STYLE = `- Languages:
 - Tone:
 - Confidence (0-1): 0
+- Slang, nicknames and the rest: in your instructions (LEARNED STYLE), with the rules for using them.`;
+
+// The Learned style itself lives in groups.personality.learned (jobs/style-note.ts); this section only mirrors it.
+export const WORKING_MEMORY_TEMPLATE = `# Group
+${STYLE_HEADING}
+${EMPTY_STYLE}
 
 ## Member notes
-- [Name]: diet: ; pays with: ; time zone: ; other:
+- [Name]: preferred name: ; diet/allergies: ; pays with: ; time zone: ; cares about: ; birthday: ; other:
 `;
 
 export const memory = new Memory({

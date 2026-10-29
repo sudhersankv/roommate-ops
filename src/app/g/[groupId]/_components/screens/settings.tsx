@@ -1,7 +1,7 @@
 "use client"
 
 import { useRouter } from "next/navigation"
-import { useEffect, useState, useTransition } from "react"
+import { useEffect, useState, useTransition, type ReactNode } from "react"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import {
@@ -84,7 +84,7 @@ const toolkits: { id: ToolkitId | string; name: string; description: string; soo
 /** Pick the list entry, or add the Group's own value so the Select can show it. */
 const withCurrent = (list: { label: string; value: string }[], value: string) => (list.some((x) => x.value === value) ? list : [...list, { label: value, value }])
 
-export function SettingsScreen({ splitwise, notice, zones, schedule }: { splitwise: SplitwiseView | null; notice: string | null; zones: ZoneGroup[]; schedule: ScheduleView }) {
+export function SettingsScreen({ splitwise, notice, zones, schedule, personality }: { splitwise: SplitwiseView | null; notice: string | null; zones: ZoneGroup[]; schedule: ScheduleView; personality?: ReactNode }) {
   const { group, isAdmin, active } = useGroup()
   const admins = active.filter((m) => m.role === "admin").map((m) => m.name)
   useEffect(() => {
@@ -101,6 +101,8 @@ export function SettingsScreen({ splitwise, notice, zones, schedule }: { splitwi
       </PageHeader>
       <div className="flex flex-col gap-10 px-5 pb-6">
         {isAdmin ? <AdminSettings splitwise={splitwise} zones={zones} schedule={schedule} /> : null}
+        {/* Settings -> Personality: a self-contained server component (components/app/personality-section.tsx) */}
+        {personality}
         <Appearance />
         {isAdmin ? <DangerZone /> : null}
       </div>

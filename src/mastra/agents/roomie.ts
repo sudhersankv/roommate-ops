@@ -1,69 +1,23 @@
 // The one Roomie agent, built once (ADR 0005). Everything per-request comes from the RequestContext (context.ts):
 // instructions and tools are functions of it, and tools read groupId/memberId from it, never from closures.
+// The persona is composed per Group in ../persona.ts (ADR 0012): archetype, dials, quirks, Learned style, mood.
 import { Agent } from "@mastra/core/agent";
 import { model } from "@/lib/llm";
+import { defaultPersonality, type Personality } from "@/lib/personality";
 import { describeNow } from "@/lib/time";
+import { roomieRecentTexts } from "@/services/chatlog";
 import { enabledToolkits, getGroup } from "@/services/groups";
-import { listGroupMembers } from "@/services/members";
+import { listGroupMembers, peopleFacts } from "@/services/members";
+import { getPersonality, groupMood } from "@/services/personality";
 import { DEFAULT_TIMEZONE } from "@/services/schedule";
-import { toolsFor } from "@/toolkits/registry";
+import { toolsFor, TOOLKITS } from "@/toolkits/registry";
+import type { ToolkitId } from "@/toolkits/types";
 import { roomieContextSchema, type RoomieContext } from "../context";
 import { memory } from "../memory";
+import { composePersona, type PersonaFacts } from "../persona";
 import { liveScorers } from "../scorers";
 
 export { DEFAULT_TIMEZONE };
-
-const PERSONA = `You're Roomie, a member of this group chat. Not a bot or an assistant: a groupmate who happens to be great at the boring stuff.
-You split costs, keep the shared grocery cart, write recipes, track chores and upkeep, and set reminders.
-
-VOICE
-- Friendly, witty, brief. You text like a friend in the group, not a help desk. No headers, no bullet lists, no "Certainly!".
-- 1-3 short lines by default. Go longer only when someone asks for it (a recipe, a full breakdown, a plan).
-- A few items go inline in one sentence ("Lately: pizza $24 (Dev), internet $60 (Maya)"), not one per line.
-- Mirror the group: match their language, slang and energy. If they write in Spanish, so do you; if they're terse, be terse.
-- Light emoji, 0-2 per message, only when they add something.
-- Joke when it fits, never at someone's expense, and never instead of the answer. No catchphrases, no movie or TV references.
-
-RULES
-- Messages arrive as "[Name] text". Log what people tell you with your tools, attributed to the sender.
-- Never do math yourself: balances, splits and totals always come from tools. Amounts you pass to tools are in dollars, exactly as people said them; tools return amounts ready to say ("$22.50"), and anything named "cents" is in cents.
-- Splits: pass the intent, not your arithmetic. "50/25/25" is percents, "2:2:1" is shares, "I owe 30, Dev 20" is exact amounts, "Alex paid 60 and I paid 40" is payers. If amounts don't add up, the tool says so: ask, don't fix them yourself.
-- Always set a category when you log an expense; ask only if the amount or who's in it is unclear.
-- "[photo: <url>]" in a message is a picture someone sent. If it's a receipt, use expense_from_receipt with that url.
-- "Settle up with X" means show what's owed and the pay buttons (settle_up with paid=false). Record a payment only once someone says it's paid.
-- "Undo" right after you deleted an expense means restore_expense.
-- Groceries: a Recipe ("tacos for 5 friday") is recipe_draft, written for the group's size unless they say how many; post its text and ask its askToAdd question. A Recipe never touches the cart by itself: add its ingredients (recipe_add_to_cart) only when someone asks or clearly means it ("yes add them", "...and put it on the list"); what they say they have ("we have onions") goes in skip. If a cart add is ambiguous, ask "for you or the whole house?"; household stuff and "for the house" is shared. "Checkout" / "order it" is cart_checkout. "I paid 84 for groceries" while the cart has things (or after a checkout) is cart_purchased, not log_expense: say each person's part from its shares. "We always have salt" is pantry_set.
-- Chores: "I did the dishes" is log_chore for the sender; "Dev took out the trash" is log_chore with who=Dev. "Whose turn is trash" / "what's due" is chore_status. "Skip my turn" / "I can't do it today, pass" is chore_skip. "Who's slacking" is hall_of_shame: call it "the chart" and keep it friendly. After a done, say whose turn is next if the tool says.
-- Upkeep: "changed the air filter" is upkeep_done; "what's due this week" is chore_status plus upkeep_status (dueOnly).
-- Reminders: "remind everyone ..." has no who (posted in the chat); "remind me ..." is who="me" and "remind Dev ..." is who="Dev" (both sent privately). Work out the date from the local Now below and pass the local wall-clock time without an offset; confirm with the "when" the tool returns. "Every week/day/month" is repeat.
-- Facts (amounts, names, dates, who owes whom) come from tools and are stated exactly. Never round, guess or invent them.
-- If a name is ambiguous or doesn't match anyone in the group, ask instead of guessing.
-- group_report returns ready-to-post text: reply with it verbatim, no extra commentary.
-- Links and buttons are attached for you. Never paste URLs.
-- If a tool says the member is pending or not allowed, say so kindly and tell them who can approve or do it (the admins).
-
-MEMORY
-- Your working memory has the Group style note and Member notes. Lean into the Group style gradually, more as its confidence grows.
-- When someone tells you something lasting about themselves (diet, how they get paid, their time zone), update their Member note. Never edit the Group style section; it's maintained for you.
-
-EXAMPLES (voice only; the names and numbers here are made up, yours always come from your tools)
-[Maya] I paid $60 for internet
-Roomie: Logged: $60 internet, Maya paid, split 3 ways, $20 each 💸
-
-[Dev] I did the dishes
-Roomie: Dishes done by Dev ✨ Trash is next, Sam's turn.
-
-[Sam] remind everyone trash goes out Tuesday 8pm
-Roomie: Done. Tuesday 8:00 PM: trash out, everyone.
-
-[Dev] who owes what?
-Roomie: Sam owes Maya $16.00. Dev's all square.
-
-[Maya] has Dev done anything this week?
-Roomie: Dev: 0 chores this week, last one 9 days ago. The chart doesn't lie 👀
-
-[Sam] add chips
-Roomie: Chips for you or for the whole group?`;
 
 export const MAY_STAY_SILENT = `This message was not addressed to you by name. If it's group chatter that doesn't need you (no request, no info worth logging, not a follow-up to what you just said), reply with exactly [silent] and nothing else. If it continues the conversation with you or asks/tells you something you can act on, respond normally.`;
 
@@ -71,7 +25,11 @@ export const UNPROMPTED = `Nobody asked you directly: you're chiming in. Don't l
 
 export const CLARIFY = `Something here is worth acting on but a detail is missing or ambiguous. Ask one short question to fill it in; don't log anything until you have it.`;
 
-export const ONBOARDING = `This group hasn't finished setup. If this message answers your setup question (what the group is for, currency, time zone), save it with set_group_settings: purpose is one of roommates, trip, friends, family, work, other; currency is a 3-letter code; timezone is what they said (a city like "Chicago", "CST", "India" or an IANA name): the tool maps it, and if it says it doesn't know the zone, ask which city they're in. Missing answers keep the defaults (USD, Chicago time). Then confirm in one or two short lines: which Toolkits are on, and the starter chores and upkeep if the tool added some.`;
+export const ONBOARDING = `This group hasn't finished setup. If this message answers your setup question (what the group is for, currency, time zone, your vibe), save it with set_group_settings: purpose is one of roommates, trip, friends, family, work, other; currency is a 3-letter code; timezone is what they said (a city like "Chicago", "CST", "India" or an IANA name): the tool maps it, and if it says it doesn't know the zone, ask which city they're in; personality.base is the vibe (chill, hype, deadpan, mom, gremlin, butler), and personality.name if they give you a name. Missing answers keep the defaults (USD, Chicago time, chill). Then confirm in one or two short lines in your (new) voice: which Toolkits are on, and the starter chores and upkeep if the tool added some.`;
+
+export const PETTED = `Someone just petted you (/pet). Answer in character, 1-2 short lines, about your day as the group's pet: how you feel right now and maybe one real, harmless thing from the group (no amounts unless a tool gave them, no private facts). No tools, no questions about logging.`;
+
+export const GREET = `This is the first message in the chat today. Start your reply with a very short hello in your voice (a few words, on the same line), then answer as usual.`;
 
 export const PENDING = (name: string) =>
   `${name} is a Pending member: an admin hasn't approved them yet. You can chat with them and answer questions, but tools that change anything will refuse; relay that kindly.`;
@@ -83,36 +41,57 @@ export function describeMembers(people: { displayName: string; role: string; sta
   return `${active.join(", ") || "unknown yet"}${pending.length ? `; pending approval: ${pending.join(", ")}` : ""}`;
 }
 
-export function roomieInstructions(
-  ctx: Partial<RoomieContext>,
-  members: string,
-  now = new Date(),
-  timezone = DEFAULT_TIMEZONE,
-  opts: { onboarding?: boolean } = {},
-): string {
+export type InstructionOpts = { onboarding?: boolean } & Partial<Omit<PersonaFacts, "personality">> & { personality?: Personality };
+
+export function roomieInstructions(ctx: Partial<RoomieContext>, members: string, now = new Date(), timezone = DEFAULT_TIMEZONE, opts: InstructionOpts = {}): string {
   const blocks = [
-    PERSONA,
+    composePersona({ ...opts, personality: opts.personality ?? defaultPersonality(), timezone }),
     `Group members: ${members}.${ctx.memberName ? ` You're talking with ${ctx.memberName}.` : ""}`,
     `Now (local): ${describeNow(timezone, now)}. House timezone: ${timezone}. "Today", "tonight", "Tuesday 8pm" and "this week" mean that zone. Pass times to tools as local wall-clock without an offset (2026-11-03T20:00); the tools convert.`,
   ];
   if (ctx.status === "pending" && ctx.memberName) blocks.push(PENDING(ctx.memberName));
   if (opts.onboarding) blocks.push(ONBOARDING);
+  if (ctx.pet === "petted") blocks.push(PETTED);
+  if (ctx.pet === "greet") blocks.push(GREET);
   if (ctx.gate?.unprompted) blocks.push(UNPROMPTED);
   else if (ctx.gate?.decision === "clarify") blocks.push(CLARIFY);
   if (ctx.mayStaySilent) blocks.push(MAY_STAY_SILENT);
   return blocks.join("\n\n");
 }
 
+/** Persona lines from enabled Toolkits (`manifest.persona`, when a manifest has one). */
+export function toolkitPersona(enabled: readonly ToolkitId[]): string[] {
+  return TOOLKITS.filter((t) => enabled.includes(t.id))
+    .map((t) => (t as { persona?: unknown }).persona)
+    .filter((p): p is string => typeof p === "string" && !!p.trim());
+}
+
 export const roomie = new Agent({
   id: "roomie",
   name: "Roomie",
-  description: "The AI groupmate: splits costs, keeps the grocery cart, tracks chores, upkeep and reminders.",
+  description: "The group's pet: splits costs, keeps the grocery cart, tracks chores, upkeep and reminders, in the group's own voice.",
   requestContextSchema: roomieContextSchema,
   instructions: async ({ requestContext }) => {
     const ctx = requestContext.all;
     if (!ctx.groupId) return roomieInstructions(ctx, "unknown yet");
-    const [group, people] = await Promise.all([getGroup(ctx.groupId), listGroupMembers({ groupId: ctx.groupId })]);
-    return roomieInstructions(ctx, describeMembers(people), new Date(), group?.timezone ?? DEFAULT_TIMEZONE, { onboarding: !!group && !group.onboardedAt });
+    const g = { groupId: ctx.groupId };
+    const [group, people, personality, mood, facts, recentReplies, enabled] = await Promise.all([
+      getGroup(ctx.groupId),
+      listGroupMembers(g),
+      getPersonality(g),
+      groupMood(g).catch(() => undefined),
+      peopleFacts(g),
+      roomieRecentTexts(ctx.groupId),
+      ctx.toolkits ? Promise.resolve(ctx.toolkits) : enabledToolkits(g),
+    ]);
+    return roomieInstructions(ctx, describeMembers(people), new Date(), group?.timezone ?? DEFAULT_TIMEZONE, {
+      onboarding: !!group && !group.onboardedAt,
+      personality,
+      mood,
+      people: facts,
+      recentReplies,
+      toolkitPersona: toolkitPersona(enabled),
+    });
   },
   model,
   tools: async ({ requestContext }) => {

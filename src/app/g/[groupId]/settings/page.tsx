@@ -1,5 +1,6 @@
 import type { Metadata } from "next"
 
+import { PersonalitySection } from "@/components/app/personality-section"
 import { zonesByRegion } from "@/lib/time"
 import { currentMember } from "@/lib/session"
 import { scheduleView, splitwiseView } from "../_components/data"
@@ -15,5 +16,5 @@ export default async function SettingsPage({ params, searchParams }: Props) {
   const s = await currentMember(groupId)
   const admin = s.member.role === "admin" && s.member.status === "active"
   const [sw, schedule] = await Promise.all([admin ? splitwiseView(s) : null, scheduleView(s)])
-  return <SettingsScreen splitwise={sw} notice={splitwise ?? null} zones={admin ? zonesByRegion() : []} schedule={schedule} />
+  return <SettingsScreen splitwise={sw} notice={splitwise ?? null} zones={admin ? zonesByRegion() : []} schedule={schedule} personality={<PersonalitySection groupId={groupId} />} />
 }

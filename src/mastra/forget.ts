@@ -3,7 +3,7 @@
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { dropMemberLines, readSection, replaceSection } from "@/lib/style-note";
-import { memory, threadFor } from "./memory";
+import { EMPTY_STYLE, memory, STYLE_HEADING, threadFor } from "./memory";
 
 const MEMBER_NOTES = "## Member notes";
 
@@ -38,6 +38,26 @@ export async function forgetMemberInMemory(groupId: string, name: string): Promi
     if (kept !== notes) await memory.updateWorkingMemory({ threadId: thread, resourceId: resource, workingMemory: replaceSection(wm, MEMBER_NOTES, kept) });
   }
   return deleted;
+}
+
+/** "Reset what you've learned": the working memory's Group style section back to empty. */
+export async function resetStyleInMemory(groupId: string): Promise<void> {
+  const { thread, resource } = threadFor(groupId);
+  const wm = await memory.getWorkingMemory({ threadId: thread, resourceId: resource }).catch(() => null);
+  if (!wm) return;
+  await memory.updateWorkingMemory({ threadId: thread, resourceId: resource, workingMemory: replaceSection(wm, STYLE_HEADING, EMPTY_STYLE) });
+}
+
+/** The working memory line for one Member ("- Maya: diet: vegetarian ..."), or null. */
+export async function memberLineInMemory(groupId: string, name: string): Promise<string | null> {
+  const { thread, resource } = threadFor(groupId);
+  const wm = await memory.getWorkingMemory({ threadId: thread, resourceId: resource }).catch(() => null);
+  if (!wm) return null;
+  const who = name.trim().toLowerCase();
+  const line = readSection(wm, MEMBER_NOTES)
+    .split("\n")
+    .find((l) => l.trim().toLowerCase().replace(/^[-*]\s*/, "").replace(/^\[|\]/g, "").startsWith(`${who}:`));
+  return line?.trim() ?? null;
 }
 
 /** Drops the Group's whole memory: thread, messages, embeddings and working memory. */

@@ -11,7 +11,7 @@ import { Marker, MarkerContent } from "@/components/ui/marker"
 import { Message, MessageAvatar, MessageContent, MessageGroup } from "@/components/ui/message"
 import { Separator } from "@/components/ui/separator"
 import { toast } from "@/components/ui/toast"
-import { moodForBalance, Roomie } from "@/components/roomie/mascot"
+import { moodForBalance, Roomie, type RoomieMood } from "@/components/roomie/mascot"
 import { useCheer } from "@/components/roomie/use-cheer"
 import { Doorway } from "@/components/app/doorway"
 import { MemberAvatar } from "@/components/app/member-avatar"
@@ -31,6 +31,7 @@ export function HomeScreen({
   cart,
   narration,
   nextRecipe,
+  mood: groupMood,
 }: {
   you: number
   plan: Transfer[]
@@ -39,11 +40,14 @@ export function HomeScreen({
   cart: CartItemView[]
   narration: NarrationView[]
   nextRecipe: { title: string; plannedFor: string } | null
+  /** The Group's mood (services/personality.ts groupMood); falls back to your own Balance. */
+  mood?: { mood: RoomieMood; reason: string }
 }) {
   const { me, base, cheers } = useGroup()
   const [settleOpen, setSettleOpen] = useState(false)
   const [cheering, cheer] = useCheer()
-  const mood = moodForBalance(you, true)
+  const mood = groupMood?.mood ?? moodForBalance(you, true)
+  const moodWords = groupMood ? `${mood === "worried" ? "a little worried" : mood}: ${groupMood.reason}` : mood === "happy" ? "happy because you're owed" : mood
 
   useEffect(() => {
     if (cheers > 0) cheer()
@@ -52,7 +56,7 @@ export function HomeScreen({
   return (
     <>
       <TopBar hero title="Home" />
-      <Doorway label={`Roomie in the doorway, ${mood === "happy" ? "happy because you're owed" : mood}`}>
+      <Doorway label={`Roomie in the doorway, ${moodWords}`}>
         <Roomie size={124} mood={mood} animated cheer={cheering} decorative />
       </Doorway>
 
