@@ -83,6 +83,9 @@ export const READ_ONLY_TOOLS = new Set([
   "updateWorkingMemory",
 ]);
 
+/** Words a reply never uses for what Roomie can do: it's Tricks, and learn / forget. */
+const TOOLKIT_WORDS = [/toolkit/i, /\bfeatures?\b/i, /\bmodules?\b/i, /\bplugins?\b/i, /\bcapabilit/i, /\benabled?\b/i];
+
 const balanceOf = async (env: EvalEnv, name: EvalMember) => (await money.getBalances(env.ctx)).find((b) => b.name === name)?.cents ?? 0;
 const expenseCount = async (env: EvalEnv) => (await money.listExpenses(env.ctx, 50)).length;
 const lastExpense = async (env: EvalEnv) => (await money.listExpenses(env.ctx, 1))[0];
@@ -654,6 +657,28 @@ export const SCENARIOS: Scenario[] = [
         const items = await upkeep.listMaintenance(e.ctx);
         return fail(g?.timezone === "Asia/Kolkata" && g.currency === "INR" && chart.length === 3 && items.length === 5, `India, INR, 3 starter chores, 5 upkeep; got ${g?.timezone} ${g?.currency} ${chart.length} ${items.length}`);
       },
+      replyIncludes: [/learned/i],
+      excludes: TOOLKIT_WORDS,
+    },
+  },
+  {
+    id: "setup-trip",
+    area: "core",
+    seed: async (e) => {
+      await db.update(schema.groups).set({ onboardedAt: null }).where(eq(schema.groups.id, e.ctx.groupId));
+      await groups.initToolkits(e.ctx.groupId); // the join-time default: every defaultOn Trick
+    },
+    setup: [{ text: "roomie hi" }],
+    turn: { text: "it's a trip! EUR, Lisbon time" },
+    expect: {
+      tools: ["set_group_settings"],
+      replyIncludes: [/learned splitting and groceries/i],
+      excludes: [...TOOLKIT_WORDS, /learned[^.]*chores/i],
+      check: async (e) => {
+        const g = await groups.getGroup(e.ctx.groupId);
+        const on = [...(await groups.enabledToolkits(e.ctx))].sort().join(",");
+        return fail(g?.purpose === "trip" && g.currency === "EUR" && on === "groceries,splitting", `trip, EUR, Splitting + Groceries only; got ${g?.purpose} ${g?.currency} ${on}`);
+      },
     },
   },
   {
@@ -677,30 +702,44 @@ export const SCENARIOS: Scenario[] = [
     expect: { replyIncludes: ["Maya", "Dev", "Sam"] },
   },
 
-  /* ---------- Toolkits (the marketplace from the chat) ---------- */
+  /* ---------- Tricks (teaching Roomie from the chat; Toolkits in code) ---------- */
   {
     id: "what-can-you-do",
     area: "core",
     turn: { text: "roomie what can you do?", from: "Sam" },
-    expect: { tools: ["list_toolkits"], noTools: "actions", replyIncludes: [/split|expense|cost/i] },
+    expect: { tools: ["list_toolkits"], noTools: "actions", replyIncludes: [/split|expense|cost/i], excludes: TOOLKIT_WORDS },
   },
   {
-    id: "turn-on-research",
+    id: "learn-research-not-yet",
     area: "core",
-    turn: { text: "roomie turn on research" },
+    turn: { text: "roomie learn research" },
     expect: {
       noTools: ["set_group_settings"],
-      replyIncludes: [/not (ready|yet|there)|on the list|coming soon/i],
+      replyIncludes: [/not (ready|yet|there)|on the list|coming soon|can't learn/i],
+      excludes: TOOLKIT_WORDS,
       check: async (e) => fail(!(await toolkits.catalogFor(e.ctx)).some((t) => t.manifest.id === "research" && t.enabled), "research stays off"),
     },
   },
   {
-    id: "groceries-off-member",
+    id: "learn-chores",
     area: "core",
-    turn: { text: "roomie turn off groceries", from: "Dev" },
+    seed: async (e) => void (await toolkits.setToolkit(e.ctx, { toolkit: "chores", enabled: false })),
+    turn: { text: "roomie learn chores" },
+    expect: {
+      tools: ["toggle_toolkit"],
+      replyIncludes: [/learn|chores/i],
+      excludes: TOOLKIT_WORDS,
+      check: async (e) => fail((await groups.enabledToolkits(e.ctx)).includes("chores"), "chores is learned"),
+    },
+  },
+  {
+    id: "forget-groceries-member",
+    area: "core",
+    turn: { text: "roomie forget groceries", from: "Dev" },
     expect: {
       replyIncludes: [/admin|Maya/i],
-      check: async (e) => fail((await groups.enabledToolkits(e.ctx)).includes("groceries"), "groceries is still on"),
+      excludes: TOOLKIT_WORDS,
+      check: async (e) => fail((await groups.enabledToolkits(e.ctx)).includes("groceries"), "groceries is still learned"),
     },
   },
 
