@@ -13,11 +13,19 @@ import { devAuthEmail } from "@/lib/auth/dev"
 const neonAuth = auth.middleware({ loginUrl: "/" })
 const VERIFIER_PARAM = "neon_auth_session_verifier"
 
-export default function proxy(request: NextRequest) {
+export default async function proxy(request: NextRequest) {
   if (devAuthEmail()) return NextResponse.next()
   const { pathname, searchParams } = request.nextUrl
   if (pathname.startsWith("/claim/") && !searchParams.has(VERIFIER_PARAM)) return NextResponse.next()
-  return neonAuth(request)
+  const res = await neonAuth(request)
+  if (searchParams.has(VERIFIER_PARAM)) {
+    // One line per OAuth return so a failed exchange is visible in the server logs.
+    const cookie = request.headers.get("cookie") ?? ""
+    console.log(
+      `[auth] oauth return ${pathname}: challenge_cookie=${/session_challen?ge=/.test(cookie)} -> ${res.status} ${res.headers.get("location") ?? ""} set_cookie=${res.headers.has("set-cookie")}`,
+    )
+  }
+  return res
 }
 
 export const config = {
