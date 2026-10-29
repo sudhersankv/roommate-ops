@@ -16,9 +16,13 @@ import { humanMessagesSince, lastRoomieReplyAt, logMessage, recentChatter } from
 import type { Ctx } from "@/services/types";
 import { mastra } from "@/mastra";
 import type { RoomieContext } from "@/mastra/context";
-import { inFollowUpWindow, parseSilent, runGate, saysRoomie, type Chattiness, type GateRun } from "@/mastra/gate";
+import { callsPet, inFollowUpWindow, parseSilent, runGate, type Chattiness, type GateRun } from "@/mastra/gate";
 import { threadFor } from "@/mastra/memory";
 import { onGroupJoined, onUnknownSender } from "@/onboarding";
+import { localDay } from "@/lib/dates";
+import { isPetCommand, normalizePersonality, winsFrom, type Personality } from "@/lib/personality";
+import { allSquare } from "@/services/personality";
+import { claimWins, dayGreeting, dbMoments } from "@/services/pet";
 
 /** How many earlier chat lines Jev sees; the agent sees up to 30 as context. */
 const GATE_RECENT = 6;
@@ -113,15 +117,25 @@ export async function respond(input: RespondInput): Promise<PipelineResult> {
     enabledToolkits({ groupId }),
   ]);
   const earlier = chat ? chatter.slice(0, -1) : chatter; // everything before this message
-  let hardTrigger = !chat || !!(input.isVoice || input.isReplyToRoomie || input.mentionsRoomie || saysRoomie(text));
+  const personality = normalizePersonality(group?.personality);
+  const petted = isPetCommand(text, personality.name);
+  let hardTrigger = !chat || petted || !!(input.isVoice || input.isReplyToRoomie || input.mentionsRoomie || callsPet(text, personality.name));
   let inWindow = false;
+  const lastRoomieAt = chat ? await lastRoomieReplyAt(groupId) : null;
   if (chat && !hardTrigger) {
-    const lastRoomieAt = await lastRoomieReplyAt(groupId);
     // Counted after the log above, so this includes the current message (see gate/policy.ts).
     inWindow = inFollowUpWindow({ lastRoomieAt, humanSinceRoomie: lastRoomieAt ? await humanMessagesSince(groupId, lastRoomieAt) : 0 });
     // Onboarding asked the Chat a question; an active Member's reply in the window is the answer.
     if (inWindow && group && !group.onboardedAt && member.status === "active") hardTrigger = true;
   }
+  // The day's first message gets one hello (services/pet.ts); claimed here so it happens once, whatever the Gate says.
+  const greeting =
+    chat && group && group.onboardedAt
+      ? await dayGreeting(dbMoments, { groupId, chattiness: group.chattiness, personality, timezone: group.timezone, roomieSpokeAt: lastRoomieAt }).catch((e) => {
+          console.warn("[pipeline] greeting check failed", e);
+          return null;
+        })
+      : null;
 
   const root = startSpan("roomie message", { text: line }, { channel: input.channel, source, groupId, memberId: member.id, role: member.role, status: member.status });
   const gateSpan = root?.createChildSpan({ type: SpanType.GENERIC, name: "gate", input: { latest: line, hardTrigger, inWindow } });
@@ -145,6 +159,12 @@ export async function respond(input: RespondInput): Promise<PipelineResult> {
   gateSpan?.end({ output: { speak: gate.speak, decision: gate.decision, toolkit: gate.toolkit }, metadata: gateMeta });
 
   if (!gate.speak) {
+    // Nobody needs Roomie, but it's the first message today: just the hello (one line, no link, not logged, so it
+    // doesn't open the follow-up window).
+    if (greeting) {
+      root?.end({ output: { replied: true, greeting }, metadata: gateMeta });
+      return { out: { text: greeting }, gate, toolCalls: [], traceId: root?.traceId };
+    }
     root?.end({ output: { replied: false }, metadata: gateMeta });
     return { out: null, gate, toolCalls: [], traceId: root?.traceId };
   }
@@ -160,6 +180,7 @@ export async function respond(input: RespondInput): Promise<PipelineResult> {
     ...(gate.toolkit ? { toolkit: gate.toolkit } : {}),
     ...(gate.decision !== "ignore" ? { gate: { decision: gate.decision, unprompted: gate.unprompted } } : {}),
     ...(gate.mayStaySilent ? { mayStaySilent: true } : {}),
+    ...(petted ? { pet: "petted" as const } : greeting ? { pet: "greet" as const } : {}),
   };
   const requestContext = new RequestContext<RoomieContext>(Object.entries(ctx) as [keyof RoomieContext, never][]);
 
@@ -173,7 +194,8 @@ export async function respond(input: RespondInput): Promise<PipelineResult> {
     });
     const steps = res.steps ?? [];
     const toolCalls = steps.flatMap((s) => (s.toolCalls ?? []).map((c) => c.payload.toolName));
-    const buttons = collectLinks(steps.flatMap((s) => (s.toolResults ?? []).map((r) => r.payload.result)));
+    const results = steps.flatMap((s) => (s.toolResults ?? []).map((r) => r.payload));
+    const buttons = collectLinks(results.map((r) => r.result));
 
     // "[silent]" (or nothing, with nothing done) is only honoured in the follow-up window. Otherwise never post the
     // literal token or an empty message: acknowledge instead.
@@ -185,6 +207,12 @@ export async function respond(input: RespondInput): Promise<PipelineResult> {
       root?.end({ output: { replied: false, silent: true }, metadata: gateMeta });
       return { out: null, gate, toolCalls, traceId: root?.traceId };
     }
+    // A win (everyone square, a 3/7/30 streak, a Checkout) gets one short line in the pet's voice, once.
+    const cheer = await winCheer(groupId, member.displayName, group?.timezone, personality, steps).catch((e) => {
+      console.warn("[pipeline] win check failed", e);
+      return null;
+    });
+    if (cheer) replyText = `${replyText} ${cheer}`;
     if (chat) await logMessage(groupId, null, replyText);
     const out: Outgoing = { text: replyText, ...(buttons.length ? { buttons } : {}) };
     root?.end({ output: out, metadata: gateMeta });
@@ -193,6 +221,26 @@ export async function respond(input: RespondInput): Promise<PipelineResult> {
     root?.error({ error: err instanceof Error ? err : new Error(String(err)), metadata: gateMeta });
     throw err;
   }
+}
+
+type StepLike = {
+  toolCalls?: { payload: { toolName: string; toolCallId?: string; args?: unknown } }[];
+  toolResults?: { payload: { toolName: string; toolCallId?: string; result?: unknown } }[];
+};
+
+/** The first new win in this run's tool results, as one line, or null. Claimed in pet_moments so it's said once. */
+async function winCheer(groupId: string, senderName: string, tz: string | undefined, personality: Personality, steps: StepLike[]): Promise<string | null> {
+  const calls = steps.flatMap((s) => s.toolCalls ?? []).map((c) => c.payload);
+  const results = steps.flatMap((s) => s.toolResults ?? []).map((r) => ({
+    tool: r.payload.toolName,
+    result: r.payload.result,
+    args: calls.find((c) => c.toolCallId && c.toolCallId === r.payload.toolCallId)?.args,
+  }));
+  if (!results.some((r) => ["log_chore", "settle_up", "cart_checkout"].includes(r.tool))) return null;
+  const settled = results.some((r) => r.tool === "settle_up" && (r.result as { recorded?: boolean } | null)?.recorded === true);
+  const wins = winsFrom(results, { day: localDay(new Date(), tz ?? "America/Chicago"), senderName, allSquareAfter: settled && (await allSquare({ groupId })) });
+  const [line] = await claimWins(dbMoments, groupId, wins.slice(0, 1), personality);
+  return line ?? null;
 }
 
 /** Tools that change something (anything but Mastra's working-memory bookkeeping). */

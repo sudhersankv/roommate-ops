@@ -12,6 +12,7 @@
 //   6. Otherwise: logged as context, no reply.
 // "unprompted" = nobody addressed Roomie and it's not a follow-up: the agent asks before logging anything.
 import type { GateToolkit } from "../context";
+import { saysName } from "@/lib/personality";
 
 export type Chattiness = "quiet" | "normal" | "chatty";
 export const CHATTINESS: readonly Chattiness[] = ["quiet", "normal", "chatty"];
@@ -77,6 +78,8 @@ export function decideGate({ hardTrigger, inWindow, jev, chattiness }: GateFacts
 /** The trigger word: "roomie" as a whole word, any case ("Roomie, add milk", "ok roomie?"). */
 export const TRIGGER_WORD = /\broomie\b/i;
 export const saysRoomie = (text: string) => TRIGGER_WORD.test(text);
+/** "roomie" always works; so does the name the Group gave its pet ("Dino, add milk"). */
+export const callsPet = (text: string, petName?: string) => saysRoomie(text) || (!!petName && saysName(text, petName));
 
 export const FOLLOW_UP_WINDOW_MS = 180_000;
 export const FOLLOW_UP_MAX = 4;
