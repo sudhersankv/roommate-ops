@@ -467,6 +467,18 @@ export const betaRequests = pgTable(
   (t) => [index("beta_requests_created_at").on(t.createdAt)],
 );
 
+/** "I want this" on a coming-soon Trick (Toolkit) on the landing page (services/trick-votes.ts). The IP only as an HMAC. */
+export const trickVotes = pgTable(
+  "trick_votes",
+  {
+    id: id(),
+    trickId: text("trick_id").notNull(),
+    createdAt: createdAt(),
+    ipHash: text("ip_hash"),
+  },
+  (t) => [index("trick_votes_trick_id").on(t.trickId)],
+);
+
 export const maintenance = pgTable("maintenance", {
   id: id(),
   groupId: uuid("group_id").notNull().references(() => groups.id, { onDelete: "cascade" }),
