@@ -84,7 +84,7 @@ export function PersonalityPanel({ groupId, initial, isAdmin, timezone }: { grou
     <FieldSet>
       <FieldLegend className="type-heading">Personality</FieldLegend>
       <FieldDescription>
-        {p.name} is your group&apos;s pet. Pick its vibe; it slowly picks up how you all talk on top of that.
+        {p.name} is your group&apos;s pet. Pick its vibe, its name and a few quirks.
         {isAdmin ? "" : " Only Admins can change it."}
       </FieldDescription>
 
@@ -233,18 +233,16 @@ function Learned({ groupId, p, isAdmin, timezone, onReset }: { groupId: string; 
       setOpen(false)
       if (!res.ok) return void toast.add({ title: "Couldn't reset it", description: res.error, type: "error" })
       onReset(res.data)
-      toast.add({ title: "Starting fresh", description: `${p.name} forgot the group's slang and style. It keeps your vibe and quirks.` })
+      toast.add({ title: "Starting fresh", description: `${p.name} keeps your vibe, name and quirks.` })
     })
 
   return (
     <section aria-labelledby="learned-title" className="flex flex-col gap-3 rounded-3xl bg-card p-4 ring-1 ring-foreground/10">
       <h3 id="learned-title" className="type-heading text-base">
-        What {p.name} has learned
+        What {p.name} has picked up
       </h3>
       <Progress value={Math.round(l.confidence * 100)} aria-label="How well it knows the group">
-        <span className="text-sm text-muted-foreground">
-          {l.messagesSeen ? `How well it knows you: from ${l.messagesSeen} messages` : "Nothing yet. It starts learning after about 50 messages."}
-        </span>
+        <span className="text-sm text-muted-foreground">{l.messagesSeen ? `How well it knows you: from ${l.messagesSeen} messages` : "Nothing yet."}</span>
         <span className="ml-auto text-sm text-muted-foreground tabular-nums">{Math.round(l.confidence * 100)}%</span>
       </Progress>
       {l.messagesSeen ? (
@@ -282,14 +280,13 @@ function Learned({ groupId, p, isAdmin, timezone, onReset }: { groupId: string; 
           ) : null}
         </dl>
       ) : null}
-      <p className="text-sm text-muted-foreground">It borrows slang slowly: none until it knows you a bit, then one phrase now and then, and never more than you do.</p>
       {isAdmin && l.messagesSeen ? (
         <AlertDialog open={open} onOpenChange={setOpen}>
-          <AlertDialogTrigger render={<Button variant="outline" size="sm" className="self-start" />}>Reset what it learned</AlertDialogTrigger>
+          <AlertDialogTrigger render={<Button variant="outline" size="sm" className="self-start" />}>Start fresh</AlertDialogTrigger>
           <AlertDialogContent>
             <AlertDialogHeader>
-              <AlertDialogTitle>Reset what {p.name} learned?</AlertDialogTitle>
-              <AlertDialogDescription>It forgets the group&apos;s slang, nicknames and tone, and learns again from new messages. Your vibe, name and quirks stay.</AlertDialogDescription>
+              <AlertDialogTitle>Clear what {p.name} picked up?</AlertDialogTitle>
+              <AlertDialogDescription>The list above starts again from new messages. Your vibe, name and quirks stay.</AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel>Keep it</AlertDialogCancel>

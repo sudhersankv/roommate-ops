@@ -1,6 +1,7 @@
 // What every Channel adapter says and how it cuts text: the chunking, the first-contact lines (/help, /start), the
-// failure line and the "which group?" answers for 1:1 messages. Pure, no SDK imports (telegram.test.ts,
-// whatsapp.test.ts).
+// failure line and the "which group?" answers for 1:1 messages. Pure, no SDK imports (text.test.ts,
+// telegram.test.ts, whatsapp.test.ts); the Tricks in /help come from the manifests.
+import { COMING_SOON, MANIFESTS } from "@/toolkits/manifests";
 import type { ChannelName } from "./types";
 
 /** Telegram's limit; WhatsApp takes far more, but long walls of text read badly there too. */
@@ -38,17 +39,33 @@ export const startReply = (name: string, inGroups: number, channel: ChannelName 
     ? channel === "telegram"
       ? `Hey ${name} 👋 Now I can DM you: ask for "the dashboard" here or in the group and your link lands here (/help for the rest).`
       : `Hey ${name} 👋 Ask for "the dashboard" here or in the group and your link lands here ("/help" for the rest).`
-    : `Hey ${name} 👋 I'm Roomie. Add me to your group chat, say "roomie hi" there, and we're off.`;
+    : `Hey ${name} 👋 I'm Roomie. Add me to a group chat, tell me what it's for, and I'll learn the right Tricks.`;
 
-/** /help, in a group or a DM: five lines of what Roomie does, in its voice. */
-export const helpText = () =>
-  [
-    `I'm Roomie 👋 Say "roomie" or reply to me and I'm in. Some things I do:`,
-    `💸 "I paid 60 for internet", "who owes what?", "settle up with Dev"`,
-    `🛒 "add milk and eggs", "tacos for 5 friday", "I paid 84 for groceries"`,
-    `🧹 "I did the dishes", "whose turn is trash?", "skip my turn", "changed the air filter"`,
-    `⏰ "remind everyone trash goes out Tuesday 8pm", "weekly report", "send me the dashboard"`,
+const joinNames = (n: string[]) => (n.length <= 1 ? n.join("") : `${n.slice(0, -1).join(", ")} and ${n[n.length - 1]}`);
+
+/**
+ * /help, in a group or a DM, at most 8 lines. `learned` (Trick ids) is what this group taught Roomie: those Tricks
+ * get a line each and the last line says how to teach the next one. Unknown (a DM from someone in several groups):
+ * every Trick there is.
+ */
+export function helpText(learned?: readonly string[]): string {
+  const known = learned ? MANIFESTS.filter((m) => learned.includes(m.id)) : [...MANIFESTS];
+  const next = MANIFESTS.find((m) => learned && !learned.includes(m.id));
+  const said = (m: (typeof MANIFESTS)[number]) => m.gate.examples.slice(0, 2).map((e) => `"${e}"`).join(", ");
+  const lower = (m: { name: string }) => m.name.toLowerCase();
+  const teach = !learned
+    ? `Teach me one in your group: "roomie, learn ${lower(MANIFESTS[0])}". Drop one: "roomie, forget ${lower(MANIFESTS.at(-1)!)}".`
+    : next
+      ? `Teach me more: "roomie, learn ${lower(next)}".${known.length ? ` Drop one: "roomie, forget ${lower(known.at(-1)!)}".` : ""}`
+      : `Drop one any time: "roomie, forget ${lower(known.at(-1)!)}". ${COMING_SOON[0].name} and more are on the way.`;
+  return [
+    `I'm Roomie 🦖 Say "roomie" or reply to me and I'm in.`,
+    learned ? `Tricks I know here: ${joinNames(known.map((m) => m.name)) || "none yet"}.` : `Tricks I can learn: ${joinNames(known.map((m) => m.name))}, more on the way.`,
+    ...known.map((m) => `${m.name}: ${said(m)}`),
+    `Always: "remind everyone trash goes out Tuesday 8pm", "send me the dashboard"`,
+    teach,
   ].join("\n");
+}
 
 /** What goes into the chat when something broke while handling a message addressed to Roomie. Details go to the log. */
 export const OOPS = "Something went sideways on my end and I couldn't do that. Mind trying again in a minute?";

@@ -106,7 +106,8 @@ describe("the manifest contract", () => {
     const groceries = MANIFESTS.find((m) => m.id === "groceries")!.persona!;
     assert.ok(all.includes(splitting) && all.includes(groceries));
     assert.ok(groceriesOnly.includes(groceries) && !groceriesOnly.includes(splitting));
-    assert.match(groceriesOnly, /Off here: Splitting, Chores, Upkeep/);
+    assert.match(groceriesOnly, /Not learned here yet: Splitting, Chores, Upkeep/);
+    assert.match(groceriesOnly, /TRICKS\n- Tricks you know here: Groceries/);
     assert.ok(!all.includes("{TOOLKITS}"));
   });
 });

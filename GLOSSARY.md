@@ -29,7 +29,7 @@ A person's signed-in identity on the dashboard (their Google account). One Accou
 _Avoid_: User, login, profile
 
 **Admin**:
-A Member who can approve Members, change roles, switch Toolkits and edit Group settings. Whoever adds Roomie to a Chat is the first Admin.
+A Member who can approve Members, change roles, teach Roomie Tricks and edit Group settings. Whoever adds Roomie to a Chat is the first Admin.
 _Avoid_: Owner, moderator
 
 **Pending member**:
@@ -41,7 +41,7 @@ A private, single-use link Roomie sends a Member so they can connect their Accou
 _Avoid_: Magic link, invite link
 
 **Onboarding**:
-The short conversation after Roomie joins a Chat in which it creates the Group, learns what the Group is for, and proposes Toolkits.
+The short conversation after Roomie joins a Chat in which it creates the Group, learns what the Group is for, and learns the Tricks that fit.
 _Avoid_: Setup, profiling (in user-facing text)
 
 **Beta request**:
@@ -62,13 +62,13 @@ _Avoid_: OTP, verification code
 
 ## Behaviour
 
-**Toolkit**:
-A self-contained capability a Group can switch on, such as Splitting or Groceries.
-_Avoid_: Plugin, module, skill, feature
-
 **Trick**:
-The user-facing name for a Toolkit (the landing page, /help, and what people say: "roomie, learn trips"). The code keeps saying Toolkit. Groups "teach" Roomie a Trick; it "learns" it.
-_Avoid_: Toolkit, capability, module, plugin, feature (in user-facing text)
+Something Roomie can do in a Group, such as Splitting, Groceries, Chores or Upkeep (Research, Trips, PDFs and Stickers are coming). People **teach** Roomie a Trick ("roomie, learn trips", or the dashboard's Tricks page) and can make it **forget** one; nothing is deleted. In code a Trick is a **Toolkit** (`src/toolkits/`, docs/toolkits.md): user-facing text always says Trick.
+_Avoid_ (in anything a person reads): Toolkit, capability, module, plugin, feature, enable
+
+**Teach / Forget**:
+Switching a Trick on or off for a Group (Admins only): "roomie, learn chores" / "roomie, forget chores" in the chat, Teach / Forget on the Tricks page. In code: `toggle_toolkit`, `setToolkit`.
+_Avoid_: Enable, disable, install, turn on (in user-facing text)
 
 **Trick vote**:
 An "I want this" on a coming-soon Trick's card on the landing page: one row in `trick_votes` with an HMAC of the voter's IP, no Group or Account. Counts show from 5.

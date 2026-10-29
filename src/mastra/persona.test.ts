@@ -50,5 +50,5 @@ test("mood, people and Toolkit persona lines go in when given", () => {
   });
   assert.match(text, /Right now you feel: sleepy \(the chat's been quiet\)/);
   assert.match(text, /Maya: diet: vegetarian/);
-  assert.match(text, /TOOLKITS\n- Trips: you love a good itinerary\./);
+  assert.match(text, /TRICKS\n- Trips: you love a good itinerary\./);
 });

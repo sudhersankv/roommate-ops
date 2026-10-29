@@ -65,6 +65,10 @@ export async function telegramDeps(): Promise<TelegramDeps> {
     },
     groupIdOfChat: async (id) => (await groups.chatFor("telegram", id))?.group.id,
     chatsOfUser: async (userId) => (await groups.chatsOfChannelUser("telegram", userId)).map((c) => c.externalId),
+    tricksIn: async (id) => {
+      const known = await groups.chatFor("telegram", id);
+      return known ? groups.enabledToolkits({ groupId: known.group.id }) : undefined;
+    },
     moveChat: (from, to) => groups.moveChat("telegram", from, to),
     saveImage: async (chatId, fileUniqueId, bytes) => {
       const saved = await saveUpload(`tg/${chatId}`, bytes, "image/jpeg", fileUniqueId);

@@ -45,7 +45,7 @@ export function checkRequirements(m: ToolkitManifest, facts: RequirementFacts): 
   for (const name of m.requires?.env ?? []) out.push({ label: `Needs ${name} on the server`, ok: facts.hasEnv(name), blocking: true });
   for (const id of m.requires?.toolkits ?? []) {
     const dep = manifestOf(id);
-    out.push({ label: `Needs ${dep?.name ?? id} on`, ok: facts.enabled.includes(id), blocking: true });
+    out.push({ label: `Needs ${dep?.name ?? id} first`, ok: facts.enabled.includes(id), blocking: true });
   }
   for (const i of m.requires?.integrations ?? []) {
     const s = facts.integrations[i];
@@ -116,12 +116,12 @@ export type ToolkitChange = { toolkit: ToolkitId; name: string; enabled: boolean
  */
 export async function setToolkit(ctx: Ctx, input: { toolkit: string; enabled: boolean }): Promise<ToolkitChange> {
   const m = findManifest(input.toolkit);
-  if (!m) throw new ToolkitUnavailableError(`I don't have a "${input.toolkit}" Toolkit. There's ${MANIFESTS.map((x) => x.name).join(", ")}.`, "unknown");
+  if (!m) throw new ToolkitUnavailableError(`I don't know a "${input.toolkit}" Trick. I can learn ${MANIFESTS.map((x) => x.name).join(", ")}.`, "unknown");
   if (m.status === "coming-soon") {
     if (!input.enabled) return { toolkit: m.id as ToolkitId, name: m.name, enabled: false, changed: false, toolkits: await enabledToolkits(ctx) };
-    throw new ToolkitUnavailableError(`${m.name} isn't ready yet. It's on the list.`, "coming-soon");
+    throw new ToolkitUnavailableError(`I can't learn ${m.name} yet: it isn't ready yet, but it's on the list.`, "coming-soon");
   }
-  if (!isToolkitId(m.id)) throw new ToolkitUnavailableError(`I don't have a "${input.toolkit}" Toolkit.`, "unknown");
+  if (!isToolkitId(m.id)) throw new ToolkitUnavailableError(`I don't know a "${input.toolkit}" Trick.`, "unknown");
   const id = m.id;
   await requireAdmin(ctx);
 
@@ -129,11 +129,11 @@ export async function setToolkit(ctx: Ctx, input: { toolkit: string; enabled: bo
   const wasOn = before.includes(id);
   if (input.enabled && !wasOn) {
     const missing = unmet(checkRequirements(m, await requirementFacts(ctx.groupId, m.requires?.integrations ?? [])));
-    if (missing.length) throw new ToolkitUnavailableError(`${m.name} can't go on yet: ${missing.map((r) => r.label.replace(/^Needs /, "it needs ")).join("; ")}.`, "requirements");
+    if (missing.length) throw new ToolkitUnavailableError(`I can't learn ${m.name} yet: ${missing.map((r) => r.label.replace(/^Needs /, "it needs ")).join("; ")}.`, "requirements");
   }
   if (!input.enabled && wasOn) {
     const dependents = MANIFESTS.filter((x) => before.includes(x.id) && x.requires?.toolkits?.includes(id));
-    if (dependents.length) throw new ToolkitUnavailableError(`${dependents.map((x) => x.name).join(" and ")} need${dependents.length === 1 ? "s" : ""} ${m.name}, so it stays on.`, "needed-by");
+    if (dependents.length) throw new ToolkitUnavailableError(`${dependents.map((x) => x.name).join(" and ")} need${dependents.length === 1 ? "s" : ""} ${m.name}, so I'm keeping it.`, "needed-by");
   }
 
   await db
@@ -143,7 +143,7 @@ export async function setToolkit(ctx: Ctx, input: { toolkit: string; enabled: bo
 
   const changed = wasOn !== input.enabled;
   if (changed) {
-    await record(ctx.groupId, ctx.memberId, "toolkit.toggled", `switched ${m.name} ${input.enabled ? "on" : "off"}`);
+    await record(ctx.groupId, ctx.memberId, "toolkit.toggled", `${input.enabled ? "taught Roomie" : "had Roomie forget"} ${m.name}`);
     await runHooks({ groupId: ctx.groupId, memberId: ctx.memberId }, input.enabled ? [id] : [], input.enabled ? [] : [id]);
     if (input.enabled && ctx.source === "ui") await announceToolkitOn(ctx.groupId, id).catch((e) => console.error("[toolkits] announce failed", e));
   }
@@ -161,7 +161,7 @@ export async function runHooks(ctx: HookCtx, on: readonly string[], off: readonl
 /** The line Roomie posts when a Toolkit goes on from the dashboard. Pure. */
 export function announcement(m: Pick<ToolkitManifest, "name" | "gate">): string {
   const example = m.gate.examples[0];
-  return example ? `${m.name} is on. Try: "${example}"` : `${m.name} is on.`;
+  return example ? `Learned ${m.name}. Try: "roomie, ${example}"` : `Learned ${m.name}.`;
 }
 
 const ANNOUNCE_COOLDOWN_MS = 10 * 60_000;

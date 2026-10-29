@@ -24,6 +24,9 @@ export type MemberView = {
 /** A tab or menu entry contributed by a Toolkit's manifest (`dashboard.nav`). The icon is rendered on the server. */
 export type NavItemView = { toolkit: string; label: string; href: string; icon: ReactNode }
 
+/** A Trick that isn't learned here (or can't be yet): a greyed slot in the More drawer. */
+export type TrickSlotView = { id: string; name: string; icon: ReactNode }
+
 /** A route prefix a Toolkit owns (`dashboard.pages`): while every owner is off, the page shows the off state. */
 export type OwnedPageView = { prefix: string; owners: { id: string; name: string; summary: string; enabled: boolean; icon: ReactNode }[] }
 
@@ -35,9 +38,10 @@ export type GroupView = {
   toolkits: Record<ToolkitId, boolean>
   /** Names of the enabled Toolkits, in marketplace order. */
   toolkitNames: string[]
-  /** Bottom-nav tabs after Home (at most NAV_TABS), then the rest for the avatar menu. */
+  /** Dock tabs between Home and More (at most NAV_TABS learned Tricks, one per page). */
   nav: NavItemView[]
-  moreNav: NavItemView[]
+  /** The More drawer: every learned Trick, then greyed slots for the ones not learned yet and the coming-soon ones. */
+  drawer: { learned: NavItemView[]; notYet: TrickSlotView[]; soon: TrickSlotView[] }
   ownedPages: OwnedPageView[]
   today: string
   dev: boolean

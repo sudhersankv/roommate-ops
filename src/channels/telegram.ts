@@ -28,6 +28,8 @@ export type TelegramDeps = {
   groupIdOfChat(chatExternalId: string): Promise<string | undefined>;
   /** External ids of the Chats where this person is a Member (where their DMs belong). */
   chatsOfUser(userExternalId: string): Promise<string[]>;
+  /** The Tricks (Toolkit ids) the Chat's Group taught Roomie, for /help; undefined when it's not a known Chat. */
+  tricksIn?(chatExternalId: string): Promise<string[] | undefined>;
   moveChat(fromExternalId: string, toExternalId: string): Promise<void>;
   /** Store a photo where the server can read it; returns its URL. */
   saveImage(chatExternalId: string, fileUniqueId: string, bytes: Buffer): Promise<string>;
@@ -307,7 +309,7 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
 
   async function groupMessage(me: UserFromGetMe, m: Message, from: User) {
     const chatId = String(m.chat.id);
-    if (commandOf(m.text, me.username) === "help") return channel.sendToChat(chatId, { text: helpText() });
+    if (commandOf(m.text, me.username) === "help") return channel.sendToChat(chatId, { text: helpText(await deps.tricksIn?.(chatId).catch(() => undefined)) });
     const content = await readContent(me, m, chatId, chatId);
     if (!content) return;
     await pipeline(
@@ -319,8 +321,8 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
   async function privateMessage(me: UserFromGetMe, m: Message, from: User) {
     const userId = String(from.id);
     const command = commandOf(m.text, me.username);
-    if (command === "help") return channel.sendPrivate(userId, { text: helpText() });
     const chats = await deps.chatsOfUser(userId);
+    if (command === "help") return channel.sendPrivate(userId, { text: helpText(chats.length === 1 ? await deps.tricksIn?.(chats[0]).catch(() => undefined) : undefined) });
     if (command === "start") return channel.sendPrivate(userId, { text: startReply(from.first_name, chats.length) });
     if (chats.length !== 1) return channel.sendPrivate(userId, { text: chats.length ? MANY_GROUPS : NO_GROUP });
     const content = await readContent(me, m, userId, chats[0]);

@@ -36,10 +36,10 @@ Two people: **you** (you add Roomie, so you're its Admin) and **Friend**. Send t
 
 | # | Who | Send | Roomie should |
 |---|---|---|---|
-| 1 | You | Create a new group with Friend, then add `@imroomiebot` to it | Post one intro: names you as admin, asks what the group is for, the currency and the time zone in the same message, and ends with "tap @imroomiebot and press Start". Terminal 2: `[roomie] joined ...` |
+| 1 | You | Create a new group with Friend, then add `@imroomiebot` to it | Post one intro, three lines, no feature list: who it is, "tell me what this group is for ... and I'll learn the right Tricks", and you as admin plus "tap @imroomiebot and press Start". Terminal 2: `[roomie] joined ...` |
 | 2 | Both | Open a 1:1 chat with `@imroomiebot` and press **Start** | Reply with one line: "Now I can DM you..." No link. |
-| 3 | You | `roommates, USD, Chicago` | Confirm in one or two lines: Toolkits on, three starter chores and five upkeep items added. No "roomie" needed: it's the answer to its question. |
-| 4 | Friend | `/help` | Five short lines of what it does. |
+| 3 | You | `roommates, USD, Chicago` | Confirm in one or two lines: "Learned Splitting, Groceries, Chores and Upkeep", three starter chores and five upkeep items added. No "roomie" needed: it's the answer to its question. |
+| 4 | Friend | `/help` | At most 8 short lines: "Tricks I know here: ...", a line of examples per Trick, how to teach or drop one. |
 | 5 | Friend | `lol this is so weird` | **Nothing.** Chatter isn't for Roomie (a reply here is a Gate false positive). |
 | 6 | You | `roomie I paid 60 for internet` | "Logged: $60 internet... $30 each". |
 | 7 | Friend | `I did the dishes` | Ask first ("want me to log that?"), because nobody named it. Not log it silently. |
@@ -53,6 +53,9 @@ Two people: **you** (you add Roomie, so you're its Admin) and **Friend**. Send t
 | 15 | You | `roomie weekly report` | One message, emoji lines (or plain sentences once Roomie thinks the chat is casual), about 8 lines, no extra chatter around it. |
 | 16 | Friend | `send me the dashboard` | Friend gets a Claim link **in the DM**, and the group gets one line saying it went there. Never a link in the group. Open it, sign in with Google, see the Chores page. |
 | 17 | Friend | `roomie book us a flight to Lisbon` | A short, honest "can't do that yet", not an invented booking. |
+| 18 | Friend | `roomie forget upkeep` | Kindly refused: only an admin (you) can make Roomie forget a Trick. |
+| 19 | You | `roomie forget upkeep`, then `roomie learn upkeep` | "Forgot Upkeep ... nothing's deleted", then "Learned Upkeep. Try: ...". |
+| 20 | You | `roomie learn trips` | "Can't learn Trips yet": it's coming soon. Never the word "toolkit" or "feature". |
 
 Optional if you have time: add a third person to the group (Roomie asks you to approve them, `roomie approve <name>`), send a receipt photo with `roomie split this receipt`, or change the time zone on the dashboard (Settings → Time zone) and ask `roomie what time is it for you?`.
 

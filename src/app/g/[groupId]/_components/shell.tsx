@@ -1,10 +1,9 @@
 "use client"
 
-import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import { useEffect, type ReactNode } from "react"
 import { cn } from "cn"
-import { CheckIcon, ChevronDownIcon, House } from "lucide-react"
+import { CheckIcon, ChevronDownIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -16,11 +15,10 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { Roomie } from "@/components/roomie/mascot"
-import { useCheer } from "@/components/roomie/use-cheer"
 import { MemberAvatar } from "@/components/app/member-avatar"
 import { authClient } from "@/lib/auth/client"
 import { AskRoomie } from "./ask-roomie"
+import { Dock } from "./dock"
 import { useGroup } from "./group-context"
 import { ToolkitOff } from "./toolkit-off"
 
@@ -44,13 +42,13 @@ export function AppShell({ children }: { children: ReactNode }) {
       <main id="main" className="flex flex-1 flex-col pb-32">
         <OwnedPage>{children}</OwnedPage>
       </main>
-      <BottomNav />
+      <Dock />
       <AskRoomie />
     </div>
   )
 }
 
-/** Sticky bar with the group switcher and the More menu. `hero` renders it as part of the forest doorway band. */
+/** Sticky bar with the group switcher and the account menu. `hero` renders it as part of the forest doorway band. */
 export function TopBar({ hero = false, title }: { hero?: boolean; title?: string }) {
   return (
     <header
@@ -61,7 +59,7 @@ export function TopBar({ hero = false, title }: { hero?: boolean; title?: string
     >
       <GroupSwitcher />
       {title ? <span className="sr-only">{title}</span> : null}
-      <MoreMenu />
+      <AccountMenu />
     </header>
   )
 }
@@ -96,7 +94,7 @@ function GroupSwitcher() {
 
 /**
  * A page a Toolkit owns (its manifest's `dashboard.pages`) while every owner is off: the off state instead of the
- * page. Pages nobody owns (Home, Members, Settings, Toolkits) always render.
+ * page. Pages nobody owns (Home, Members, Settings, Tricks) always render.
  */
 function OwnedPage({ children }: { children: ReactNode }) {
   const pathname = usePathname()
@@ -112,37 +110,24 @@ function OwnedPage({ children }: { children: ReactNode }) {
   )
 }
 
-function MoreMenu() {
+/** The avatar menu: who you are, the Group's own pages and sign out (the Tricks live in the dock's More drawer). */
+function AccountMenu() {
   const router = useRouter()
-  const { me, base, dev, moreNav } = useGroup()
+  const { me, base, dev } = useGroup()
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
-          <Button variant="ghost" size="icon" aria-label="More: Members, Toolkits, Settings, sign out">
+          <Button variant="ghost" size="icon" aria-label="Account: Members, Tricks, Settings, sign out">
             <MemberAvatar name={me.name} />
           </Button>
         }
       />
       <DropdownMenuContent align="end" className="min-w-52">
-        {moreNav.length ? (
-          <>
-            <DropdownMenuGroup>
-              <DropdownMenuLabel>More</DropdownMenuLabel>
-              {moreNav.map((n) => (
-                <DropdownMenuItem key={n.href} onClick={() => router.push(n.href)}>
-                  {n.icon}
-                  {n.label}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuGroup>
-            <DropdownMenuSeparator />
-          </>
-        ) : null}
         <DropdownMenuGroup>
           <DropdownMenuLabel>Signed in as {me.name}</DropdownMenuLabel>
           <DropdownMenuItem onClick={() => router.push(`${base}/members`)}>Members</DropdownMenuItem>
-          <DropdownMenuItem onClick={() => router.push(`${base}/toolkits`)}>Toolkits</DropdownMenuItem>
+          <DropdownMenuItem onClick={() => router.push(`${base}/tricks`)}>Tricks</DropdownMenuItem>
           <DropdownMenuItem onClick={() => router.push(`${base}/settings`)}>Settings</DropdownMenuItem>
           {dev ? <DropdownMenuItem onClick={() => router.push("/design")}>Design system</DropdownMenuItem> : null}
         </DropdownMenuGroup>
@@ -160,74 +145,6 @@ function MoreMenu() {
         </DropdownMenuGroup>
       </DropdownMenuContent>
     </DropdownMenu>
-  )
-}
-
-/** Home, then the enabled Toolkits' tabs (from their manifests), with Ask Roomie in the middle. */
-function BottomNav() {
-  const pathname = usePathname()
-  const { base, cheers, setAskOpen, nav } = useGroup()
-  const [cheering, cheer] = useCheer()
-  const links = [{ href: base, label: "Home", icon: <House />, exact: true }, ...nav.map((n) => ({ href: n.href, label: n.label, icon: n.icon, exact: false }))]
-  const middle = Math.ceil(links.length / 2)
-  const tabs = [...links.slice(0, middle), null, ...links.slice(middle)]
-
-  // The nav dino hops whenever something good happens anywhere in the Group.
-  useEffect(() => {
-    if (cheers > 0) cheer()
-  }, [cheers, cheer])
-
-  return (
-    <nav
-      aria-label="Main"
-      className="fixed inset-x-0 bottom-0 z-30 mx-auto w-full max-w-md border-t bg-card/95 pb-[env(safe-area-inset-bottom)] backdrop-blur-md md:border-x"
-    >
-      <ul className="grid h-18 items-stretch" style={{ gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))` }}>
-        {tabs.map((tab) => {
-          if (!tab) {
-            return (
-              <li key="ask" className="flex items-start justify-center">
-                <button
-                  type="button"
-                  onClick={() => setAskOpen(true)}
-                  className="group/ask -mt-6 flex flex-col items-center gap-1 rounded-full outline-none"
-                >
-                  <span className="flex size-16 items-center justify-center rounded-full bg-forest shadow-lg ring-4 ring-card transition-transform group-hover/ask:-translate-y-0.5 group-focus-visible/ask:ring-ring group-active/ask:translate-y-px">
-                    <Roomie size={50} mood="calm" animated cheer={cheering} decorative />
-                  </span>
-                  <span className="text-[0.6875rem] font-semibold text-foreground">Ask Roomie</span>
-                </button>
-              </li>
-            )
-          }
-          const path = tab.href.split("?")[0]
-          const active = tab.exact ? pathname === path : pathname.startsWith(path)
-          return (
-            <li key={tab.href} className="flex">
-              <Link
-                href={tab.href}
-                aria-current={active ? "page" : undefined}
-                className={cn(
-                  "group/tab flex flex-1 flex-col items-center justify-center gap-1 rounded-2xl text-[0.6875rem] font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50",
-                  active && "font-semibold text-foreground"
-                )}
-              >
-                <span
-                  className={cn(
-                    "flex h-7 w-12 items-center justify-center rounded-full transition-colors [&_svg]:size-5",
-                    active && "bg-primary/18 text-foreground"
-                  )}
-                  aria-hidden
-                >
-                  {tab.icon}
-                </span>
-                {tab.label}
-              </Link>
-            </li>
-          )
-        })}
-      </ul>
-    </nav>
   )
 }
 

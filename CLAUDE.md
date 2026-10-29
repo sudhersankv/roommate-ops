@@ -10,7 +10,9 @@ Agent skills for this repo live in `.agents/skills/`.
 
 **All business logic lives in `src/services/`.** The agent's tools (`src/toolkits/*/`) and the dashboard (`src/app/`) are thin front doors that call the same service functions. Anything you can do in chat must be doable in the UI, and vice versa. Never put logic in a tool or a page that belongs in a service. Permissions are business logic too: they live in services, never in prompts or pages alone.
 
-**The manifest is the Toolkit contract** ([ADR 0011](docs/adr/0011-manifest-is-the-toolkit-contract.md), [docs/toolkits.md](docs/toolkits.md)). The agent's tools and persona, the Gate's toolkit choices, the bottom nav, Home, Settings and the Toolkits page are built from the Group's enabled manifests. Never name a Toolkit in the shell, the Gate or the persona: put it in its manifest.
+**The manifest is the Toolkit contract** ([ADR 0011](docs/adr/0011-manifest-is-the-toolkit-contract.md), [docs/toolkits.md](docs/toolkits.md)). The agent's tools and persona, the Gate's toolkit choices, the dock and its More drawer, Home, Settings and the Tricks page are built from the Group's enabled manifests. Never name a Toolkit in the shell, the Gate or the persona: put it in its manifest.
+
+**People see Tricks, never Toolkits.** In every string a person reads (chat replies and tool results Roomie relays, the intro, `/help`, `/start`, the dashboard, Settings) a Toolkit is a **Trick**; switching one on is **teaching** Roomie ("roomie, learn trips"), off is **forgetting** it. Never "toolkit / capability / module / plugin / feature / enable" there. Code keeps "toolkit" (ids, folders, `toggle_toolkit`, the `/toolkits` route, which also answers at `/tricks`). "Pet" appears in at most two places in the app (`/pet`, the Personality subtitle), and nothing user-facing says Roomie adapts to how the group talks.
 
 ## Layout
 
@@ -138,7 +140,8 @@ src/
   channels/whatsapp-store.ts pgAuthRows (wa_sessions) and pgContacts (wa_contacts); only imported lazily
   channels/whatsapp-boot.ts  real deps; whatsappClient() (built once per process, registers the Channel) and
                         whatsappChannel() for instrumentation (WHATSAPP_ENABLED=1; connects only with a saved login)
-  channels/text.ts      shared copy and cutting: chunkText, commandOf, helpText, startReply, OOPS, NO_GROUP, wasAddressed
+  channels/text.ts      shared copy and cutting: chunkText, commandOf, helpText(learned?) (the Group's Tricks, <= 8 lines; the
+                        adapters pass them through the optional `tricksIn` dep), startReply, OOPS, NO_GROUP, wasAddressed
   channels/queue.ts     KeyedQueue: inbound work per Chat, in order
   channels/rate-limit.ts     token buckets (TokenBucket, SendLimiter) with an injectable clock; envMs
   lib/auth/             server.ts (createNeonAuth), client.ts (createAuthClient), dev.ts (DEV_AUTH_EMAIL bypass)
@@ -198,10 +201,14 @@ src/
                         nav, overflow and owned pages from the enabled manifests once), Home (doorway + Toolkits' Home
                         sections + narration), money (+ ?tab=, [expenseId]), cart (+ ?recipe=; Recipes and Pantry in
                         _components/recipes.tsx), chores, members, settings (core + Toolkits' settings sections),
-                        toolkits (the Toolkits page: search, category chips, cards, detail sheet; ?open=<id>);
+                        toolkits (the Tricks page: search, category chips, Learned / Not yet / Soon cards, detail sheet with
+                        Teach Roomie X / Forget X; ?open=<id>; also served at tricks/);
                         actions.ts = every server action; _components/data.ts = services -> screen shapes;
                         _components/sections.tsx = the Toolkits' Home/Settings sections and mood for a request;
-                        _components/toolkit-off.tsx = the off state of a page whose Toolkits are all off; _components/screens/*
+                        _components/toolkit-off.tsx = the off state of a page whose Toolkits are all off ("Roomie hasn't learned X
+                        here yet."); _components/dock.tsx = the dock (Home, up to 3 Trick tabs, Ask Roomie centred, More) and
+                        the More drawer (every learned Trick, greyed Teach / Ask an admin slots, inert Soon slots, Teach a
+                        Trick, Members, Settings; aria-current in both); _components/screens/*
                         settings/splitwise/callback = Composio's return URL (route handler)
     design/             the design-system page (dev only unless SHOW_DESIGN_PAGE=1)
     api/auth/[...path]  Neon Auth proxy; api/chat = Ask Roomie (session Member, 401/403); api/receipts = Scan receipt;
@@ -263,8 +270,9 @@ scripts/studio-presets.ts  writes .mastra-presets.json for Studio (run by mastra
 - **Reminders:** `memberId` null = the whole Group (posted with `deliver`), set = that Member privately (`deliverPrivate`), never both; if Roomie can't DM them yet it goes to the Chat once, addressed to them, with the Start hint. `created_by` gives "(set by Maya)" when set for someone else. Repeats (daily / weekly / monthly, monthly clamped to day 28) keep the local wall-clock and skip missed occurrences. The scheduler claims a reminder (sets `sent_at`) before sending and releases it on failure. Lists show only what the viewer may see (`visibleTo`); cancel = the target, the setter, anyone for a whole-group one, or an Admin.
 - **Posts Roomie makes on its own (ADR 0001):** the chores nudge at `group_toolkits["chores"].settings.nudgeHour` (default 9, null = off), only when something is due or late; the weekly Group Report at `group_toolkits["core"].settings.report = { weekday, hour }` (default Sunday 18). Both are claimed in `scheduled_posts (group, kind, local period)` before sending, so at most one per day / week across restarts and processes; a failed send gives the claim back. Upkeep has no post of its own: it's a line in the report. The window is the whole hour; a scheduler that was off for it skips that day rather than posting late.
 - **The Group Report** is one message of at most ~12 lines (`reportParts`): Settle plan, chores this week (counts, the best streak, what's up now, the chart), upkeep due soon, the Cart's size, the next week's whole-group reminders. Sections of switched-off Toolkits are left out. Emoji-led lines by default; when the Group style note's tone is casual (`isCasualStyle`) the same sentences run together without the list look. `group_report` returns the same text (`groupReportText`) and Roomie posts it verbatim.
+- **Onboarding copy:** the intro is three lines and no feature list (who Roomie is, "tell me what this group is for ... and I'll learn the right Tricks", the Admin); when setup finishes `set_group_settings` returns `learned` (`learnedLine`: "Learned Splitting and Groceries. Say "roomie, learn chores" any time.", or "You didn't say what this group is for, so I kept the roommates set: ..."), which Roomie says as it is.
 - **Onboarding** for roommates and families adds the three starter chores (no Rotation, so new people join in) and the usual five upkeep items, once, and only for Toolkits that are on. Family now also gets Upkeep.
-- **First contact** (`channels/text.ts`, shared by both adapters): `/help` (group or DM) is five lines (`helpText`), `/start` in a DM is one line and never a link (on WhatsApp nobody needs either; they work when typed, and other text starting with "/" goes through as text there), on Telegram other slash commands are ignored, a failure while Roomie was addressed gets one friendly line (`OOPS`) and the stack goes to the log. `npm run telegram` prints a `[roomie]` line per message (gate, tools, time, trace id) and per reply.
+- **First contact** (`channels/text.ts`, shared by both adapters): `/help` (group or DM) is at most 8 lines naming the Group's Tricks (`helpText`), `/start` in a DM is one line and never a link (on WhatsApp nobody needs either; they work when typed, and other text starting with "/" goes through as text there), on Telegram other slash commands are ignored, a failure while Roomie was addressed gets one friendly line (`OOPS`) and the stack goes to the log. `npm run telegram` prints a `[roomie]` line per message (gate, tools, time, trace id) and per reply.
 
 ## Personality (the group pet)
 
@@ -289,7 +297,7 @@ scripts/studio-presets.ts  writes .mastra-presets.json for Studio (run by mastra
 - Tools get the Group and sender from `ctxOf(context)` (the RequestContext), never from closures.
 - Tools attach buttons by returning `links: [{ text, url }]` (see `cart_add` / `dashboardLinks()`); the pipeline collects them from every tool result into `Outgoing.buttons`. Never paste URLs. Buttons need an absolute `APP_URL`.
 - A new Toolkit = a folder with `manifest.ts` + `server.ts` + tools, one line in `toolkits/manifests.ts` and one in `toolkits/registry.ts` (docs/toolkits.md has the checklist). Its Gate criterion, persona lines, nav tab, Home and Settings sections come from the manifest; never add them to the shell, `gate/jev.ts` or the persona.
-- The Toolkits page (`/g/<id>/toolkits`) is the one place Toolkits are switched in the UI; Settings only summarizes and links there. In UI text it's "Toolkits", not a store or marketplace (Roomie is a groupmate).
+- The Tricks page (`/g/<id>/tricks`, same page as `/toolkits`) is the one place Tricks are taught or forgotten in the UI; Settings only summarizes and links there. In UI text it's "Tricks", not a store or marketplace (Roomie is a groupmate).
 - Dashboard pattern: a page (server) calls `currentMember(groupId)`, reads services through `_components/data.ts` and renders a client screen; writes are server actions in `g/[groupId]/actions.ts` that call a service with the session's Ctx and `revalidatePath`. They return `{ ok, error, status }`, so screens toast errors. Coming-soon Toolkits (Research, PDFs, Trips, Stickers, Household admin) are manifest-only stubs: listed on the Toolkits page and refused kindly.
 - Schema changes: edit `src/db/schema.ts`, `npm run db:generate`, commit the SQL in `drizzle/`, `npm run db:migrate`. Never `drizzle-kit push`.
 - Roomie's replies are 1 to 3 short lines unless someone asks for more (the archetype can make that 1). The trigger words are "roomie" and the Group's name for its pet (`callsPet`); the @mention always works.
