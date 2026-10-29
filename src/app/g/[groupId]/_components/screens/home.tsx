@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { Fragment, useEffect, useState, useTransition, type ReactNode } from "react"
-import { ChevronRightIcon, ShoppingCart } from "lucide-react"
+import { ChevronRightIcon, ShoppingCart, WrenchIcon } from "lucide-react"
 
 import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { Button } from "@/components/ui/button"
@@ -21,7 +21,7 @@ import { markChoreDone } from "../../actions"
 import { useGroup } from "../group-context"
 import { SettleDrawer } from "../settle-drawer"
 import { TopBar } from "../shell"
-import type { CartItemView, ChoreView, NarrationView, Transfer } from "../types"
+import type { CartItemView, ChoreView, NarrationView, Transfer, UpkeepView } from "../types"
 
 /**
  * Home: Roomie in the doorway, then each enabled Toolkit's Home section (children, in nav order, from their
@@ -128,7 +128,8 @@ export function ChoresToday({ chores }: { chores: ChoreView[] }) {
       const res = await markChoreDone(group.id, c.id)
       if (!res.ok) return void toast.add({ title: "Couldn't mark it done", description: res.error, type: "error" })
       cheer()
-      toast.add({ title: `${c.name}: done`, description: `Streak is ${res.data?.streak ?? 1}. Nice.`, type: "success" })
+      const streak = res.data?.streak ?? 1
+      toast.add({ title: `${c.name}: done`, description: streak > 1 ? `That's ${streak} on time in a row.` : "Logged. The chart is happy.", type: "success" })
     })
 
   return (
@@ -164,6 +165,29 @@ export function ChoresToday({ chores }: { chores: ChoreView[] }) {
           </Fragment>
         ))
       )}
+    </HomeCard>
+  )
+}
+
+/** Upkeep's Home section: the next upkeep item that's due or overdue (nothing when the house is fine). */
+export function UpkeepToday({ upkeep }: { upkeep: UpkeepView[] }) {
+  const { base, dates } = useGroup()
+  const house = upkeep.find((u) => u.status !== "ok")
+  if (!house) return null
+  return (
+    <HomeCard id="upkeep-title" title="House care">
+      <Item render={<Link href={`${base}/chores?tab=upkeep`} />} className="py-3">
+        <ItemMedia variant="icon" className="size-8 justify-center">
+          <WrenchIcon aria-hidden />
+        </ItemMedia>
+        <ItemContent>
+          <ItemTitle>{house.name}</ItemTitle>
+          <ItemDescription>{house.status === "overdue" ? `Upkeep, ${dates.dueLabel(house.due)}.` : `Upkeep, due ${dates.dueLabel(house.due)}.`}</ItemDescription>
+        </ItemContent>
+        <ItemActions>
+          <ChevronRightIcon className="size-4 text-muted-foreground" aria-hidden />
+        </ItemActions>
+      </Item>
     </HomeCard>
   )
 }

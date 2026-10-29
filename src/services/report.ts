@@ -1,128 +1,138 @@
-// P3 · Sudhersan. The Group Report: chat tool, home page cards, and the weekly scheduled post all use this.
-// formatGroupReport / shouldPostWeeklyReport are pure (no DB, no randomness) so report.test.ts can run them.
-import { dollars, type GroupCtx } from "./types";
-import { getBalances, getSettlePlan } from "./money";
-import { choreStatus, hallOfShame } from "./chores";
+// The Group Report: the weekly post (jobs/scheduler.ts, at the Group's report day and hour) and group_report on
+// demand print the same text. One message, about a dozen lines at most: who owes whom (the Settle plan), chores this
+// week (done counts, the best streak, what's due, the chart), upkeep due soon, the Cart's size and what's coming up.
+// Sections of switched-off Toolkits are left out. formatGroupReport is pure (report.test.ts).
+import { dayInZone, formatInZone } from "@/lib/time";
+import { listOpenItems } from "./cart";
+import { bestStreaks, choreStatus, hallOfShame } from "./chores";
+import { enabledToolkits, getGroup } from "./groups";
+import { listMembers } from "./members";
+import { getSettlePlan } from "./money";
 import { listReminders } from "./reminders";
+import { DEFAULT_TIMEZONE } from "./schedule";
+import { dollars, type GroupCtx } from "./types";
 import { dueMaintenance } from "./upkeep";
 
-export async function groupReport(ctx: GroupCtx) {
-  const [balances, settlePlan, chores, shame, upcoming, upkeep] = await Promise.all([
-    getBalances(ctx),
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
+export async function groupReport(ctx: GroupCtx, now = new Date()) {
+  const [group, toolkits, settlePlan, chores, shame, upcoming, upkeep, cart, people] = await Promise.all([
+    getGroup(ctx.groupId),
+    enabledToolkits(ctx),
     getSettlePlan(ctx),
-    choreStatus(ctx),
-    hallOfShame(ctx),
-    listReminders(ctx),
-    dueMaintenance(ctx),
+    choreStatus(ctx, now),
+    hallOfShame(ctx, now),
+    listReminders(ctx, { groupOnly: true }),
+    dueMaintenance(ctx, now),
+    listOpenItems(ctx),
+    listMembers(ctx),
   ]);
-  return { balances, settlePlan, chores, shame, upcoming: upcoming.slice(0, 5), upkeep };
+  return {
+    groupName: group?.name ?? null,
+    tz: group?.timezone ?? DEFAULT_TIMEZONE,
+    now,
+    toolkits,
+    settlePlan,
+    chores,
+    shame,
+    streaks: bestStreaks(chores, people.map((p) => ({ id: p.id, name: p.displayName }))),
+    upcoming: upcoming.filter((r) => r.dueAt.getTime() - now.getTime() <= WEEK_MS).slice(0, 3),
+    upkeep,
+    cartCount: cart.length,
+  };
 }
 
 export type GroupReport = Awaited<ReturnType<typeof groupReport>>;
 
-export const DEFAULT_TZ = "America/Chicago";
-
 /* ---------- pure formatting ---------- */
 
-/** "Fri Oct 10" in the Group's time zone. */
-export function shortDate(d: Date, tz = DEFAULT_TZ): string {
-  return new Intl.DateTimeFormat("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: tz }).format(d).replace(",", "");
+const joinNames = (names: string[]) => (names.length <= 1 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`);
+
+/** "today", "tomorrow", "Thu", "2 days late" from days-until. */
+export function dueWord(dueIn: number, dueDay: string): string {
+  if (dueIn < 0) return `${-dueIn} day${dueIn === -1 ? "" : "s"} late`;
+  if (dueIn === 0) return "today";
+  if (dueIn === 1) return "tomorrow";
+  return new Intl.DateTimeFormat("en-US", { weekday: "short", timeZone: "UTC" }).format(new Date(`${dueDay}T12:00:00Z`));
 }
 
-const joinNames = (names: string[]) =>
-  names.length <= 1 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+type Part = { icon: string; text: string };
 
-/** A light jab for whoever tops the Hall of Shame. Deterministic: picked from the row, never random. */
-export function shameJab(top: GroupReport["shame"][number]): string {
-  if (top.daysSinceLastChore == null) return "hasn't logged a chore yet. Bold strategy 😅";
-  if (top.daysSinceLastChore >= 14) return `${top.daysSinceLastChore} days since a chore. The dust has opinions now 😭`;
-  if (top.daysSinceLastChore >= 7) return `${top.daysSinceLastChore} days since a chore 👀`;
-  if (top.choresThisWeek === 0) return `${top.daysSinceLastChore}d ago, 0 this week.`;
-  return `${top.choresThisWeek} this week, the fewest in the group.`;
+/** The report's sections, in order. */
+export function reportParts(r: GroupReport): Part[] {
+  const on = (t: string) => r.toolkits.includes(t as GroupReport["toolkits"][number]);
+  const parts: Part[] = [];
+
+  if (on("splitting")) {
+    if (r.settlePlan.length === 0) parts.push({ icon: "💸", text: "All square. Love that for us." });
+    else {
+      const shown = r.settlePlan.slice(0, 3).map((t) => `${t.fromName} pays ${t.toName} ${dollars(t.cents)}`);
+      const more = r.settlePlan.length - shown.length;
+      parts.push({ icon: "💸", text: `${joinNames(shown)}${more > 0 ? `, +${more} more` : ""}.` });
+    }
+  }
+
+  if (on("chores") && r.chores.length) {
+    const counts = [...r.shame].sort((a, b) => b.choresThisWeek - a.choresThisWeek || a.name.localeCompare(b.name));
+    if (counts.length) parts.push({ icon: "🧹", text: `Chores this week: ${counts.map((s) => `${s.name} ${s.choresThisWeek}`).join(", ")}.` });
+    const top = r.streaks[0];
+    if (top && top.streak >= 2) parts.push({ icon: "🔥", text: `${top.name}'s on a ${top.streak}-turn streak (${top.chore.toLowerCase()}).` });
+    const due = r.chores.filter((c) => c.state !== "ok");
+    if (due.length === 0) parts.push({ icon: "✅", text: "Nothing due on the chart." });
+    else {
+      const list = due.slice(0, 3).map((c) => `${c.name} (${c.whoseTurn ? `${c.whoseTurn}, ` : ""}${dueWord(c.dueIn, c.dueDay)})`);
+      parts.push({ icon: "⏳", text: `Up now: ${list.join(", ")}${due.length > 3 ? `, +${due.length - 3} more` : ""}.` });
+    }
+    const slackers = r.shame.filter((s) => s.choresThisWeek === 0);
+    if (slackers.length && slackers.length < r.shame.length) {
+      parts.push({ icon: "📉", text: `The chart says ${joinNames(slackers.slice(0, 2).map((s) => s.name))} ${slackers.length === 1 ? "has" : "have"} some catching up to do.` });
+    }
+  }
+
+  if (on("upkeep") && r.upkeep.length) {
+    const list = r.upkeep.slice(0, 3).map((m) => `${m.item} (${dueWord(m.dueIn, m.dueDay)})`);
+    parts.push({ icon: "🔧", text: `Upkeep due soon: ${list.join(", ")}${r.upkeep.length > 3 ? `, +${r.upkeep.length - 3} more` : ""}.` });
+  }
+
+  if (on("groceries")) parts.push({ icon: "🛒", text: r.cartCount ? `${r.cartCount} thing${r.cartCount === 1 ? "" : "s"} in the Cart.` : "The Cart's empty." });
+
+  if (r.upcoming.length) {
+    const list = r.upcoming.map((u) => `${u.text} (${formatInZone(u.dueAt, r.tz, { weekday: "short", hour: "numeric", minute: "2-digit" }).replace(":00", "")})`);
+    parts.push({ icon: "⏰", text: `Coming up: ${list.join(", ")}.` });
+  }
+  return parts;
 }
 
 /**
- * Plain-text Group Report for chat. Header + who pays whom (or "All square."),
- * overdue chores with whose turn, who's behind on chores (Hall of Shame top 1–2 with a jab), next 3 reminders, overdue upkeep.
- * Stays around a dozen lines. Pure and deterministic.
+ * Plain text for the Chat. One line per section with an emoji in front; when the Group style says the chat is casual,
+ * no list look at all: the same sentences run together in two short lines. Pure and deterministic.
  */
-export function formatGroupReport(r: GroupReport, opts: { groupName?: string; tz?: string } = {}): string {
-  const tz = opts.tz ?? DEFAULT_TZ;
-  const lines: string[] = [`📣 Group report${opts.groupName ? ` — ${opts.groupName}` : ""}`];
-
-  // Money
-  if (r.settlePlan.length === 0) lines.push("💸 All square. Love that for us.");
-  else {
-    const shown = r.settlePlan.slice(0, 3);
-    for (const t of shown) lines.push(`💸 ${t.fromName} pays ${t.toName} ${dollars(t.cents)}`);
-    if (r.settlePlan.length > shown.length) lines.push(`💸 …and ${r.settlePlan.length - shown.length} more. Time to settle up.`);
+export function formatGroupReport(r: GroupReport, opts: { casual?: boolean } = {}): string {
+  const parts = reportParts(r);
+  const title = `Group report${r.groupName ? ` · ${r.groupName}` : ""}`;
+  if (opts.casual) {
+    const half = Math.ceil(parts.length / 2);
+    const sentence = (p: Part[]) => p.map((x) => x.text).join(" ");
+    return [`${title}:`, sentence(parts.slice(0, half)), sentence(parts.slice(half))].filter(Boolean).join("\n");
   }
-
-  // Chores
-  const overdue = r.chores.filter((c) => c.overdue);
-  if (r.chores.length === 0) lines.push("🧹 No chores on the chart yet.");
-  else if (overdue.length === 0) lines.push("🧹 Chores on track. Nice.");
-  else
-    lines.push(
-      `🧹 Overdue: ${overdue
-        .slice(0, 4)
-        .map((c) => (c.whoseTurn ? `${c.name} (${c.whoseTurn}'s turn)` : c.name))
-        .join(", ")}${overdue.length > 4 ? ` +${overdue.length - 4} more` : ""}`,
-    );
-
-  // Hall of Shame: only worth posting when someone is actually slacking.
-  const slackers = r.shame.filter((s) => s.choresThisWeek === 0 || (s.daysSinceLastChore ?? Infinity) >= 7);
-  if (slackers.length > 0 && r.chores.length > 0) {
-    const top = slackers.slice(0, 2);
-    const roll = top.length > 1 ? `${joinNames(top.map((s) => s.name))}. ${top[0].name}` : top[0].name;
-    lines.push(`🚨 Behind on chores: ${roll} ${shameJab(top[0])}`);
-  }
-
-  // Upcoming
-  if (r.upcoming.length === 0) lines.push("⏰ Nothing scheduled. Enjoy the quiet.");
-  else
-    for (const u of r.upcoming.slice(0, 3))
-      lines.push(`⏰ ${shortDate(u.dueAt, tz)}: ${u.text}${u.memberName ? ` (${u.memberName})` : ""}`);
-
-  // Upkeep
-  const lateUpkeep = r.upkeep.filter((m) => m.status === "overdue");
-  if (lateUpkeep.length > 0) lines.push(`🔧 Overdue upkeep: ${lateUpkeep.map((m) => m.item).join(", ")}`);
-
-  return lines.join("\n");
+  return [`📋 ${title}`, ...parts.map((p) => `${p.icon} ${p.text}`)].join("\n");
 }
 
-/* ---------- scheduling helpers ---------- */
+/** The report's local day for idempotency ("2026-11-01"). */
+export const reportPeriod = (r: Pick<GroupReport, "tz" | "now">) => dayInZone(r.tz, r.now);
 
-/** Local weekday ("Sun".."Sat"), hour (0–23) and calendar day ("2026-10-04") of `d` in `tz`. */
-export function localParts(d: Date, tz = DEFAULT_TZ): { weekday: string; hour: number; day: string } {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: tz,
-    weekday: "short",
-    hour: "numeric",
-    hourCycle: "h23",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(d);
-  const get = (type: Intl.DateTimeFormatPartTypes) => parts.find((p) => p.type === type)?.value ?? "";
-  return {
-    weekday: get("weekday"),
-    hour: Number(get("hour")) % 24, // some ICU builds print "24" for midnight
-    day: `${get("year")}-${get("month")}-${get("day")}`,
-  };
-}
+/* ---------- the chores nudge ---------- */
 
-const HOUR_MS = 60 * 60 * 1000;
-
-/** Weekly post window: Sunday 18:00–18:59 in `tz`, and nothing posted in the last 20 hours. */
-export function shouldPostWeeklyReport(now: Date, lastPostedAt: Date | null, tz = DEFAULT_TZ): boolean {
-  const { weekday, hour } = localParts(now, tz);
-  if (weekday !== "Sun" || hour !== 18) return false;
-  return !lastPostedAt || now.getTime() - lastPostedAt.getTime() >= 20 * HOUR_MS;
-}
-
-/** Daily nudge window: 09:00–09:59 in `tz`, at most once per local calendar day. */
-export function shouldPostUpkeepNudge(now: Date, lastPostedDay: string | null, tz = DEFAULT_TZ): boolean {
-  const { hour, day } = localParts(now, tz);
-  return hour === 9 && lastPostedDay !== day;
+/**
+ * The daily "chores due today" line, or null when nothing is due or late (then nothing is posted). Names whose turn
+ * it is; at most four chores.
+ */
+export function choresNudgeText(due: Pick<GroupReport["chores"][number], "name" | "whoseTurn" | "dueIn" | "dueDay">[]): string | null {
+  if (!due.length) return null;
+  const list = due.slice(0, 4).map((c) => {
+    const notes = [c.whoseTurn, c.dueIn < 0 ? dueWord(c.dueIn, c.dueDay) : null].filter(Boolean);
+    return `${c.name.toLowerCase()}${notes.length ? ` (${notes.join(", ")})` : ""}`;
+  });
+  const more = due.length > 4 ? ` +${due.length - 4} more` : "";
+  return `🧹 On the chart today: ${joinNames(list)}${more}. Tell me when it's done.`;
 }

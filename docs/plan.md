@@ -80,15 +80,15 @@ scripts/                  wa.ts, seed.ts, evals.ts
 
 ## Steps
 
-Each step gets its own branch and PR, and you test locally before it's merged.
+Each step gets its own branch and PR, and you test locally before it's merged. Steps 1 and 2b to 7 are done; step 2 (WhatsApp) is parked until Roomie has a number. Next: the first real Telegram group ([docs/first-group-test.md](./first-group-test.md)).
 
-### 1. Rename and clean slate (`step/1-roomie`)
+### 1. Rename and clean slate (`step/1-roomie`) ✅ done
 - Rename Kevin to Roomie everywhere: package, code identifiers, UI text, docs. "roomie" becomes the trigger word, with a fresh neutral-witty persona. The full persona work happens in step 3.
 - Delete Telegram, AgentMail/leasing, rent reminders, the fake "Kevin's Market", Fly (`fly.toml`, `.github/workflows/fly-deploy.yml`) and the smoke scripts that write to real data.
 - Rewrite `.env.example`, `README.md` and `CLAUDE.md`. Add CI (typecheck + `npm test`).
 - **Done when:** typecheck and tests pass, `git grep -i kevin` finds only ADRs and history notes, and the dashboard boots against the empty database.
 
-### 2. WhatsApp channel (`step/2-whatsapp`), needs Roomie's number
+### 2. WhatsApp channel (`step/2-whatsapp`), needs Roomie's number (parked)
 - Baileys adapter: QR pairing with the session stored in Postgres, inbound text, voice notes (transcribed by a Gemini model on the gateway if it accepts audio, otherwise OpenRouter as today), images, group join/leave events, and outbound text, images, documents and stickers, plus private 1:1 messages.
 - Anti-ban behaviour: join delay, typing indicators and human-like pauses, per-Chat and global send rate limits, and no bulk links.
 - `npm run wa` process, with reconnects and a health log. A channel-agnostic `pipeline.ts`, using today's agent for now.
@@ -96,7 +96,7 @@ Each step gets its own branch and PR, and you test locally before it's merged.
 - If the number isn't ready, steps 2 and 3 swap.
 - **Parked** until Roomie has its number; step 2b validates the adapter and the flows on Telegram first.
 
-### 2b. Telegram channel (`step/2b-telegram`)
+### 2b. Telegram channel (`step/2b-telegram`) ✅ done
 - [x] grammY adapter (`src/channels/telegram.ts`): Roomie added to a group -> Onboarding (adder = Admin, the group's Telegram admins active, intro after `JOIN_DELAY_MS`), `new_chat_members` -> Pending + approval ask, text / captions / photos (receipts) / voice notes (OpenRouter when set), @-mentions and replies to Roomie, DMs from a Member of one Group, supergroup upgrades.
 - [x] Outbound: typing + human-like pause, per-Chat and global rate limits, 4096-character chunks, URL buttons. Claim links only by DM; when Telegram refuses (the person never pressed Start) Roomie tells them to tap @bot and press Start.
 - [x] Telegram can't list members: first-time senders within 24 h of the join are active, later ones Pending ([ADR 0010](./adr/0010-telegram-cant-list-group-members.md)).
@@ -104,7 +104,7 @@ Each step gets its own branch and PR, and you test locally before it's merged.
 - **Done when:** in a real test group, Roomie introduces itself, logs "I paid 20 for pizza", approves a newcomer, and DMs a Claim link that signs someone in ([docs/telegram.md](./telegram.md)).
   - [x] all of it offline against the real pipeline and dev DB with a fake token · [ ] live, waiting for the bot token (BotFather checklist in docs/telegram.md)
 
-### 3. Mastra agent rebuild (`step/3-agent`)
+### 3. Mastra agent rebuild (`step/3-agent`) ✅ done
 - [x] `src/mastra/` with a `roomie` agent built once: `RequestContext` with a schema, dynamic instructions (persona, Group style, Members, time zone) and dynamic tools from the Toolkit registry.
 - [x] Memory: Postgres storage, a thread per Group, semantic recall with pgvector embeddings (`qwen3-embedding-0-6b` on the gateway), and Member notes plus the Group style in working memory (refreshed by Haiku every 50 chat lines).
 - [x] The Gate (Jev, with a hard-trigger fallback) and Chattiness (`groups.chattiness`).
@@ -114,7 +114,7 @@ Each step gets its own branch and PR, and you test locally before it's merged.
 - **Done when:** Studio chats work, traces show up on the Mastra platform, the Gate has unit tests, and the eval baseline is recorded.
   - [x] Studio chats work · [ ] traces on the Mastra platform (waiting for `MASTRA_PLATFORM_ACCESS_TOKEN` / `MASTRA_PROJECT_ID`; traces are in Postgres and Studio today) · [x] Gate unit tests · [x] eval baseline
 
-### 4. Identity, Groups and dashboard shell (`step/4-identity`)
+### 4. Identity, Groups and dashboard shell (`step/4-identity`) ✅ done
 - [x] Fresh schema with migrations (`drizzle/`, `npm run db:migrate`). Neon Auth with Google. Claim links, roles, Pending members, and the approval flow in both chat and dashboard. Permission checks in services (`services/authz.ts`).
 - [x] Onboarding: Roomie joins, introduces itself, creates the Group, makes the adder Admin, reads the members, and asks the Group's purpose, currency, time zone and Toolkits in one message (`src/onboarding.ts`; the 1–3 minute wait belongs to the WhatsApp adapter). Claim links are **not** sent in a burst. A Member gets theirs privately when they ask for the dashboard ([ADR 0001](./adr/0001-baileys-for-whatsapp-groups.md)). People already in the Chat are active; later joiners are Pending ([ADR 0008](./adr/0008-who-is-pending.md)).
 - [x] Dashboard rebuilt on Tailwind + shadcn from the prototype: sign in, group switcher, a personal home ("you owe / you're owed", your Cart items, your chores), and Members and Settings for Admins.
@@ -123,7 +123,7 @@ Each step gets its own branch and PR, and you test locally before it's merged.
 - **Done when:** a new person in the test group goes from Pending to approved to claimed to seeing their own dashboard, and a non-Admin can't change Members or settings anywhere.
   - [x] Pending -> approved -> claimed -> own dashboard (dev-chat + browser, with the dev sign-in bypass for the Google step) · [x] non-Admins see no admin controls and every admin service refuses them · [ ] the same in a real WhatsApp group (step 2)
 
-### 5. Splitting Toolkit (`step/5-splitting`)
+### 5. Splitting Toolkit (`step/5-splitting`) ✅ done
 - [x] Split equally, by exact amounts, by percentages or by shares. Multiple Payers. Categories (picked by Roomie), notes, dates, recurring Expenses, edit/delete/undo, Activity, a simplify-debts toggle, and a Settle plan with Venmo, PayPal and Cash App links (`services/split.ts`, `services/money.ts`, `services/recurring.ts`; migration 0001).
 - [x] Receipt photo to Expense (vision model: `claude-sonnet-5-5` reads `image_url` on the gateway), with per-item assignment ("I had the steak"); sums are recomputed and a mismatch makes Roomie ask (`services/receipts.ts`, `expense_from_receipt`, Scan receipt in the drawer).
 - [x] Splitwise through Composio: connect, import a group (people plus full history), and export as a one-time copy or a live mirror (`integrations/splitwise.ts`, `services/splitwise.ts`, the outbox in [ADR 0009](./adr/0009-outbox-for-splitwise-mirror-pushes.md)).
@@ -131,16 +131,23 @@ Each step gets its own branch and PR, and you test locally before it's merged.
 - **Done when:** the "$90 dinner, 50/25/25" scenario, multi-payer, edit and undo all match to the cent between chat and dashboard, and a Splitwise import and export round-trips on a test group.
   - [x] 50/25/25, 2:2:1, multi-payer, edit and undo match to the cent between dev-chat and the dashboard ([walkthrough](./dev-chat.md)) · [x] Splitwise import, export and mirror round-trip against the in-memory fake (`npm run test:tools`) · [ ] the same against real Splitwise (blocked on a valid `COMPOSIO_API_KEY`; the current one gets 401, which the app reports as "Splitwise isn't available")
 
-### 6. Groceries Toolkit (`step/6-groceries`)
+### 6. Groceries Toolkit (`step/6-groceries`) ✅ done
 - [x] Cart (personal vs shared items, estimated prices, Recipe sub-groups, remove your own or as an Admin) and an Instacart shopping-list link through Composio, recorded as a Checkout (`services/cart.ts`, `integrations/instacart.ts`; migration 0003). "I paid $84" becomes one exact Expense (category groceries) split by who wanted what, weighted by the estimates (`computeCartSplits`, which the dashboard previews with).
 - [x] Recipes: "tacos for 5 friday" gives a scaled Recipe (Sonnet, strict JSON, Instacart units, one retry) and an Instacart recipe link, cached until the ingredients change. Ingredients go into the Cart only when someone asks or clearly means it, minus the Pantry and what they say they have (`services/recipes.ts`, `services/pantry.ts`).
 - [x] The Cart page: Recipe cards and detail, a New recipe sheet, the Pantry editor, Get Instacart link, and the "I paid" drawer. Home shows the next planned Recipe.
 - **Done when:** a recipe, a cart, the checkout link and the paid-to-Expense step all work end to end in the test group.
   - [x] Recipe -> "yes add them, we have onions" -> checkout link -> "I paid 84" match to the cent between dev-chat and the dashboard's preview ([walkthrough](./dev-chat.md)) · [x] the Instacart link, verified against the fake · [ ] the real Instacart link (blocked on a valid `COMPOSIO_API_KEY`; Composio lists Instacart as "no auth", so no Instacart auth config is needed, but that is unconfirmed until a real call) · [ ] the same in a real WhatsApp group (step 2)
 
-### 7. Chores and Upkeep Toolkits (`step/7-household`)
-- Move chores, rotation, streaks and upkeep onto Groups and the new UI. Reminders live in core, with each Group's time zone.
+### 7. Chores and Upkeep Toolkits (`step/7-household`) ✅ done
+- [x] Group time zones for real: `lib/time.ts` (wall-clock to instant across DST, local days, next weekday, "Chicago" / "CST" / "India" to IANA). Every "today", "Tuesday 8pm", "this week", due day and report window uses the Group's zone; the hard-coded Chicago is gone (migration 0004).
+- [x] Chores: a Rotation per chore (or everyone, least recent first), passes (`chore_skip`), local due days, streaks per Member, logging for someone else, add and remove (Admin), the chart (`hall_of_shame`), Activity for done, pass, add, change and remove.
+- [x] Upkeep: local due days, due soon (7 days) and late, `upkeep_add` / `upkeep_done` / `upkeep_status` / `upkeep_remove`, the usual five (added at Onboarding for roommates and families, together with three starter chores).
+- [x] Reminders (core): one-off, daily, weekly, monthly; the whole Group's go to the Chat, one Member's privately ("(set by Maya)"); wall-clock in the Group's zone; list and cancel with privacy rules.
+- [x] The scheduler: the daily chores nudge (`nudgeHour`, default 9 local, only when something is due) and the weekly Group Report (default Sunday 18:00 local), each claimed in `scheduled_posts` so it goes out once per period (ADR 0001). The upkeep nudge is folded into the report.
+- [x] Dashboard: the Chores page (Chores / Upkeep / Reminders), Home's Today strip, Settings (time zone by region, nudge hour, report day and hour).
+- [x] Telegram readiness: `npm run telegram:check`, `/help`, a one-line `/start`, friendly failures, `[roomie]` log lines, [docs/first-group-test.md](./first-group-test.md).
 - **Done when:** the chores and upkeep scenarios pass in evals and show up on the dashboard.
+  - [x] evals ([baseline](./evals-baseline.md)) · [x] the dashboard (`design/screens/real-chores-*.jpeg`) · [x] the dev-chat walkthrough ([docs/dev-chat.md](./dev-chat.md)) · [ ] the same in a real Telegram group ([docs/first-group-test.md](./first-group-test.md))
 
 ## Parked (v2 / v3)
 
@@ -155,7 +162,7 @@ Each step gets its own branch and PR, and you test locally before it's merged.
 - [ ] Roomie's WhatsApp number: a real prepaid eSIM or SIM you **keep** (for example Tello, about $5/month). Not Google Voice and not a rented SMS-verification number. Use the WhatsApp Business app, turn on two-step verification, warm it up for a few days, and open it at least weekly.
 - [ ] Mastra platform: `MASTRA_PLATFORM_ACCESS_TOKEN` and `MASTRA_PROJECT_ID` in `.env`.
 - [ ] Composio: a valid `COMPOSIO_API_KEY` in `.env` (the current one is rejected with 401). Then connect Splitwise once from Settings and put the logged `COMPOSIO_SPLITWISE_AUTH_CONFIG_ID` in `.env`, and press "Get Instacart link" on the Cart page once to confirm Instacart works with no Instacart key.
-- [ ] Google Cloud OAuth client for Neon Auth, before anyone outside the dev team signs in (dev uses Neon's shared Google keys; the consent screen shows Neon). Add it under the branch's Auth -> OAuth providers.
+- [ ] Google Cloud OAuth client for Neon Auth, before anyone outside the dev team signs in (dev uses Neon's shared Google keys; the consent screen shows Neon). Add it under the branch's Auth -> OAuth providers. At the same time, turn off email+password sign-up on that branch (Neon enables it by default; Roomie only uses Google).
 
 ## Environment
 

@@ -11,7 +11,7 @@ export const gateModel = () => process.env.GATE_MODEL ?? "typesafeai-jev-1-14-0"
 const ROOMIE =
   "Roomie is an assistant member of this group chat that logs shared expenses, keeps a grocery cart, writes recipes, tracks chores, home upkeep and reminders.";
 
-export const NONE_CRITERION = "None of these, or several at once.";
+export const NONE_CRITERION = "None of these, or several at once, such as 'what's due this week' (chores and upkeep), 'how are we doing' or a weekly report.";
 
 /**
  * The `toolkit` question's choices, from the manifests: each enabled Toolkit's gate criterion, core (always), and

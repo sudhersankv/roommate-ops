@@ -115,13 +115,38 @@ export type ChoreView = {
   id: string
   name: string
   cadence: string
+  everyDays: number
+  /** Whose turn it is (member id). */
   turn: string | null
+  /** The saved Rotation (member ids), null = everyone, least recent first. */
+  rotation: string[] | null
+  /** Who's in the turn order now, in order. */
+  order: string[]
   due: string
+  state: "overdue" | "due" | "ok"
+  /** The last doer's streak. */
   streak: number
+  /** memberId -> on-time turns in a row. */
+  streaks: Record<string, number>
   lastDone?: { by: string; date: string }
 }
 
-export type UpkeepView = { id: string; name: string; every: string; due: string; lastDone?: string }
+export type UpkeepView = { id: string; name: string; every: string; everyDays: number; due: string; status: "overdue" | "due-soon" | "ok"; lastDone?: string }
+
+export type ReminderView = {
+  id: string
+  text: string
+  /** "Tue Nov 3, 8:00 PM" in the Group's time zone. */
+  when: string
+  day: string
+  /** Member id, null = everyone. */
+  for: string | null
+  setBy: string | null
+  repeat: "daily" | "weekly" | "monthly" | null
+  canCancel: boolean
+}
+
+export type ScheduleView = { nudgeHour: number | null; reportWeekday: number; reportHour: number }
 
 /** One marketplace card and its detail sheet, from the Toolkit's manifest and this Group's state. */
 export type ToolkitCardView = {

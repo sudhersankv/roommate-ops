@@ -29,6 +29,17 @@ export function dropMemberLines(section: string, name: string): string {
     .join("\n");
 }
 
+/**
+ * Whether a Group style note says the chat is casual (then the Group Report reads as sentences, not a list). Needs a
+ * little confidence first, so a fresh Group gets the default look.
+ */
+export function isCasualStyle(section: string): boolean {
+  const tone = /^\s*[-*]?\s*tone:\s*(.*)$/im.exec(section)?.[1] ?? "";
+  const confidence = Number(/confidence[^:]*:\s*([\d.]+)/i.exec(section)?.[1] ?? 0);
+  if (confidence < 0.3 || /\b(formal|professional|polite)\b/i.test(tone)) return false;
+  return /\b(casual|chill|laid[- ]?back|relaxed|informal|playful|banter|teasing|jokey|goofy|lowercase|slangy)\b/i.test(tone);
+}
+
 /** The body of `heading`, or "" when missing. */
 export function readSection(markdown: string, heading: string): string {
   const lines = markdown.split("\n");

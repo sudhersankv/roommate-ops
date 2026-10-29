@@ -6,7 +6,7 @@ export const upkeep = defineManifest({
   description: "Recurring home maintenance such as filters, smoke alarms and gutters.",
   summary: "Filters, smoke alarms and the rest of the house care, on schedule.",
   longDescription:
-    "Tell Roomie how often something needs doing (\"change the AC filter every 90 days\") and it keeps track. It knows what's overdue or coming up, and \"changed the filter\" resets the clock.",
+    "Tell Roomie how often something needs doing (\"change the AC filter every 90 days\") and it keeps track, in the Group's time zone. It knows what's overdue or coming up, and \"changed the filter\" resets the clock. Roommates and families start with the usual five.",
   icon: "Wrench",
   category: "home",
   tags: ["maintenance", "filters", "smoke alarms", "house care"],
@@ -16,14 +16,16 @@ export const upkeep = defineManifest({
     criterion: "Home maintenance on a schedule: filters, smoke alarms, gutters, repairs.",
     examples: ["changed the air filter", "track the AC filter every 90 days", "what upkeep is due?"],
   },
+  persona: `- Upkeep: "changed the air filter" is upkeep_done; "what's due this week" is chore_status plus upkeep_status (dueOnly).`,
   abilities: {
-    add_maintenance: "Track a recurring upkeep item",
-    maintenance_done: "Mark an upkeep item done",
-    maintenance_status: "Say what's overdue or due soon",
+    upkeep_add: "Track a recurring upkeep item",
+    upkeep_done: "Mark an upkeep item done",
+    upkeep_status: "Say what's overdue or due soon",
+    upkeep_remove: "Stop tracking an upkeep item",
   },
-  // Upkeep lives on the Chores page; with Chores off, its tab still gets you there.
+  // Upkeep lives on the Chores page's Upkeep tab; with Chores off, its own tab still gets you there.
   dashboard: {
-    nav: { label: "Upkeep", href: (g) => `/g/${g}/chores`, icon: "Wrench", order: 40 },
+    nav: { label: "Upkeep", href: (g) => `/g/${g}/chores?tab=upkeep`, icon: "Wrench", order: 40 },
     pages: ["chores"],
   },
 });

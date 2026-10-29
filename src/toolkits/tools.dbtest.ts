@@ -9,21 +9,22 @@
 import "@/lib/env";
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import type { PgColumn, PgTable } from "drizzle-orm/pg-core";
 import { isValidationError } from "@mastra/core/tools";
 import { RequestContext } from "@mastra/core/request-context";
 import { db, schema } from "@/db";
 import type { Ctx } from "@/services/types";
 import type { Balance, Expense, Transfer } from "@/services/money";
-import type { ChoreStatus, ShameRow } from "@/services/chores";
-import type { Reminder } from "@/services/reminders";
-import type { MaintenanceItem } from "@/services/upkeep";
+import type { ShameRow } from "@/services/chores";
 import type { CartItem } from "@/services/cart";
-import { devUserId } from "@/channels/dev";
+import { registerChannel } from "@/channels";
+import { DevChannel, devUserId, type DevOutput } from "@/channels/dev";
+import { choresNudgeJob, sendDueReminders, weeklyReportJob } from "@/jobs/scheduler";
+import { addDaysInZone, addDaysToDay, dayInZone, nextWeekday, zonedParts, zonedTimeToUtc } from "@/lib/time";
 import { onGroupJoined, onParticipantJoined } from "@/onboarding";
-import { deleteGroup } from "@/services/groups";
-import { cart, chatlog, members, money, receipts, recipes, recurring, splitwise, toolkits as toolkitsSvc } from "@/services";
+import { deleteGroup, groupsWithChat } from "@/services/groups";
+import { cart, chatlog, chores, members, money, receipts, recipes, recurring, splitwise, toolkits as toolkitsSvc } from "@/services";
 import { composioHealth } from "@/integrations/composio";
 import { FakeSplitwise, setSplitwiseClient } from "@/integrations/splitwise";
 import { ComposioInstacart, FakeInstacart, setInstacartClient } from "@/integrations/instacart";
@@ -389,158 +390,253 @@ describe("Roomie tools against the dev DB", () => {
 
   // ---------- chores ----------
 
-  test("add_chore puts chores on the chart; same name again updates the cadence", async () => {
-    assert.deepEqual(await run("add_chore", { name: "Dishes", everyDays: 1 }), { ok: true, chore: "Dishes", everyDays: 1 });
-    await run("add_chore", { name: "Take out trash", everyDays: 3 });
-    await run("add_chore", { name: "take out trash", everyDays: 2 });
+  type ChoreBrief = { chore: string; whoseTurn: string | null; rotation: string[] | string; status: string; due: string; lastDone: string };
+
+  test("chore_add: on the chart with a Rotation ('me' = the sender); same name again updates the cadence and keeps it", async () => {
+    const d = await run("chore_add", { name: "Dishes", everyDays: 1 });
+    assert.equal(d.created, true);
+    assert.deepEqual(d.rotation, ["Sudhersan", "Ryan", "Alex"], "no Rotation = everyone");
+    const t = await run("chore_add", { name: "Take out trash", everyDays: 3, rotation: ["Ryan", "Alex", "me"] });
+    assert.deepEqual(t.rotation, ["Ryan", "Alex", "Sudhersan"]);
+    if (t.links) assert.match(t.links[0].url, new RegExp(`/g/${groupId}/chores$`), "the button opens this Group's Chores page");
+    const again = await run("chore_add", { name: "take out trash", everyDays: 2 });
+    assert.equal(again.created, false);
+    assert.deepEqual(again.rotation, ["Ryan", "Alex", "Sudhersan"]);
     const chart = await db.select().from(schema.chores).where(eq(schema.chores.groupId, groupId));
-    assert.deepEqual(
-      chart.map((c) => [c.name, c.everyDays]).sort(),
-      [
-        ["Dishes", 1],
-        ["Take out trash", 2],
-      ],
-    );
+    assert.deepEqual(chart.map((c) => [c.name, c.everyDays, c.rotation?.length ?? 0]).sort(), [
+      ["Dishes", 1, 0],
+      ["Take out trash", 2, 3],
+    ]);
+    await assert.rejects(run("chore_add", { name: "Mop", rotation: ["Zed"] }), /No member named "Zed"/);
+    const acts = await db.select().from(schema.activity).where(and(eq(schema.activity.groupId, groupId), eq(schema.activity.kind, "chore.added")));
+    assert.equal(acts.length, 2);
   });
 
-  test("log_chore: 'the dishes' fuzzy-matches Dishes for the sender; 'trash' for Alex by name", async () => {
-    const r: { chore: string; streak: number } = await run("log_chore", { chore: "the dishes" });
+  test("log_chore: 'the dishes' for the sender (streak 2); 'trash' for Alex moves the Rotation on to the next one", async () => {
+    const r = await run("log_chore", { chore: "the dishes" });
     assert.equal(r.chore, "Dishes");
     assert.equal(r.streak, 1);
-    const r2: { chore: string; streak: number } = await run("log_chore", { chore: "the dishes" });
-    assert.equal(r2.streak, 2, "two in a row by the same person");
-    const r3: { chore: string; streak: number } = await run("log_chore", { chore: "trash", who: "Alex" });
+    const r2 = await run("log_chore", { chore: "the dishes" });
+    assert.equal(r2.streak, 2, "two on-time turns in a row");
+    const r3 = await run("log_chore", { chore: "took out the trash", who: "Alex" });
     assert.equal(r3.chore, "Take out trash");
-
+    assert.equal(r3.doneBy, "Alex");
+    assert.equal(r3.nextUp, "Sudhersan", "after Alex in Ryan, Alex, Sudhersan");
     const logs = await db
       .select({ memberId: schema.choreLogs.memberId, name: schema.chores.name })
       .from(schema.choreLogs)
       .innerJoin(schema.chores, eq(schema.choreLogs.choreId, schema.chores.id))
       .where(eq(schema.chores.groupId, groupId));
     assert.equal(logs.length, 3);
-    assert.equal(logs.filter((l) => l.memberId === member.Sudhersan && l.name === "Dishes").length, 2);
     assert.equal(logs.filter((l) => l.memberId === member.Alex && l.name === "Take out trash").length, 1);
-    assert.equal((await db.select().from(schema.chores).where(eq(schema.chores.groupId, groupId))).length, 2, "no new chore was created");
+    const [act] = await db.select().from(schema.activity).where(and(eq(schema.activity.groupId, groupId), eq(schema.activity.kind, "chore.done"))).orderBy(desc(schema.activity.createdAt)).limit(1);
+    assert.equal(act.summary, "marked Take out trash done for Alex");
   });
 
   test("log_chore: an unknown chore is added to the chart (every 7 days)", async () => {
-    const r: { chore: string } = await run("log_chore", { chore: "watered the plants" });
+    const r = await run("log_chore", { chore: "watered the plants" });
     assert.equal(r.chore, "watered the plants");
+    assert.equal(r.added, true);
     const [c] = await db
       .select()
       .from(schema.chores)
       .where(and(eq(schema.chores.groupId, groupId), eq(schema.chores.name, "watered the plants")));
-    assert.equal(c.groupId, groupId);
     assert.equal(c.everyDays, 7);
   });
 
-  test("chore_status: last done by, whose turn, Hall of Shame worst first", async () => {
-    const { chores, shame }: { chores: ChoreStatus[]; shame: ShameRow[] } = await run("chore_status", {});
-    const dishes = chores.find((c) => c.name === "Dishes");
-    assert.equal(dishes?.lastDoneBy, "Sudhersan");
-    assert.equal(dishes?.overdue, false);
-    assert.ok(dishes?.whoseTurn === "Alex" || dishes?.whoseTurn === "Ryan", "someone who hasn't done dishes is up next");
-    const trash = chores.find((c) => c.name === "Take out trash");
-    assert.equal(trash?.lastDoneBy, "Alex");
-    // Ryan did nothing -> worst. Then Alex (1) before Sudhersan (3).
-    assert.deepEqual(
-      shame.map((s) => s.name),
-      ["Ryan", "Alex", "Sudhersan"],
-    );
-    assert.equal(shame[0].daysSinceLastChore, null);
-    assert.equal(shame[0].choresThisWeek, 0);
-    assert.equal(shame[2].choresThisWeek, 3);
+  test("chore_status: whose turn (Rotation or least recent), due in the Group's days, last done", async () => {
+    const { chores, dueOrOverdue }: { chores: ChoreBrief[]; dueOrOverdue: string[] } = await run("chore_status", {});
+    const dishes = chores.find((c) => c.chore === "Dishes")!;
+    assert.match(dishes.lastDone, /^Sudhersan on \d{4}-\d{2}-\d{2}$/);
+    assert.equal(dishes.status, "ok", "done today, every day: due tomorrow");
+    assert.ok(dishes.whoseTurn === "Alex" || dishes.whoseTurn === "Ryan", "someone who hasn't done dishes is up");
+    const trash = chores.find((c) => c.chore === "Take out trash")!;
+    assert.equal(trash.whoseTurn, "Sudhersan");
+    assert.deepEqual(trash.rotation, ["Ryan", "Alex", "Sudhersan"]);
+    assert.ok(!dueOrOverdue.includes("Dishes"));
+  });
+
+  test("chore_skip: only whoever's turn it is passes; the next in the Rotation is up and Activity says so", async () => {
+    const alex = contextFor(member.Alex, "Alex", "member", "active");
+    const refused = await run("chore_skip", { chore: "trash" }, alex);
+    assert.equal(refused.notAllowed, true);
+    assert.match(refused.message, /Sudhersan's turn on Take out trash/);
+    const s = await run("chore_skip", { chore: "trash" });
+    assert.deepEqual(s, { chore: "Take out trash", choreId: s.choreId, nextUp: "Ryan" });
+    const status = await chores.choreStatus({ groupId });
+    const trash = status.find((c) => c.name === "Take out trash")!;
+    assert.equal(trash.whoseTurn, "Ryan");
+    assert.equal(trash.lastDoneBy, "Alex", "a pass isn't a done");
+    const [act] = await db.select().from(schema.activity).where(and(eq(schema.activity.groupId, groupId), eq(schema.activity.kind, "chore.skipped")));
+    assert.equal(act.summary, "passed their turn on Take out trash to Ryan");
+    // Without naming the chore: Ryan's only chore is trash
+    const ryan = contextFor(member.Ryan, "Ryan", "member", "active");
+    const r = await run("chore_skip", {}, ryan);
+    assert.equal(r.nextUp, "Alex");
+  });
+
+  test("hall_of_shame: the chart, worst first, with a friendly line", async () => {
+    const { line, rows }: { line: string; rows: ShameRow[] } = await run("hall_of_shame", {});
+    assert.deepEqual(rows.map((s) => s.name), ["Ryan", "Alex", "Sudhersan"]);
+    assert.equal(rows[0].daysSinceLastChore, null);
+    assert.equal(rows[2].choresThisWeek, 3);
+    assert.equal(line, "The chart this week: Ryan 0 (none yet), Alex 1, Sudhersan 3.");
+  });
+
+  test("chore_remove: Admins only; the chore and its history go, Activity keeps a line", async () => {
+    const alex = contextFor(member.Alex, "Alex", "member", "active");
+    assert.equal((await run("chore_remove", { chore: "plants" }, alex)).reason, "admin-only");
+    assert.deepEqual(await run("chore_remove", { chore: "plants" }), { removed: "watered the plants" });
+    const left = await db.select().from(schema.chores).where(eq(schema.chores.groupId, groupId));
+    assert.deepEqual(left.map((c) => c.name).sort(), ["Dishes", "Take out trash"]);
+    await assert.rejects(run("chore_remove", { chore: "gutters" }), /No chore matches "gutters"/);
   });
 
   // ---------- reminders ----------
 
-  let trashReminderId: string;
+  const CHI = "America/Chicago";
+  const outbox: DevOutput[] = [];
+  let tuesday8pm: Date;
 
-  test("set_reminder: for Ryan by name; monthly for everyone", async () => {
-    const due = new Date(Date.now() + 3 * 24 * 3600_000);
-    const r: Reminder = await run("set_reminder", { text: "Trash goes out at 8pm", dueAt: due.toISOString(), who: "Ryan" });
-    trashReminderId = r.id;
-    assert.equal(r.memberName, "Ryan");
-    assert.equal(r.memberId, member.Ryan);
-    assert.equal(r.recurring, null);
-    assert.equal(r.dueAt.getTime(), due.getTime());
+  test("set_reminder: wall-clock in the Group's zone ('Tuesday 8pm' for everyone), 'me' monthly, Ryan privately", async () => {
+    registerChannel(new DevChannel((o) => outbox.push(o)));
+    tuesday8pm = nextWeekday(CHI, 2, 20);
+    const p = zonedParts(CHI, tuesday8pm);
+    const wall = `${p.year}-${String(p.month).padStart(2, "0")}-${String(p.day).padStart(2, "0")}T20:00`;
+    const trash = await run("set_reminder", { text: "Trash goes out", dueAt: wall, repeat: "weekly" });
+    assert.equal(trash.for, "everyone");
+    assert.equal(trash.private, false);
+    const [row] = await db.select().from(schema.reminders).where(eq(schema.reminders.id, trash.id));
+    assert.equal(row.dueAt.toISOString(), tuesday8pm.toISOString(), "8 PM Chicago on the next Tuesday, as an instant");
+    assert.equal(row.recurring, "weekly");
+    assert.equal(row.createdBy, member.Sudhersan);
+    assert.match(trash.when, /^Tue \w{3} \d{1,2}, 8:00 PM, then weekly$/);
 
-    const rent: Reminder = await run("set_reminder", { text: "Rent is due", dueAt: due.toISOString(), monthly: true });
-    assert.equal(rent.memberId, null);
-    assert.equal(rent.recurring, "monthly");
-
-    const rows = await db.select().from(schema.reminders).where(eq(schema.reminders.groupId, groupId));
-    assert.equal(rows.length, 2);
-    assert.ok(rows.every((x) => x.sentAt === null));
+    const rent = await run("set_reminder", { text: "Pay rent", dueAt: new Date(Date.now() + 86_400_000).toISOString(), who: "me", repeat: "monthly" });
+    assert.equal(rent.for, "Sudhersan");
+    assert.equal(rent.private, true);
+    const ryan = await run("set_reminder", { text: "Pay Sudhersan back for pizza", dueAt: new Date(Date.now() + 2 * 86_400_000).toISOString(), who: "Ryan" });
+    assert.equal(ryan.for, "Ryan");
+    assert.equal(await count(schema.reminders), 3);
   });
 
-  test("set_reminder: bad date is rejected by the service", async () => {
+  test("set_reminder: a time that already passed or isn't a date is refused", async () => {
     await assert.rejects(run("set_reminder", { text: "x", dueAt: "next tuesday-ish" }), /not a real date/);
+    await assert.rejects(run("set_reminder", { text: "x", dueAt: "2020-01-01T09:00" }), /already passed/);
   });
 
-  test("list_reminders: upcoming, soonest first", async () => {
-    const list: Reminder[] = await run("list_reminders", {});
-    assert.deepEqual(list.map((r) => r.text).sort(), ["Rent is due", "Trash goes out at 8pm"]);
-    assert.equal(list.find((r) => r.id === trashReminderId)?.memberName, "Ryan");
+  test("list_reminders: what the sender may see (the group's, theirs, the ones they set), soonest first", async () => {
+    const mine: { text: string; for: string; setBy: string }[] = await run("list_reminders", {});
+    assert.deepEqual(mine.map((r) => r.text).sort(), ["Pay Sudhersan back for pizza", "Pay rent", "Trash goes out"]);
+    const alexSees: { text: string }[] = await run("list_reminders", {}, contextFor(member.Alex, "Alex", "member", "active"));
+    assert.deepEqual(alexSees.map((r) => r.text), ["Trash goes out"], "other people's private reminders stay private");
   });
 
-  test("cancel_reminder: by text, then by id; unknown throws with the list", async () => {
-    const c: { id: string; cancelled: string } = await run("cancel_reminder", { text: "trash goes" });
-    assert.equal(c.id, trashReminderId);
-    const left: Reminder[] = await run("list_reminders", {});
-    assert.equal(left.length, 1);
-    await assert.rejects(run("cancel_reminder", { text: "nothing like this" }), /No upcoming reminder matches.*Rent is due/);
+  test("scheduler: the whole group's reminder goes to the Chat, a Member's privately with '(set by ...)', repeats come back", async () => {
+    await db.update(schema.reminders).set({ dueAt: new Date(Date.now() - 60_000) }).where(and(eq(schema.reminders.groupId, groupId), sql`${schema.reminders.recurring} is distinct from 'weekly'`));
+    // The weekly one fired last Tuesday at 8 PM, so the next is the coming Tuesday at 8 PM, DST or not.
+    await db.update(schema.reminders).set({ dueAt: addDaysInZone(CHI, tuesday8pm, -7) }).where(and(eq(schema.reminders.groupId, groupId), eq(schema.reminders.recurring, "weekly")));
+    outbox.length = 0;
+    const sent = await sendDueReminders(new Date(), groupId);
+    assert.equal(sent, 3);
+    const chat = outbox.filter((o) => o.to === "chat");
+    const priv = outbox.filter((o) => o.to === "private");
+    assert.equal(chat.length, 1, "one Chat post: the group's");
+    assert.match(chat[0].msg.text, /trash goes out/i);
+    assert.equal(priv.length, 2);
+    const toRyan = priv.find((o) => o.to === "private" && o.userExternalId.includes("ryan"))!;
+    assert.match(toRyan.msg.text, /pay Sudhersan back for pizza \(set by Sudhersan\)$/);
+    const own = priv.find((o) => o.to === "private" && o.userExternalId.includes("sudhersan"))!;
+    assert.doesNotMatch(own.msg.text, /set by/);
+    const next = await db.select().from(schema.reminders).where(and(eq(schema.reminders.groupId, groupId), isNull(schema.reminders.sentAt)));
+    assert.deepEqual(next.map((r) => r.recurring).sort(), ["monthly", "weekly"], "the one-off is done; repeats are scheduled again");
+    assert.ok(next.every((r) => r.dueAt.getTime() > Date.now()));
+    const weekly = next.find((r) => r.recurring === "weekly")!;
+    assert.equal(weekly.dueAt.toISOString(), tuesday8pm.toISOString());
+    assert.equal(await sendDueReminders(new Date(), groupId), 0, "nothing twice");
+  });
+
+  test("cancel_reminder: by text, then by id; other people's private ones can't be cancelled; unknown lists what's there", async () => {
+    const c = await run("cancel_reminder", { text: "rent" });
+    assert.equal(c.cancelled, "Pay rent");
+    const left: { id: string; text: string }[] = await run("list_reminders", {});
+    assert.deepEqual(left.map((r) => r.text), ["Trash goes out"]);
+    await assert.rejects(run("cancel_reminder", { text: "nothing like this" }), /No upcoming reminder matches.*Trash goes out/);
     await run("cancel_reminder", { reminderId: left[0].id });
-    assert.equal(await count(schema.reminders), 0);
+    assert.equal(Number((await db.select({ n: sql<number>`count(*)::int` }).from(schema.reminders).where(and(eq(schema.reminders.groupId, groupId), isNull(schema.reminders.sentAt))))[0].n), 0);
     await assert.rejects(run("cancel_reminder", { text: "rent" }), /no upcoming reminders/);
   });
 
   // ---------- upkeep ----------
 
-  test("add_maintenance + maintenance_status: never done = overdue", async () => {
-    assert.deepEqual(await run("add_maintenance", { item: "Replace HVAC filter", everyDays: 90 }), { ok: true });
-    await run("add_maintenance", { item: "Test smoke alarms", everyDays: 180 });
-    const all: MaintenanceItem[] = await run("maintenance_status", {});
-    assert.deepEqual(all.map((m) => [m.item, m.status]).sort(), [
-      ["Replace HVAC filter", "overdue"],
-      ["Test smoke alarms", "overdue"],
-    ]);
-    const due: MaintenanceItem[] = await run("maintenance_status", { dueOnly: true });
-    assert.equal(due.length, 2);
+  type UpkeepBrief = { item: string; status: string; due: string; lastDone: string };
+
+  test("upkeep_add + upkeep_status: one item, then the usual five (skipping what's tracked); never done = due today", async () => {
+    const a = await run("upkeep_add", { item: "Replace HVAC / air filter", everyDays: 90 });
+    assert.equal(a.created, true);
+    const u = await run("upkeep_add", { usual: true });
+    assert.equal(u.added, 4);
+    const all: { items: UpkeepBrief[]; tracked: number } = await run("upkeep_status", {});
+    assert.equal(all.tracked, 5);
+    assert.ok(all.items.every((m) => m.status === "due-soon" && m.due === "due today"));
+    const due: { items: UpkeepBrief[] } = await run("upkeep_status", { dueOnly: true });
+    assert.equal(due.items.length, 5);
+    await assert.rejects(run("upkeep_add", { item: "Gutters" }), /How often/);
   });
 
-  test("maintenance_done: fuzzy 'hvac filter' marks it done; unknown item throws with known items", async () => {
-    await run("maintenance_done", { item: "hvac filter" });
-    const [row] = await db
-      .select()
-      .from(schema.maintenance)
-      .where(and(eq(schema.maintenance.groupId, groupId), eq(schema.maintenance.item, "Replace HVAC filter")));
-    assert.ok(row.lastDone && Date.now() - row.lastDone.getTime() < 60_000, "lastDone set to now");
-    const due: MaintenanceItem[] = await run("maintenance_status", { dueOnly: true });
-    assert.deepEqual(
-      due.map((m) => m.item),
-      ["Test smoke alarms"],
-    );
-    const all: MaintenanceItem[] = await run("maintenance_status", {});
-    const hvac = all.find((m) => m.item === "Replace HVAC filter");
-    assert.equal(hvac?.status, "ok");
-    assert.ok(hvac?.nextDue && hvac.nextDue.getTime() - row.lastDone!.getTime() === 90 * 86_400_000);
-    await assert.rejects(run("maintenance_done", { item: "gutters" }), /No upkeep item matches "gutters".*Replace HVAC filter/);
+  test("upkeep_done: 'changed the air filter' finds the filter; due again in 90 local days; unknown throws with the list", async () => {
+    const d = await run("upkeep_done", { item: "changed the air filter" });
+    assert.equal(d.item, "Replace HVAC / air filter");
+    assert.equal(d.nextDueDay, addDaysToDay(dayInZone(CHI, new Date()), 90));
+    const all: { items: UpkeepBrief[] } = await run("upkeep_status", {});
+    assert.equal(all.items.find((m) => m.item === "Replace HVAC / air filter")?.status, "ok");
+    const due: { items: UpkeepBrief[] } = await run("upkeep_status", { dueOnly: true });
+    assert.equal(due.items.length, 4);
+    await assert.rejects(run("upkeep_done", { item: "gutters" }), /No upkeep item matches "gutters".*Replace HVAC/);
   });
 
-  // ---------- report ----------
+  test("upkeep_remove: Admins only", async () => {
+    const alex = contextFor(member.Alex, "Alex", "member", "active");
+    assert.equal((await run("upkeep_remove", { item: "coffee maker" }, alex)).reason, "admin-only");
+    assert.deepEqual(await run("upkeep_remove", { item: "coffee maker" }), { removed: "Descale coffee maker" });
+    assert.equal(await count(schema.maintenance), 4);
+  });
 
-  test("group_report: ready-to-post text built from every card", async () => {
+  // ---------- report + the chores nudge ----------
+
+  test("group_report: one ready-to-post message from every Toolkit, at most 12 lines", async () => {
     const r: { text: string } = await run("group_report", {});
-    assert.equal(typeof r.text, "string");
-    assert.match(r.text, /Group report/);
+    assert.match(r.text, /^📋 Group report · Test Group/);
     assert.match(r.text, /Ryan pays Sudhersan \$16\.00/, "settle plan from the ledger (1500 + the $1 Sudhersan sent Ryan)");
-    assert.match(r.text, /Chores on track/);
-    assert.match(r.text, /Behind on chores: Ryan/);
-    assert.match(r.text, /Nothing scheduled/);
-    assert.match(r.text, /Overdue upkeep: Test smoke alarms/);
-    assert.doesNotMatch(r.text, /Replace HVAC filter/);
+    assert.match(r.text, /Chores this week: Sudhersan 2, Alex 1, Ryan 0\./);
+    assert.match(r.text, /The chart says Ryan has some catching up to do\./);
+    assert.match(r.text, /Upkeep due soon: .*Test smoke alarms \(today\)/);
+    assert.doesNotMatch(r.text, /air filter/);
+    assert.match(r.text, /The Cart's empty\./);
     assert.ok(r.text.split("\n").length <= 12, "stays short");
+  });
+
+  test("scheduler: the chores nudge posts once in the nudge hour, only when something's due; the report once on its day", async () => {
+    await run("chore_add", { name: "Mop the floor", everyDays: 7 });
+    const [g] = await groupsWithChat(groupId);
+    const today = zonedParts(CHI, new Date());
+    const at = (hour: number, dayOffset = 0) => zonedTimeToUtc(CHI, { year: today.year, month: today.month, day: today.day + dayOffset, hour, minute: 15 });
+    outbox.length = 0;
+    assert.equal(await choresNudgeJob(g, at(10)), null, "outside the 9 AM hour");
+    const text = await choresNudgeJob(g, at(9));
+    assert.match(text ?? "", /^🧹 On the chart today: .*mop the floor/);
+    assert.equal(await choresNudgeJob(g, at(9)), null, "once per local day");
+    assert.equal(outbox.filter((o) => o.to === "chat").length, 1);
+
+    await run("set_group_settings", { choresNudgeHour: null, reportDay: "Wednesday", reportHour: 7 });
+    assert.equal(await choresNudgeJob(g, at(9, 1)), null, "nudge switched off");
+    const wed = nextWeekday(CHI, 3, 7, at(0));
+    const report = await weeklyReportJob(g, new Date(wed.getTime() + 10 * 60_000));
+    assert.match(report ?? "", /Group report/);
+    assert.equal(await weeklyReportJob(g, new Date(wed.getTime() + 20 * 60_000)), null, "once per week");
+    assert.equal(await weeklyReportJob(g, new Date(wed.getTime() + 2 * 3_600_000)), null, "outside its hour");
+    await run("set_group_settings", { choresNudgeHour: 9, reportDay: "Sunday", reportHour: 18 });
+    await run("chore_remove", { chore: "mop" });
   });
 
   // ---------- cart (estimates from lib/prices; Instacart checkout is not wired yet) ----------
@@ -878,10 +974,40 @@ describe("Roomie tools against the dev DB", () => {
     assert.deepEqual([...s.toolkits].sort(), ["groceries", "splitting"]);
     const [g] = await db.select().from(schema.groups).where(eq(schema.groups.id, groupId));
     assert.ok(g.onboardedAt, "Onboarding is done");
-    await assert.rejects(run("set_group_settings", { timezone: "Mars/Olympus" }), /isn't a time zone/);
+    await assert.rejects(run("set_group_settings", { timezone: "Mars/Olympus" }), /don't know the time zone "Mars\/Olympus"\. Which city/);
+    assert.equal((await run("set_group_settings", { timezone: "India" })).timezone, "Asia/Kolkata");
+    assert.equal((await run("set_group_settings", { timezone: "CST" })).timezone, "America/Chicago");
     const t = await run("toggle_toolkit", { toolkit: "chores", enabled: true }, contextFor(member.Ryan, "Ryan", "admin", "active"));
     assert.ok(t.toolkits.includes("chores"));
     assert.equal((await run("toggle_toolkit", { toolkit: "upkeep", enabled: true }, alex)).reason, "admin-only");
+    assert.equal((await run("set_group_settings", { reportHour: 9 }, alex)).reason, "admin-only");
+  });
+
+  test("Onboarding a household ('roommates, USD, Chicago'): three starter chores for everyone and the usual upkeep", async () => {
+    const people = ["Maya", "Dev"].map((name) => ({ userExternalId: devUserId(`house-${name}-${Date.now()}`), name }));
+    const joined = await onGroupJoined({ channel: "dev", externalId: `house-${Date.now()}`, title: "House test" }, people, people[0]);
+    const gid = joined.group.id;
+    try {
+      const rc = new RequestContext<unknown>([
+        ["groupId", gid],
+        ["memberId", joined.members[0].id],
+        ["memberName", "Maya"],
+        ["role", "admin"],
+        ["status", "active"],
+        ["source", "chat"],
+      ]);
+      const s = await run("set_group_settings", { purpose: "roommates", currency: "USD", timezone: "Chicago" }, rc);
+      assert.equal(s.timezone, "America/Chicago");
+      assert.equal(s.added, "3 starter chores, 5 upkeep items");
+      const chart = await db.select().from(schema.chores).where(eq(schema.chores.groupId, gid));
+      assert.deepEqual(chart.map((c) => c.name).sort(), ["Clean the bathroom", "Dishes", "Take out the trash"]);
+      assert.ok(chart.every((c) => c.rotation === null), "everyone, new people included");
+      assert.equal((await db.select().from(schema.maintenance).where(eq(schema.maintenance.groupId, gid))).length, 5);
+      const again = await run("set_group_settings", { purpose: "roommates" }, rc);
+      assert.equal(again.added, undefined, "only at Onboarding");
+    } finally {
+      await deleteGroup(gid);
+    }
   });
 
   test("toggle_toolkit goes through the catalog (names, coming soon, unknown); list_toolkits; a dashboard switch-on posts one line", async () => {

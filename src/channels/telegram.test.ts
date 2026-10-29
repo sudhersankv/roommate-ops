@@ -10,7 +10,10 @@ import {
   botInfoFromToken,
   botWasAdded,
   chunkText,
+  commandOf,
   createTelegramBot,
+  helpText,
+  OOPS,
   isButtonUrl,
   keyboardFor,
   readAddress,
@@ -240,11 +243,79 @@ describe("private messages", () => {
     assert.equal(none.seen.incoming.length + many.seen.incoming.length, 0);
   });
 
-  test("/start: a greeting that says DMs work now", async () => {
+  test("/start: one line, no links; a Member hears DMs work now, a stranger how to get going", async () => {
     const h = harness();
     await h.feed(message(SAM, { text: "/start" }, PRIVATE));
-    assert.match(String(h.sent()[0].payload.text), /Now I can DM you/);
+    const member = String(h.sent()[0].payload.text);
+    assert.match(member, /^Hey Sam 👋 Now I can DM you: ask for "the dashboard"/);
+    assert.equal(member.split("\n").length, 1);
+    assert.ok(!/https?:\/\//.test(member), "no Claim link on /start");
+    assert.equal(h.sent()[0].payload.reply_markup, undefined, "no buttons either");
+    const stranger = harness({ deps: { chatsOfUser: async () => [] } });
+    await stranger.feed(message(SAM, { text: "/start" }, PRIVATE));
+    assert.equal(String(stranger.sent()[0].payload.text), `Hey Sam 👋 I'm Roomie. Add me to your group chat, say "roomie hi" there, and we're off.`);
+    assert.equal(h.seen.incoming.length + stranger.seen.incoming.length, 0);
+  });
+
+  test("/help in a DM: what Roomie does, even before the person is in a group", async () => {
+    const h = harness({ deps: { chatsOfUser: async () => [] } });
+    await h.feed(message(SAM, { text: "/help" }, PRIVATE));
+    assert.equal(h.sent()[0].payload.text, helpText());
     assert.equal(h.seen.incoming.length, 0);
+  });
+
+  test("a failure while handling a DM: a friendly line, never the error", async () => {
+    const h = harness({ deps: { handleIncoming: async () => Promise.reject(new Error("ECONNRESET at db.query (pg/lib/client.js:12)")) } });
+    await h.feed(message(SAM, { text: "what do I owe?" }, PRIVATE));
+    assert.equal(h.sent()[0].payload.text, OOPS);
+  });
+});
+
+describe("commands and failures in a group", () => {
+  test("/help (and /help@roomie) -> five lines in Roomie's voice; another bot's /help is ignored", async () => {
+    const h = harness();
+    await h.feed(message(MAYA, { text: "/help" }));
+    await h.feed(message(MAYA, { text: "/help@roomie_test_bot" }));
+    await h.feed(message(MAYA, { text: "/help@spam_bot" }));
+    const texts = h.sent().map((c) => String(c.payload.text));
+    assert.equal(texts.length, 2);
+    assert.equal(texts[0], helpText());
+    assert.equal(texts[0].split("\n").length, 5);
+    assert.match(texts[0], /Say "roomie"/);
+    assert.ok(!/https?:\/\//.test(texts[0]));
+    assert.equal(h.seen.incoming.length, 0, "commands don't reach the pipeline");
+  });
+
+  test("commandOf", () => {
+    assert.equal(commandOf("/help", "roomie_test_bot"), "help");
+    assert.equal(commandOf("/HELP@Roomie_Test_Bot please", "roomie_test_bot"), "help");
+    assert.equal(commandOf("/help@other_bot", "roomie_test_bot"), null);
+    assert.equal(commandOf("help me", "roomie_test_bot"), null);
+    assert.equal(commandOf(undefined, "roomie_test_bot"), null);
+  });
+
+  test("Roomie's own messages are ignored", async () => {
+    const h = harness();
+    await h.feed(message(BOT_USER, { text: "roomie, I said something" }));
+    assert.equal(h.seen.incoming.length + h.sent().length, 0);
+  });
+
+  test("a pipeline failure: one friendly line when Roomie was addressed, nothing for chatter, the stack only in the log", async () => {
+    const h = harness({ deps: { handleIncoming: async () => Promise.reject(new Error("TypeError: cannot read 'cents' of undefined\n    at money.ts:42")) } });
+    const logged: unknown[] = [];
+    const was = console.error;
+    console.error = (...args: unknown[]) => void logged.push(args);
+    try {
+      await h.feed(message(MAYA, { text: "roomie I paid 20 for pizza" }));
+      await h.feed(message(DEV, { text: "lol same" }));
+    } finally {
+      console.error = was;
+    }
+    const texts = h.sent().map((c) => String(c.payload.text));
+    assert.deepEqual(texts, [OOPS]);
+    assert.ok(!/money\.ts|TypeError/.test(texts[0]));
+    assert.equal(logged.length, 2, "both failures are logged");
+    assert.match(String((logged[0] as unknown[])[0]), /^\[roomie\] couldn't handle a message from Maya Lee/);
   });
 });
 

@@ -2,7 +2,7 @@
 // manifest is complete. No DB, no model.
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { roomieInstructions } from "@/mastra/agents/roomie";
+import { roomieInstructions } from "@/mastra/agents/instructions";
 import { allTools, core, toolsFor, TOOLKITS } from "./registry";
 import { CATALOG, COMING_SOON, findManifest, MANIFESTS, TOOLKIT_IDS } from "./manifests";
 import { PRESETS, presetFor } from "./presets";
@@ -21,7 +21,7 @@ describe("toolsFor", () => {
     const t = toolsFor("groceries");
     assert.ok(coreIds.every((id) => id in t), "core is always on");
     assert.ok("cart_add" in t);
-    assert.ok(!("log_expense" in t) && !("log_chore" in t) && !("add_maintenance" in t));
+    assert.ok(!("log_expense" in t) && !("log_chore" in t) && !("upkeep_add" in t));
   });
 
   test("'core' (reminders, members, settings): core tools only", () => {

@@ -28,7 +28,7 @@ export type NavItemView = { toolkit: string; label: string; href: string; icon: 
 export type OwnedPageView = { prefix: string; owners: { id: string; name: string; summary: string; enabled: boolean; icon: ReactNode }[] }
 
 export type GroupView = {
-  group: { id: string; name: string; currency: string; timezone: string; chattiness: "quiet" | "normal" | "chatty"; purpose: string | null; simplifyDebts: boolean }
+  group: { id: string; name: string; currency: string; timezone: string; chattiness: "quiet" | "normal" | "chatty"; purpose: string | null; simplifyDebts: boolean; onboarded: boolean }
   me: MemberView
   groups: { id: string; name: string }[]
   members: MemberView[]

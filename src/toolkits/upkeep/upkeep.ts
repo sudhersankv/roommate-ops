@@ -1,38 +1,54 @@
-// P8 · Sudhersan.
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
-import { upkeep } from "@/services";
-import { ctxOf } from "../util";
+import { report, upkeep } from "@/services";
+import type { MaintenanceItem } from "@/services/upkeep";
+import { ctxOf, dashboardLinks } from "../util";
+
+const brief = (m: MaintenanceItem) => ({
+  item: m.item,
+  every: `every ${m.everyDays} days`,
+  status: m.status,
+  due: m.dueIn < 0 ? report.dueWord(m.dueIn, m.dueDay) : m.dueIn === 0 ? "due today" : `due ${m.dueDay} (in ${m.dueIn} days)`,
+  lastDone: m.lastDone ? "yes" : "never marked done",
+});
 
 export const upkeepTools = {
-  add_maintenance: createTool({
-    id: "add_maintenance",
-    description: "Track a recurring upkeep item, e.g. 'change the AC filter every 90 days'. Same name again just updates the cadence.",
+  upkeep_add: createTool({
+    id: "upkeep_add",
+    description:
+      "Track recurring house care ('change the AC filter every 90 days', 'smoke detector batteries every 6 months'). Same name again updates the cadence. usual: true adds the usual five (filter, smoke alarms, dryer vent, coffee maker, fire extinguisher).",
     inputSchema: z.object({
-      item: z.string().min(1).describe("e.g. 'Replace HVAC filter'"),
-      everyDays: z.number().int().positive().describe("How often, in days"),
+      item: z.string().optional().describe("e.g. 'Replace HVAC filter'"),
+      everyDays: z.number().int().positive().optional().describe("How often, in days (6 months = 180)"),
+      usual: z.boolean().optional().describe("Add the usual five instead"),
     }),
-    execute: async (input, context) => {
-      await upkeep.addMaintenance(ctxOf(context), input);
-      return { ok: true };
+    execute: async ({ item, everyDays, usual }, context) => {
+      const ctx = ctxOf(context);
+      if (usual) return { added: await upkeep.addDefaults(ctx), ...dashboardLinks("Open upkeep", `/g/${ctx.groupId}/chores?tab=upkeep`) };
+      if (!item) throw new Error("Which item, and how often?");
+      return upkeep.addMaintenance(ctx, { item, everyDays: everyDays ?? 0 });
     },
   }),
-  maintenance_done: createTool({
-    id: "maintenance_done",
-    description: "Mark an upkeep item done today. Fuzzy name match ('hvac filter' finds 'Replace HVAC filter').",
+  upkeep_done: createTool({
+    id: "upkeep_done",
+    description: "Mark an upkeep item done today ('changed the air filter', 'tested the smoke alarms'). Fuzzy name match; returns when it's due next.",
     inputSchema: z.object({ item: z.string().min(1) }),
-    execute: async (input, context) => {
-      await upkeep.markDone(ctxOf(context), input);
-      return { ok: true };
-    },
+    execute: async ({ item }, context) => upkeep.markDone(ctxOf(context), { item }),
   }),
-  maintenance_status: createTool({
-    id: "maintenance_status",
-    description: "Upkeep items with next-due date and status (overdue / due-soon / ok), soonest first.",
+  upkeep_status: createTool({
+    id: "upkeep_status",
+    description: "Upkeep items with when they're due (overdue / due soon = within 7 days / ok), soonest first. For 'what's due this week' use dueOnly.",
     inputSchema: z.object({ dueOnly: z.boolean().optional().describe("true = only overdue or due within 7 days") }),
     execute: async ({ dueOnly }, context) => {
       const ctx = ctxOf(context);
-      return dueOnly ? upkeep.dueMaintenance(ctx) : upkeep.listMaintenance(ctx);
+      const list = dueOnly ? await upkeep.dueMaintenance(ctx) : await upkeep.listMaintenance(ctx);
+      return { items: list.map(brief), tracked: dueOnly ? undefined : list.length };
     },
+  }),
+  upkeep_remove: createTool({
+    id: "upkeep_remove",
+    description: "Admin only: stop tracking an upkeep item.",
+    inputSchema: z.object({ item: z.string().min(1) }),
+    execute: async ({ item }, context) => upkeep.removeMaintenance(ctxOf(context), { item }),
   }),
 };

@@ -12,6 +12,7 @@ export * as chores from "./chores";
 export * as reminders from "./reminders";
 export * as upkeep from "./upkeep";
 export * as report from "./report";
+export * as schedule from "./schedule";
 export * as chatlog from "./chatlog";
 export * as receipts from "./receipts";
 export * as recurring from "./recurring";

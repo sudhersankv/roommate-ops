@@ -1,6 +1,8 @@
 import type { Metadata } from "next"
 
+import { zonesByRegion } from "@/lib/time"
 import { currentMember } from "@/lib/session"
+import { scheduleView } from "../_components/data"
 import { SettingsScreen } from "../_components/screens/settings"
 import { settingsSections } from "../_components/sections"
 
@@ -13,5 +15,11 @@ type Props = { params: Promise<{ groupId: string }> }
 export default async function SettingsPage({ params }: Props) {
   const { groupId } = await params
   const s = await currentMember(groupId)
-  return <SettingsScreen>{s.member.status === "active" ? await settingsSections(s) : null}</SettingsScreen>
+  const admin = s.member.role === "admin" && s.member.status === "active"
+  const [schedule, sections] = await Promise.all([scheduleView(s), s.member.status === "active" ? settingsSections(s) : null])
+  return (
+    <SettingsScreen zones={admin ? zonesByRegion() : []} schedule={schedule}>
+      {sections}
+    </SettingsScreen>
+  )
 }

@@ -1,6 +1,10 @@
 // The fixed scenario set for `npm run evals` (scripts/evals.ts). Each scenario runs through the real pipeline
 // (Gate + Sonnet + tools) in its own throwaway Group with Maya (Admin), Dev and Sam; the sender is Maya unless set.
 // A scenario passes when every check in `expect` holds, or every check in `alt` does (two acceptable behaviours).
+import { eq } from "drizzle-orm";
+import { db, schema } from "@/db";
+import { groupReportText } from "@/jobs/report-text";
+import { nextWeekday, zonedParts } from "@/lib/time";
 import { cart, chores, groups, members, money, pantry, receipts, recipes, reminders, toolkits, upkeep } from "@/services";
 import type { Ctx } from "@/services/types";
 
@@ -31,8 +35,8 @@ export type Expect = {
   asks?: boolean;
   /** Allow more than 3 lines. */
   long?: boolean;
-  /** State check after the turn; return an error message or null. */
-  check?: (env: EvalEnv) => Promise<string | null>;
+  /** State check after the turn (with Roomie's reply); return an error message or null. */
+  check?: (env: EvalEnv, reply: string) => Promise<string | null>;
 };
 
 export type Scenario = {
@@ -57,7 +61,8 @@ export const READ_ONLY_TOOLS = new Set([
   "recipe_link",
   "chore_status",
   "list_reminders",
-  "maintenance_status",
+  "upkeep_status",
+  "hall_of_shame",
   "group_report",
   "splitwise_status",
   "list_toolkits",
@@ -467,7 +472,7 @@ export const SCENARIOS: Scenario[] = [
     id: "add-chore",
     area: "chores",
     turn: { text: "roomie add vacuuming to the chart, every 7 days" },
-    expect: { tools: ["add_chore"], check: async (e) => fail((await chores.choreStatus(e.ctx)).some((c) => /vacuum/i.test(c.name)), "vacuuming on the chart") },
+    expect: { tools: ["chore_add"], check: async (e) => fail((await chores.choreStatus(e.ctx)).some((c) => /vacuum/i.test(c.name)), "vacuuming on the chart") },
   },
   {
     id: "chore-for-someone-else",
@@ -476,20 +481,87 @@ export const SCENARIOS: Scenario[] = [
     turn: { text: "roomie Dev took out the trash" },
     expect: { tools: ["log_chore"], check: async (e) => fail((await chores.choreStatus(e.ctx)).find((c) => /trash/i.test(c.name))?.lastDoneBy === "Dev", "trash done by Dev") },
   },
+  {
+    id: "whose-turn-rotation",
+    area: "chores",
+    seed: async (e) => {
+      await chores.addChore(e.ctx, { name: "Take out trash", everyDays: 2, rotation: [e.member.Maya, e.member.Dev, e.member.Sam] });
+      await chores.logChore(e.ctx, { chore: "trash" });
+    },
+    turn: { text: "roomie whose turn is trash?", from: "Sam" },
+    expect: { tools: ["chore_status"], replyIncludes: ["Dev"] },
+  },
+  {
+    id: "skip-my-turn",
+    area: "chores",
+    seed: async (e) => void (await chores.addChore(e.ctx, { name: "Take out trash", everyDays: 2, rotation: [e.member.Dev, e.member.Sam, e.member.Maya] })),
+    turn: { text: "roomie can you skip my turn on trash? I'm away tonight", from: "Dev" },
+    expect: {
+      tools: ["chore_skip"],
+      replyIncludes: ["Sam"],
+      check: async (e) => fail((await chores.choreStatus(e.ctx)).find((c) => c.name === "Take out trash")?.whoseTurn === "Sam", "Sam is up after Dev passes"),
+    },
+  },
+  {
+    id: "add-chore-rotation",
+    area: "chores",
+    turn: { text: "roomie add mopping every 3 days: Sam first, then Dev, then me" },
+    expect: {
+      tools: ["chore_add"],
+      check: async (e) => {
+        const c = (await chores.choreStatus(e.ctx)).find((x) => /mop/i.test(x.name));
+        const order = c?.order.map((p) => p.name).join(",");
+        return fail(c?.everyDays === 3 && !!c.rotation && order === "Sam,Dev,Maya", `mopping every 3 days, Sam, Dev, Maya; got ${c?.everyDays} ${order}`);
+      },
+    },
+  },
+  {
+    id: "the-chart",
+    area: "chores",
+    seed: async (e) => {
+      await chores.addChore(e.ctx, { name: "Dishes", everyDays: 1 });
+      await chores.logChore(e.ctx, { chore: "dishes" });
+      await chores.logChore(e.as("Dev"), { chore: "dishes" });
+    },
+    turn: { text: "roomie who's been slacking on chores this week?", from: "Dev" },
+    expect: { tools: ["hall_of_shame"], replyIncludes: ["Sam"] },
+    alt: { tools: ["chore_status"], replyIncludes: ["Sam"] },
+  },
 
   /* ---------- upkeep ---------- */
   {
     id: "track-ac-filter",
     area: "upkeep",
     turn: { text: "roomie track the AC filter, it needs changing every 90 days" },
-    expect: { tools: ["add_maintenance"], check: async (e) => fail((await upkeep.listMaintenance(e.ctx)).some((m) => m.everyDays === 90), "an upkeep item every 90 days") },
+    expect: { tools: ["upkeep_add"], check: async (e) => fail((await upkeep.listMaintenance(e.ctx)).some((m) => m.everyDays === 90), "an upkeep item every 90 days") },
   },
   {
     id: "maintenance-done",
     area: "upkeep",
     seed: async (e) => void (await upkeep.addMaintenance(e.ctx, { item: "Replace HVAC filter", everyDays: 90 })),
     turn: { text: "roomie I replaced the hvac filter", from: "Dev" },
-    expect: { tools: ["maintenance_done"], check: async (e) => fail((await upkeep.listMaintenance(e.ctx))[0]?.status === "ok", "filter marked done") },
+    expect: { tools: ["upkeep_done"], check: async (e) => fail((await upkeep.listMaintenance(e.ctx))[0]?.status === "ok", "filter marked done") },
+  },
+  {
+    id: "air-filter-done",
+    area: "upkeep",
+    seed: async (e) => void (await upkeep.addDefaults(e.ctx)),
+    turn: { text: "roomie changed the air filter", from: "Sam" },
+    expect: {
+      tools: ["upkeep_done"],
+      check: async (e) => fail((await upkeep.listMaintenance(e.ctx)).find((m) => /filter/i.test(m.item))?.status === "ok", "the filter is marked done"),
+    },
+  },
+  {
+    id: "whats-due-this-week",
+    area: "upkeep",
+    seed: async (e) => {
+      await upkeep.addDefaults(e.ctx);
+      await chores.addChore(e.ctx, { name: "Dishes", everyDays: 1 });
+    },
+    turn: { text: "roomie what's due this week?" },
+    expect: { tools: ["upkeep_status"], replyIncludes: [/smoke|filter|dryer|extinguisher|coffee/i] },
+    alt: { tools: ["chore_status"], replyIncludes: [/dishes/i] },
   },
 
   /* ---------- reminders + core ---------- */
@@ -502,8 +574,71 @@ export const SCENARIOS: Scenario[] = [
       check: async (e) => {
         const [r] = await reminders.listReminders(e.ctx);
         if (!r) return "no reminder";
-        const local = new Intl.DateTimeFormat("en-US", { timeZone: "America/Chicago", weekday: "short", hour: "numeric", hourCycle: "h23" }).format(r.dueAt);
-        return fail(/Tue/.test(local) && /\b20\b/.test(local) && r.memberId === null, `Tuesday 20:00 Chicago for everyone, got ${local}`);
+        // The stored instant is 20:00 Chicago on the coming Tuesday, whatever the offset that day (CST after Nov 1).
+        const want = nextWeekday("America/Chicago", 2, 20, new Date(Date.now() - 5 * 60_000));
+        return fail(r.dueAt.getTime() === want.getTime() && r.memberId === null, `${want.toISOString()} for everyone, got ${r.dueAt.toISOString()} (${r.memberName ?? "everyone"})`);
+      },
+    },
+  },
+  {
+    id: "remind-rent-monthly",
+    area: "reminders",
+    turn: { text: "roomie remind me to pay rent on the 1st, every month" },
+    expect: {
+      tools: ["set_reminder"],
+      check: async (e) => {
+        const [r] = await reminders.listReminders(e.ctx);
+        if (!r) return "no reminder";
+        const p = zonedParts("America/Chicago", r.dueAt);
+        return fail(r.memberId === e.member.Maya && r.recurring === "monthly" && p.day === 1 && r.dueAt.getTime() > Date.now(), `Maya's monthly reminder on the 1st, got ${r.memberName} ${r.recurring} day ${p.day}`);
+      },
+    },
+  },
+  {
+    id: "remind-dev-private",
+    area: "reminders",
+    turn: { text: "roomie remind Dev to pay me back for brunch on friday at 6pm" },
+    expect: {
+      tools: ["set_reminder"],
+      check: async (e) => {
+        const [r] = await reminders.listReminders(e.ctx);
+        if (!r) return "no reminder";
+        const p = zonedParts("America/Chicago", r.dueAt);
+        return fail(r.memberId === e.member.Dev && r.createdBy === e.member.Maya && p.weekday === 5 && p.hour === 18, `Dev, set by Maya, Friday 18:00, got ${r.memberName} weekday ${p.weekday} ${p.hour}:00`);
+      },
+    },
+  },
+  {
+    id: "weekly-report-verbatim",
+    area: "core",
+    seed: async (e) => {
+      await internet(e);
+      await chores.addChore(e.ctx, { name: "Dishes", everyDays: 1 });
+      await chores.logChore(e.as("Dev"), { chore: "dishes" });
+    },
+    turn: { text: "roomie weekly report please" },
+    expect: {
+      tools: ["group_report"],
+      long: true,
+      check: async (e, reply) => {
+        const want = await groupReportText(e.ctx.groupId);
+        return fail(reply.trim() === want.trim(), `reply isn't the report verbatim:\n${reply}`);
+      },
+    },
+  },
+  {
+    id: "setup-india-household",
+    area: "core",
+    seed: async (e) => void (await db.update(schema.groups).set({ onboardedAt: null }).where(eq(schema.groups.id, e.ctx.groupId))),
+    setup: [{ text: "roomie hi" }],
+    turn: { text: "we're roommates, INR, India time" },
+    expect: {
+      tools: ["set_group_settings"],
+      check: async (e) => {
+        const g = await groups.getGroup(e.ctx.groupId);
+        const chart = await chores.choreStatus(e.ctx);
+        const items = await upkeep.listMaintenance(e.ctx);
+        return fail(g?.timezone === "Asia/Kolkata" && g.currency === "INR" && chart.length === 3 && items.length === 5, `India, INR, 3 starter chores, 5 upkeep; got ${g?.timezone} ${g?.currency} ${chart.length} ${items.length}`);
       },
     },
   },
