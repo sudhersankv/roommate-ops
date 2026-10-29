@@ -1,7 +1,7 @@
-// Who may see /admin/*. Run: npx tsx --test src/lib/operator.test.ts
+﻿// Who may see /admin/*. Run: npx tsx --test src/lib/operator.test.ts
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { operatorFrom } from "./operator";
+import { operatorFrom } from "./operator-rule";
 
 const ops = { operators: ["Owner@Example.com"] };
 const owner = { id: "u1", email: "owner@example.com", emailVerified: true };

@@ -36,5 +36,3 @@ export const operatorEmails = (): string[] =>
     .split(",")
     .map((e) => e.trim().toLowerCase())
     .filter(Boolean);
-
-export const isOperator = (email: string | null | undefined): boolean => !!email && operatorEmails().includes(email.trim().toLowerCase());
