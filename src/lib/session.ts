@@ -4,6 +4,7 @@ import { cache } from "react";
 import { notFound, redirect } from "next/navigation";
 import { auth } from "@/lib/auth/server";
 import { devAuthEmail, warnDevAuth } from "@/lib/auth/dev";
+import { signInPath } from "@/lib/auth/oauth-paths";
 import { accountByEmail, upsertAccount, type Account, type AuthUser } from "@/services/claims";
 import { getGroup, groupsForAccount, type Group } from "@/services/groups";
 import { getMember, type Member } from "@/services/members";
@@ -58,7 +59,7 @@ export const memberSession = cache(async (groupId: string): Promise<GroupSession
 
 /** Pages: the session for a Group, or a redirect to sign-in / a 404 for Groups you're not in. */
 export async function currentMember(groupId: string): Promise<GroupSession> {
-  if (!(await currentAccount())) redirect("/");
+  if (!(await currentAccount())) redirect(signInPath(`/g/${groupId}`));
   const s = await memberSession(groupId);
   if (!s) notFound();
   return s;

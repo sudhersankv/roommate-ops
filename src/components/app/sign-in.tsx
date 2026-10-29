@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, type ReactNode } from "react"
+import Link from "next/link"
 import { TriangleAlertIcon } from "lucide-react"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -8,7 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { toast } from "@/components/ui/toast"
 import { authClient } from "@/lib/auth/client"
-import { callbackPathFor } from "@/lib/auth/oauth-paths"
+import { SIGNIN_PATH, callbackPathFor } from "@/lib/auth/oauth-paths"
 
 function GoogleMark() {
   return (
@@ -22,7 +23,7 @@ function GoogleMark() {
 }
 
 /** "Continue with Google" through Neon Auth; comes back via /auth/callback to `returnTo` (a path on this site). */
-export function GoogleButton({ returnTo = "/" }: { returnTo?: string }) {
+export function GoogleButton({ returnTo = SIGNIN_PATH }: { returnTo?: string }) {
   const [busy, setBusy] = useState(false)
   return (
     <Button
@@ -66,10 +67,12 @@ export function SignInScreen({ title, children }: { title: string; children: Rea
       <div className="flex flex-col gap-8">
         {/* The lockup ships in two colorways; show the one that matches the theme. */}
         <h1 className="m-0">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/brand/roomie-logo-on-light.svg" alt="Roomie" width={419} height={128} className="h-auto w-64 dark:hidden" />
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/brand/roomie-logo-on-dark.svg" alt="Roomie" width={419} height={128} className="hidden h-auto w-64 dark:block" />
+          <Link href="/" className="inline-block rounded-lg outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/brand/roomie-logo-on-light.svg" alt="Roomie" width={419} height={128} className="h-auto w-64 dark:hidden" />
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/brand/roomie-logo-on-dark.svg" alt="Roomie" width={419} height={128} className="hidden h-auto w-64 dark:block" />
+          </Link>
         </h1>
         <p className="type-title max-w-[18ch] text-pretty">{title}</p>
       </div>

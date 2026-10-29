@@ -2,6 +2,7 @@
 // remember who made it), then go back to Settings with a notice.
 import { NextResponse, type NextRequest } from "next/server"
 
+import { signInPath } from "@/lib/auth/oauth-paths"
 import { memberSession } from "@/lib/session"
 import { splitwise } from "@/services"
 
@@ -9,7 +10,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ grou
   const { groupId } = await params
   const back = (notice: string) => NextResponse.redirect(new URL(`/g/${groupId}/settings?splitwise=${notice}`, req.url))
   const session = await memberSession(groupId)
-  if (!session) return NextResponse.redirect(new URL("/", req.url))
+  if (!session) return NextResponse.redirect(new URL(signInPath(`/g/${groupId}/settings`), req.url))
   if (req.nextUrl.searchParams.get("status") === "failed") return back("failed")
   try {
     await splitwise.finishConnect(session.ctx)

@@ -11,7 +11,7 @@ export type Actor = Pick<MemberRow, "id" | "displayName" | "role" | "status">;
 export class NotAllowedError extends Error {
   constructor(
     message: string,
-    readonly code: "pending" | "removed" | "not-member" | "admin-only" | "not-yours",
+    readonly code: "pending" | "removed" | "not-member" | "admin-only" | "not-yours" | "operator-only",
   ) {
     super(message);
     this.name = "NotAllowedError";

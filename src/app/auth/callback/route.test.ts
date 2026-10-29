@@ -98,8 +98,13 @@ test("Neon Auth reported an error (errorCallbackURL): passed through", async () 
 test("`next` can't leave the site", async () => {
   for (const next of ["https://evil.example/x", "//evil.example/x", "/\\evil.example", ""]) {
     const res = await back(`next=${encodeURIComponent(next)}&neon_auth_session_verifier=good`)
-    assert.equal(res.headers.get("location"), "/", next)
+    assert.equal(res.headers.get("location"), "/signin", next)
   }
+})
+
+test("a failed sign-in without a `next` lands on /signin with the reason (not the landing page)", async () => {
+  const res = await back("neon_auth_session_verifier=stale")
+  assert.equal(res.headers.get("location"), "/signin?auth_error=VERIFICATION_NOT_FOUND")
 })
 
 test("proxy: a verifier that lands on a page is sent to /auth/callback with the page as `next`", async () => {
@@ -111,11 +116,23 @@ test("proxy: a verifier that lands on a page is sent to /auth/callback with the 
   assert.equal(to.searchParams.get("neon_auth_session_verifier"), "good")
 })
 
-test("proxy: /claim and / pass signed out; /g/* is guarded", async () => {
-  const claim = await proxy(new NextRequest("https://roomie.example/claim/abc"))
-  assert.equal(claim.headers.get("x-roomie-proxy"), "pass")
-  assert.equal((await proxy(new NextRequest("https://roomie.example/"))).headers.get("x-roomie-proxy"), "pass")
-  const g = await proxy(new NextRequest("https://roomie.example/g/00000000-0000-0000-0000-000000000000"))
+test("proxy: /claim, /signin, / and /admin/* pass signed out (admin pages 404 themselves); /g/* goes to /signin with `next`", async () => {
+  for (const path of ["/claim/abc", "/", "/signin", "/signin?next=%2Fg%2Fx", "/admin/beta", "/admin/whatsapp"]) {
+    const res = await proxy(new NextRequest(`https://roomie.example${path}`))
+    assert.equal(res.headers.get("x-roomie-proxy"), "pass", path)
+  }
+  const g = await proxy(new NextRequest("https://roomie.example/g/00000000-0000-0000-0000-000000000000/money?tab=expenses"))
   assert.equal(g.status, 307)
-  assert.equal(new URL(g.headers.get("location")!).pathname, "/")
+  assert.equal(g.headers.get("x-roomie-proxy"), "guard")
+  const to = new URL(g.headers.get("location")!)
+  assert.equal(to.pathname, "/signin")
+  assert.equal(to.searchParams.get("next"), "/g/00000000-0000-0000-0000-000000000000/money?tab=expenses")
+  assert.equal([...to.searchParams.keys()].join(","), "next", "the page's own query stays inside `next`")
+})
+
+test("proxy: a verifier that lands on /signin is exchanged too", async () => {
+  const res = await proxy(new NextRequest("https://roomie.example/signin?next=%2Fg%2Fx&neon_auth_session_verifier=good"))
+  const to = new URL(res.headers.get("location")!)
+  assert.equal(to.pathname, "/auth/callback")
+  assert.equal(to.searchParams.get("next"), "/signin?next=%2Fg%2Fx")
 })
