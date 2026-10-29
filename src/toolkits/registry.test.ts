@@ -16,7 +16,7 @@ describe("toolsFor", () => {
     const t = toolsFor("groceries");
     assert.ok(coreIds.every((id) => id in t), "core is always on");
     assert.ok("cart_add" in t);
-    assert.ok(!("log_expense" in t) && !("log_chore" in t) && !("add_maintenance" in t));
+    assert.ok(!("log_expense" in t) && !("log_chore" in t) && !("upkeep_add" in t));
   });
 
   test("'reminders' is core: core tools only", () => {

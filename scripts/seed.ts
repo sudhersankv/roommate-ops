@@ -1,7 +1,7 @@
 // npm run seed: the demo Group "Apt 4B" with Maya (Admin), Dev and Sam (active) and Priya (Pending), three weeks of
 // Expenses (equal splits, plus one percent, one shares, one multi-payer and one recurring Expense), Settlements, a
-// Cart, a Pantry and a "Tacos for 5" Recipe, chores, upkeep, reminders and some chat. The numbers match the UI prototype: Maya is owed $42.50, Dev owes
-// $30.00 and Sam owes $12.50. Prints the Group id, a Claim link for Maya and a Studio
+// Cart, a Pantry and a "Tacos for 5" Recipe, three chores with Rotations, the usual five upkeep items, two reminders and
+// some chat. The numbers match the UI prototype: Maya is owed $42.50, Dev owes $30.00 and Sam owes $12.50. Prints the Group id, a Claim link for Maya and a Studio
 // requestContext. `npm run seed:demo` (--reset) deletes Apt 4B first and rebuilds it.
 // The Chat is a dev Channel chat ("dev-apt-4b"), so `npm run dev-chat -- --chat dev-apt-4b` talks to it.
 import "../src/lib/env";
@@ -9,6 +9,7 @@ import { and, eq } from "drizzle-orm";
 import { db, schema } from "../src/db";
 import { devUserId } from "../src/channels/dev";
 import { addDays, localDay } from "../src/lib/dates";
+import { zonedParts, zonedTimeToUtc } from "../src/lib/time";
 import { guessCategory } from "../src/services/categories";
 import { claims, groups, money, chores as choresSvc, pantry as pantrySvc, recipes as recipesSvc, upkeep as upkeepSvc } from "../src/services";
 import { dollars } from "../src/services/types";
@@ -76,11 +77,65 @@ async function addGroceriesDemos(groupId: string) {
   return true;
 }
 
+/**
+ * Step 7: three chores with Rotations (trash is Maya's today, dishes Dev's, the bathroom Dev's in a few days), the
+ * usual five upkeep items (one late, two due soon) and two reminders (rent for everyone, monthly; Dev's private one,
+ * set by Maya). An older seed without Rotations gets its chores, upkeep and reminders rebuilt; otherwise skipped.
+ */
+async function addHouseholdDemos(groupId: string) {
+  const old = await db.select({ rotation: schema.chores.rotation }).from(schema.chores).where(eq(schema.chores.groupId, groupId));
+  if (old.some((c) => c.rotation)) return false;
+  await db.delete(schema.chores).where(eq(schema.chores.groupId, groupId)); // logs cascade
+  await db.delete(schema.maintenance).where(eq(schema.maintenance.groupId, groupId));
+  await db.delete(schema.reminders).where(eq(schema.reminders.groupId, groupId));
+  const people = await db.select().from(schema.members).where(eq(schema.members.groupId, groupId));
+  const id = (name: string) => people.find((p) => p.displayName === name)!.id;
+  const [m, d, s] = [id("Maya"), id("Dev"), id("Sam")];
+  const [g] = await db.select().from(schema.groups).where(eq(schema.groups.id, groupId));
+
+  const chart = await db
+    .insert(schema.chores)
+    .values([
+      { groupId, name: "Take out the trash", everyDays: 2, rotation: [m, d, s] },
+      { groupId, name: "Dishes", everyDays: 1, rotation: [s, d, m] },
+      { groupId, name: "Clean the bathroom", everyDays: 7, rotation: [s, m, d] },
+    ])
+    .returning();
+  const chore = (name: string) => chart.find((c) => c.name === name)!.id;
+  const logs: [string, string, number][] = [
+    ["Take out the trash", m, 6],
+    ["Take out the trash", d, 4],
+    ["Take out the trash", s, 2],
+    ["Dishes", d, 5],
+    ["Dishes", m, 3],
+    ["Dishes", s, 2],
+    ["Dishes", s, 1],
+    ["Clean the bathroom", s, 17],
+    ["Clean the bathroom", d, 10],
+    ["Clean the bathroom", m, 3],
+  ];
+  await db.insert(schema.choreLogs).values(logs.map(([name, memberId, n]) => ({ choreId: chore(name), memberId, doneAt: ago(n, 2) })));
+  await db.insert(schema.activity).values({ groupId, actorMemberId: s, kind: "chore.done", summary: "marked Dishes done", refTable: "chores", refId: chore("Dishes"), createdAt: ago(1, 2) });
+
+  const lastDone: Record<string, number | null> = { "Replace HVAC / air filter": 86, "Test smoke alarms": 185, "Clean dryer vent": 100, "Descale coffee maker": 55, "Check fire extinguisher": null };
+  await db.insert(schema.maintenance).values(upkeepSvc.DEFAULT_ITEMS.map((x) => ({ groupId, ...x, lastDone: lastDone[x.item] == null ? null : ago(lastDone[x.item]!) })));
+
+  const p = zonedParts(g.timezone, now);
+  const rentDue = zonedTimeToUtc(g.timezone, { year: p.year, month: p.month + 1, day: 1, hour: 9, minute: 0 });
+  const brunch = zonedTimeToUtc(g.timezone, { year: p.year, month: p.month, day: p.day + 1, hour: 19, minute: 0 });
+  await db.insert(schema.reminders).values([
+    { groupId, text: "Rent is due", dueAt: rentDue, recurring: "monthly", createdBy: m },
+    { groupId, text: "Venmo Maya for brunch", dueAt: brunch, memberId: d, createdBy: m },
+  ]);
+  return true;
+}
+
 const existing = await groups.chatFor("dev", CHAT);
 if (existing && !RESET) {
   const added = await addSplitDemos(existing.group.id);
   const groceries = await addGroceriesDemos(existing.group.id);
-  console.log(`"${existing.group.name}" (${existing.group.id}) already seeded${added ? "; added the step-5 split examples" : ""}${groceries ? "; added the Pantry and Tacos for 5" : ""}; pass --reset (npm run seed:demo) to rebuild`);
+  const household = await addHouseholdDemos(existing.group.id);
+  console.log(`"${existing.group.name}" (${existing.group.id}) already seeded${added ? "; added the step-5 split examples" : ""}${groceries ? "; added the Pantry and Tacos for 5" : ""}${household ? "; rebuilt chores (Rotations), upkeep and reminders" : ""}; pass --reset (npm run seed:demo) to rebuild`);
   await printAccess(existing.group.id);
   process.exit(0);
 }
@@ -163,50 +218,8 @@ await db.insert(schema.cartItems).values([
   { groupId: gid, name: "Sparkling water", qty: "12 pack", addedBy: D, shared: true, estCents: 599, createdAt: ago(0, 7) },
 ]);
 
-/* ----- chores: whose turn = whoever did it longest ago. Trash is Maya's today, dishes Dev's. ----- */
-const chart = await db
-  .insert(schema.chores)
-  .values([
-    { groupId: gid, name: "Take out the trash", everyDays: 2 },
-    { groupId: gid, name: "Dishes", everyDays: 1 },
-    { groupId: gid, name: "Water the plants", everyDays: 3 },
-    { groupId: gid, name: "Vacuum the living room", everyDays: 7 },
-    { groupId: gid, name: "Clean the bathroom", everyDays: 7 },
-  ])
-  .returning();
-const chore = (name: string) => chart.find((c) => c.name === name)!.id;
-const logs: [string, string, number][] = [
-  ["Take out the trash", S, 2],
-  ["Take out the trash", D, 4],
-  ["Take out the trash", M, 6],
-  ["Dishes", S, 1],
-  ["Dishes", S, 2],
-  ["Dishes", M, 3],
-  ["Dishes", D, 5],
-  ["Water the plants", D, 2],
-  ["Water the plants", M, 5],
-  ["Water the plants", S, 8],
-  ["Vacuum the living room", D, 4],
-  ["Vacuum the living room", S, 11],
-  ["Vacuum the living room", M, 18],
-  ["Clean the bathroom", M, 3],
-  ["Clean the bathroom", D, 10],
-  ["Clean the bathroom", S, 17],
-];
-await db.insert(schema.choreLogs).values(logs.map(([name, memberId, d]) => ({ choreId: chore(name), memberId, doneAt: ago(d, 2) })));
-activity.push({ groupId: gid, actorMemberId: S, kind: "chore.done", summary: "marked Dishes done", refTable: "chores", refId: chore("Dishes"), createdAt: ago(1, 2) });
-
-/* ----- upkeep and reminders ----- */
-await db.insert(schema.maintenance).values([
-  { groupId: gid, item: "Smoke detector batteries", everyDays: 182, lastDone: ago(180) },
-  { groupId: gid, item: "HVAC filter", everyDays: 91, lastDone: ago(86) },
-  { groupId: gid, item: "Descale the kettle", everyDays: 30, lastDone: ago(8) },
-  { groupId: gid, item: "Fridge coils", everyDays: 365, lastDone: ago(256) },
-]);
-await db.insert(schema.reminders).values([
-  { groupId: gid, text: "Rent is due", dueAt: new Date(now.getTime() + 4 * DAY), recurring: "monthly" },
-  { groupId: gid, text: "Venmo Maya for brunch", dueAt: new Date(now.getTime() + DAY), memberId: D },
-]);
+/* ----- chores (with Rotations), upkeep (the usual five) and reminders ----- */
+await addHouseholdDemos(gid);
 
 /* ----- chat: what Roomie said lately (Home's narration) and a little chatter ----- */
 const chat: [string | null, number, number, string][] = [
@@ -232,7 +245,7 @@ const [balances, plan, status, due] = await Promise.all([money.getBalances(ctx),
 console.log(`${RESET ? "rebuilt" : "seeded"} "${NAME}" ${gid}`);
 console.log("  balances:", balances.map((b) => `${b.name} ${b.cents >= 0 ? "+" : "-"}${dollars(Math.abs(b.cents))}`).join(", "));
 console.log("  settle:  ", plan.map((t) => `${t.fromName} -> ${t.toName} ${dollars(t.cents)}`).join("; ") || "all square");
-console.log("  chores:  ", status.map((c) => `${c.name} [${c.whoseTurn}'s turn${c.overdue ? ", due" : ""}]`).join(", "));
+console.log("  chores:  ", status.map((c) => `${c.name} [${c.whoseTurn}'s turn, ${c.state === "ok" ? `due ${c.dueDay}` : c.state}]`).join(", "));
 console.log("  upkeep:  ", due.map((m) => `${m.item} (${m.status})`).join(", ") || "nothing due");
 await printAccess(gid);
 process.exit(0);

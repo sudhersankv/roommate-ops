@@ -67,7 +67,7 @@ async function failures(x: Expect, r: PipelineResult, env: EvalEnv): Promise<str
   if (!x.long && shape.tooLong) out.push(`${shape.lines} lines`);
   if (shape.bullets || shape.headers) out.push("bullets/headers");
   if (x.check) {
-    const err = await x.check(env);
+    const err = await x.check(env, reply);
     if (err) out.push(err);
   }
   return out;

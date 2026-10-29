@@ -22,7 +22,7 @@ export type MemberView = {
 }
 
 export type GroupView = {
-  group: { id: string; name: string; currency: string; timezone: string; chattiness: "quiet" | "normal" | "chatty"; purpose: string | null; simplifyDebts: boolean }
+  group: { id: string; name: string; currency: string; timezone: string; chattiness: "quiet" | "normal" | "chatty"; purpose: string | null; simplifyDebts: boolean; onboarded: boolean }
   me: MemberView
   groups: { id: string; name: string }[]
   members: MemberView[]

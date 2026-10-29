@@ -41,7 +41,7 @@ test("default Toolkits per purpose (core is always on and not listed)", () => {
   assert.deepEqual(defaultToolkitsFor("roommates"), ["splitting", "groceries", "chores", "upkeep"]);
   assert.deepEqual(defaultToolkitsFor("trip"), ["splitting", "groceries"]);
   assert.deepEqual(defaultToolkitsFor("friends"), ["splitting"]);
-  assert.deepEqual(defaultToolkitsFor("family"), ["splitting", "groceries", "chores"]);
+  assert.deepEqual(defaultToolkitsFor("family"), ["splitting", "groceries", "chores", "upkeep"]);
   assert.deepEqual(defaultToolkitsFor("work"), ["splitting"]);
   assert.deepEqual(defaultToolkitsFor(null), defaultToolkitsFor("roommates"), "no answer yet: everything on");
 });
@@ -49,7 +49,10 @@ test("default Toolkits per purpose (core is always on and not listed)", () => {
 test("settings are normalized, and bad ones explained", () => {
   assert.deepEqual(validateSettings({ currency: " eur ", timezone: "Europe/Berlin", name: "  Lake   trip " }), { currency: "EUR", timezone: "Europe/Berlin", name: "Lake trip" });
   assert.throws(() => validateSettings({ currency: "XQZ" }), /isn't a currency code/);
-  assert.throws(() => validateSettings({ timezone: "Chicago" }), /isn't a time zone/);
+  assert.equal(validateSettings({ timezone: "Chicago" }).timezone, "America/Chicago", "what people say maps to IANA");
+  assert.equal(validateSettings({ timezone: "CST" }).timezone, "America/Chicago");
+  assert.equal(validateSettings({ timezone: "india" }).timezone, "Asia/Kolkata");
+  assert.throws(() => validateSettings({ timezone: "my place" }), /don't know the time zone "my place"\. Which city are you in\?/);
   assert.throws(() => validateSettings({ name: "  " }), /needs a name/);
   assert.throws(() => validateSettings({ purpose: "party" as never }), /Purpose must be one of/);
 });

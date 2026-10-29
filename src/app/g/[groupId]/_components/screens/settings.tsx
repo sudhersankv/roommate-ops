@@ -19,7 +19,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel, FieldLegend, FieldSeparator, FieldSet } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { toast } from "@/components/ui/toast"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
@@ -35,11 +35,12 @@ import {
   setSimplifyDebts,
   setSplitwiseMirror,
   setToolkit,
+  updateSchedule,
   updateSettings,
 } from "../../actions"
 import { useGroup } from "../group-context"
 import { PageHeader, TopBar } from "../shell"
-import type { SplitwiseView } from "../types"
+import type { ScheduleView, SplitwiseView } from "../types"
 
 const currencies = [
   { label: "US dollar (USD)", value: "USD" },
@@ -49,15 +50,11 @@ const currencies = [
   { label: "Canadian dollar (CAD)", value: "CAD" },
 ]
 
-const zones = [
-  { label: "Central (Chicago)", value: "America/Chicago" },
-  { label: "Eastern (New York)", value: "America/New_York" },
-  { label: "Mountain (Denver)", value: "America/Denver" },
-  { label: "Pacific (Los Angeles)", value: "America/Los_Angeles" },
-  { label: "London", value: "Europe/London" },
-  { label: "Berlin", value: "Europe/Berlin" },
-  { label: "India (Kolkata)", value: "Asia/Kolkata" },
-]
+export type ZoneGroup = { region: string; zones: { value: string; label: string }[] }
+
+const hourLabel = (h: number) => (h === 0 ? "Midnight" : h === 12 ? "Noon" : h < 12 ? `${h} AM` : `${h - 12} PM`)
+const hours = Array.from({ length: 24 }, (_, h) => ({ label: hourLabel(h), value: String(h) }))
+const weekdays = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"].map((label, i) => ({ label, value: String(i) }))
 
 const purposes = [
   { label: "Roommates", value: "roommates" },
@@ -87,7 +84,7 @@ const toolkits: { id: ToolkitId | string; name: string; description: string; soo
 /** Pick the list entry, or add the Group's own value so the Select can show it. */
 const withCurrent = (list: { label: string; value: string }[], value: string) => (list.some((x) => x.value === value) ? list : [...list, { label: value, value }])
 
-export function SettingsScreen({ splitwise, notice }: { splitwise: SplitwiseView | null; notice: string | null }) {
+export function SettingsScreen({ splitwise, notice, zones, schedule }: { splitwise: SplitwiseView | null; notice: string | null; zones: ZoneGroup[]; schedule: ScheduleView }) {
   const { group, isAdmin, active } = useGroup()
   const admins = active.filter((m) => m.role === "admin").map((m) => m.name)
   useEffect(() => {
@@ -103,7 +100,7 @@ export function SettingsScreen({ splitwise, notice }: { splitwise: SplitwiseView
         </p>
       </PageHeader>
       <div className="flex flex-col gap-10 px-5 pb-6">
-        {isAdmin ? <AdminSettings splitwise={splitwise} /> : null}
+        {isAdmin ? <AdminSettings splitwise={splitwise} zones={zones} schedule={schedule} /> : null}
         <Appearance />
         {isAdmin ? <DangerZone /> : null}
       </div>
@@ -111,10 +108,25 @@ export function SettingsScreen({ splitwise, notice }: { splitwise: SplitwiseView
   )
 }
 
-function AdminSettings({ splitwise }: { splitwise: SplitwiseView | null }) {
+function AdminSettings({ splitwise, zones, schedule }: { splitwise: SplitwiseView | null; zones: ZoneGroup[]; schedule: ScheduleView }) {
   const { group, toolkits: on } = useGroup()
   const [name, setName] = useState(group.name)
   const [, start] = useTransition()
+  const [browserZone, setBrowserZone] = useState<string | null>(null)
+  const allZones = zones.flatMap((z) => z.zones)
+  const zoneItems = allZones.some((z) => z.value === group.timezone) ? allZones : [...allZones, { value: group.timezone, label: group.timezone }]
+  const zoneLabel = (value: string) => {
+    const region = zones.find((g) => g.zones.some((z) => z.value === value))?.region
+    const city = allZones.find((z) => z.value === value)?.label ?? value
+    return region && region !== "Other" ? `${city} (${region})` : city
+  }
+
+  // A Group that hasn't finished setup gets the browser's zone offered (read after hydration so SSR matches).
+  useEffect(() => {
+    if (group.onboarded) return
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
+    if (tz && tz !== group.timezone) setBrowserZone(tz)
+  }, [group.onboarded, group.timezone])
 
   const save = (patch: SettingsPatch, ok: { title: string; description?: string }) =>
     start(async () => {
@@ -186,21 +198,33 @@ function AdminSettings({ splitwise }: { splitwise: SplitwiseView | null }) {
           </Field>
           <Field>
             <FieldLabel htmlFor="timezone">Time zone</FieldLabel>
-            <Select items={withCurrent(zones, group.timezone)} value={group.timezone} onValueChange={(v) => v && save({ timezone: v }, { title: "Time zone changed" })}>
+            <Select
+              items={zoneItems.map((z) => ({ value: z.value, label: zoneLabel(z.value) }))}
+              value={group.timezone}
+              onValueChange={(v) => v && save({ timezone: v }, { title: "Time zone changed", description: `Chore days, reminders and the weekly report follow ${zoneLabel(v)} now.` })}
+            >
               <SelectTrigger id="timezone" className="w-full">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectGroup>
-                  {withCurrent(zones, group.timezone).map((z) => (
-                    <SelectItem key={z.value} value={z.value}>
-                      {z.label}
-                    </SelectItem>
-                  ))}
-                </SelectGroup>
+                {zones.map((g) => (
+                  <SelectGroup key={g.region}>
+                    <SelectLabel>{g.region}</SelectLabel>
+                    {g.zones.map((z) => (
+                      <SelectItem key={z.value} value={z.value}>
+                        {z.label}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                ))}
               </SelectContent>
             </Select>
-            <FieldDescription>Reminders and chore days follow this.</FieldDescription>
+            <FieldDescription>&quot;Today&quot;, reminders, chore days and the weekly report follow this.</FieldDescription>
+            {browserZone ? (
+              <Button variant="outline" size="sm" className="self-start" onClick={() => save({ timezone: browserZone }, { title: "Time zone changed", description: `Using ${zoneLabel(browserZone)}, like this browser.` })}>
+                Use this browser&apos;s: {zoneLabel(browserZone)}
+              </Button>
+            ) : null}
           </Field>
           <Field orientation="horizontal">
             <FieldContent>
@@ -243,6 +267,8 @@ function AdminSettings({ splitwise }: { splitwise: SplitwiseView | null }) {
         </p>
       </FieldSet>
 
+      <ScheduleSettings schedule={schedule} choresOn={on.chores} />
+
       <FieldSet>
         <FieldLegend className="type-heading">Toolkits</FieldLegend>
         <FieldDescription>What Roomie can do in this Group. Switching one off stops its tools in the chat.</FieldDescription>
@@ -269,6 +295,86 @@ function AdminSettings({ splitwise }: { splitwise: SplitwiseView | null }) {
 
       {splitwise ? <SplitwiseSettings sw={splitwise} /> : null}
     </>
+  )
+}
+
+/** When Roomie posts on its own: the daily chores nudge and the weekly report, in the Group's time zone. */
+function ScheduleSettings({ schedule, choresOn }: { schedule: ScheduleView; choresOn: boolean }) {
+  const { group } = useGroup()
+  const [, start] = useTransition()
+  const nudgeItems = [{ label: "Off", value: "off" }, ...hours]
+  const save = (patch: Partial<ScheduleView>, title: string) =>
+    start(async () => {
+      const res = await updateSchedule(group.id, patch)
+      if (!res.ok) return void toast.add({ title: "Couldn't save that", description: res.error, type: "error" })
+      toast.add({ title })
+    })
+  return (
+    <FieldSet>
+      <FieldLegend className="type-heading">Roomie&apos;s own posts</FieldLegend>
+      <FieldDescription>At most one chores nudge a day, only when something is due, and one report a week. Times are {(group.timezone.split("/").pop() ?? group.timezone).replace(/_/g, " ")} time.</FieldDescription>
+      <FieldGroup>
+        <Field data-disabled={choresOn ? undefined : true}>
+          <FieldLabel htmlFor="nudge-hour">Chores nudge</FieldLabel>
+          <Select
+            items={nudgeItems}
+            value={schedule.nudgeHour === null ? "off" : String(schedule.nudgeHour)}
+            disabled={!choresOn}
+            onValueChange={(v) => v && save({ nudgeHour: v === "off" ? null : Number(v) }, v === "off" ? "Chores nudge off" : `Chores nudge at ${hourLabel(Number(v))}`)}
+          >
+            <SelectTrigger id="nudge-hour" className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                {nudgeItems.map((h) => (
+                  <SelectItem key={h.value} value={h.value}>
+                    {h.label}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+          <FieldDescription>{choresOn ? "Roomie names whose turn it is on anything due or late." : "Switch Chores on to get the nudge."}</FieldDescription>
+        </Field>
+        <div className="flex gap-3">
+          <Field>
+            <FieldLabel htmlFor="report-day">Weekly report</FieldLabel>
+            <Select items={weekdays} value={String(schedule.reportWeekday)} onValueChange={(v) => v && save({ reportWeekday: Number(v) }, `Weekly report on ${weekdays[Number(v)].label}s`)}>
+              <SelectTrigger id="report-day" className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  {weekdays.map((d) => (
+                    <SelectItem key={d.value} value={d.value}>
+                      {d.label}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="report-hour">At</FieldLabel>
+            <Select items={hours} value={String(schedule.reportHour)} onValueChange={(v) => v && save({ reportHour: Number(v) }, `Weekly report at ${hourLabel(Number(v))}`)}>
+              <SelectTrigger id="report-hour" className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  {hours.map((h) => (
+                    <SelectItem key={h.value} value={h.value}>
+                      {h.label}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </Field>
+        </div>
+      </FieldGroup>
+    </FieldSet>
   )
 }
 

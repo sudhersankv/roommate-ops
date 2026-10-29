@@ -3,7 +3,7 @@
 import { localDay } from "@/lib/dates"
 import type { GroupSession } from "@/lib/session"
 import { instacartAvailability } from "@/integrations/instacart"
-import { activity, cart, chatlog, chores, groups, members, money, pantry, recipes, splitwise, upkeep } from "@/services"
+import { activity, cart, chatlog, chores, groups, members, money, pantry, recipes, reminders, schedule, splitwise, upkeep } from "@/services"
 import { canChangeExpense } from "@/services/authz"
 import { guessCategory } from "@/services/categories"
 import type { Expense } from "@/services/money"
@@ -11,7 +11,7 @@ import { haveNeed } from "@/services/recipe-math"
 import type { Recipe } from "@/services/recipes"
 import { TOOLKIT_IDS, type ToolkitId } from "@/toolkits/types"
 import type { GroupView, MemberView } from "./group-context"
-import type { ActivityView, CartItemView, CartPageView, ChoreView, ExpenseView, NarrationView, RecipeView, SplitwiseView, Transfer, UpkeepView } from "./types"
+import type { ActivityView, CartItemView, CartPageView, ChoreView, ExpenseView, NarrationView, RecipeView, ReminderView, ScheduleView, SplitwiseView, Transfer, UpkeepView } from "./types"
 
 export async function groupView(s: GroupSession): Promise<GroupView> {
   const [people, toolkits] = await Promise.all([members.listMembersWithHandles({ groupId: s.group.id }), groups.listToolkits({ groupId: s.group.id })])
@@ -35,6 +35,7 @@ export async function groupView(s: GroupSession): Promise<GroupView> {
       chattiness: s.group.chattiness,
       purpose: s.group.purpose,
       simplifyDebts: s.group.simplifyDebts,
+      onboarded: !!s.group.onboardedAt,
     },
     me: me ? view(me) : { id: s.member.id, name: s.member.displayName, role: s.member.role, status: s.member.status, joined: localDay(s.member.joinedAt, tz), handles: {}, hasAccount: true },
     groups: s.groups,
@@ -107,7 +108,17 @@ export async function expensesView(s: GroupSession): Promise<ExpenseView[]> {
 }
 
 const refHref = (base: string, table: string | null, id: string | null) =>
-  table === "expenses" && id ? `${base}/money/${id}` : table === "members" ? `${base}/members` : table === "chores" ? `${base}/chores` : undefined
+  table === "expenses" && id
+    ? `${base}/money/${id}`
+    : table === "members"
+      ? `${base}/members`
+      : table === "chores"
+        ? `${base}/chores`
+        : table === "maintenance"
+          ? `${base}/chores?tab=upkeep`
+          : table === "reminders"
+            ? `${base}/chores?tab=reminders`
+            : undefined
 
 export async function activityView(s: GroupSession): Promise<ActivityView[]> {
   const base = `/g/${s.group.id}`
@@ -178,7 +189,6 @@ const every = (days: number) =>
 
 export async function choresView(s: GroupSession): Promise<{ chores: ChoreView[]; upkeep: UpkeepView[] }> {
   const tz = s.group.timezone
-  const today = localDay(new Date(), tz)
   const [status, items] = await Promise.all([chores.choreStatus(s.ctx), upkeep.listMaintenance(s.ctx)])
   return {
     chores: status
@@ -186,18 +196,44 @@ export async function choresView(s: GroupSession): Promise<{ chores: ChoreView[]
         id: c.choreId,
         name: c.name,
         cadence: every(c.everyDays),
+        everyDays: c.everyDays,
         turn: c.whoseTurnId,
-        due: c.dueAt ? localDay(c.dueAt, tz) : today,
+        rotation: c.rotation,
+        order: c.order.map((p) => p.id),
+        due: c.dueDay,
+        state: c.state,
         streak: c.streak,
-        lastDone: c.lastDoneById && c.lastDoneAt ? { by: c.lastDoneById, date: localDay(c.lastDoneAt, tz) } : undefined,
+        streaks: c.streaks,
+        lastDone: c.lastDoneById && c.lastDoneDay ? { by: c.lastDoneById, date: c.lastDoneDay } : undefined,
       }))
       .sort((a, b) => a.due.localeCompare(b.due) || a.name.localeCompare(b.name)),
     upkeep: items.map((m) => ({
       id: m.id,
       name: m.item,
       every: every(m.everyDays),
-      due: m.nextDue ? localDay(m.nextDue, tz) : today,
+      everyDays: m.everyDays,
+      due: m.dueDay,
+      status: m.status,
       lastDone: m.lastDone ? localDay(m.lastDone, tz) : undefined,
     })),
   }
+}
+
+/** Upcoming reminders the signed-in Member may see (the Group's, theirs, the ones they set). */
+export async function remindersView(s: GroupSession): Promise<ReminderView[]> {
+  const tz = s.group.timezone
+  return (await reminders.listReminders(s.ctx, { viewerId: s.member.id })).map((r) => ({
+    id: r.id,
+    text: r.text,
+    when: reminders.whenLabel({ dueAt: r.dueAt, recurring: null }, tz),
+    day: localDay(r.dueAt, tz),
+    for: r.memberId,
+    setBy: r.createdBy,
+    repeat: r.recurring,
+    canCancel: reminders.canCancel(s.member, r),
+  }))
+}
+
+export async function scheduleView(s: GroupSession): Promise<ScheduleView> {
+  return schedule.getSchedule(s.ctx)
 }

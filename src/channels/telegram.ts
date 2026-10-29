@@ -262,14 +262,37 @@ export type TelegramBotOptions = {
 
 export type TelegramBot = { bot: Bot; channel: TelegramChannel; idle: () => Promise<void> };
 
-const START_REPLY = (name: string, inGroups: number) =>
+/** /start in a DM: one line. Members learn DMs work now; anyone else how to get going. No links either way. */
+export const startReply = (name: string, inGroups: number) =>
   inGroups
-    ? `Hey ${name} 👋 Now I can DM you. Ask for "the dashboard" here or in your group chat and your link lands here.`
-    : `Hey ${name} 👋 Now I can DM you. Add me to your group chat first, then ask me for the dashboard.`;
+    ? `Hey ${name} 👋 Now I can DM you: ask for "the dashboard" here or in the group and your link lands here (/help for the rest).`
+    : `Hey ${name} 👋 I'm Roomie. Add me to your group chat, say "roomie hi" there, and we're off.`;
+
+/** /help, in a group or a DM: five lines of what Roomie does, in its voice. */
+export const helpText = () =>
+  [
+    `I'm Roomie 👋 Say "roomie" or reply to me and I'm in. Some things I do:`,
+    `💸 "I paid 60 for internet", "who owes what?", "settle up with Dev"`,
+    `🛒 "add milk and eggs", "tacos for 5 friday", "I paid 84 for groceries"`,
+    `🧹 "I did the dishes", "whose turn is trash?", "skip my turn", "changed the air filter"`,
+    `⏰ "remind everyone trash goes out Tuesday 8pm", "weekly report", "send me the dashboard"`,
+  ].join("\n");
+
+/** What goes into the chat when something broke while handling a message addressed to Roomie. Details go to the log. */
+export const OOPS = "Something went sideways on my end and I couldn't do that. Mind trying again in a minute?";
+
 const NO_GROUP = "Add me to your group chat first, then we can talk here too.";
 const MANY_GROUPS = "You're in a few of my groups, so ask me in the group chat you mean.";
 const NO_VOICE = "I can't hear voice notes yet, mind typing that?";
 const BAD_VOICE = "I couldn't make out that voice note, mind typing it?";
+
+/** "/help", "/help@roomie_bot" -> "help"; a command for another bot or plain text -> null. */
+export function commandOf(text: string | undefined, username?: string): string | null {
+  const m = /^\/([a-z]+)(?:@(\w+))?(?:\s|$)/i.exec(text ?? "");
+  if (!m) return null;
+  if (m[2] && username && m[2].toLowerCase() !== username.toLowerCase()) return null;
+  return m[1].toLowerCase();
+}
 
 export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
   const { deps } = opts;
@@ -333,34 +356,45 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
       return { ...addressed, imageUrl: await deps.saveImage(folderChat, largest.file_unique_id, Buffer.from(file.bytes)) };
     }
     if (m.text === undefined && m.caption === undefined) return null;
-    if (/^\/start(@\w+)?\b/i.test(m.text ?? "")) return null; // the "add to group" deep link posts this
+    if (/^\/\w+(@\w+)?/.test(m.text ?? "")) return null; // other commands (the "add to group" deep link posts /start)
     return addressed;
+  }
+
+  /** The pipeline, with failures logged and, when Roomie was clearly being talked to, one friendly line instead. */
+  async function pipeline(msg: IncomingMessage, reply: (out: Outgoing) => Promise<void>) {
+    let out: Outgoing | null;
+    try {
+      out = await deps.handleIncoming(msg);
+    } catch (err) {
+      console.error(`[roomie] couldn't handle a message from ${msg.userName} in ${msg.isPrivate ? "a DM" : `chat ${msg.chatExternalId}`}:`, err);
+      const addressed = msg.isPrivate || msg.isVoice || msg.mentionsRoomie || msg.isReplyToRoomie || /\broomie\b/i.test(msg.text);
+      if (addressed) await reply({ text: OOPS }).catch(() => {});
+      return;
+    }
+    if (out) await reply(out);
   }
 
   async function groupMessage(me: UserFromGetMe, m: Message, from: User) {
     const chatId = String(m.chat.id);
+    if (commandOf(m.text, me.username) === "help") return channel.sendToChat(chatId, { text: helpText() });
     const content = await readContent(me, m, chatId, chatId);
     if (!content) return;
-    const out = await deps.handleIncoming({
-      channel: "telegram",
-      chatExternalId: chatId,
-      chatTitle: "title" in m.chat ? m.chat.title : undefined,
-      userExternalId: String(from.id),
-      userName: userName(from),
-      ...content,
-    });
-    if (out) await channel.sendToChat(chatId, out);
+    await pipeline(
+      { channel: "telegram", chatExternalId: chatId, chatTitle: "title" in m.chat ? m.chat.title : undefined, userExternalId: String(from.id), userName: userName(from), ...content },
+      (out) => channel.sendToChat(chatId, out),
+    );
   }
 
   async function privateMessage(me: UserFromGetMe, m: Message, from: User) {
     const userId = String(from.id);
+    const command = commandOf(m.text, me.username);
+    if (command === "help") return channel.sendPrivate(userId, { text: helpText() });
     const chats = await deps.chatsOfUser(userId);
-    if (/^\/start\b/i.test(m.text ?? "")) return channel.sendPrivate(userId, { text: START_REPLY(from.first_name, chats.length) });
+    if (command === "start") return channel.sendPrivate(userId, { text: startReply(from.first_name, chats.length) });
     if (chats.length !== 1) return channel.sendPrivate(userId, { text: chats.length ? MANY_GROUPS : NO_GROUP });
     const content = await readContent(me, m, userId, chats[0]);
     if (!content) return;
-    const out = await deps.handleIncoming({ channel: "telegram", chatExternalId: chats[0], userExternalId: userId, userName: userName(from), ...content, isPrivate: true });
-    if (out) await channel.sendPrivate(userId, out);
+    await pipeline({ channel: "telegram", chatExternalId: chats[0], userExternalId: userId, userName: userName(from), ...content, isPrivate: true }, (out) => channel.sendPrivate(userId, out));
   }
 
   bot.use(async (ctx, next) => {

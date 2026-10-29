@@ -9,6 +9,7 @@ import "@/lib/env";
 import { Memory } from "@mastra/memory";
 import { PgVector, PostgresStore } from "@mastra/pg";
 import { EMBED_DIM, gatewayEmbedder } from "@/lib/llm";
+import { readSection } from "@/lib/style-note";
 
 export const storage = new PostgresStore({ id: "roomie-storage", connectionString: process.env.DATABASE_URL! });
 export const vector = new PgVector({ id: "roomie-vector", connectionString: process.env.DATABASE_URL! });
@@ -40,3 +41,10 @@ export const memory = new Memory({
 });
 
 export const threadFor = (groupId: string) => ({ thread: `group-${groupId}`, resource: groupId });
+
+/** The Group style section of a Group's working memory ("" when there's none yet). */
+export async function groupStyle(groupId: string): Promise<string> {
+  const { thread, resource } = threadFor(groupId);
+  const wm = await memory.getWorkingMemory({ threadId: thread, resourceId: resource }).catch(() => null);
+  return wm ? readSection(wm, STYLE_HEADING) : "";
+}

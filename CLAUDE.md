@@ -2,7 +2,7 @@
 
 Roomie is an AI groupmate that lives in a group chat and on a per-group dashboard. It splits costs, keeps the shared grocery cart, tracks chores and upkeep, and sets reminders. Persona: a friendly, witty, brief groupmate; exact about facts.
 
-**Read first:** the rebuild plan is in `docs/plan.md`, the vocabulary in `GLOSSARY.md`, and the decisions in `docs/adr/`. They are the spec; where they conflict with this file, they win. Steps 1 (rename), 2b (Telegram), 3 (Mastra agent), 4 (identity, Groups, dashboard), 5 (Splitting) and 6 (Groceries) are done; the code below is what exists today. WhatsApp (step 2) is parked until Roomie has a number; `npm run dev-chat` simulates a group chat without any app.
+**Read first:** the rebuild plan is in `docs/plan.md`, the vocabulary in `GLOSSARY.md`, and the decisions in `docs/adr/`. They are the spec; where they conflict with this file, they win. Steps 1 (rename), 2b (Telegram), 3 (Mastra agent), 4 (identity, Groups, dashboard), 5 (Splitting), 6 (Groceries) and 7 (Chores, Upkeep, reminders, Group time zones) are done; the code below is what exists today. Before a real Telegram group: `npm run telegram:check`, then `docs/first-group-test.md`. WhatsApp (step 2) is parked until Roomie has a number; `npm run dev-chat` simulates a group chat without any app.
 
 Agent skills for this repo live in `.agents/skills/`.
 
@@ -45,7 +45,16 @@ src/
                         recipeLink (cached by recipeKey), upcomingRecipes
     recipe-math.ts      pure: Pantry matching (covers, haveNeed), scaleIngredients, recipeKey
     pantry.ts           group_toolkits.settings.pantry for groceries: getPantry, updatePantry (any active Member)
-    chores.ts reminders.ts upkeep.ts report.ts
+    chores.ts           the chart: Rotation (turnFor), passes (skipChore), local due days (choreSchedule), streaks per
+                        Member (streaksFor), add/remove (Admin), hallOfShame + chartLine, addStarterChores (Onboarding)
+    upkeep.ts           upkeep items in local days (upkeepSchedule: due soon = 7 days), markDone, remove (Admin),
+                        DEFAULT_ITEMS / addDefaults ("the usual five")
+    reminders.ts        one-off / daily / weekly / monthly (nextOccurrence keeps the wall-clock across DST), whole Group
+                        or one Member (private), reminderLine ("(set by Maya)"), visibleTo / canCancel, claim before send
+    report.ts           groupReport + formatGroupReport (one message, sections of enabled Toolkits; casual = sentences),
+                        choresNudgeText
+    schedule.ts         groupTimezone, the nudge hour and report day/hour (getSchedule / updateSchedule, Admin), the
+                        pure windows, claimPost / releasePost on scheduled_posts
   onboarding.ts         onGroupJoined (Group + Chat + Members, adder = Admin, intro + setup questions),
                         onParticipantJoined (Pending + "approve X?") and onUnknownSender (Pending, or active inside a
                         Channel's roster grace, ADR 0010). Called by Channel adapters (ADR 0008)
@@ -91,12 +100,17 @@ src/
   lib/llm.ts            model ids for the Neon AI Gateway ("neon/<id>"), the gateway embedder
   lib/urls.ts           APP_URL links (dashboardUrl, linkFor)
   lib/dates.ts          day strings and labels in the Group's time zone (client-safe)
+  lib/time.ts           Group time zones, Intl only (client-safe): zonedParts, zonedTimeToUtc (DST gap -> later, overlap ->
+                        first), dayInZone, startOfDay, addDaysInZone, nextWeekday, parseInZone (bare wall-clock = Group
+                        zone), formatInZone, describeNow, resolveTimeZone ("Chicago", "CST", "India" -> IANA), zonesByRegion
   lib/money.ts          formatMoney / parseMoney (client-safe)
   lib/units.ts          Instacart's units, synonyms (tbsp, lb, pcs), clove/pinch/slice -> buyable, parseAmount, formatAmount
   lib/voice.ts lib/prices.ts lib/style-note.ts
   lib/pay-links.ts      Venmo / PayPal / Cash App links with the amount (settle_up and the settle drawer)
-  jobs/scheduler.ts     60 s tick: due reminders, weekly Group Report, upkeep nudge -> channels.deliver; Group style
+  jobs/scheduler.ts     60 s tick: due reminders (deliver for the Group, deliverPrivate for a Member), the daily chores
+                        nudge and the weekly Group Report (claimed in scheduled_posts, once per period); Group style
                         refresh; recurring Expenses (hourly check); Splitwise outbox; daily retention
+  jobs/report-text.ts   groupReportText: the same text for the weekly post and group_report (casual from the style note)
   jobs/retention.ts     deletes chat_messages older than 30 days (ADR 0006)
   jobs/style-note.ts    Haiku rewrites the Group style note every 50 chat lines
   proxy.ts              THE middleware (a root proxy.ts is ignored because the app is under src/): Neon Auth guard on
@@ -124,6 +138,8 @@ scripts/migrate.ts      npm run db:migrate
 scripts/seed.ts         demo Group "Apt 4B" (dev Chat dev-apt-4b); prints its id, a Claim link for Maya, a Studio requestContext
 scripts/dev-chat.ts     the terminal group chat stand-in (docs/dev-chat.md)
 scripts/telegram.ts     npm run telegram: long polling (deletes any webhook first); telegram-webhook.ts --set/--delete/--info
+scripts/telegram-check.ts  npm run telegram:check: read-only readiness (getMe, privacy mode, webhook, APP_URL, delays,
+                        Toolkits, DB + migrations, a 1-token Haiku call, Jev); non-zero with the fix when something's off
 scripts/evals.ts        runs the scenarios in throwaway Groups; --baseline writes docs/evals-baseline.md
 scripts/studio-presets.ts  writes .mastra-presets.json for Studio (run by mastra:dev)
 spikes/                 throwaway experiments (WhatsApp/Baileys)
@@ -159,6 +175,17 @@ spikes/                 throwaway experiments (WhatsApp/Baileys)
 - **Checkout** (`cart_checkout`, "Get Instacart link"): snapshots the open Cart into `cart_checkouts`, builds an Instacart shopping list (structured `quantity`/`unit`, else parsed from `qty`), returns an "Open in Instacart" button. The same open items reuse the last unpaid Checkout. If Instacart can't be reached the Checkout is still saved with a null url and Roomie says the link isn't available yet.
 - **"I paid $84"** is `cart_purchased` (persona: not `log_expense`). `markPurchased` flips the open items (or a Checkout's) to purchased in a transaction, then `logExpense` with `method: "exact"`, `category: "groceries"` and `computeCartSplits` rows (personal to the adder, shared evenly, weighted by estimates, payer-first remainder); the newest unpaid Checkout it covers gets `expense_id` + `paid_at`. The drawer previews with the same function and the active Members in `listMembers` order, so it matches to the cent.
 - **Instacart** (ADR 0004): `InstacartClient` with `ComposioInstacart` (`tools.execute("INSTACART_CREATE_SHOPPING_LIST_PAGE" | "INSTACART_CREATE_RECIPE_PAGE", { userId: "roomie-app", arguments })`, Instacart IDP body shapes, `products_link_url` found at any depth) and `FakeInstacart` (deterministic `https://instacart.example/...`). Instacart is a "no auth" Composio toolkit: no auth config, no connection, only `COMPOSIO_API_KEY`. `INSTACART_FAKE=1` / `setInstacartClient()` pick the fake; dev-chat switches by itself when the key is missing or rejected; failures are `InstacartUnavailableError`, relayed as text. The dashboard button is enabled only for the real client with a healthy key. Recipe links are cached on the Recipe by `recipeKey` (title, servings, ingredients).
+## Chores, upkeep and reminders (step 7)
+
+- **Time zones:** every "today", "tonight", "Tuesday 8pm", "this week", due day, nudge hour and report window is computed in `groups.timezone` with `lib/time.ts`. Never `new Date().getDay()`/`toISOString().slice(0,10)` for a Group's day. The agent's instructions carry the local now (`describeNow`); tools take local wall-clock without an offset (`parseInZone`: an offset is honoured, a bare `2026-11-03T20:00` is the Group's zone, a bare date is 9:00). `validateSettings` maps what people say ("Chicago", "CST", "India", any IANA city) with `resolveTimeZone`; unknown -> "Which city are you in?". Test DST with America/Chicago Nov 1 2026, Europe/Berlin Oct 25 2026 and Asia/Kolkata.
+- **Rotation:** `chores.rotation` (member ids in order, null = everyone). With one, the turn is the Member after whoever last did or passed it (inactive ids drop out; an empty result falls back to everyone); without one, whoever did or passed it least recently (never first, ties by name). A pass is a `chore_logs` row with `skipped`: it moves the turn, isn't a done (no streak, the chore stays due). Only whoever's turn it is can pass (`not-yours`). Logging for another active Member is fine; the Activity row says "for Dev".
+- **Due and streaks:** a chore is due on (last done's local day + everyDays), never done = due today; `state` is overdue / due / ok. A Streak counts a Member's own consecutive on-time dones on that chore (on time = no later than the previous done's day + everyDays); a pass or a late done ends it. Upkeep: never done = due today (due soon, not overdue), due soon = within 7 days.
+- **Reminders:** `memberId` null = the whole Group (posted with `deliver`), set = that Member privately (`deliverPrivate`), never both; if Roomie can't DM them yet it goes to the Chat once, addressed to them, with the Start hint. `created_by` gives "(set by Maya)" when set for someone else. Repeats (daily / weekly / monthly, monthly clamped to day 28) keep the local wall-clock and skip missed occurrences. The scheduler claims a reminder (sets `sent_at`) before sending and releases it on failure. Lists show only what the viewer may see (`visibleTo`); cancel = the target, the setter, anyone for a whole-group one, or an Admin.
+- **Posts Roomie makes on its own (ADR 0001):** the chores nudge at `group_toolkits["chores"].settings.nudgeHour` (default 9, null = off), only when something is due or late; the weekly Group Report at `group_toolkits["core"].settings.report = { weekday, hour }` (default Sunday 18). Both are claimed in `scheduled_posts (group, kind, local period)` before sending, so at most one per day / week across restarts and processes; a failed send gives the claim back. Upkeep has no post of its own: it's a line in the report. The window is the whole hour; a scheduler that was off for it skips that day rather than posting late.
+- **The Group Report** is one message of at most ~12 lines (`reportParts`): Settle plan, chores this week (counts, the best streak, what's up now, the chart), upkeep due soon, the Cart's size, the next week's whole-group reminders. Sections of switched-off Toolkits are left out. Emoji-led lines by default; when the Group style note's tone is casual (`isCasualStyle`) the same sentences run together without the list look. `group_report` returns the same text (`groupReportText`) and Roomie posts it verbatim.
+- **Onboarding** for roommates and families adds the three starter chores (no Rotation, so new people join in) and the usual five upkeep items, once, and only for Toolkits that are on. Family now also gets Upkeep.
+- **Telegram first contact:** `/help` (group or DM) is five lines (`helpText`), `/start` in a DM is one line and never a link, other slash commands are ignored, a failure while Roomie was addressed gets one friendly line (`OOPS`) and the stack goes to the log. `npm run telegram` prints a `[roomie]` line per message (gate, tools, time, trace id) and per reply.
+
 ## The Gate (when Roomie speaks)
 
 `mastra/gate/policy.ts`, ADR 0002. In order: hard trigger (voice note, reply to Roomie, @mention, the word "roomie", the dashboard) always speaks; Jev error or > 2.5 s means hard triggers only; p(act) over the Group's threshold acts; in the follow-up window (3 min / 3 messages after Roomie spoke) the agent decides with permission to answer `[silent]`, unless Jev is sure it's chatter; p(clarify) over its threshold asks. Thresholds (act / clarify): quiet .9/.8, **normal .75/.6** (default), chatty .6/.45. If nobody addressed Roomie and it's not a follow-up, the agent is told to ask before logging anything. Jev's toolkit narrows the agent's tools only at p ≥ 0.6. While Onboarding is open (`groups.onboarded_at` null), an active Member's message in the follow-up window counts as a hard trigger, so "roommates, USD, Chicago" reaches `set_group_settings`.
@@ -171,7 +198,7 @@ spikes/                 throwaway experiments (WhatsApp/Baileys)
 - Tools get the Group and sender from `ctxOf(context)` (the RequestContext), never from closures.
 - Tools attach buttons by returning `links: [{ text, url }]` (see `cart_add` / `dashboardLinks()`); the pipeline collects them from every tool result into `Outgoing.buttons`. Never paste URLs. Buttons need an absolute `APP_URL`.
 - A new Toolkit = a folder with `manifest.ts` + tools, added to `TOOLKITS` in `toolkits/registry.ts`, `TOOLKIT_IDS`, and the Gate's toolkit choice in `gate/jev.ts` + `GATE_TOOLKITS`.
-- Dashboard pattern: a page (server) calls `currentMember(groupId)`, reads services through `_components/data.ts` and renders a client screen; writes are server actions in `g/[groupId]/actions.ts` that call a service with the session's Ctx and `revalidatePath`. They return `{ ok, error, status }`, so screens toast errors. Features of step 7 stay visible but disabled with a "Coming soon" hint.
+- Dashboard pattern: a page (server) calls `currentMember(groupId)`, reads services through `_components/data.ts` and renders a client screen; writes are server actions in `g/[groupId]/actions.ts` that call a service with the session's Ctx and `revalidatePath`. They return `{ ok, error, status }`, so screens toast errors. Later features (Research, PDFs, Trips) stay visible but disabled with a "Coming soon" hint.
 - Schema changes: edit `src/db/schema.ts`, `npm run db:generate`, commit the SQL in `drizzle/`, `npm run db:migrate`. Never `drizzle-kit push`.
 - Roomie's replies are 1 to 3 short lines unless someone asks for more. The trigger word is "roomie".
 - Use the glossary's words in code and UI text (Member, Group, Expense, Cart...), and avoid the words it lists under _Avoid_.
@@ -201,11 +228,12 @@ npm run dev                   # dashboard at localhost:3000 (scheduler runs here
 npm run dev-chat              # terminal group chat through the real pipeline (docs/dev-chat.md)
 npm run telegram              # Roomie on Telegram, long polling (TELEGRAM_BOT_TOKEN/_USERNAME; docs/telegram.md)
 npm run telegram:webhook -- --set|--delete|--info   # webhook at <APP_URL>/api/telegram (public https only)
+npm run telegram:check        # read-only readiness check before a real group (docs/first-group-test.md)
 npm run mastra:dev            # Mastra Studio at localhost:4111, with request-context presets for Apt 4B's Members
 npm run db:generate           # after a schema change: write the next migration
 npm run typecheck && npm test # tsc + unit tests (no .env); CI runs both
 npm run test:tools            # every tool against the dev DB in throwaway Groups (Splitwise, Instacart, recipes on fakes), no LLM
-npm run evals                 # ~55 chat scenarios through the real Gate + Sonnet; prints a table and the pass rate
+npm run evals                 # ~65 chat scenarios through the real Gate + Sonnet; prints a table and the pass rate
                               # (npx tsx scripts/evals.ts --only id,id   or   --baseline to rewrite docs/evals-baseline.md)
 ```
 

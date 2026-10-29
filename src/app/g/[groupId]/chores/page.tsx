@@ -1,15 +1,18 @@
 import type { Metadata } from "next"
 
 import { currentMember } from "@/lib/session"
-import { choresView } from "../_components/data"
-import { ChoresScreen } from "../_components/screens/chores"
+import { choresView, remindersView } from "../_components/data"
+import { ChoresScreen, type ChoresTab } from "../_components/screens/chores"
 
 export const metadata: Metadata = { title: "Chores" }
 
-export default async function ChoresPage({ params }: { params: Promise<{ groupId: string }> }) {
-  const { groupId } = await params
+const tabs: ChoresTab[] = ["chores", "upkeep", "reminders"]
+
+export default async function ChoresPage({ params, searchParams }: { params: Promise<{ groupId: string }>; searchParams: Promise<{ tab?: string }> }) {
+  const [{ groupId }, { tab }] = await Promise.all([params, searchParams])
   const s = await currentMember(groupId)
   if (s.member.status !== "active") return null
-  const { chores, upkeep } = await choresView(s)
-  return <ChoresScreen chores={chores} upkeep={upkeep} />
+  const initialTab = tabs.find((t) => t === tab) ?? "chores"
+  const [{ chores, upkeep }, reminders] = await Promise.all([choresView(s), remindersView(s)])
+  return <ChoresScreen key={initialTab} initialTab={initialTab} chores={chores} upkeep={upkeep} reminders={reminders} />
 }
