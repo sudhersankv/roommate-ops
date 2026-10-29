@@ -104,7 +104,12 @@ function OwnedPage({ children }: { children: ReactNode }) {
   const segment = pathname.startsWith(`${base}/`) ? pathname.slice(base.length + 1).split("/")[0] : ""
   const owned = ownedPages.find((p) => p.prefix === segment)
   if (!owned || owned.owners.some((o) => o.enabled)) return children
-  return <ToolkitOff toolkit={owned.owners[0]} />
+  return (
+    <>
+      <TopBar title={owned.owners[0].name} />
+      <ToolkitOff toolkit={owned.owners[0]} />
+    </>
+  )
 }
 
 function MoreMenu() {

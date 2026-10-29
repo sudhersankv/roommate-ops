@@ -6,6 +6,8 @@ import { CATALOG, CORE_MANIFEST, TOOLKIT_IDS } from "../manifests";
 import { ctxOf, dashboardLinks } from "../util";
 
 const NAMES = CATALOG.map((m) => m.id).join(", ");
+const SWITCHABLE = CATALOG.filter((m) => m.status !== "coming-soon").map((m) => m.id).join(", ");
+const SOON = CATALOG.filter((m) => m.status === "coming-soon").map((m) => m.id).join(", ");
 
 export const settingsTools = {
   set_group_settings: createTool({
@@ -28,7 +30,7 @@ export const settingsTools = {
   }),
   toggle_toolkit: createTool({
     id: "toggle_toolkit",
-    description: `Admin only: switch a Toolkit on or off by name (${NAMES}). Nothing is deleted. Coming-soon ones and ones missing something they need come back with notAvailable + message: relay it. When one goes on, mention tryThis as an example.`,
+    description: `Admin only: switch a Toolkit on or off by name. Switchable: ${SWITCHABLE}. Coming soon, not switchable yet: ${SOON}. Nothing is deleted. Coming-soon ones and ones missing something they need come back with notAvailable + message: relay it, and don't offer another coming-soon one instead. When one goes on, mention tryThis as an example.`,
     inputSchema: z.object({ toolkit: z.string().describe(`One of: ${NAMES}`), enabled: z.boolean() }),
     execute: async (input, context) => {
       try {

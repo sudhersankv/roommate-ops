@@ -1,7 +1,7 @@
 // The fixed scenario set for `npm run evals` (scripts/evals.ts). Each scenario runs through the real pipeline
 // (Gate + Sonnet + tools) in its own throwaway Group with Maya (Admin), Dev and Sam; the sender is Maya unless set.
 // A scenario passes when every check in `expect` holds, or every check in `alt` does (two acceptable behaviours).
-import { cart, chores, groups, members, money, pantry, receipts, recipes, reminders, upkeep } from "@/services";
+import { cart, chores, groups, members, money, pantry, receipts, recipes, reminders, toolkits, upkeep } from "@/services";
 import type { Ctx } from "@/services/types";
 
 export const EVAL_MEMBERS = ["Maya", "Dev", "Sam"] as const;
@@ -60,6 +60,7 @@ export const READ_ONLY_TOOLS = new Set([
   "maintenance_status",
   "group_report",
   "splitwise_status",
+  "list_toolkits",
   "updateWorkingMemory",
 ]);
 
@@ -525,6 +526,33 @@ export const SCENARIOS: Scenario[] = [
     area: "core",
     turn: { text: "roomie who's in this group?", from: "Dev" },
     expect: { replyIncludes: ["Maya", "Dev", "Sam"] },
+  },
+
+  /* ---------- Toolkits (the marketplace from the chat) ---------- */
+  {
+    id: "what-can-you-do",
+    area: "core",
+    turn: { text: "roomie what can you do?", from: "Sam" },
+    expect: { tools: ["list_toolkits"], noTools: "actions", replyIncludes: [/split|expense|cost/i] },
+  },
+  {
+    id: "turn-on-research",
+    area: "core",
+    turn: { text: "roomie turn on research" },
+    expect: {
+      noTools: ["set_group_settings"],
+      replyIncludes: [/not (ready|yet|there)|on the list|coming soon/i],
+      check: async (e) => fail(!(await toolkits.catalogFor(e.ctx)).some((t) => t.manifest.id === "research" && t.enabled), "research stays off"),
+    },
+  },
+  {
+    id: "groceries-off-member",
+    area: "core",
+    turn: { text: "roomie turn off groceries", from: "Dev" },
+    expect: {
+      replyIncludes: [/admin|Maya/i],
+      check: async (e) => fail((await groups.enabledToolkits(e.ctx)).includes("groceries"), "groceries is still on"),
+    },
   },
 
   /* ---------- the Gate ---------- */

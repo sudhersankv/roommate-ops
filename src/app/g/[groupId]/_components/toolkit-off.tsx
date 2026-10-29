@@ -10,7 +10,6 @@ import { toast } from "@/components/ui/toast"
 import type { ToolkitId } from "@/toolkits/types"
 import { setToolkit } from "../actions"
 import { useGroup } from "./group-context"
-import { TopBar } from "./shell"
 
 /** A page owned by a Toolkit that's off: what it is, and "Turn on" for Admins ("Ask an admin" for everyone else). */
 export function ToolkitOff({ toolkit }: { toolkit: { id: string; name: string; summary: string; icon: ReactNode } }) {
@@ -27,7 +26,6 @@ export function ToolkitOff({ toolkit }: { toolkit: { id: string; name: string; s
     })
   return (
     <>
-      <TopBar title={toolkit.name} />
       <Empty className="px-6 py-16">
         <EmptyHeader>
           <EmptyMedia variant="icon" className="size-12 rounded-2xl [&_svg]:size-6">
