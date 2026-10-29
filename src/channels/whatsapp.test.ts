@@ -328,6 +328,14 @@ describe("incoming messages", () => {
     assert.equal(h.seen.incoming.length, 0);
   });
 
+  test("/help in a group lists the Tricks that group taught Roomie", async () => {
+    const h = harness({ deps: { tricksIn: async () => ["splitting"] } });
+    h.markKnown();
+    await h.open();
+    await h.feed([msg({ message: { conversation: "/help" } })]);
+    assert.deepEqual(h.sock().sent.map((s) => s.text), [helpText(["splitting"])]);
+  });
+
   test("a 1:1 message from a Member of one Group -> isPrivate, answered in the DM", async () => {
     const h = harness();
     h.markKnown();

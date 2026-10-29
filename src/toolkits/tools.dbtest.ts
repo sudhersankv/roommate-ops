@@ -973,6 +973,7 @@ describe("Roomie tools against the dev DB", () => {
     assert.equal(s.currency, "EUR");
     assert.equal(s.timezone, "Europe/Berlin");
     assert.deepEqual([...s.toolkits].sort(), ["groceries", "splitting"]);
+    assert.equal(s.learned, `Learned Splitting and Groceries. Say "roomie, learn chores" any time.`, "the one setup line");
     const [g] = await db.select().from(schema.groups).where(eq(schema.groups.id, groupId));
     assert.ok(g.onboardedAt, "Onboarding is done");
     await assert.rejects(run("set_group_settings", { timezone: "Mars/Olympus" }), /don't know the time zone "Mars\/Olympus"\. Which city/);
@@ -1020,17 +1021,26 @@ describe("Roomie tools against the dev DB", () => {
     const soon = await run("toggle_toolkit", { toolkit: "research", enabled: true });
     assert.equal(soon.notAvailable, true);
     assert.equal(soon.reason, "coming-soon");
-    assert.match(soon.message, /isn't ready yet/);
+    assert.match(soon.message, /can't learn Research yet/);
     assert.equal((await run("toggle_toolkit", { toolkit: "spaceships", enabled: true })).reason, "unknown");
+    assert.match((await run("toggle_toolkit", { toolkit: "spaceships", enabled: true })).message, /don't know a "spaceships" Trick/);
 
     const list = await run("list_toolkits", {}, alex);
-    assert.ok(list.on.some((t: { name: string; try?: string[] }) => t.name === "Splitting" && t.try?.length));
-    assert.ok(list.off.some((t: { name: string }) => t.name === "Groceries"));
+    assert.ok(list.known.some((t: { name: string; try?: string[] }) => t.name === "Splitting" && t.try?.length));
+    assert.ok(list.couldLearn.some((t: { name: string }) => t.name === "Groceries"));
     assert.ok(list.comingSoon.includes("Research") && list.comingSoon.includes("Stickers"));
-    assert.ok(!list.on.concat(list.off).some((t: { name: string }) => t.name === "Core"), "core isn't a switch");
+    assert.ok(!list.known.concat(list.couldLearn).some((t: { name: string }) => t.name === "Core"), "core isn't a Trick");
+    assert.match(list.say, /^Tricks I know here: .*Splitting.*\. Could learn: .*Groceries.*\. Coming soon: /);
+    assert.ok(!/toolkit|feature|enable/i.test(list.say + list.whoCanTeach), "Tricks vocabulary only");
+    if (list.links) assert.match(list.links[0].url, /\/tricks$/);
+
+    const learned = await run("toggle_toolkit", { toolkit: "groceries", enabled: true });
+    assert.match(learned.say, /^Learned Groceries\. Try: "roomie, /);
+    const forgot = await run("toggle_toolkit", { toolkit: "groceries", enabled: false });
+    assert.match(forgot.say, /^Forgot Groceries\. Nothing's deleted/);
 
     const ui = { groupId, memberId: member.Sudhersan, source: "ui" as const };
-    const said = async () => (await chatlog.roomieLines(groupId, 50)).filter((l) => l.text === `Groceries is on. Try: "tacos for 5 friday"`).length;
+    const said = async () => (await chatlog.roomieLines(groupId, 50)).filter((l) => l.text === `Learned Groceries. Try: "roomie, tacos for 5 friday"`).length;
     const on = await toolkitsSvc.setToolkit(ui, { toolkit: "groceries", enabled: true });
     assert.deepEqual([on.changed, on.enabled, on.tryThis], [true, true, "tacos for 5 friday"]);
     assert.equal(await said(), 1, "Roomie says it once in the chat");
@@ -1040,7 +1050,8 @@ describe("Roomie tools against the dev DB", () => {
     const again = await toolkitsSvc.setToolkit(ui, { toolkit: "groceries", enabled: true });
     assert.equal(again.changed, false, "already on: no change, no hook, no Activity");
     const rows = await db.select().from(schema.activity).where(and(eq(schema.activity.groupId, groupId), eq(schema.activity.kind, "toolkit.toggled")));
-    assert.ok(rows.some((r) => r.summary === "switched Groceries on"));
+    assert.ok(rows.some((r) => r.summary === "taught Roomie Groceries"));
+    assert.ok(rows.some((r) => r.summary === "had Roomie forget Groceries"));
   });
 
   test("get_dashboard_link: a Claim link goes out privately (reused while live); with an Account, the dashboard", async () => {

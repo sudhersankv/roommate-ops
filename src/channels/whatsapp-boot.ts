@@ -55,6 +55,10 @@ export async function whatsappDeps(): Promise<WhatsAppDeps> {
     },
     groupIdOfChat: async (jid) => (await groups.chatFor("whatsapp", jid))?.group.id,
     chatsOfUser: async (userId) => (await groups.chatsOfChannelUser("whatsapp", userId)).map((c) => c.externalId),
+    tricksIn: async (jid) => {
+      const known = await groups.chatFor("whatsapp", jid);
+      return known ? groups.enabledToolkits({ groupId: known.group.id }) : undefined;
+    },
     renameChat: (jid, title) => groups.renameChat("whatsapp", jid, title),
     rekeyUser: async (lid, pn) => {
       const moved = await members.rekeyChannelUser("whatsapp", lid, pn);

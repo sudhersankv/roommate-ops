@@ -14,7 +14,7 @@ export const core = defineManifest({
   status: "stable",
   gate: {
     criterion:
-      "Reminders at a time or date, and the group itself: members and approvals, settings (including Roomie's name, vibe and quirks), which Toolkits are on or what Roomie can do, lasting facts about a member ('remember I'm vegetarian', 'what do you know about me'), the dashboard link, the weekly report.",
-    examples: ["remind everyone trash goes out tuesday 8pm", "what can you do?", "approve Priya", "send me the dashboard"],
+      "Reminders at a time or date, and the group itself: members and approvals, settings (including Roomie's name, vibe and quirks), what Roomie can do and which Tricks it knows, teaching Roomie a Trick or making it learn or forget one ('roomie learn trips', 'roomie forget groceries', 'turn on chores'), lasting facts about a member ('remember I'm vegetarian', 'what do you know about me'), the dashboard link, the weekly report.",
+    examples: ["remind everyone trash goes out tuesday 8pm", "what can you do?", "learn chores", "approve Priya", "send me the dashboard"],
   },
 });

@@ -64,6 +64,8 @@ export type WhatsAppDeps = {
   groupIdOfChat(chatExternalId: string): Promise<string | undefined>;
   /** External ids of the Chats where this person is a Member (where their DMs belong). */
   chatsOfUser(userExternalId: string): Promise<string[]>;
+  /** The Tricks (Toolkit ids) the Chat's Group taught Roomie, for /help; undefined when it's not a known Chat. */
+  tricksIn?(chatExternalId: string): Promise<string[] | undefined>;
   /** The group's subject changed. */
   renameChat(chatExternalId: string, title: string): Promise<void>;
   /** We learned the phone JID behind a LID: Members stored under the LID move to it. */
@@ -641,7 +643,7 @@ export function createWhatsApp(opts: WhatsAppOptions): WhatsApp {
     const from = await person([m.key.participant, m.key.participantAlt, (m.key as { participantPn?: string }).participantPn], m.pushName);
     if (!from) return;
     if (!(await deps.groupIdOfChat(jid))) await joined(jid, [m.key.participant, m.key.participantAlt]); // joined while offline
-    if (commandOf(read.text) === "help") return channel.sendToChat(jid, { text: helpText() });
+    if (commandOf(read.text) === "help") return channel.sendToChat(jid, { text: helpText(await deps.tricksIn?.(jid).catch(() => undefined)) });
     const say = (out: Outgoing) => channel.sendToChat(jid, out);
     const got = await content(m, read, say, jid, jid);
     if (!got) return;
@@ -655,8 +657,8 @@ export function createWhatsApp(opts: WhatsAppOptions): WhatsApp {
     if (!from) return;
     const say = (out: Outgoing) => channel.sendPrivate(jid, out);
     const command = commandOf(read.text);
-    if (command === "help") return say({ text: helpText() });
     const chats = await deps.chatsOfUser(from.userExternalId);
+    if (command === "help") return say({ text: helpText(chats.length === 1 ? await deps.tricksIn?.(chats[0]).catch(() => undefined) : undefined) });
     if (command === "start") return say({ text: startReply(from.name.split(" ")[0], chats.length, "whatsapp") });
     if (chats.length !== 1) {
       if (chats.length) return say({ text: MANY_GROUPS });

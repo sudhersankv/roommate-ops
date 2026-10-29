@@ -15,11 +15,13 @@ import { record } from "@/services/activity";
 import { logMessage } from "@/services/chatlog";
 import { chatFor, initToolkits, type Chat, type Group } from "@/services/groups";
 import { addMember, admins, memberByChannelUser, type Member } from "@/services/members";
-import { ARCHETYPE_IDS, DEFAULT_ARCHETYPE, DEFAULT_PET_NAME } from "@/lib/personality";
-import { manifestOf } from "@/toolkits/manifests";
-import { presetFor } from "@/toolkits/presets";
+import { ARCHETYPE_IDS, DEFAULT_PET_NAME } from "@/lib/personality";
+import { MANIFESTS } from "@/toolkits/manifests";
 
 export type ChatRef = { channel: ChannelName; externalId: string; title?: string };
+
+/** What a Group that never said its purpose gets (presetFor(null): every defaultOn Trick, the roommates set). */
+const DEFAULT_PURPOSE = "roommates";
 
 const joinNames = (n: string[]) => (n.length <= 1 ? n.join("") : `${n.slice(0, -1).join(", ")} and ${n[n.length - 1]}`);
 
@@ -29,17 +31,31 @@ const joinNames = (n: string[]) => (n.length <= 1 ? n.join("") : `${n.slice(0, -
 export const isPlaceholderName = (name: string) => /^\+?\d[\d\s-]{5,}$/.test(name.trim()) || name.trim() === "Someone";
 
 /**
- * Roomie's first message: who it is, who the Admin is, and the setup questions in one go. `dmHandle` (Telegram's
- * @username) adds the one nudge to open a 1:1 chat, since a bot can't message anyone first.
+ * Roomie's first message, at most three lines and no feature list: who it is, what to tell it (the group's purpose
+ * picks the Tricks it learns), and who the Admin is. `dmHandle` (Telegram's @username) adds the one nudge to open a
+ * 1:1 chat, since a bot can't message anyone first.
  */
 export function introMessage(adderName: string, opts: { dmHandle?: string; petName?: string } = {}): string {
   const name = opts.petName?.trim() || DEFAULT_PET_NAME;
   const admin = isPlaceholderName(adderName) ? "Whoever added me is my admin." : `${adderName} added me, so ${adderName}'s my admin.`;
   return [
-    `Hey all, I'm ${name}, your group's new pet 🦖 ${admin} I split costs, keep a shared Cart, track chores, set reminders, and slowly pick up how you all talk.`,
-    `Quick setup, one reply is plenty: what's this group for (roommates, a trip, friends, family, work), which currency, which time zone (a city is fine), and what vibe should I have (${ARCHETYPE_IDS.join(" / ")})? Just "roommates" works too: I'll go with USD, Chicago time, ${DEFAULT_ARCHETYPE}, and switch on ${joinNames(presetFor("roommates").map((id) => manifestOf(id)!.name))} ("also ..." or "no ..." changes that).`,
-    ...(opts.dmHandle ? [`One more thing: tap @${opts.dmHandle} and press Start, so I can DM you your dashboard link later.`] : []),
+    `Hey all, I'm ${name} 🦖 a small dino who lives in your group chat and learns Tricks.`,
+    `Tell me what this group is for (roommates, a trip, friends, family, work…) and I'll learn the right Tricks. Currency, city and a vibe (${ARCHETYPE_IDS.join(" / ")}) are welcome too.`,
+    `${admin}${opts.dmHandle ? ` Tap @${opts.dmHandle} and press Start, so I can DM you your dashboard link later.` : ""}`,
   ].join("\n");
+}
+
+/**
+ * The one line after the setup answer: the Tricks Roomie learned, and what to say next. `defaulted`: nobody said
+ * what the group is for, so it kept the roommates set, and says so.
+ */
+export function learnedLine(on: readonly string[], opts: { defaulted?: boolean } = {}): string {
+  const names = MANIFESTS.filter((m) => on.includes(m.id)).map((m) => m.name);
+  const learned = names.length ? `${opts.defaulted ? "learned" : "Learned"} ${joinNames(names)}.` : `${opts.defaulted ? "no" : "No"} Tricks yet.`;
+  const lead = opts.defaulted ? `You didn't say what this group is for, so I kept the ${DEFAULT_PURPOSE} set: ` : "";
+  const next = MANIFESTS.find((m) => !on.includes(m.id));
+  const tip = next ? `Say "roomie, learn ${next.name.toLowerCase()}" any time.` : `Say "roomie, what can you do?" any time.`;
+  return `${lead}${learned} ${tip}`;
 }
 
 /** Asked in the Chat when someone new shows up. */

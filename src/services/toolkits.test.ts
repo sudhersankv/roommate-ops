@@ -22,7 +22,7 @@ describe("checkRequirements", () => {
 
   test("required Toolkits must be on", () => {
     const trips = manifestOf("trips")!;
-    assert.deepEqual(checkRequirements(trips, facts()), [{ label: "Needs Splitting on", ok: false, blocking: true }]);
+    assert.deepEqual(checkRequirements(trips, facts()), [{ label: "Needs Splitting first", ok: false, blocking: true }]);
     assert.equal(checkRequirements(trips, facts({ enabled: ["splitting"] }))[0].ok, true);
   });
 
@@ -39,7 +39,7 @@ describe("checkRequirements", () => {
   });
 });
 
-test("announcement: one line with the first example", () => {
-  assert.equal(announcement(manifestOf("groceries")!), `Groceries is on. Try: "tacos for 5 friday"`);
-  assert.equal(announcement({ name: "X", gate: { criterion: "", examples: [] } }), "X is on.");
+test("announcement: one line with the first example, in Tricks words", () => {
+  assert.equal(announcement(manifestOf("groceries")!), `Learned Groceries. Try: "roomie, tacos for 5 friday"`);
+  assert.equal(announcement({ name: "X", gate: { criterion: "", examples: [] } }), "Learned X.");
 });

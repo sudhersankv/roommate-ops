@@ -1,31 +1,51 @@
 // Onboarding copy and defaults, no DB. Run: npx tsx --test src/onboarding.test.ts
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { approvalPrompt, introMessage, rosterStillOpen } from "./onboarding";
+import { approvalPrompt, introMessage, learnedLine, rosterStillOpen } from "./onboarding";
 import { defaultToolkitsFor, validateSettings } from "./services/groups";
 
-test("intro: the group's new pet, names the Admin and asks purpose, currency, time zone and vibe in one message", () => {
+const BANNED = /toolkit|capabilit|module|plugin|enable|feature|\bpet\b|slang|how you (all )?talk|adapt/i;
+
+test("intro: who Roomie is, 'tell me what this group is for and I'll learn the right Tricks', the Admin; no feature list", () => {
   const text = introMessage("Maya");
-  assert.match(text, /I'm Roomie, your group's new pet/);
-  assert.match(text, /Maya added me, so Maya's my admin/);
-  for (const q of [/what's this group for/, /currency/, /time zone \(a city is fine\)/, /what vibe should I have \(chill \/ hype \/ deadpan \/ mom \/ gremlin \/ butler\)/]) assert.match(text, q);
-  assert.match(text, /USD, Chicago time, chill/, "says what the defaults are");
-  assert.match(text, /Splitting, Groceries, Chores and Upkeep/, "lists the roommates preset");
-  assert.match(introMessage("Maya", { petName: "Dino" }), /I'm Dino, your group's new pet/);
+  const lines = text.split("\n");
+  assert.equal(lines.length, 3, "three short lines");
+  assert.equal(lines[0], "Hey all, I'm Roomie 🦖 a small dino who lives in your group chat and learns Tricks.");
+  assert.match(lines[1], /^Tell me what this group is for \(roommates, a trip, friends, family, work…\) and I'll learn the right Tricks\./);
+  assert.match(lines[1], /chill \/ hype \/ deadpan \/ mom \/ gremlin \/ butler/, "the vibe is still part of setup");
+  assert.equal(lines[2], "Maya added me, so Maya's my admin.");
+  assert.ok(!/Splitting|Groceries|Chores|Upkeep|split costs|Cart/.test(text), "no feature list");
+  assert.ok(!BANNED.test(text), "Tricks vocabulary; the pet and the adaptation stay implicit");
+  assert.match(introMessage("Maya", { petName: "Dino" }), /^Hey all, I'm Dino 🦖/);
   for (const unknown of ["+16235550123", "Someone"]) {
     const t = introMessage(unknown);
     assert.match(t, /Whoever added me is my admin\./, "no name yet (WhatsApp before anyone has spoken)");
     assert.ok(!t.includes(unknown), "never reads a phone number out in the group");
   }
-  assert.ok(text.split("\n").length <= 3, "one short message");
   assert.ok(!/https?:\/\//.test(text), "no links at join time (ADR 0001)");
 });
 
-test("intro on Telegram: one extra line asking people to press Start, still no URL", () => {
+test("intro on Telegram: the press-Start nudge rides on the admin line, still three lines and no URL", () => {
   const text = introMessage("Maya", { dmHandle: "roomie_house_bot" });
-  assert.match(text, /tap @roomie_house_bot and press Start/);
+  assert.match(text, /Maya's my admin\. Tap @roomie_house_bot and press Start/);
   assert.equal(text.split("\n").length, 3);
   assert.ok(!/https?:\/\//.test(text));
+});
+
+test("the setup line names the Tricks Roomie learned and what to say next", () => {
+  assert.equal(learnedLine(defaultToolkitsFor("trip")), `Learned Splitting and Groceries. Say "roomie, learn chores" any time.`);
+  assert.equal(learnedLine(defaultToolkitsFor("friends")), `Learned Splitting. Say "roomie, learn groceries" any time.`);
+  assert.equal(learnedLine(defaultToolkitsFor("roommates")), `Learned Splitting, Groceries, Chores and Upkeep. Say "roomie, what can you do?" any time.`);
+  assert.equal(
+    learnedLine(defaultToolkitsFor(null), { defaulted: true }),
+    `You didn't say what this group is for, so I kept the roommates set: learned Splitting, Groceries, Chores and Upkeep. Say "roomie, what can you do?" any time.`,
+  );
+  assert.equal(learnedLine([]), `No Tricks yet. Say "roomie, learn splitting" any time.`);
+  for (const p of ["roommates", "trip", "friends", "family", "work", "other"] as const) {
+    const line = learnedLine(defaultToolkitsFor(p));
+    assert.equal(line.split("\n").length, 1);
+    assert.ok(!BANNED.test(line));
+  }
 });
 
 test("roster grace (ADR 0010): Telegram first-time senders count as already there for 24 hours; other Channels never", () => {

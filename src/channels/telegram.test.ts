@@ -253,7 +253,7 @@ describe("private messages", () => {
     assert.equal(h.sent()[0].payload.reply_markup, undefined, "no buttons either");
     const stranger = harness({ deps: { chatsOfUser: async () => [] } });
     await stranger.feed(message(SAM, { text: "/start" }, PRIVATE));
-    assert.equal(String(stranger.sent()[0].payload.text), `Hey Sam 👋 I'm Roomie. Add me to your group chat, say "roomie hi" there, and we're off.`);
+    assert.equal(String(stranger.sent()[0].payload.text), `Hey Sam 👋 I'm Roomie. Add me to a group chat, tell me what it's for, and I'll learn the right Tricks.`);
     assert.equal(h.seen.incoming.length + stranger.seen.incoming.length, 0);
   });
 
@@ -264,6 +264,12 @@ describe("private messages", () => {
     assert.equal(h.seen.incoming.length, 0);
   });
 
+  test("/help in a DM from a Member of one Group: that Group's Tricks", async () => {
+    const h = harness({ deps: { tricksIn: async (id) => (id === "-1001" ? ["splitting"] : undefined) } });
+    await h.feed(message(SAM, { text: "/help" }, PRIVATE));
+    assert.equal(h.sent()[0].payload.text, helpText(["splitting"]));
+  });
+
   test("a failure while handling a DM: a friendly line, never the error", async () => {
     const h = harness({ deps: { handleIncoming: async () => Promise.reject(new Error("ECONNRESET at db.query (pg/lib/client.js:12)")) } });
     await h.feed(message(SAM, { text: "what do I owe?" }, PRIVATE));
@@ -272,15 +278,16 @@ describe("private messages", () => {
 });
 
 describe("commands and failures in a group", () => {
-  test("/help (and /help@roomie) -> five lines in Roomie's voice; another bot's /help is ignored", async () => {
-    const h = harness();
+  test("/help (and /help@roomie) -> the group's Tricks in at most 8 lines; another bot's /help is ignored", async () => {
+    const h = harness({ deps: { tricksIn: async () => ["splitting", "groceries"] } });
     await h.feed(message(MAYA, { text: "/help" }));
     await h.feed(message(MAYA, { text: "/help@roomie_test_bot" }));
     await h.feed(message(MAYA, { text: "/help@spam_bot" }));
     const texts = h.sent().map((c) => String(c.payload.text));
     assert.equal(texts.length, 2);
-    assert.equal(texts[0], helpText());
-    assert.equal(texts[0].split("\n").length, 5);
+    assert.equal(texts[0], helpText(["splitting", "groceries"]));
+    assert.match(texts[0], /Tricks I know here: Splitting and Groceries\./);
+    assert.ok(texts[0].split("\n").length <= 8);
     assert.match(texts[0], /Say "roomie"/);
     assert.ok(!/https?:\/\//.test(texts[0]));
     assert.equal(h.seen.incoming.length, 0, "commands don't reach the pipeline");
