@@ -21,7 +21,7 @@ export default function PrivacyPage() {
         </Link>
         <h1 className="m-0 text-[clamp(2.25rem,6vw,3.25rem)] leading-[1.02] font-extrabold tracking-[-0.035em]">Privacy</h1>
         <p className="m-0 text-lg leading-relaxed text-muted-foreground">
-          Roomie is a groupmate, so it remembers things about your group. Here&apos;s what, for how long, and how to make it forget.
+          Roomie lives in your group chat, so it remembers things about your group. Here&apos;s what, for how long, and how to make it forget.
         </p>
       </header>
 
@@ -30,7 +30,7 @@ export default function PrivacyPage() {
         <ul>
           <li>The Members: the name and id each person has on Telegram or WhatsApp, and who&apos;s an Admin.</li>
           <li>What the group asked it to track: Expenses and Settlements, the Cart and Recipes, Chores, upkeep and Reminders, and the Activity of who changed what.</li>
-          <li>The last 30 days of chat messages, so it can follow the conversation. Older messages are deleted every day.</li>
+          <li>The last 30 days of chat messages, so it can follow the conversation and know when it&apos;s being talked to. Older messages are deleted every day.</li>
           <li>What a Member asked it to remember about them (a preferred name, a diet, a Venmo handle).</li>
           <li>Counts of how the group talks (common phrases, emoji, busy hours), used to match your group&apos;s style.</li>
         </ul>
@@ -69,7 +69,11 @@ export default function PrivacyPage() {
           <Link href="/#whatsapp-beta" className={link}>
             form on the home page
           </Link>{" "}
-          and say it&apos;s about privacy. We&apos;ll get back to you.
+          and say it&apos;s about privacy. We&apos;ll get back to you. How Roomie works day to day is on{" "}
+          <Link href="/help" className={link}>
+            the help page
+          </Link>
+          .
         </p>
       </Part>
     </main>
