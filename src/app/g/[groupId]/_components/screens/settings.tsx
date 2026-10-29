@@ -110,7 +110,7 @@ function ToolkitsSummary() {
       <Field orientation="horizontal">
         <FieldContent>
           <FieldLabel htmlFor="browse-toolkits">{toolkitNames.length ? `On: ${toolkitNames.join(", ")}` : "None on yet"}</FieldLabel>
-          <FieldDescription>What Roomie can do in this Group. {isAdmin ? "Add or switch them off in the marketplace." : "Admins switch them on and off."}</FieldDescription>
+          <FieldDescription>What Roomie can do in this Group. {isAdmin ? "Add more or switch them off on the Toolkits page." : "Admins switch them on and off."}</FieldDescription>
         </FieldContent>
         <Button id="browse-toolkits" variant="outline" size="sm" nativeButton={false} render={<Link href={`${base}/toolkits`} />}>
           Browse

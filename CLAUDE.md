@@ -10,6 +10,8 @@ Agent skills for this repo live in `.agents/skills/`.
 
 **All business logic lives in `src/services/`.** The agent's tools (`src/toolkits/*/`) and the dashboard (`src/app/`) are thin front doors that call the same service functions. Anything you can do in chat must be doable in the UI, and vice versa. Never put logic in a tool or a page that belongs in a service. Permissions are business logic too: they live in services, never in prompts or pages alone.
 
+**The manifest is the Toolkit contract** ([ADR 0011](docs/adr/0011-manifest-is-the-toolkit-contract.md), [docs/toolkits.md](docs/toolkits.md)). The agent's tools and persona, the Gate's toolkit choices, the bottom nav, Home, Settings and the Toolkits page are built from the Group's enabled manifests. Never name a Toolkit in the shell, the Gate or the persona: put it in its manifest.
+
 ## Layout
 
 ```
@@ -24,7 +26,10 @@ src/
   services/             (ctx: Ctx, input) => result. Source of truth. index.ts re-exports as namespaces.
     types.ts            Ctx { groupId, memberId, source }, GroupCtx { groupId }, dollars()
     authz.ts            NotAllowedError, requireActive / requireAdmin (load the Member from the DB), canChangeExpense
-    groups.ts           settings (validateSettings, defaultToolkitsFor purpose), Toolkit on/off, delete group data
+    groups.ts           settings (validateSettings, defaultToolkitsFor = the purpose preset), listToolkits (no row =
+                        defaultOn), delete group data; Onboarding's preset runs the Toolkits' onEnable hooks
+    toolkits.ts         setToolkit (Admins; by id or name; coming soon / unmet requires refused; hooks once per change;
+                        a dashboard switch-on posts ONE line in the Chat, 10 min cooldown), catalogFor, checkRequirements
     members.ts          list (active / active+pending), approve, decline, promote, payment handles, forgetMe
     claims.ts           Claim links: issueDashboardLink, createClaimToken, consumeClaim, upsertAccount
     activity.ts         record() + listActivity(): who added, changed or deleted what
@@ -57,21 +62,32 @@ src/
     index.ts            `mastra`: the roomie agent, PostgresStore, Observability, scorers, logger
     context.ts          RequestContext schema { groupId, memberId, memberName, role, status, source, toolkits?,
                         toolkit?, gate?, mayStaySilent? } + ctxOf()
-    agents/roomie.ts    ONE agent, built once. instructions(requestContext) = persona + members (roles, pending) +
-                        Group time zone + Pending / Onboarding / Gate blocks; tools = toolsFor(toolkit, enabled Toolkits)
+    agents/roomie.ts    ONE agent, built once. instructions(requestContext) = persona + what's on/off + each enabled
+                        manifest's persona fragment + members (roles, pending) + Group time zone + Pending / Onboarding
+                        (lists the presets) / Gate blocks; tools = toolsFor(toolkit, enabled Toolkits)
     memory.ts           Memory: thread group-<id>, resource <groupId>; last 30, semantic recall, working memory
     forget.ts           memory cleanup for "forget me" (a Member's lines + note) and "delete group data" (the thread)
-    gate/               policy.ts (pure: decideGate, Chattiness thresholds, follow-up window, parseSilent), jev.ts, index.ts
+    gate/               policy.ts (pure: decideGate, Chattiness thresholds, follow-up window, parseSilent), jev.ts
+                        (questionsFor(enabled): the toolkit choices are the enabled manifests' gate criteria + core + none),
+                        index.ts
     scorers/            relevancy (built-in) + brevity-tone (custom), Haiku judge, 10% of live replies
     evals/scenarios.ts  the fixed scenario set for `npm run evals`
-  toolkits/
-    registry.ts         TOOLKITS + toolsFor(gateToolkit, enabled). Wraps every tool so a NotAllowedError comes back as
-                        { notAllowed, reason, message } text for Roomie to relay
-    types.ts            TOOLKIT_IDS, ToolkitManifest { id, name, description, tools }
+  toolkits/             docs/toolkits.md: how to add one
+    types.ts            the contract: ToolkitManifest (summary, longDescription, icon, category, tags, defaultOn,
+                        requires, worksWith, status, gate { criterion, examples }, persona, abilities, dashboard { nav,
+                        pages }) and Toolkit (+ tools, dashboard { home, settings, mood } lazy refs, onEnable/onDisable)
+    define.ts           defineManifest (keeps the id literal), defineToolkit (manifest + server parts)
+    manifests.ts        client-safe: MANIFESTS -> ToolkitId / TOOLKIT_IDS, CATALOG (+ coming-soon), manifestOf, findManifest
+    coming-soon.ts      manifest-only stubs: research, pdf, trips, stickers, household-admin
+    presets.ts          purpose -> Toolkits (roommates/family: all four; trip/other: splitting+groceries; friends/work: splitting)
+    registry.ts         server: TOOLKITS (BY_ID satisfies Record<ToolkitId, Toolkit>) + toolsFor(gateToolkit, enabled),
+                        toolkitById. Wraps every tool so a NotAllowedError comes back as { notAllowed, reason, message }
+    catalog.ts          server: allToolkits, enabledFor(groupId), isEnabled, toolkitStates (React-cached per request)
     util.ts             ctxOf, toCents, memberIdByName (opts.includePending), dashboardLinks
-    core/               members (list, list_pending, approve/decline/promote, set_payment_handle, forget_me),
-                        settings (set_group_settings, toggle_toolkit), dashboard (get_dashboard_link), reminders, report
-    splitting/ groceries/ chores/ upkeep/   manifest.ts + the tools (groceries: cart.ts + recipes.ts)
+    core/               manifest.ts + server.ts; members (list, list_pending, approve/decline/promote, set_payment_handle,
+                        forget_me), settings (set_group_settings, toggle_toolkit, list_toolkits), dashboard
+                        (get_dashboard_link), reminders, report
+    splitting/ groceries/ chores/ upkeep/   manifest.ts + server.ts + the tools (+ dashboard.tsx: Home/Settings sections)
   integrations/         composio.ts (client + cached key health), splitwise.ts (SplitwiseClient: ComposioSplitwise and
                         FakeSplitwise, splitwiseClient(), splitwiseAvailability())
   channels/types.ts     IncomingMessage { channel, chatExternalId, userExternalId, userName, text, imageUrl?, isPrivate?,
@@ -108,9 +124,14 @@ src/
     layout.tsx globals.css   Figtree, theme script, toasts; the design tokens
     page.tsx            signed out: sign-in; signed in: last/first Group, or "No groups yet"
     claim/[token]/      Claim link: sign in, consume, link the Account, -> /g/<id>
-    g/[groupId]/        layout (session + GroupProvider + shell; Pending members see a waiting screen), Home, money
-                        (+ ?tab=, [expenseId]), cart (+ ?recipe=; Recipes and Pantry in _components/recipes.tsx), chores, members, settings; actions.ts = every server action;
-                        _components/data.ts = services -> screen shapes; _components/screens/*
+    g/[groupId]/        layout (session + GroupProvider + shell; Pending members see a waiting screen; groupView builds the
+                        nav, overflow and owned pages from the enabled manifests once), Home (doorway + Toolkits' Home
+                        sections + narration), money (+ ?tab=, [expenseId]), cart (+ ?recipe=; Recipes and Pantry in
+                        _components/recipes.tsx), chores, members, settings (core + Toolkits' settings sections),
+                        toolkits (the Toolkits page: search, category chips, cards, detail sheet; ?open=<id>);
+                        actions.ts = every server action; _components/data.ts = services -> screen shapes;
+                        _components/sections.tsx = the Toolkits' Home/Settings sections and mood for a request;
+                        _components/toolkit-off.tsx = the off state of a page whose Toolkits are all off; _components/screens/*
                         settings/splitwise/callback = Composio's return URL (route handler)
     design/             the design-system page (dev only unless SHOW_DESIGN_PAGE=1)
     api/auth/[...path]  Neon Auth proxy; api/chat = Ask Roomie (session Member, 401/403); api/receipts = Scan receipt;
@@ -157,7 +178,7 @@ spikes/                 throwaway experiments (WhatsApp/Baileys)
 - **Instacart** (ADR 0004): `InstacartClient` with `ComposioInstacart` (`tools.execute("INSTACART_CREATE_SHOPPING_LIST_PAGE" | "INSTACART_CREATE_RECIPE_PAGE", { userId: "roomie-app", arguments })`, Instacart IDP body shapes, `products_link_url` found at any depth) and `FakeInstacart` (deterministic `https://instacart.example/...`). Instacart is a "no auth" Composio toolkit: no auth config, no connection, only `COMPOSIO_API_KEY`. `INSTACART_FAKE=1` / `setInstacartClient()` pick the fake; dev-chat switches by itself when the key is missing or rejected; failures are `InstacartUnavailableError`, relayed as text. The dashboard button is enabled only for the real client with a healthy key. Recipe links are cached on the Recipe by `recipeKey` (title, servings, ingredients).
 ## The Gate (when Roomie speaks)
 
-`mastra/gate/policy.ts`, ADR 0002. In order: hard trigger (voice note, reply to Roomie, @mention, the word "roomie", the dashboard) always speaks; Jev error or > 2.5 s means hard triggers only; p(act) over the Group's threshold acts; in the follow-up window (3 min / 3 messages after Roomie spoke) the agent decides with permission to answer `[silent]`, unless Jev is sure it's chatter; p(clarify) over its threshold asks. Thresholds (act / clarify): quiet .9/.8, **normal .75/.6** (default), chatty .6/.45. If nobody addressed Roomie and it's not a follow-up, the agent is told to ask before logging anything. Jev's toolkit narrows the agent's tools only at p ≥ 0.6. While Onboarding is open (`groups.onboarded_at` null), an active Member's message in the follow-up window counts as a hard trigger, so "roommates, USD, Chicago" reaches `set_group_settings`.
+`mastra/gate/policy.ts`, ADR 0002. In order: hard trigger (voice note, reply to Roomie, @mention, the word "roomie", the dashboard) always speaks; Jev error or > 2.5 s means hard triggers only; p(act) over the Group's threshold acts; in the follow-up window (3 min / 3 messages after Roomie spoke) the agent decides with permission to answer `[silent]`, unless Jev is sure it's chatter; p(clarify) over its threshold asks. Thresholds (act / clarify): quiet .9/.8, **normal .75/.6** (default), chatty .6/.45. If nobody addressed Roomie and it's not a follow-up, the agent is told to ask before logging anything. Jev's toolkit narrows the agent's tools only at p ≥ 0.6, and Jev is only offered the Group's enabled Toolkits (plus `core`: reminders, members, settings, what Roomie can do; and `none`). While Onboarding is open (`groups.onboarded_at` null), an active Member's message in the follow-up window counts as a hard trigger, so "roommates, USD, Chicago" reaches `set_group_settings`.
 
 ## Conventions
 
@@ -166,7 +187,8 @@ spikes/                 throwaway experiments (WhatsApp/Baileys)
 - Tools resolve names to ids with `memberIdByName()` and throw a helpful error on unknown names (the model then asks). Money tools return amounts as ready-to-say strings ("$22.50", `expenseSummary`), so the model never formats cents.
 - Tools get the Group and sender from `ctxOf(context)` (the RequestContext), never from closures.
 - Tools attach buttons by returning `links: [{ text, url }]` (see `cart_add` / `dashboardLinks()`); the pipeline collects them from every tool result into `Outgoing.buttons`. Never paste URLs. Buttons need an absolute `APP_URL`.
-- A new Toolkit = a folder with `manifest.ts` + tools, added to `TOOLKITS` in `toolkits/registry.ts`, `TOOLKIT_IDS`, and the Gate's toolkit choice in `gate/jev.ts` + `GATE_TOOLKITS`.
+- A new Toolkit = a folder with `manifest.ts` + `server.ts` + tools, one line in `toolkits/manifests.ts` and one in `toolkits/registry.ts` (docs/toolkits.md has the checklist). Its Gate criterion, persona lines, nav tab, Home and Settings sections come from the manifest; never add them to the shell, `gate/jev.ts` or the persona.
+- The Toolkits page (`/g/<id>/toolkits`) is the one place Toolkits are switched in the UI; Settings only summarizes and links there. In UI text it's "Toolkits", not a store or marketplace (Roomie is a groupmate).
 - Dashboard pattern: a page (server) calls `currentMember(groupId)`, reads services through `_components/data.ts` and renders a client screen; writes are server actions in `g/[groupId]/actions.ts` that call a service with the session's Ctx and `revalidatePath`. They return `{ ok, error, status }`, so screens toast errors. Features of step 7 stay visible but disabled with a "Coming soon" hint.
 - Schema changes: edit `src/db/schema.ts`, `npm run db:generate`, commit the SQL in `drizzle/`, `npm run db:migrate`. Never `drizzle-kit push`.
 - Roomie's replies are 1 to 3 short lines unless someone asks for more. The trigger word is "roomie".
