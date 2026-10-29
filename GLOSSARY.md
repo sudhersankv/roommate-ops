@@ -44,6 +44,14 @@ _Avoid_: Magic link, invite link
 The short conversation after Roomie joins a Chat in which it creates the Group, learns what the Group is for, and proposes Toolkits.
 _Avoid_: Setup, profiling (in user-facing text)
 
+**Beta request**:
+Someone asking, through the form on the landing page, for Roomie in their WhatsApp group while WhatsApp is in beta. Not a Group or a Member yet: an operator follows up by hand and marks it contacted, onboarded or declined.
+_Avoid_: Lead, signup, waitlist entry
+
+**Operator**:
+One of the people who run a Roomie deployment (`ROOMIE_OPERATOR_EMAILS`): links the WhatsApp number and works the Beta requests. Not anyone's Admin.
+_Avoid_: Superuser, staff, owner
+
 **LID**:
 The opaque id WhatsApp uses for a person in many groups (`…@lid`) instead of their phone number. Roomie keeps a Member under their phone number when it can find it, and under the LID only when it can't.
 _Avoid_: User id, WhatsApp id (ambiguous)

@@ -150,6 +150,13 @@ Each step gets its own branch and PR, and you test locally before it's merged. S
 - **Done when:** the chores and upkeep scenarios pass in evals and show up on the dashboard.
   - [x] evals ([baseline](./evals-baseline.md)) · [x] the dashboard (`design/screens/real-chores-*.jpeg`) · [x] the dev-chat walkthrough ([docs/dev-chat.md](./dev-chat.md)) · [ ] the same in a real Telegram group ([docs/first-group-test.md](./first-group-test.md))
 
+### Landing page and WhatsApp beta (`feat/landing`) ✅ done
+- [x] `/` signed out is the public landing page ([docs/landing.md](./landing.md)): hero with Add to Telegram (`t.me/imroomiebot?startgroup=true`) and Join the WhatsApp beta, fake chats per Toolkit and per vibe (copy from `ARCHETYPES`), how it works, the dashboard in phones, the six vibes, the footer; Open Graph image `public/landing/og.png`. Signed in, `/` is unchanged.
+- [x] Sign-in moved to `/signin` (Google, paste a Claim link, `auth_error`); the proxy sends signed-out dashboard visitors to `/signin?next=<path>` and `/signin` continues there after Google. `/admin/*` is a 404 for anyone but a signed-in operator.
+- [x] The WhatsApp beta form -> `beta_requests` (migration 0007; honeypot, zod, 3 per IP per hour, IP stored only as an HMAC) -> a Telegram DM to the operator (or a `[beta]` log line) -> `/admin/beta` with a status per request. `/privacy`.
+- **Done when:** a request from the form lands in the table, the operator hears about it and can mark it contacted.
+  - [x] form -> row -> `[beta]` fallback log, in a local smoke test (`design/screens/landing-*.jpeg`) · [ ] the Telegram DM on Fly (needs `ROOMIE_OPERATOR_EMAILS` and the operator's claimed Telegram Member who pressed Start)
+
 ## Parked (v2 / v3)
 
 - **v2:** Research (web search), PDF generation (itineraries, receipts, summaries), and Trip planning, which builds on Research, PDF and Splitting.

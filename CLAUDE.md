@@ -2,7 +2,7 @@
 
 Roomie is an AI groupmate that lives in a group chat and on a per-group dashboard. It splits costs, keeps the shared grocery cart, tracks chores and upkeep, and sets reminders. Persona: the group chat's pet. Each Group's Roomie takes its personality from the group (a vibe, a name, quirks, and the slang it slowly picks up); always brief and exact about facts (see "Personality" below).
 
-**Read first:** the rebuild plan is in `docs/plan.md`, the vocabulary in `GLOSSARY.md`, and the decisions in `docs/adr/`. They are the spec; where they conflict with this file, they win. Steps 1 (rename), 2 (WhatsApp, waiting for its live test), 2b (Telegram), 3 (Mastra agent), 4 (identity, Groups, dashboard), 5 (Splitting), 6 (Groceries) and 7 (Chores, Upkeep, reminders, Group time zones) are done; the code below is what exists today. Before a real Telegram group: `npm run telegram:check`, then `docs/first-group-test.md`; WhatsApp: `docs/whatsapp.md` (link the number at `/admin/whatsapp`). `npm run dev-chat` simulates a group chat without any app.
+**Read first:** the rebuild plan is in `docs/plan.md`, the vocabulary in `GLOSSARY.md`, and the decisions in `docs/adr/`. They are the spec; where they conflict with this file, they win. Steps 1 (rename), 2 (WhatsApp, waiting for its live test), 2b (Telegram), 3 (Mastra agent), 4 (identity, Groups, dashboard), 5 (Splitting), 6 (Groceries) and 7 (Chores, Upkeep, reminders, Group time zones) are done, plus the public landing page with the WhatsApp beta form (`docs/landing.md`); the code below is what exists today. Before a real Telegram group: `npm run telegram:check`, then `docs/first-group-test.md`; WhatsApp: `docs/whatsapp.md` (link the number at `/admin/whatsapp`). `npm run dev-chat` simulates a group chat without any app.
 
 Agent skills for this repo live in `.agents/skills/`.
 
@@ -21,8 +21,10 @@ src/
                         settlements, splitwise_links, expense/settlement_external_refs, outbox_jobs, recipes, cart_items,
                         cart_checkouts, chores,
                         chore_logs, reminders, maintenance), all keyed by group_id; wa_sessions (the WhatsApp login,
-                        BufferJSON rows "creds" / "<type>-<id>") and wa_contacts (LID -> phone JID + name)
-  db/enums.ts           categories, split methods, recurrences, sources (no drizzle import: client code uses them)
+                        BufferJSON rows "creds" / "<type>-<id>") and wa_contacts (LID -> phone JID + name); beta_requests
+                        (the landing page's WhatsApp beta form, not tied to a Group)
+  db/enums.ts           categories, split methods, recurrences, sources, Group purposes, beta sizes / statuses (no drizzle
+                        import: client code uses them)
   db/index.ts           db client
   services/             (ctx: Ctx, input) => result. Source of truth. index.ts re-exports as namespaces.
     types.ts            Ctx { groupId, memberId, source }, GroupCtx { groupId }, dollars()
@@ -66,6 +68,9 @@ src/
     personality.ts      groups.personality: getPersonality, updatePersonality (Admin), saveLearned (style job), resetLearned
                         (Admin), groupMood (worried / sleepy / happy / calm), allSquare
     pet.ts              say-once pet moments on pet_moments (MomentStore): dayGreeting, claimWins
+    beta.ts             Beta requests (docs/landing.md): submitBetaRequest (honeypot, zod, 3 per IP-hash per hour, store,
+                        then notifyOperator: Telegram DM to the first ROOMIE_OPERATOR_EMAILS Account's Telegram Member, else
+                        a "[beta]" log line); list / setBetaStatus / delete take the operator (NotAllowedError otherwise)
   onboarding.ts         onGroupJoined (Group + Chat + Members, adder = Admin, intro + setup questions),
                         onParticipantJoined (Pending + "approve X?") and onUnknownSender (Pending, or active inside a
                         Channel's roster grace, ADR 0010). Called by Channel adapters (ADR 0008)
@@ -158,9 +163,13 @@ src/
   jobs/style-note.ts    every 50 chat lines: Haiku proposes style candidates, style-stats counts them into
                         groups.personality.learned (setCandidateReader() for tests)
   proxy.ts              THE middleware (a root proxy.ts is ignored because the app is under src/): Neon Auth guard on
-                        /g/* and /admin/*; a stray neon_auth_session_verifier on / or /claim/* -> /auth/callback (dev bypass skips it)
-  lib/auth/             server.ts (createNeonAuth, sameSite lax), client.ts, oauth-paths.ts (client-safe URL helpers),
-                        oauth-return.ts (the verifier exchange behind /auth/callback), dev.ts (DEV_AUTH_EMAIL bypass)
+                        /g/* (-> /signin?next=<path>); /, /signin, /claim/* and /admin/* pass (admin pages 404 for
+                        non-operators, signed out included); a stray neon_auth_session_verifier on any matched page ->
+                        /auth/callback (dev bypass skips it)
+  lib/auth/             server.ts (createNeonAuth, sameSite lax), client.ts, oauth-paths.ts (client-safe URL helpers:
+                        SIGNIN_PATH, safeNext, afterSignIn, signInPath), oauth-return.ts (the verifier exchange behind
+                        /auth/callback), dev.ts (DEV_AUTH_EMAIL bypass)
+  lib/window-limit.ts   WindowLimiter: N tries per key per window, in memory (the beta form)
   instrumentation.ts    loads env, registers the Telegram Channel (outbound) when TELEGRAM_BOT_TOKEN is set; unless
                         DISABLE_SCHEDULER=1 (builds, tests), starts the WhatsApp socket (WHATSAPP_ENABLED=1) and the
                         scheduler once
@@ -171,7 +180,12 @@ src/
                         (client), -actions.ts (its own server actions)
   app/
     layout.tsx globals.css   Figtree, theme script, toasts; the design tokens
-    page.tsx            signed out: sign-in; signed in: last/first Group, or "No groups yet" (+ paste a Claim link)
+    page.tsx            signed out: the landing page (_landing/, docs/landing.md); signed in: last/first Group, or "No groups
+                        yet" (+ paste a Claim link)
+    _landing/           landing.tsx (sections), demos.ts (the fake chats; Roomie's lines from ARCHETYPES), chat.tsx
+                        (ChatWindow), landing.css (CSS-only motion), beta-form.tsx + actions.ts (the WhatsApp beta form)
+    signin/             the sign-in screen: Google + paste a Claim link + "Sign-in didn't complete"; ?next= afterwards
+    privacy/            the short privacy page (what's kept, per Group, forget me)
     claim/[token]/      Claim link: sign in, consume, link the Account, -> /g/<id>
     auth/callback/      Google sign-in return: verifier -> session cookies -> `next` (or `next?auth_error=<reason>`)
     g/[groupId]/        layout (session + GroupProvider + shell; Pending members see a waiting screen; groupView builds the
@@ -188,6 +202,7 @@ src/
                         api/telegram = Telegram webhook (401 without TELEGRAM_WEBHOOK_SECRET in the header);
                         api/admin/whatsapp = status JSON + start / request-pairing-code / logout (operators, else 404)
     admin/whatsapp/     the operator page: state, QR (refreshes every 5 s), pairing-code form, the linked number, Log out
+    admin/beta/         operators: the beta requests, newest first, status new / contacted / onboarded / declined
 drizzle/                generated migrations (0000 baseline drops the pre-step-4 tables)
 scripts/migrate.ts      npm run db:migrate
 scripts/seed.ts         demo Group "Apt 4B" (dev Chat dev-apt-4b); prints its id, a Claim link for Maya, a Studio requestContext
@@ -197,6 +212,7 @@ scripts/telegram-check.ts  npm run telegram:check: read-only readiness (getMe, p
                         Toolkits, DB + migrations, a 1-token Haiku call, Jev); non-zero with the fix when something's off
 scripts/whatsapp.ts     npm run whatsapp: holds the WhatsApp session from a terminal (QR in the terminal, --pair <digits>
                         for a pairing code, --timeout <s>); never while Fly holds it
+scripts/og-image.ts     rebuilds public/landing/og.png (the share image) from the brand SVGs with sharp
 scripts/evals.ts        runs the scenarios in throwaway Groups; --baseline writes docs/evals-baseline.md
 scripts/studio-presets.ts  writes .mastra-presets.json for Studio (run by mastra:dev)
 ```
@@ -283,8 +299,8 @@ scripts/studio-presets.ts  writes .mastra-presets.json for Studio (run by mastra
 - **grammY** (Telegram, `grammy` in `serverExternalPackages`): `new Bot(token, { botInfo })` skips getMe (the webhook builds botInfo from the token's id + `TELEGRAM_BOT_USERNAME`; tests do the same with a fake token). Polling: `bot.start({ allowed_updates, onStart })`; webhook: `webhookCallback(bot, "std/http", { secretToken })`. Outbound calls are captured in tests with `bot.api.config.use(transformer)`; `handleUpdate` + the adapter's `idle()` runs an update to the end. `my_chat_member` (Roomie added/removed) arrives without admin rights; `chat_member` doesn't, so we don't use it. Privacy mode must be off (BotFather `/setprivacy`) to see every group message. Groups upgraded to supergroups change id (`migrate_to_chat_id` -> `groups.moveChat`). Telegram refuses `localhost` URL buttons: the adapter sends those links as text.
 - **Baileys** (WhatsApp, `baileys` pinned at `7.0.0-rc14`, in `serverExternalPackages`; docs/whatsapp.md, ADR 0013): `makeWASocket({ version: fetchLatestBaileysVersion(), auth: { creds, keys: makeCacheableSignalKeyStore(keys) }, markOnlineOnConnect: false, syncFullHistory: false, getMessage, cachedGroupMetadata })`. Don't set `shouldSyncHistoryMessage: () => false`: Baileys warns it loses its initial LID mappings. Only `messages.upsert` type `notify` is live; joins arrive as `group-participants.update` (`add` with us in `participants`, `author`/`authorPn` = the adder) or `groups.upsert` (added at creation); participants are `{ id, phoneNumber?, lid? }`; messages carry `key.participantAlt` / `key.remoteJidAlt` (the other form of the sender's id); `sock.signalRepository.lidMapping.getPNForLID(lid)`. Close codes: 401 `loggedOut` (clear, wait for login), 440 `connectionReplaced` (another process: stop), 515 `restartRequired` (right after pairing: reconnect at once), 408 while showing a QR (nobody scanned: stop). `requestPairingCode(digits)` only after the first `qr` event. Tests drive `createWhatsApp` with a fake socket and an in-memory `AuthRows`. One process per session.
 - **Env (pacing):** `JOIN_DELAY_MS` (intro after joining, default 60000) and `REPLY_DELAY_MS` (pause after "typing", default 600-1800 ms random on Telegram, 1200-3200 ms on WhatsApp); tests pass 0.
-- **Env (WhatsApp, operators):** `WHATSAPP_ENABLED=1` (this process holds the socket), `WA_LOG` (Baileys' log level, default warn), `ROOMIE_OPERATOR_EMAILS` (comma-separated; `/admin/*` is a 404 for anyone else).
-- **Neon Auth** (Managed Better Auth, `@neondatabase/auth`): `lib/auth/server.ts` = `createNeonAuth({ baseUrl, cookies: { secret, sameSite: "lax" } })` (the default `strict` drops the challenge cookie on the cross-site return from Google, so sign-in silently loops); `app/api/auth/[...path]` = `auth.handler()`; browser `createAuthClient()` (no args). The sign-in flow: `GoogleButton` calls `signIn.social({ provider: "google", callbackURL: <origin>/auth/callback?next=<path> })`; `/api/auth/sign-in/social` sets the `session_challenge` cookie; after Google, Neon Auth redirects to the callbackURL with `neon_auth_session_verifier=…` (or `error=…`); `app/auth/callback` (`lib/auth/oauth-return.ts`) exchanges verifier + challenge for the session cookies via `get-session` and 303s to `next`, or to `next?auth_error=<reason>`, which `/` and `/claim` show as "Sign-in didn't complete" (`authErrorFrom`). Logs `[auth] oauth return ok|failed: <reason>`; the response carries `x-roomie-auth`. `src/proxy.ts` is the only middleware file (Next loads it from `src/`; a root `proxy.ts` is silently ignored): `auth.middleware({ loginUrl: "/" })` guards `/g/*`, and a verifier landing on `/` or `/claim/*` is bounced to `/auth/callback` (the SDK middleware never exchanges on its own loginUrl, and must not run on /claim). Header `x-roomie-proxy: guard|pass|oauth-return`. Behind Fly, `request.url` is `https://localhost:3000`: never build redirects from it (use relative Locations). Tests: `app/auth/callback/route.test.ts` (fake Neon Auth server). Email+password sign-up is also enabled on the dev Auth branch (Neon's default; the app has no UI for it). `auth.getSession()` returns `{ data }`, user is `data.user`. Users live in `neon_auth` (Neon owns it; never write there). Dev Google uses Neon's shared OAuth keys.
+- **Env (WhatsApp, operators):** `WHATSAPP_ENABLED=1` (this process holds the socket), `WA_LOG` (Baileys' log level, default warn), `ROOMIE_OPERATOR_EMAILS` (comma-separated; `/admin/*` is a 404 for anyone else, signed out included: operators sign in at `/signin?next=/admin/beta`; the first address also gets the beta-request DMs on Telegram).
+- **Neon Auth** (Managed Better Auth, `@neondatabase/auth`): `lib/auth/server.ts` = `createNeonAuth({ baseUrl, cookies: { secret, sameSite: "lax" } })` (the default `strict` drops the challenge cookie on the cross-site return from Google, so sign-in silently loops); `app/api/auth/[...path]` = `auth.handler()`; browser `createAuthClient()` (no args). The sign-in flow: `GoogleButton` calls `signIn.social({ provider: "google", callbackURL: <origin>/auth/callback?next=<path> })`; `/api/auth/sign-in/social` sets the `session_challenge` cookie; after Google, Neon Auth redirects to the callbackURL with `neon_auth_session_verifier=…` (or `error=…`); `app/auth/callback` (`lib/auth/oauth-return.ts`) exchanges verifier + challenge for the session cookies via `get-session` and 303s to `next`, or to `next?auth_error=<reason>`, which `/signin` and `/claim` show as "Sign-in didn't complete" (`authErrorFrom`; `/` forwards a stray `auth_error` to `/signin`). A missing or off-site `next` is `/signin`. Logs `[auth] oauth return ok|failed: <reason>`; the response carries `x-roomie-auth`. `src/proxy.ts` is the only middleware file (Next loads it from `src/`; a root `proxy.ts` is silently ignored): `auth.middleware({ loginUrl: "/signin" })` guards `/g/*` (its redirect is rewritten to `/signin?next=<path>`; `/signin`'s Google button returns to `/signin?next=…`, which continues to `next` once signed in), and a verifier landing on `/`, `/signin`, `/claim/*` or `/admin/*` is bounced to `/auth/callback` (the SDK middleware never exchanges on its own loginUrl, and must not run on the pages signed-out visitors see). Header `x-roomie-proxy: guard|pass|oauth-return`. Behind Fly, `request.url` is `https://localhost:3000`: never build redirects from it (use relative Locations). Tests: `app/auth/callback/route.test.ts` (fake Neon Auth server). Email+password sign-up is also enabled on the dev Auth branch (Neon's default; the app has no UI for it). `auth.getSession()` returns `{ data }`, user is `data.user`. Users live in `neon_auth` (Neon owns it; never write there). Dev Google uses Neon's shared OAuth keys.
 - **Composio** (`@composio/core`, TS SDK v3): `new Composio({ apiKey })`; direct execution (`tools.execute`) needs a toolkit version, so we pass `COMPOSIO_SPLITWISE_VERSION` or `dangerouslySkipVersionCheck`. `connectedAccounts.initiate` is retired for Composio-managed OAuth; use `connectedAccounts.link`. The Splitwise auth config comes from `COMPOSIO_SPLITWISE_AUTH_CONFIG_ID`, else the first Composio-managed one, else one is created (`authConfigs.create("splitwise", { type: "use_composio_managed_auth" })`) and its id logged for `.env`.
 - **Next 16:** Mastra, pg, Composio, grammY and Baileys are in `serverExternalPackages`. Read `node_modules/next/dist/docs/` before using Next APIs.
 
