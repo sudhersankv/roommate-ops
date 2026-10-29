@@ -45,7 +45,7 @@ export const choreTools = {
       const ctx = ctxOf(context);
       const ids = rotation ? await Promise.all(rotation.map((n) => (/^(me|myself|i)$/i.test(n.trim()) ? ctx.memberId : memberIdByName(ctx, n)))) : undefined;
       const r = await chores.addChore(ctx, { name, everyDays, rotation: ids });
-      return { ...r, ...dashboardLinks("Open chores", "chores") };
+      return { ...r, ...dashboardLinks("Open chores", `/g/${ctx.groupId}/chores`) };
     },
   }),
   chore_remove: createTool({

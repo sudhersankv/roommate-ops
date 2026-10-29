@@ -188,9 +188,12 @@ function ChoreList({ title, chores, onDone, onSkip, pending }: { title: string; 
               </ItemContent>
               <ItemActions className="flex-col items-end gap-1.5">
                 <div className="flex items-center gap-1">
-                  <span className="type-caption flex items-center gap-1 text-muted-foreground" aria-label={`${c.streaks[me.id] ?? 0} on time in a row for you`}>
+                  <span
+                    className="type-caption flex items-center gap-1 text-muted-foreground"
+                    aria-label={c.lastDone ? `${c.streak} on time in a row by ${name(c.lastDone.by) === "You" ? "you" : name(c.lastDone.by)}` : "No streak yet"}
+                  >
                     <FlameIcon className="size-3.5" aria-hidden />
-                    <span className="money">{c.streaks[me.id] ?? 0}</span>
+                    <span className="money">{c.streak}</span>
                   </span>
                   {mine || isAdmin ? (
                     <DropdownMenu>
@@ -236,7 +239,7 @@ function AddChore({ onDone }: { onDone: () => void }) {
   const [name, setName] = useState("")
   const [days, setDays] = useState("7")
   const [mode, setMode] = useState<"everyone" | "order">("everyone")
-  const [order, setOrder] = useState<string[]>(active.map((m) => m.id))
+  const [order, setOrder] = useState<string[]>(() => [me.id, ...active.map((m) => m.id).filter((id) => id !== me.id)])
   const [included, setIncluded] = useState<string[]>(active.map((m) => m.id))
   const [saving, start] = useTransition()
   const n = Number(days)

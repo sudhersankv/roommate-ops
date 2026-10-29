@@ -398,6 +398,7 @@ describe("Roomie tools against the dev DB", () => {
     assert.deepEqual(d.rotation, ["Sudhersan", "Ryan", "Alex"], "no Rotation = everyone");
     const t = await run("chore_add", { name: "Take out trash", everyDays: 3, rotation: ["Ryan", "Alex", "me"] });
     assert.deepEqual(t.rotation, ["Ryan", "Alex", "Sudhersan"]);
+    if (t.links) assert.match(t.links[0].url, new RegExp(`/g/${groupId}/chores$`), "the button opens this Group's Chores page");
     const again = await run("chore_add", { name: "take out trash", everyDays: 2 });
     assert.equal(again.created, false);
     assert.deepEqual(again.rotation, ["Ryan", "Alex", "Sudhersan"]);

@@ -24,7 +24,7 @@ export const upkeepTools = {
     }),
     execute: async ({ item, everyDays, usual }, context) => {
       const ctx = ctxOf(context);
-      if (usual) return { added: await upkeep.addDefaults(ctx), ...dashboardLinks("Open upkeep", "chores?tab=upkeep") };
+      if (usual) return { added: await upkeep.addDefaults(ctx), ...dashboardLinks("Open upkeep", `/g/${ctx.groupId}/chores?tab=upkeep`) };
       if (!item) throw new Error("Which item, and how often?");
       return upkeep.addMaintenance(ctx, { item, everyDays: everyDays ?? 0 });
     },

@@ -312,7 +312,7 @@ function ScheduleSettings({ schedule, choresOn }: { schedule: ScheduleView; chor
   return (
     <FieldSet>
       <FieldLegend className="type-heading">Roomie&apos;s own posts</FieldLegend>
-      <FieldDescription>At most one chores nudge a day, only when something is due, and one report a week. Times are {group.timezone.replace(/_/g, " ")} time.</FieldDescription>
+      <FieldDescription>At most one chores nudge a day, only when something is due, and one report a week. Times are {(group.timezone.split("/").pop() ?? group.timezone).replace(/_/g, " ")} time.</FieldDescription>
       <FieldGroup>
         <Field data-disabled={choresOn ? undefined : true}>
           <FieldLabel htmlFor="nudge-hour">Chores nudge</FieldLabel>
