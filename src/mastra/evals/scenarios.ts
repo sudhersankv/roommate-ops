@@ -1,7 +1,8 @@
 // The fixed scenario set for `npm run evals` (scripts/evals.ts). Each scenario runs through the real pipeline
 // (Gate + Sonnet + tools) in its own throwaway Group with Maya (Admin), Dev and Sam; the sender is Maya unless set.
 // A scenario passes when every check in `expect` holds, or every check in `alt` does (two acceptable behaviours).
-import { cart, chores, groups, members, money, pantry, receipts, recipes, reminders, upkeep } from "@/services";
+import { cart, chatlog, chores, groups, members, money, pantry, personality, receipts, recipes, reminders, upkeep } from "@/services";
+import { emptyLearned } from "@/lib/personality";
 import type { Ctx } from "@/services/types";
 
 export const EVAL_MEMBERS = ["Maya", "Dev", "Sam"] as const;
@@ -31,13 +32,25 @@ export type Expect = {
   asks?: boolean;
   /** Allow more than 3 lines. */
   long?: boolean;
+  /** At most this many non-empty lines. */
+  maxLines?: number;
+  /** Emoji count bounds for the reply. */
+  emoji?: { min?: number; max?: number };
+  /** Case-insensitive substrings (or regexes) the reply must NOT contain. */
+  excludes?: (string | RegExp)[];
+  /** No buttons on the reply. */
+  noButtons?: boolean;
+  /** The Gate's reason, e.g. "hard-trigger". */
+  gateReason?: string;
   /** State check after the turn; return an error message or null. */
   check?: (env: EvalEnv) => Promise<string | null>;
 };
 
 export type Scenario = {
   id: string;
-  area: "splitting" | "groceries" | "chores" | "upkeep" | "reminders" | "core" | "gate";
+  area: "splitting" | "groceries" | "chores" | "upkeep" | "reminders" | "core" | "gate" | "personality";
+  /** Leave the day's greeting unclaimed (the runner claims it for every other scenario so it doesn't add a line). */
+  greet?: boolean;
   /** Rows to create with services before the turn (no LLM). */
   seed?: (env: EvalEnv) => Promise<void>;
   /** Earlier chat turns through the pipeline; their replies aren't checked. */
@@ -60,6 +73,7 @@ export const READ_ONLY_TOOLS = new Set([
   "maintenance_status",
   "group_report",
   "splitwise_status",
+  "what_do_you_know_about_me",
   "updateWorkingMemory",
 ]);
 
@@ -560,5 +574,122 @@ export const SCENARIOS: Scenario[] = [
     turn: { text: "someone paid for something yesterday", from: "Sam" },
     expect: { asks: true, noTools: "actions" },
     alt: { speaks: false },
+  },
+
+  /* ---------- personality (ADR 0012) ---------- */
+  // The same message under three archetypes: brevity and the emoji policy follow the vibe.
+  {
+    id: "vibe-chill",
+    area: "personality",
+    turn: { text: "roomie I paid $60 for internet" },
+    expect: { tools: ["log_expense"], replyIncludes: ["60"], maxLines: 2, emoji: { max: 1 } },
+  },
+  {
+    id: "vibe-hype",
+    area: "personality",
+    seed: async (e) => void (await personality.updatePersonality(e.ctx, { base: "hype" })),
+    turn: { text: "roomie I paid $60 for internet" },
+    expect: { tools: ["log_expense"], replyIncludes: ["60"], emoji: { min: 1 } },
+  },
+  {
+    id: "vibe-deadpan",
+    area: "personality",
+    seed: async (e) => void (await personality.updatePersonality(e.ctx, { base: "deadpan" })),
+    turn: { text: "roomie I paid $60 for internet" },
+    expect: { tools: ["log_expense"], replyIncludes: ["60"], maxLines: 1, emoji: { max: 0 } },
+  },
+  {
+    id: "name-dino-triggers",
+    area: "personality",
+    seed: async (e) => void (await personality.updatePersonality(e.ctx, { name: "Dino" })),
+    turn: { text: "dino add oat milk for me", from: "Dev" },
+    expect: { gateReason: "hard-trigger", tools: ["cart_add"], check: async (e) => fail((await cart.listOpenItems(e.ctx)).some((i) => /oat milk/i.test(i.name)), "oat milk in the cart") },
+    alt: { gateReason: "hard-trigger", asks: true, noTools: "actions" },
+  },
+  {
+    id: "nickname-not-before-3",
+    area: "personality",
+    seed: async (e) => {
+      await internet(e);
+      await personality.saveLearned(e.ctx.groupId, { ...emptyLearned(), messagesSeen: 90, confidence: 0.42, nicknames: [{ nickname: "Devvy", member: "Dev", count: 2 }], tone: ["teasing"] });
+      await chatlog.logMessage(e.ctx.groupId, e.member.Maya, "devvy you still owe me lol");
+      await chatlog.logMessage(e.ctx.groupId, e.member.Sam, "classic devvy");
+    },
+    turn: { text: "roomie who owes what?", from: "Sam" },
+    expect: { tools: ["get_balances"], replyIncludes: ["Dev", "20"], excludes: [/devvy/i] },
+  },
+  {
+    id: "slang-low-confidence",
+    area: "personality",
+    seed: async (e) =>
+      void (await personality.saveLearned(e.ctx.groupId, { ...emptyLearned(), messagesSeen: 40, confidence: 0.22, slang: [{ phrase: "no cap", count: 12 }, { phrase: "bussin", count: 9 }], slangRate: 0.5 })),
+    turn: { text: "roomie I paid 30 for pizza no cap, it was bussin", from: "Dev" },
+    expect: { tools: ["log_expense"], excludes: [/\bno cap\b/i, /\bbussin\b/i] },
+  },
+  {
+    id: "slang-budget-spent",
+    area: "personality",
+    seed: async (e) => {
+      await personality.saveLearned(e.ctx.groupId, { ...emptyLearned(), messagesSeen: 110, confidence: 0.5, slang: [{ phrase: "no cap", count: 20 }, { phrase: "bussin", count: 9 }], slangRate: 0.4 });
+      await chatlog.logMessage(e.ctx.groupId, null, "logged, no cap. $10 each");
+    },
+    turn: { text: "roomie I paid 30 for pizza, it was bussin", from: "Dev" },
+    expect: { tools: ["log_expense"], excludes: [/\bno cap\b/i, /\bbussin\b/i] },
+  },
+  {
+    id: "greeting-first-message",
+    area: "personality",
+    greet: true,
+    turn: { text: "morning all", from: "Dev" },
+    expect: { maxLines: 1, noButtons: true, noTools: "actions" },
+  },
+  {
+    id: "greeting-once-a-day",
+    area: "personality",
+    greet: true,
+    setup: [{ text: "morning all", from: "Dev" }],
+    turn: { text: "ok see you at 7", from: "Sam" },
+    expect: { speaks: false },
+  },
+  {
+    id: "pet-command",
+    area: "personality",
+    turn: { text: "/pet", from: "Sam" },
+    expect: { gateReason: "hard-trigger", maxLines: 2, noTools: "actions" },
+  },
+  {
+    id: "remember-vegetarian",
+    area: "personality",
+    turn: { text: "roomie remember I'm vegetarian" },
+    expect: { tools: ["remember"], check: async (e) => fail(/vegetarian/i.test((await members.getNote(e.member.Maya)).diet ?? ""), "Maya's diet: vegetarian") },
+  },
+  {
+    id: "recipe-respects-diet",
+    area: "personality",
+    seed: async (e) => void (await members.rememberAboutMe(e.ctx, { diet: "vegetarian" })),
+    turn: { text: "roomie write me a dinner recipe for tonight, just for me" },
+    expect: {
+      tools: ["recipe_draft"],
+      long: true,
+      check: async (e) => {
+        const [r] = await recipes.listRecipes(e.ctx, 1);
+        const meat = (r?.ingredients ?? []).filter((i) => /\b(chicken|beef|pork|bacon|meat|steak|fish|salmon|tuna|shrimp|turkey|sausage|ham|lamb|anchov)/i.test(i.name));
+        return fail(!!r && meat.length === 0, `a Recipe with no meat, got ${r ? meat.map((i) => i.name).join(", ") || "none" : "no recipe"}`);
+      },
+    },
+  },
+  {
+    id: "what-do-you-know-about-me",
+    area: "personality",
+    seed: async (e) => void (await members.rememberAboutMe(e.as("Dev"), { diet: "vegan", caresAbout: "the plant" })),
+    turn: { text: "roomie what do you know about me?", from: "Dev" },
+    expect: { tools: ["what_do_you_know_about_me"], replyIncludes: ["vegan"] },
+  },
+  {
+    id: "what-do-you-know-about-others",
+    area: "personality",
+    seed: async (e) => void (await members.rememberAboutMe(e.as("Dev"), { diet: "vegan", allergies: "peanuts" })),
+    turn: { text: "roomie what do you know about Dev?", from: "Sam" },
+    expect: { excludes: [/vegan/i, /peanut/i] },
   },
 ];

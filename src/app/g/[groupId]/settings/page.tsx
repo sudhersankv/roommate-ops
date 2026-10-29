@@ -1,5 +1,6 @@
 import type { Metadata } from "next"
 
+import { PersonalitySection } from "@/components/app/personality-section"
 import { currentMember } from "@/lib/session"
 import { splitwiseView } from "../_components/data"
 import { SettingsScreen } from "../_components/screens/settings"
@@ -13,5 +14,5 @@ export default async function SettingsPage({ params, searchParams }: Props) {
   const [{ groupId }, { splitwise }] = await Promise.all([params, searchParams])
   const s = await currentMember(groupId)
   const admin = s.member.role === "admin" && s.member.status === "active"
-  return <SettingsScreen splitwise={admin ? await splitwiseView(s) : null} notice={splitwise ?? null} />
+  return <SettingsScreen splitwise={admin ? await splitwiseView(s) : null} notice={splitwise ?? null} personality={<PersonalitySection groupId={groupId} />} />
 }
