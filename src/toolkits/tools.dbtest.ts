@@ -23,7 +23,7 @@ import type { CartItem } from "@/services/cart";
 import { devUserId } from "@/channels/dev";
 import { onGroupJoined, onParticipantJoined } from "@/onboarding";
 import { deleteGroup } from "@/services/groups";
-import { cart, members, money, receipts, recipes, recurring, splitwise } from "@/services";
+import { cart, chatlog, members, money, receipts, recipes, recurring, splitwise, toolkits as toolkitsSvc } from "@/services";
 import { composioHealth } from "@/integrations/composio";
 import { FakeSplitwise, setSplitwiseClient } from "@/integrations/splitwise";
 import { ComposioInstacart, FakeInstacart, setInstacartClient } from "@/integrations/instacart";
@@ -882,6 +882,38 @@ describe("Roomie tools against the dev DB", () => {
     const t = await run("toggle_toolkit", { toolkit: "chores", enabled: true }, contextFor(member.Ryan, "Ryan", "admin", "active"));
     assert.ok(t.toolkits.includes("chores"));
     assert.equal((await run("toggle_toolkit", { toolkit: "upkeep", enabled: true }, alex)).reason, "admin-only");
+  });
+
+  test("toggle_toolkit goes through the catalog (names, coming soon, unknown); list_toolkits; a dashboard switch-on posts one line", async () => {
+    const alex = contextFor(member.Alex, "Alex", "member", "active");
+    const off = await run("toggle_toolkit", { toolkit: "Groceries", enabled: false });
+    assert.equal(off.enabled, false);
+    assert.ok(!off.toolkits.includes("groceries"));
+    assert.equal((await run("toggle_toolkit", { toolkit: "groceries", enabled: true }, alex)).reason, "admin-only", "members are refused kindly");
+    const soon = await run("toggle_toolkit", { toolkit: "research", enabled: true });
+    assert.equal(soon.notAvailable, true);
+    assert.equal(soon.reason, "coming-soon");
+    assert.match(soon.message, /isn't ready yet/);
+    assert.equal((await run("toggle_toolkit", { toolkit: "spaceships", enabled: true })).reason, "unknown");
+
+    const list = await run("list_toolkits", {}, alex);
+    assert.ok(list.on.some((t: { name: string; try?: string[] }) => t.name === "Splitting" && t.try?.length));
+    assert.ok(list.off.some((t: { name: string }) => t.name === "Groceries"));
+    assert.ok(list.comingSoon.includes("Research") && list.comingSoon.includes("Stickers"));
+    assert.ok(!list.on.concat(list.off).some((t: { name: string }) => t.name === "Core"), "core isn't a switch");
+
+    const ui = { groupId, memberId: member.Sudhersan, source: "ui" as const };
+    const said = async () => (await chatlog.roomieLines(groupId, 50)).filter((l) => l.text === `Groceries is on. Try: "tacos for 5 friday"`).length;
+    const on = await toolkitsSvc.setToolkit(ui, { toolkit: "groceries", enabled: true });
+    assert.deepEqual([on.changed, on.enabled, on.tryThis], [true, true, "tacos for 5 friday"]);
+    assert.equal(await said(), 1, "Roomie says it once in the chat");
+    await toolkitsSvc.setToolkit(ui, { toolkit: "groceries", enabled: false });
+    await toolkitsSvc.setToolkit(ui, { toolkit: "groceries", enabled: true });
+    assert.equal(await said(), 1, "off and on again within the cooldown: no second line");
+    const again = await toolkitsSvc.setToolkit(ui, { toolkit: "groceries", enabled: true });
+    assert.equal(again.changed, false, "already on: no change, no hook, no Activity");
+    const rows = await db.select().from(schema.activity).where(and(eq(schema.activity.groupId, groupId), eq(schema.activity.kind, "toolkit.toggled")));
+    assert.ok(rows.some((r) => r.summary === "switched Groceries on"));
   });
 
   test("get_dashboard_link: a Claim link goes out privately (reused while live); with an Account, the dashboard", async () => {

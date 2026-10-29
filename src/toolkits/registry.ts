@@ -1,17 +1,25 @@
-// The list of Toolkits. The agent's tools for a request are core + the Group's enabled Toolkits, narrowed to the one
-// the Gate picked (ADR 0005).
+// The Toolkits' server entries (tools, dashboard sections, hooks). The agent's tools for a request are core + the
+// Group's enabled Toolkits, narrowed to the one the Gate picked (ADR 0005). Server-only: client code reads
+// manifests.ts (or views built from it), never this file.
 import type { GateToolkit } from "@/mastra/context";
 import { isNotAllowed } from "@/services/authz";
-import { core } from "./core/manifest";
-import { splitting } from "./splitting/manifest";
-import { groceries } from "./groceries/manifest";
-import { chores } from "./chores/manifest";
-import { upkeep } from "./upkeep/manifest";
-import { TOOLKIT_IDS, type AnyTool, type ToolkitId } from "./types";
+import { core } from "./core/server";
+import { splitting } from "./splitting/server";
+import { groceries } from "./groceries/server";
+import { chores } from "./chores/server";
+import { upkeep } from "./upkeep/server";
+import { TOOLKIT_IDS, type ToolkitId } from "./manifests";
+import type { AnyTool, Toolkit } from "./types";
 
 export { core };
-export const TOOLKITS = [splitting, groceries, chores, upkeep] as const;
+
+/** One entry per id in manifests.ts; a missing or extra one is a type error. */
+const BY_ID = { splitting, groceries, chores, upkeep } satisfies Record<ToolkitId, Toolkit>;
+
+export const TOOLKITS: readonly Toolkit<ToolkitId>[] = TOOLKIT_IDS.map((id) => BY_ID[id] as Toolkit<ToolkitId>);
 export const ALL_TOOLKIT_IDS: ToolkitId[] = [...TOOLKIT_IDS];
+
+export const toolkitById = (id: string): Toolkit | undefined => (id === "core" ? core : TOOLKITS.find((t) => t.id === id));
 
 const RELAYED = Symbol("relaysNotAllowed");
 
@@ -39,7 +47,7 @@ for (const tk of [core, ...TOOLKITS]) for (const t of Object.values(tk.tools)) r
 
 /**
  * Tools for one request. `toolkit` from the Gate narrows to that Toolkit (plus core); unset or "none" gives every
- * enabled Toolkit. "reminders" is core, so it narrows to core only. A disabled Toolkit is never returned.
+ * enabled Toolkit; "core" gives core only. A disabled Toolkit is never returned.
  */
 export function toolsFor(toolkit?: GateToolkit, enabled: readonly ToolkitId[] = ALL_TOOLKIT_IDS): Record<string, AnyTool> {
   const on = TOOLKITS.filter((t) => enabled.includes(t.id));
@@ -48,4 +56,4 @@ export function toolsFor(toolkit?: GateToolkit, enabled: readonly ToolkitId[] = 
 }
 
 /** Every tool in the registry, keyed by id, with each tool's own types. Used by tests. */
-export const allTools = () => ({ ...core.tools, ...splitting.tools, ...groceries.tools, ...chores.tools, ...upkeep.tools });
+export const allTools = () => ({ ...core.tools, ...BY_ID.splitting.tools, ...BY_ID.groceries.tools, ...BY_ID.chores.tools, ...BY_ID.upkeep.tools });

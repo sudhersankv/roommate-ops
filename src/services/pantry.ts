@@ -19,6 +19,28 @@ export async function getPantry(ctx: GroupCtx): Promise<string[]> {
   return Array.isArray(list) ? list.filter((x): x is string => typeof x === "string") : [];
 }
 
+export const STARTER_PANTRY = ["oil", "pepper", "salt"];
+
+/**
+ * Groceries' onEnable: a starter Pantry, only for a Group that never had one (an emptied Pantry stays empty).
+ * Not a Member's edit, so no Activity row.
+ */
+export async function seedPantry(ctx: GroupCtx, items: string[] = STARTER_PANTRY): Promise<void> {
+  const [row] = await db
+    .select({ settings: groupToolkits.settings })
+    .from(groupToolkits)
+    .where(and(eq(groupToolkits.groupId, ctx.groupId), eq(groupToolkits.toolkit, "groceries")));
+  if (row && (row.settings as { pantry?: unknown }).pantry !== undefined) return;
+  const value = { pantry: items.map(pantryName).sort() };
+  await db
+    .insert(groupToolkits)
+    .values({ groupId: ctx.groupId, toolkit: "groceries", enabled: true, settings: value })
+    .onConflictDoUpdate({
+      target: [groupToolkits.groupId, groupToolkits.toolkit],
+      set: { settings: sql`${groupToolkits.settings} || ${JSON.stringify(value)}::jsonb` },
+    });
+}
+
 /** Add and/or remove Pantry items (names are normalized; duplicates ignored). Returns the new Pantry, A to Z. */
 export async function updatePantry(ctx: Ctx, input: { add?: string[]; remove?: string[] }): Promise<string[]> {
   await requireActive(ctx);

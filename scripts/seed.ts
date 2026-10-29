@@ -12,6 +12,7 @@ import { addDays, localDay } from "../src/lib/dates";
 import { guessCategory } from "../src/services/categories";
 import { claims, groups, money, chores as choresSvc, pantry as pantrySvc, recipes as recipesSvc, upkeep as upkeepSvc } from "../src/services";
 import { dollars } from "../src/services/types";
+import { presetFor } from "../src/toolkits/presets";
 import { PRESETS_FILE, writeStudioPresets } from "./lib/presets";
 
 const RESET = process.argv.includes("--reset");
@@ -95,7 +96,7 @@ const [group] = await db
   .returning();
 const gid = group.id;
 await db.insert(schema.chats).values({ groupId: gid, channel: "dev", externalId: CHAT, title: NAME, createdAt: ago(26) });
-await groups.initToolkits(gid);
+await groups.initToolkits(gid, presetFor("roommates")); // the roommates preset (toolkits/presets.ts)
 
 const person = async (displayName: string, role: "admin" | "member", status: "active" | "pending", joinedDaysAgo: number) => {
   const [m] = await db

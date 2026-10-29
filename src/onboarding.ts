@@ -15,6 +15,8 @@ import { record } from "@/services/activity";
 import { logMessage } from "@/services/chatlog";
 import { chatFor, initToolkits, type Chat, type Group } from "@/services/groups";
 import { addMember, admins, memberByChannelUser, type Member } from "@/services/members";
+import { manifestOf } from "@/toolkits/manifests";
+import { presetFor } from "@/toolkits/presets";
 
 export type ChatRef = { channel: ChannelName; externalId: string; title?: string };
 
@@ -29,7 +31,7 @@ const joinNames = (n: string[]) => (n.length <= 1 ? n.join("") : `${n.slice(0, -
 export function introMessage(adderName: string, opts: { dmHandle?: string } = {}): string {
   return [
     `Hey all, I'm Roomie 👋 ${adderName} added me, so ${adderName}'s my admin. I split costs, keep a shared Cart and track chores.`,
-    `Quick setup, one reply is plenty: what's this group for (roommates, a trip, friends, family, work), which currency, and which time zone? Just "roommates" works too: I'll go with USD, Chicago time and switch everything on.`,
+    `Quick setup, one reply is plenty: what's this group for (roommates, a trip, friends, family, work), which currency, and which time zone? Just "roommates" works too: I'll go with USD, Chicago time and switch on ${joinNames(presetFor("roommates").map((id) => manifestOf(id)!.name))} ("also ..." or "no ..." changes that).`,
     ...(opts.dmHandle ? [`One more thing: tap @${opts.dmHandle} and press Start, so I can DM you your dashboard link later.`] : []),
   ].join("\n");
 }

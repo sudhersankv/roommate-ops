@@ -1,0 +1,71 @@
+// Toolkits on the list but not built yet: manifest-only, shown in the marketplace as "Coming soon" and refused
+// kindly by toggle_toolkit. Building one = move it into its own folder with tools and add it to manifests.ts.
+import { defineManifest } from "./define";
+
+const soon = { defaultOn: false, status: "coming-soon" as const };
+
+export const COMING_SOON = [
+  defineManifest({
+    ...soon,
+    id: "research",
+    name: "Research",
+    description: "Looks things up on the web for the group.",
+    summary: "Roomie looks things up: prices, opening hours, which one to buy.",
+    longDescription: "Ask the group question nobody wants to google (\"which air purifier under $150?\") and Roomie comes back with a short, sourced answer in the chat.",
+    icon: "Search",
+    category: "planning",
+    tags: ["web", "search", "compare"],
+    requires: { integrations: ["composio"] },
+    gate: { criterion: "Looking something up on the web: prices, reviews, opening hours, comparisons.", examples: ["which air purifier under $150?", "is the taco place open sunday?"] },
+  }),
+  defineManifest({
+    ...soon,
+    id: "pdf",
+    name: "PDFs",
+    description: "Reads and makes PDFs: itineraries, leases, bills, summaries.",
+    summary: "Reads leases, bills and itineraries; makes summaries you can share.",
+    longDescription: "Drop a PDF in the chat and Roomie reads it: the lease's notice period, the bill's due date, the itinerary's check-in time. It can also turn a plan or a month of Expenses into a tidy PDF.",
+    icon: "FileText",
+    category: "planning",
+    tags: ["documents", "lease", "summary"],
+    gate: { criterion: "A PDF someone sent or wants made: leases, bills, itineraries, summaries.", examples: ["what's the notice period in the lease?", "make a PDF of this month's expenses"] },
+  }),
+  defineManifest({
+    ...soon,
+    id: "trips",
+    name: "Trips",
+    description: "Plans trips and splits them as you go.",
+    summary: "Plan a trip together and split it as you go.",
+    longDescription: "Dates, places, who's in, what's booked: Roomie keeps the trip plan in one place and splits every cost on the way, so nobody does trip math at the airport.",
+    icon: "Plane",
+    category: "planning",
+    tags: ["travel", "itinerary", "bookings"],
+    requires: { toolkits: ["splitting"] },
+    gate: { criterion: "Planning a trip: dates, places, bookings, who's going.", examples: ["plan a weekend in Austin for 4", "what's left to book?"] },
+  }),
+  defineManifest({
+    ...soon,
+    id: "stickers",
+    name: "Stickers",
+    description: "Makes custom stickers of the group's inside jokes.",
+    summary: "Custom stickers of the group's inside jokes.",
+    longDescription: "Ask for a sticker (\"Dev asleep on the couch, as a dino\") and Roomie draws one for the chat. The group's best ones stay in a pack.",
+    icon: "Sticker",
+    category: "fun",
+    tags: ["stickers", "images", "jokes"],
+    gate: { criterion: "Making a sticker or a picture for the chat.", examples: ["make a sticker of Dev asleep on the couch"] },
+  }),
+  defineManifest({
+    ...soon,
+    id: "household-admin",
+    name: "Household admin",
+    description: "Leases, utilities and renewals: whose name is on what, and when it's due.",
+    summary: "Leases, utilities and renewals: whose name is on what, and when.",
+    longDescription: "Roomie keeps the boring paperwork straight: who holds the internet account, when the lease renews, which bills are on autopay. It nudges the right person before anything lapses.",
+    icon: "ClipboardList",
+    category: "home",
+    tags: ["lease", "utilities", "renewals", "accounts"],
+    requires: { integrations: ["composio"] },
+    gate: { criterion: "Household paperwork: the lease, utility accounts, renewals, whose name is on what.", examples: ["when does the lease renew?", "whose name is the internet under?"] },
+  }),
+];
