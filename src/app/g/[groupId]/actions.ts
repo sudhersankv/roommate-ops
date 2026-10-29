@@ -7,7 +7,7 @@ import { revalidatePath } from "next/cache"
 import type { PaymentApp } from "@/db/schema"
 import { InstacartUnavailableError } from "@/integrations/instacart"
 import { memberSession } from "@/lib/session"
-import { cart, chores, groups, isNotAllowed, members, money, pantry, recipes, splitwise, upkeep, type Ctx } from "@/services"
+import { cart, chores, groups, isNotAllowed, members, money, pantry, recipes, reminders, schedule, splitwise, upkeep, type Ctx } from "@/services"
 import type { SettingsPatch } from "@/services/groups"
 import type { ToolkitId } from "@/toolkits/types"
 import type { ActionResult } from "./_components/group-context"
@@ -130,12 +130,47 @@ export async function updatePantry(groupId: string, change: { add?: string[]; re
   return act(groupId, (ctx) => pantry.updatePantry(ctx, change))
 }
 
+/* ---------- Chores, Upkeep, Reminders ---------- */
+
 export async function markChoreDone(groupId: string, choreId: string) {
   return act(groupId, (ctx) => chores.logChore(ctx, { choreId }))
 }
 
+export async function skipChore(groupId: string, choreId: string) {
+  return act(groupId, (ctx) => chores.skipChore(ctx, { choreId }))
+}
+
+/** `rotation`: member ids in turn order; empty = everyone, least recent first. */
+export async function addChore(groupId: string, input: { name: string; everyDays: number; rotation: string[] }) {
+  return act(groupId, (ctx) => chores.addChore(ctx, input))
+}
+
+export async function removeChore(groupId: string, choreId: string) {
+  return act(groupId, (ctx) => chores.removeChore(ctx, { choreId }))
+}
+
 export async function markUpkeepDone(groupId: string, itemId: string) {
-  return act(groupId, (ctx) => upkeep.markDone(ctx, { item: "", id: itemId }))
+  return act(groupId, (ctx) => upkeep.markDone(ctx, { id: itemId }))
+}
+
+export async function addUpkeep(groupId: string, input: { item: string; everyDays: number }) {
+  return act(groupId, (ctx) => upkeep.addMaintenance(ctx, input))
+}
+
+export async function addUpkeepDefaults(groupId: string) {
+  return act(groupId, (ctx) => upkeep.addDefaults(ctx))
+}
+
+export async function removeUpkeep(groupId: string, itemId: string) {
+  return act(groupId, (ctx) => upkeep.removeMaintenance(ctx, { id: itemId }))
+}
+
+export async function cancelReminder(groupId: string, reminderId: string) {
+  return act(groupId, (ctx) => reminders.cancelReminder(ctx, { reminderId }))
+}
+
+export async function updateSchedule(groupId: string, patch: Partial<schedule.Schedule>) {
+  return act(groupId, (ctx) => schedule.updateSchedule(ctx, patch))
 }
 
 export async function decideMember(groupId: string, memberId: string, decision: "approve" | "decline" | "promote") {

@@ -7,5 +7,5 @@ export default async function GroupHomePage({ params }: { params: Promise<{ grou
   const s = await currentMember(groupId)
   if (s.member.status !== "active") return null
   const [money, chores, cart, narration, nextRecipe] = await Promise.all([balancesView(s), choresView(s), cartView(s), narrationView(s), nextRecipeView(s)])
-  return <HomeScreen you={money.you} plan={money.plan} chores={chores.chores} cart={cart} narration={narration} nextRecipe={nextRecipe} />
+  return <HomeScreen you={money.you} plan={money.plan} chores={chores.chores} upkeep={chores.upkeep} cart={cart} narration={narration} nextRecipe={nextRecipe} />
 }
