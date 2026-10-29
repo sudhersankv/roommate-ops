@@ -39,6 +39,12 @@ export type LimiterOptions = {
   sleep?: (ms: number) => Promise<void>;
 };
 
+/** A non-negative number of ms from the environment (JOIN_DELAY_MS, REPLY_DELAY_MS), or undefined when unset. */
+export const envMs = (name: string): number | undefined => {
+  const v = process.env[name];
+  return v !== undefined && v.trim() !== "" && Number.isFinite(Number(v)) ? Math.max(0, Number(v)) : undefined;
+};
+
 export const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 /** acquire(key) resolves when a message to `key` may go out. Callers for the same key are served in order. */

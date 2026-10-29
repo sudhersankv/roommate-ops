@@ -11,10 +11,13 @@
 import { Api, Bot, GrammyError, InlineKeyboard } from "grammy";
 import type { ChatMember, Message, User, UserFromGetMe } from "grammy/types";
 import type { ChatRef } from "@/onboarding";
-import { SendLimiter, sleep as realSleep } from "./rate-limit";
+import { KeyedQueue } from "./queue";
+import { envMs, SendLimiter, sleep as realSleep } from "./rate-limit";
+import { BAD_VOICE, chunkText, commandOf, helpText, MANY_GROUPS, MAX_TEXT, NO_GROUP, NO_VOICE, OOPS, startReply, wasAddressed } from "./text";
 import { CantMessagePrivatelyError, type Button, type Channel, type ChannelUser, type IncomingMessage, type Outgoing } from "./types";
 
-export const TELEGRAM_MAX_TEXT = 4096;
+export const TELEGRAM_MAX_TEXT = MAX_TEXT;
+export { chunkText, commandOf, helpText, OOPS, startReply };
 /** The update types Roomie handles (polling and setWebhook ask for exactly these). */
 export const TELEGRAM_UPDATES = ["message", "my_chat_member"] as const;
 
@@ -54,21 +57,6 @@ export function readAddress(me: Pick<UserFromGetMe, "id" | "username">, m: Pick<
     mentionsRoomie,
     isReplyToRoomie: m.reply_to_message?.from?.id === me.id,
   };
-}
-
-/** Split a long reply at line breaks (else spaces) so every piece fits Telegram's 4096-character limit. */
-export function chunkText(text: string, max = TELEGRAM_MAX_TEXT): string[] {
-  const out: string[] = [];
-  let rest = text;
-  while (rest.length > max) {
-    let cut = rest.lastIndexOf("\n", max);
-    if (cut < max / 2) cut = rest.lastIndexOf(" ", max);
-    if (cut < max / 2) cut = /[\uD800-\uDBFF]/.test(rest[max - 1]) ? max - 1 : max;
-    out.push(rest.slice(0, cut).trimEnd());
-    rest = rest.slice(cut).replace(/^[\n ]+/, "");
-  }
-  if (rest || out.length === 0) out.push(rest);
-  return out;
 }
 
 /** Telegram refuses buttons that point at localhost; in local dev those links go as text instead. */
@@ -113,10 +101,6 @@ export function botInfoFromToken(token: string, username: string): UserFromGetMe
   };
 }
 
-const envMs = (name: string): number | undefined => {
-  const v = process.env[name];
-  return v !== undefined && v.trim() !== "" && Number.isFinite(Number(v)) ? Math.max(0, Number(v)) : undefined;
-};
 
 export const telegramLimiter = (opts: { clock?: () => number; sleep?: (ms: number) => Promise<void> } = {}) =>
   new SendLimiter({
@@ -228,26 +212,6 @@ export class TelegramChannel implements Channel {
 
 /* ---------- the bot (inbound) ---------- */
 
-/** Work queued per key, in order; idle() waits for all of it. */
-class KeyedQueue {
-  private readonly tails = new Map<string, Promise<void>>();
-  private readonly live = new Set<Promise<void>>();
-
-  push(key: string, task: () => Promise<void>) {
-    const p = (this.tails.get(key) ?? Promise.resolve()).then(task).catch((err) => console.error(`[telegram] chat ${key}`, err));
-    this.tails.set(key, p);
-    this.live.add(p);
-    void p.finally(() => {
-      this.live.delete(p);
-      if (this.tails.get(key) === p) this.tails.delete(key);
-    });
-  }
-
-  async idle() {
-    while (this.live.size) await Promise.allSettled([...this.live]);
-  }
-}
-
 export type TelegramBotOptions = {
   token: string;
   deps: TelegramDeps;
@@ -262,38 +226,6 @@ export type TelegramBotOptions = {
 
 export type TelegramBot = { bot: Bot; channel: TelegramChannel; idle: () => Promise<void> };
 
-/** /start in a DM: one line. Members learn DMs work now; anyone else how to get going. No links either way. */
-export const startReply = (name: string, inGroups: number) =>
-  inGroups
-    ? `Hey ${name} 👋 Now I can DM you: ask for "the dashboard" here or in the group and your link lands here (/help for the rest).`
-    : `Hey ${name} 👋 I'm Roomie. Add me to your group chat, say "roomie hi" there, and we're off.`;
-
-/** /help, in a group or a DM: five lines of what Roomie does, in its voice. */
-export const helpText = () =>
-  [
-    `I'm Roomie 👋 Say "roomie" or reply to me and I'm in. Some things I do:`,
-    `💸 "I paid 60 for internet", "who owes what?", "settle up with Dev"`,
-    `🛒 "add milk and eggs", "tacos for 5 friday", "I paid 84 for groceries"`,
-    `🧹 "I did the dishes", "whose turn is trash?", "skip my turn", "changed the air filter"`,
-    `⏰ "remind everyone trash goes out Tuesday 8pm", "weekly report", "send me the dashboard"`,
-  ].join("\n");
-
-/** What goes into the chat when something broke while handling a message addressed to Roomie. Details go to the log. */
-export const OOPS = "Something went sideways on my end and I couldn't do that. Mind trying again in a minute?";
-
-const NO_GROUP = "Add me to your group chat first, then we can talk here too.";
-const MANY_GROUPS = "You're in a few of my groups, so ask me in the group chat you mean.";
-const NO_VOICE = "I can't hear voice notes yet, mind typing that?";
-const BAD_VOICE = "I couldn't make out that voice note, mind typing it?";
-
-/** "/help", "/help@roomie_bot" -> "help"; a command for another bot or plain text -> null. */
-export function commandOf(text: string | undefined, username?: string): string | null {
-  const m = /^\/([a-z]+)(?:@(\w+))?(?:\s|$)/i.exec(text ?? "");
-  if (!m) return null;
-  if (m[2] && username && m[2].toLowerCase() !== username.toLowerCase()) return null;
-  return m[1].toLowerCase();
-}
-
 export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
   const { deps } = opts;
   const bot = new Bot(opts.token, opts.botInfo ? { botInfo: opts.botInfo } : undefined);
@@ -307,7 +239,7 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
       if (!res.ok) throw new Error(`Telegram file download failed: ${res.status}`);
       return res.arrayBuffer();
     });
-  const queue = new KeyedQueue();
+  const queue = new KeyedQueue("telegram");
   const toldNoVoice = new Set<string>();
 
   async function fetchFile(fileId: string) {
@@ -367,8 +299,7 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
       out = await deps.handleIncoming(msg);
     } catch (err) {
       console.error(`[roomie] couldn't handle a message from ${msg.userName} in ${msg.isPrivate ? "a DM" : `chat ${msg.chatExternalId}`}:`, err);
-      const addressed = msg.isPrivate || msg.isVoice || msg.mentionsRoomie || msg.isReplyToRoomie || /\broomie\b/i.test(msg.text);
-      if (addressed) await reply({ text: OOPS }).catch(() => {});
+      if (wasAddressed(msg)) await reply({ text: OOPS }).catch(() => {});
       return;
     }
     if (out) await reply(out);
