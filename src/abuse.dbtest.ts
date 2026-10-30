@@ -18,6 +18,7 @@ import { logMessage } from "@/services/chatlog";
 import { deleteGroup } from "@/services/groups";
 import { listGroupsForOperator, pausedGroupIds, setGroupPaused } from "@/services/operator-groups";
 import { whatsappAdmission } from "@/services/whatsapp-access";
+import { assertNotProdDb } from "../scripts/lib/prod-guard";
 
 const ts = Date.now();
 const op = { email: "operator@example.com" };
@@ -30,6 +31,7 @@ const chat = (member: typeof admin, text: string, extra: Partial<Parameters<type
 
 describe("abuse fixes against the dev DB", () => {
   before(async () => {
+    await assertNotProdDb(db, "abuse.dbtest");
     const people = ["Maya", "Sam"].map((name) => ({ userExternalId: devUserId(`abuse-${name}-${ts}`), name }));
     samExternal = people[1].userExternalId;
     const joined = await onGroupJoined({ channel: "dev", externalId: `abuse-${ts}`, title: `Abuse test ${ts}` }, people, people[0]);
@@ -79,6 +81,8 @@ describe("abuse fixes against the dev DB", () => {
     assert.equal(r.out, null);
     assert.equal(r.gate.reason, "paused");
     assert.equal((await lastLine())?.length, 2000);
+    const addressedPhoto = { channel: "dev" as const, chatExternalId: `abuse-${ts}`, userExternalId: samExternal, kind: "photo" as const, caption: "roomie split this", mentionsRoomie: true };
+    assert.equal(await mediaWantedFor(addressedPhoto), false, "a paused Group's media isn't fetched, addressed or not");
     const row = (await listGroupsForOperator(op)).find((g) => g.id === groupId);
     assert.ok(row?.pausedAt);
     assert.equal(row?.members, 2);
@@ -93,7 +97,7 @@ describe("abuse fixes against the dev DB", () => {
     const store = new MemoryCounters();
     const caps = makeCaps(store);
     for (let i = 0; i < CAPS.jevDay.max; i++) await caps.jev(groupId); // Jev's budget gone too: the Gate makes no call
-    for (let i = 0; i < CAPS.memberDay.max; i++) await caps.run(`other-${groupId}`, admin.id);
+    for (let i = 0; i < CAPS.memberDay.max; i++) await caps.run(`other-${i}-${groupId}`, admin.id);
     setCaps(caps);
     const first = await chat(admin, "roomie hi");
     assert.equal(first.capped, "member");

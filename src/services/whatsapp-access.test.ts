@@ -17,8 +17,9 @@ test("with one: listed numbers only; a hidden number (LID only) is refused", () 
   assert.equal(adderAllowed(undefined, list), false);
 });
 
-test("an entry without the country code (10+ digits) matches the end of the number; short ones never do", () => {
-  assert.equal(adderAllowed("15551234567", ["5551234567"]), true);
+test("exact digits only: an entry without its country code matches no number (not a suffix of every country's)", () => {
+  assert.equal(adderAllowed("15551234567", ["5551234567"]), false);
+  assert.equal(adderAllowed("445551234567", ["5551234567"]), false);
   assert.equal(adderAllowed("15551234567", ["1234567"]), false);
 });
 

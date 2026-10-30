@@ -89,8 +89,13 @@ export async function leaveGroupChat(op: Operator, groupId: string): Promise<boo
   if (!chat) return false;
   const channel = channelFor(chat.channel);
   if (!channel) throw new Error(`${chat.channel} isn't connected on this server, so Roomie can't leave from here.`);
-  await channel.leaveChat(chat.externalId);
-  await db.update(schema.groups).set({ pausedAt: sql`coalesce(${schema.groups.pausedAt}, now())` }).where(eq(schema.groups.id, groupId));
-  await record(groupId, null, "group.left", "left the chat (the people who run Roomie asked) and was paused", { table: "groups", id: groupId });
+  // Pause first: if leaving fails, the Group is at least quiet.
+  await setGroupPaused(op, groupId, true);
+  try {
+    await channel.leaveChat(chat.externalId);
+  } catch (e) {
+    throw new Error(`Paused, but leaving the chat failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  await record(groupId, null, "group.left", "left the chat (the people who run Roomie asked)", { table: "groups", id: groupId });
   return true;
 }

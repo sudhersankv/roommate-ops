@@ -280,9 +280,10 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
 
   /** Photos and voice notes are only fetched when Roomie is being talked to (policy.ts mediaWanted). */
   async function wanted(kind: "photo" | "voice", addressed: ReturnType<typeof readAddress>, from: User, chatId: string, isPrivate: boolean) {
-    if (mediaWanted({ kind, isPrivate, mentionsRoomie: addressed.mentionsRoomie, isReplyToRoomie: addressed.isReplyToRoomie, caption: addressed.text })) return true;
-    if (!deps.mediaWanted) return false;
-    return deps.mediaWanted({ channel: "telegram", chatExternalId: chatId, userExternalId: String(from.id), kind, caption: addressed.text }).catch((err) => {
+    const flags = { kind, isPrivate, mentionsRoomie: addressed.mentionsRoomie, isReplyToRoomie: addressed.isReplyToRoomie, caption: addressed.text };
+    // The pipeline's answer wins when it's wired in: it also knows about paused Groups.
+    if (!deps.mediaWanted) return mediaWanted(flags);
+    return deps.mediaWanted({ channel: "telegram", chatExternalId: chatId, userExternalId: String(from.id), ...flags }).catch((err) => {
       console.error("[telegram] media check failed", err);
       return false;
     });

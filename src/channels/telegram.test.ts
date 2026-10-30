@@ -225,7 +225,14 @@ describe("incoming messages", () => {
         ["", "photo", undefined],
       ],
     );
-    assert.deepEqual(asked[0], { channel: "telegram", chatExternalId: "-1001", userExternalId: "12", kind: "photo", caption: "look at this sunset" });
+    assert.deepEqual(asked[0], { channel: "telegram", chatExternalId: "-1001", userExternalId: "12", kind: "photo", caption: "look at this sunset", isPrivate: false, mentionsRoomie: false, isReplyToRoomie: false });
+  });
+
+  test("with the pipeline wired in, its answer wins even for an addressed photo (a paused Group fetches nothing)", async () => {
+    const h = harness({ deps: { mediaWanted: async () => false } });
+    await h.feed(message(SAM, { caption: "roomie split this", photo: PHOTO }));
+    assert.deepEqual(h.seen.saved, []);
+    assert.equal(h.seen.incoming[0].skippedMedia, "photo");
   });
 
   test("a photo in the follow-up window (the pipeline says so) is fetched; a reply to Roomie or @mention always is", async () => {

@@ -26,31 +26,53 @@ const RELAYED = Symbol("relaysNotAllowed");
 
 type ContextReader = { get(key: string): unknown };
 
-/** Roomie asked an Admin to confirm a tool call: "<groupId>:<memberId>:<toolId>" -> until when (ms). */
-const confirming = (): Map<string, number> => {
-  const g = globalThis as { __roomieAdminConfirms?: Map<string, number> };
+/** Roomie asked an Admin to confirm a tool call: "<groupId>:<memberId>:<toolId>" -> the call it asked about, until when. */
+type Pending = { call: string; until: number };
+const confirming = (): Map<string, Pending> => {
+  const g = globalThis as { __roomieAdminConfirms?: Map<string, Pending> };
   return (g.__roomieAdminConfirms ??= new Map());
 };
 
+/** The call, the same however the model spells or orders it ("Eve" / "eve"), so "yes" confirms only that call. */
+export function callKey(input: unknown): string {
+  const norm = (v: unknown): unknown =>
+    typeof v === "string"
+      ? v.trim().toLowerCase()
+      : Array.isArray(v)
+        ? v.map(norm)
+        : v && typeof v === "object"
+          ? Object.fromEntries(Object.entries(v).filter(([, x]) => x !== undefined).sort(([a], [b]) => a.localeCompare(b)).map(([k, x]) => [k, norm(x)]))
+          : v;
+  return JSON.stringify(norm(input) ?? null);
+}
+
+/** Dev only (test:tools, Studio): ROOMIE_ADMIN_ASK_OFF=1 lets admin-only tools run without a message to check. Never in production. */
+const askCheckOff = () => process.env.ROOMIE_ADMIN_ASK_OFF === "1" && process.env.NODE_ENV !== "production";
+
+const NO_MESSAGE = "Admin-only changes need the admin's own message in the chat or on the dashboard's Ask Roomie.";
+
 /**
  * The admin-only gate (audit H6, admin-ask.ts): an Admin's call runs only when their own current message (`latest` in
- * the RequestContext) asks for it; otherwise { refused: "confirm", ask } and Roomie asks. Non-Admins go straight to
- * the service, which refuses them. Without `latest` (Studio, test:tools) there's nothing to check against.
+ * the RequestContext) asks for it; otherwise { refused: "confirm", ask } and Roomie asks. A confirmation counts only for
+ * the same call (tool and input). No `latest` (Studio, a script) is refused, unless ROOMIE_ADMIN_ASK_OFF=1 outside
+ * production. Non-Admins go straight to the service, which refuses them.
  */
 export function adminAskGate(toolId: string, spec: AdminAsk, input: unknown, context: unknown, now = Date.now()): { refused: "confirm"; ask: string; say: string } | null {
   const rc = (context as { requestContext?: ContextReader } | undefined)?.requestContext;
-  const latest = rc?.get("latest");
-  if (typeof latest !== "string" || rc?.get("role") !== "admin") return null;
+  if (rc?.get("role") !== "admin") return null;
+  const latest = rc.get("latest");
+  if (typeof latest !== "string") return askCheckOff() ? null : { refused: "confirm", ask: NO_MESSAGE, say: "Nothing was changed. Say this as it is." };
   const key = `${rc.get("groupId")}:${rc.get("memberId")}:${toolId}`;
+  const call = callKey(input);
   const pending = confirming();
-  const until = pending.get(key);
-  const res = checkAdminAsk(spec, input, latest, !!until && until > now);
+  const asked = pending.get(key);
+  const res = checkAdminAsk(spec, input, latest, !!asked && asked.until > now && asked.call === call);
   if (res.ok) {
     pending.delete(key);
     return null;
   }
-  pending.set(key, now + CONFIRM_TTL_MS);
-  if (pending.size > 5_000) for (const [k, t] of pending) if (t <= now) pending.delete(k);
+  pending.set(key, { call, until: now + CONFIRM_TTL_MS });
+  if (pending.size > 5_000) for (const [k, p] of pending) if (p.until <= now) pending.delete(k);
   return { refused: "confirm", ask: res.ask, say: "Nothing was changed. Ask exactly this question and do nothing else until they answer." };
 }
 

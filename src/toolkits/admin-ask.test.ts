@@ -3,7 +3,7 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { checkAdminAsk, namesTarget } from "./admin-ask";
-import { adminAskGate, adminOnlyTools } from "./registry";
+import { adminAskGate, adminOnlyTools, callKey } from "./registry";
 import { core } from "./core/manifest";
 import { chores } from "./chores/manifest";
 import { splitting } from "./splitting/manifest";
@@ -63,16 +63,38 @@ describe("checkAdminAsk", () => {
     assert.equal(ok("toggle_toolkit", { toolkit: "splitting", enabled: false }, "roomie hi"), false);
   });
 
-  test("settings: any setting word, or a value they said (the Onboarding answer)", () => {
+  test("settings: every field the call changes needs its own words (the Onboarding answer sets only what it says)", () => {
     assert.equal(ok("set_group_settings", { purpose: "roommates", currency: "USD", timezone: "America/Chicago" }, "roommates, USD, Chicago"), true);
-    assert.equal(ok("set_group_settings", { timezone: "Europe/London" }, "we're in london"), true, "the value is enough");
+    assert.equal(ok("set_group_settings", { purpose: "roommates", currency: "USD", toolkits: ["chores"] }, "roommates, USD"), false, "Tricks nobody asked for");
+    assert.equal(ok("set_group_settings", { purpose: "roommates", personality: { base: "gremlin" } }, "roommates, USD"), false, "a vibe nobody asked for");
+    assert.equal(ok("set_group_settings", { purpose: "roommates", personality: { base: "hype" } }, "roommates, USD, Chicago, hype"), true);
+    assert.equal(ok("set_group_settings", { timezone: "Europe/London" }, "we're in london"), true, "the value is enough for a time zone");
+    assert.equal(ok("set_group_settings", { currency: "JPY" }, "roomie use JPY"), true);
     assert.equal(ok("set_group_settings", { chattiness: "quiet" }, "roomie be quieter please"), true);
     assert.equal(ok("set_group_settings", { personality: { name: "Dino" } }, "roomie we'll call you Dino"), true);
     assert.equal(ok("set_group_settings", { toolkits: [] }, "roomie hi"), false);
+    assert.equal(ok("set_group_settings", { personality: { name: "roomie" }, toolkits: ["chores"] }, "roomie hi"), false, "'roomie' is never evidence");
+    assert.equal(ok("set_group_settings", { currency: "EUR", reportHour: 9 }, "roomie how was the trip"), false, "an everyday word changes nothing");
+    assert.equal(ok("set_group_settings", { reportDay: "monday", reportHour: 9 }, "roomie move the report to monday 9am"), true);
   });
 
-  test("Splitwise, simplify debts, chore removal", () => {
+  test("settings: the question names what nobody asked for; 'yes change the settings' confirms it", () => {
+    const r = checkAdminAsk(spec("set_group_settings"), { purpose: "roommates", toolkits: ["chores"] }, "roommates");
+    assert.deepEqual(r, { ok: false, ask: `Change the group's settings (toolkits)? Say "roomie, yes change the settings".` });
+    assert.equal(ok("set_group_settings", { purpose: "roommates", toolkits: ["chores"] }, "roomie, yes change the settings", true), true);
+  });
+
+  test("Splitwise: each operation needs its own verb; a status question authorizes none of them", () => {
+    for (const id of ["splitwise_connect", "splitwise_import", "splitwise_export", "splitwise_mirror"]) {
+      assert.equal(ok(id, { group: "Apt", on: true }, "roomie is splitwise connected?"), false, id);
+      assert.equal(ok(id, { group: "Apt", on: true }, "roomie what's going on with splitwise"), false, id);
+    }
+    assert.equal(ok("splitwise_connect", {}, "roomie connect my splitwise"), true);
     assert.equal(ok("splitwise_import", { group: "Apt" }, "roomie import our splitwise group Apt"), true);
+    assert.equal(ok("splitwise_import", { group: "Apt" }, "roomie import from splitwise"), false, "which group: Roomie asks");
+    assert.equal(ok("splitwise_export", {}, "roomie copy everything to splitwise"), true);
+    assert.equal(ok("splitwise_mirror", { on: true }, "roomie keep splitwise in sync"), true);
+    assert.equal(ok("splitwise_mirror", { on: true }, "roomie export to splitwise"), false, "export isn't mirror");
     assert.equal(ok("splitwise_mirror", { on: true }, "roomie hi"), false);
     assert.equal(ok("set_simplify_debts", { on: false }, "roomie stop simplifying debts"), true);
     assert.equal(ok("chore_remove", { chore: "Dishes" }, "roomie take dishes off the chart"), true);
@@ -103,8 +125,32 @@ describe("adminAskGate (the registry wrapper)", () => {
     assert.notEqual(adminAskGate("approve_member", spec("approve_member"), { name: "Priya" }, rc("yes priya"), 11 * 60_000), null);
   });
 
-  test("non-Admins go to the service (which refuses them); no `latest` (Studio) isn't checked", () => {
+  test("non-Admins go to the service (which refuses them); no `latest` (Studio) is refused unless ROOMIE_ADMIN_ASK_OFF=1", () => {
     assert.equal(adminAskGate("promote_member", spec("promote_member"), { name: "Eve" }, rc("roomie hi", "member")), null);
-    assert.equal(adminAskGate("promote_member", spec("promote_member"), { name: "Eve" }, rc(undefined)), null);
+    assert.equal(adminAskGate("promote_member", spec("promote_member"), { name: "Eve" }, rc(undefined))?.refused, "confirm");
+    process.env.ROOMIE_ADMIN_ASK_OFF = "1";
+    try {
+      assert.equal(adminAskGate("promote_member", spec("promote_member"), { name: "Eve" }, rc(undefined)), null);
+      const env = process.env as Record<string, string | undefined>;
+      const was = env.NODE_ENV;
+      env.NODE_ENV = "production";
+      assert.notEqual(adminAskGate("promote_member", spec("promote_member"), { name: "Eve" }, rc(undefined)), null, "never in production");
+      env.NODE_ENV = was;
+    } finally {
+      delete process.env.ROOMIE_ADMIN_ASK_OFF;
+    }
+  });
+
+  test("a confirmation is for that call only: asked about Eve, a 'yes promote' can't promote Sam", () => {
+    const ctx = rc("roomie hi");
+    adminAskGate("promote_member", spec("promote_member"), { name: "Eve" }, ctx, 0);
+    assert.notEqual(adminAskGate("promote_member", spec("promote_member"), { name: "Sam" }, rc("yes promote"), 1_000), null);
+    adminAskGate("promote_member", spec("promote_member"), { name: "Eve" }, ctx, 2_000);
+    assert.equal(adminAskGate("promote_member", spec("promote_member"), { name: "eve" }, rc("yes promote"), 3_000), null, "the same call, spelled differently");
+  });
+
+  test("callKey ignores case, key order and unset fields", () => {
+    assert.equal(callKey({ b: "Eve", a: undefined, c: [1, "X"] }), callKey({ c: [1, "x"], b: "eve" }));
+    assert.notEqual(callKey({ name: "Eve" }), callKey({ name: "Sam" }));
   });
 });

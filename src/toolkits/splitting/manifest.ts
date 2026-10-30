@@ -42,10 +42,12 @@ export const splitting = defineManifest({
   },
   adminOnly: {
     set_simplify_debts: { action: String.raw`simplif|fewest|pairwise|pair by pair`, ask: `Change how debts settle? Say "roomie, yes simplify debts" (or "roomie, yes don't simplify debts").` },
-    splitwise_connect: { action: "splitwise", ask: `Connect Splitwise? Say "roomie, yes connect Splitwise".` },
-    splitwise_import: { action: "splitwise", ask: `Import that Splitwise group? Say "roomie, yes import from Splitwise".` },
-    splitwise_export: { action: "splitwise", ask: `Copy this group's expenses to Splitwise? Say "roomie, yes export to Splitwise".` },
-    splitwise_mirror: { action: "splitwise", ask: `Change the Splitwise mirror? Say "roomie, yes mirror Splitwise" (or "roomie, yes stop the Splitwise mirror").` },
+    // Each one needs its own verb next to "Splitwise": "is splitwise connected?" asks splitwise_status (not admin-only)
+    // and authorizes none of these.
+    splitwise_connect: { action: String.raw`^(?=.*\bsplitwise\b)(?=.*\b(?:connect|link|hook up|sign in|log in)\b)`, ask: `Connect your Splitwise? Say "roomie, yes connect Splitwise".` },
+    splitwise_import: { action: String.raw`^(?=.*\bsplitwise\b)(?=.*\b(?:import\w*|bring\b.*\b(?:in|over)|pull\b.*\bin|move\b.*\bover)\b)`, ask: `Import the Splitwise group {target}? Say "roomie, yes import from Splitwise".`, target: "group" },
+    splitwise_export: { action: String.raw`^(?=.*\bsplitwise\b)(?=.*\b(?:export\w*|copy|push|send\b.*\bto)\b)`, ask: `Copy this group's expenses to Splitwise? Say "roomie, yes export to Splitwise".` },
+    splitwise_mirror: { action: String.raw`^(?=.*\bsplitwise\b)(?=.*\b(?:mirror\w*|sync\w*|keep\b.*\bin sync)\b)`, ask: `Change the Splitwise mirror? Say "roomie, yes mirror Splitwise" (or "roomie, yes stop the Splitwise mirror").` },
   },
   dashboard: {
     nav: { label: "Money", href: (g) => `/g/${g}/money`, icon: "Wallet", order: 10 },

@@ -434,8 +434,18 @@ export function createWhatsApp(opts: WhatsAppOptions): WhatsApp {
   const sent = new Map<string, proto.IMessage>();
   const metaCache = new Map<string, GroupMetadata>();
   const joining = new Set<string>();
-  /** Groups Roomie said no to (the beta allowlist) and left: nothing more happens there. */
-  const refused = new Set<string>();
+  /** Groups Roomie said no to (the beta allowlist, the new-Groups cap) and left, until when (ms): messages that arrive
+   * before the leave completes go nowhere. A new "Roomie was added" event clears it, and so does the hour passing. */
+  const refusedUntil = new Map<string, number>();
+  const REFUSAL_MS = 60 * 60 * 1000;
+  const isRefused = (jid: string) => {
+    const until = refusedUntil.get(jid);
+    if (until === undefined) return false;
+    if (until > clock()) return true;
+    refusedUntil.delete(jid);
+    return false;
+  };
+  const refuse = (jid: string) => refusedUntil.set(jid, clock() + REFUSAL_MS);
   /** LID -> the phone JID stored for it in wa_contacts (Members only, audit H3). */
   const storedPairs = new Map<string, string | null>();
   const toldNoVoice = new Set<string>();
@@ -567,10 +577,12 @@ export function createWhatsApp(opts: WhatsAppOptions): WhatsApp {
   /**
    * Roomie is in a group it has no Chat for: everyone listed becomes an active Member, the adder the Admin. Someone
    * the beta allowlist doesn't know (deps.admission) gets one line and Roomie leaves: no Group, nothing stored.
-   * Returns whether the Chat has a Group now.
+   * `adderIds` come from the join event (who added Roomie); without one (Roomie joined while offline) the adder is the
+   * group's creator or a superadmin from the metadata, never whoever happens to speak first, and with an allowlist
+   * on and nobody like that, the group is refused. Returns whether the Chat has a Group now.
    */
   async function joined(jid: string, adderIds: (string | null | undefined)[], given?: GroupMetadata): Promise<boolean> {
-    if (refused.has(jid)) return false;
+    if (isRefused(jid)) return false;
     if (roomiePaused()) {
       logPaused(`joining ${jid}`);
       return false;
@@ -595,12 +607,14 @@ export function createWhatsApp(opts: WhatsAppOptions): WhatsApp {
         (meta.author && !isMe(meta.author) ? [meta.author, meta.authorPn] : null) ??
         (meta.owner && !isMe(meta.owner) ? [meta.owner, meta.ownerPn] : null) ??
         (superAdmin ? fromParticipant(superAdmin).ids : null);
-      const adder = (adderSource ? await person(adderSource) : null) ?? people[0];
+      const verified = adderSource ? await person(adderSource) : null;
+      const adder = verified ?? people[0];
       if (!adder) return false;
       const named = people.find((p) => p.userExternalId === adder.userExternalId) ?? adder;
-      const admitted = deps.admission ? await deps.admission(named) : ({ ok: true } as const);
+      // The allowlist only ever admits someone the join event or the metadata names, never "the first person listed".
+      const admitted = deps.admission ? (verified ? await deps.admission(named) : await deps.admission({ userExternalId: "unknown", name: "unknown" })) : ({ ok: true } as const);
       if (!admitted.ok) {
-        refused.add(jid);
+        refuse(jid);
         metaCache.delete(jid);
         console.log(`[whatsapp] ${jid} added by ${named.userExternalId}, who isn't on the beta allowlist: saying so and leaving`);
         await channel.sendToChat(jid, { text: admitted.say }).catch((err) => console.error(`[whatsapp] couldn't say why in ${jid}`, err));
@@ -609,7 +623,7 @@ export function createWhatsApp(opts: WhatsAppOptions): WhatsApp {
       }
       const res = await deps.onGroupJoined({ channel: "whatsapp", externalId: jid, title: meta.subject || undefined }, people, named, {});
       if (res.refused) {
-        refused.add(jid);
+        refuse(jid);
         return false;
       }
       // They're Members now: store their pairs and names.
@@ -626,7 +640,10 @@ export function createWhatsApp(opts: WhatsAppOptions): WhatsApp {
   async function participantsUpdate(e: BaileysEventMap["group-participants.update"]) {
     metaCache.delete(e.id);
     if (e.action === "add") {
-      if (e.participants.some(isMeParticipant)) return void (await joined(e.id, [e.author, e.authorPn]));
+      if (e.participants.some(isMeParticipant)) {
+        refusedUntil.delete(e.id); // added again: judge the new adder
+        return void (await joined(e.id, [e.author, e.authorPn]));
+      }
       const groupId = await deps.groupIdOfChat(e.id);
       if (!groupId) return; // a group Roomie never saw itself join: the first message there sorts it out
       for (const p of e.participants) {
@@ -677,13 +694,15 @@ export function createWhatsApp(opts: WhatsAppOptions): WhatsApp {
   async function content(m: WAMessage, read: ReadMessage, replyTo: (out: Outgoing) => Promise<void>, toldKey: string, folderChat: string, from: ChannelUser, isPrivate = false) {
     const base = { text: read.text, mentionsRoomie: read.mentionsRoomie, isReplyToRoomie: read.isReplyToRoomie };
     if (read.kind === "voice" || read.kind === "image") {
-      const kind = read.kind === "voice" ? "voice" : "photo";
-      let want = mediaWanted({ kind, isPrivate, mentionsRoomie: read.mentionsRoomie, isReplyToRoomie: read.isReplyToRoomie, caption: read.text });
-      if (!want && deps.mediaWanted)
-        want = await deps.mediaWanted({ channel: "whatsapp", chatExternalId: folderChat, userExternalId: from.userExternalId, kind, caption: read.text }).catch((err) => {
-          console.error("[whatsapp] media check failed", err);
-          return false;
-        });
+      const kind: "voice" | "photo" = read.kind === "voice" ? "voice" : "photo";
+      const flags = { kind, isPrivate, mentionsRoomie: read.mentionsRoomie, isReplyToRoomie: read.isReplyToRoomie, caption: read.text };
+      // The pipeline's answer wins when it's wired in: it also knows about paused Groups.
+      const want = deps.mediaWanted
+        ? await deps.mediaWanted({ channel: "whatsapp", chatExternalId: folderChat, userExternalId: from.userExternalId, ...flags }).catch((err) => {
+            console.error("[whatsapp] media check failed", err);
+            return false;
+          })
+        : mediaWanted(flags);
       // Not for Roomie: logged as "(voice note)" / "(photo) caption", never downloaded, stored or transcribed.
       if (!want) return kind === "voice" ? { ...base, text: "", skippedMedia: "voice" as const } : { ...base, skippedMedia: "photo" as const };
     }
@@ -715,11 +734,12 @@ export function createWhatsApp(opts: WhatsAppOptions): WhatsApp {
 
   async function groupMessage(m: WAMessage, read: ReadMessage) {
     const jid = m.key.remoteJid!;
-    if (refused.has(jid)) return;
+    if (isRefused(jid)) return;
     const senderIds = [m.key.participant, m.key.participantAlt, (m.key as { participantPn?: string }).participantPn];
     if (!(await deps.groupIdOfChat(jid))) {
       await person(senderIds, m.pushName); // in memory, so the join knows the sender's name
-      if (!(await joined(jid, [m.key.participant, m.key.participantAlt]))) return; // joined while offline
+      // Joined while offline: who added Roomie isn't known, so the join goes by the metadata, never by this sender.
+      if (!(await joined(jid, []))) return;
     }
     const from = await member(senderIds, m.pushName);
     if (!from) return;
@@ -738,8 +758,18 @@ export function createWhatsApp(opts: WhatsAppOptions): WhatsApp {
     if (!from) return;
     const say = (out: Outgoing) => channel.sendPrivate(jid, out);
     const command = commandOf(read.text);
-    const chats = await deps.chatsOfUser(from.userExternalId);
-    if (chats.length) await member(ids, m.pushName); // a Member's DM: keep their pair and name
+    let chats = await deps.chatsOfUser(from.userExternalId);
+    // A Member stored under their LID whose number we just learned: move them to it (rekey) first, then look again.
+    const lid = ids.map(norm).find((j): j is string => !!j && !!isLidUser(j));
+    if (!chats.length && lid && lid !== from.userExternalId && (await deps.chatsOfUser(lid)).length) {
+      await member(ids, m.pushName);
+      chats = await deps.chatsOfUser(from.userExternalId);
+      if (!chats.length) {
+        // The move didn't happen (yet): carry on as the LID, which is what their Member is stored under.
+        chats = await deps.chatsOfUser(lid);
+        from.userExternalId = lid;
+      }
+    } else if (chats.length) await member(ids, m.pushName); // a Member's DM: keep their pair and name
     if (command === "help") return say({ text: helpText(chats.length === 1 ? await deps.tricksIn?.(chats[0]).catch(() => undefined) : undefined) });
     if (command === "start") return say({ text: startReply(from.name.split(" ")[0], chats.length, "whatsapp") });
     if (chats.length !== 1) {
@@ -857,7 +887,11 @@ export function createWhatsApp(opts: WhatsAppOptions): WhatsApp {
     s.ev.on("messages.upsert", (e) => s === sock && messagesUpsert(e));
     s.ev.on("groups.upsert", (list) => {
       if (s !== sock) return;
-      for (const g of list) queue.push(g.id, async () => void (await joined(g.id, [g.author, g.authorPn], g)));
+      for (const g of list)
+        queue.push(g.id, async () => {
+          refusedUntil.delete(g.id);
+          await joined(g.id, [g.author, g.authorPn], g);
+        });
     });
     s.ev.on("group-participants.update", (e) => s === sock && queue.push(e.id, () => participantsUpdate(e)));
     s.ev.on("groups.update", (list) => s === sock && queue.push("groups.update", () => groupsUpdate(list)));

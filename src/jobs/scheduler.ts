@@ -213,12 +213,15 @@ export async function tick(now = new Date()): Promise<void> {
     return;
   }
   try {
+    // Fail closed: when we can't tell which Groups are paused, nothing goes out to any Group this tick.
     const paused = await pausedGroupIds().catch((e) => {
-      console.error("scheduler: pausedGroupIds failed", e);
-      return new Set<string>();
+      console.error("scheduler: pausedGroupIds failed; skipping reminders and group posts this tick", e);
+      return null;
     });
-    await sendDueReminders(now, undefined, paused);
-    await runGroupJobs(now, paused);
+    if (paused) {
+      await sendDueReminders(now, undefined, paused);
+      await runGroupJobs(now, paused);
+    }
     await recurringExpenses(now);
     await splitwiseOutbox(now);
     await dailyRetention(now);

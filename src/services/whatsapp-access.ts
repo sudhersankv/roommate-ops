@@ -19,13 +19,13 @@ export function envAdders(raw = process.env.WHATSAPP_ALLOWED_ADDERS): string[] {
 }
 
 /**
- * Pure: whether `adder` (their number's digits, if WhatsApp showed it) may add Roomie. An entry written without the
- * country code (10+ digits) matches the end of the number.
+ * Pure: whether `adder` (their number's digits, if WhatsApp showed it) may add Roomie. Exact digits only: an entry
+ * written without its country code matches nothing (a suffix match would admit the same digits in every country).
  */
 export function adderAllowed(adder: string | undefined, allowed: string[]): boolean {
   if (!allowed.length) return true;
   if (!adder) return false;
-  return allowed.some((a) => a === adder || (a.length >= 10 && adder.endsWith(a)));
+  return allowed.includes(adder);
 }
 
 /** Everyone on the allowlist right now: the env numbers plus onboarded beta requests' numbers. */

@@ -53,12 +53,16 @@ export interface Channel {
   leaveChat(chatExternalId: string): Promise<void>;
 }
 
-/** What the adapters ask before downloading a photo or transcribing a voice note nobody explicitly addressed to
- * Roomie (the pipeline's mediaWantedFor: the follow-up window, setup pending for this Admin, the pet's name). */
+/** What the adapters ask before downloading a photo or transcribing a voice note (the pipeline's mediaWantedFor: a
+ * paused Group never; otherwise addressed, the follow-up window, setup pending for this Admin, the pet's name). */
 export type MediaQuestion = {
   channel: ChannelName;
   chatExternalId: string;
   userExternalId: string;
   kind: "photo" | "voice";
   caption?: string;
+  /** What the adapter could see itself: a DM, an @mention, a reply to Roomie. */
+  isPrivate?: boolean;
+  mentionsRoomie?: boolean;
+  isReplyToRoomie?: boolean;
 };

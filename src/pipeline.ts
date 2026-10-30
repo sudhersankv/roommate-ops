@@ -22,7 +22,7 @@ import type { RoomieContext } from "@/mastra/context";
 import { inFollowUpWindow, isHardTrigger, parseSilent, runGate, type Chattiness, type GateRun } from "@/mastra/gate";
 import { threadFor } from "@/mastra/memory";
 import { JoinRefusedError, onGroupJoined, onUnknownSender } from "@/onboarding";
-import { BREATHER, caps, clipInput } from "@/lib/caps";
+import { BREATHER, BREATHER_SHORT, caps, clipInput } from "@/lib/caps";
 import { localDay } from "@/lib/dates";
 import { logPaused, roomiePaused } from "@/lib/kill-switch";
 import { effectiveDials, isPetCommand, normalizePersonality, shapeLine, winsFrom, type Personality } from "@/lib/personality";
@@ -156,8 +156,11 @@ export async function askRoomie(ctx: Ctx, text: string): Promise<Outgoing> {
  */
 export async function mediaWantedFor(q: MediaQuestion): Promise<boolean> {
   if (roomiePaused()) return false;
+  const addressed = mediaWanted({ kind: q.kind, caption: q.caption, isPrivate: q.isPrivate, mentionsRoomie: q.mentionsRoomie, isReplyToRoomie: q.isReplyToRoomie });
   const known = await chatFor(q.channel, q.chatExternalId);
-  if (!known || known.group.pausedAt) return false;
+  if (!known) return addressed; // a Chat Roomie hasn't onboarded yet: the message itself decides
+  if (known.group.pausedAt) return false; // paused by an operator: nothing is fetched, addressed or not
+  if (addressed) return true;
   const { group } = known;
   const member = await memberByChannelUser(group.id, q.userExternalId);
   if (!member || member.status === "removed") return false;
@@ -228,7 +231,7 @@ export async function respond(input: RespondInput): Promise<PipelineResult> {
 
   const limits = await caps();
   // Jev runs on every Chat message; past the Group's daily budget the Gate goes hard-triggers-only.
-  const jevOk = await limits.jev(groupId);
+  const jevOk = await limits.jev(groupId, source);
   if (!jevOk) console.log(`[caps] group ${groupId} used its Jev calls for today: hard triggers only`);
 
   const root = startSpan("roomie message", { text: line }, { channel: input.channel, source, groupId, memberId: member.id, role: member.role, status: member.status });
@@ -269,8 +272,10 @@ export async function respond(input: RespondInput): Promise<PipelineResult> {
   const capped = await limits.run(groupId, member.id);
   if (capped) {
     console.log(`[caps] group ${groupId} member ${member.id}: ${capped} cap reached, no agent run`);
-    // Once a day per Group, and only when someone was talking to Roomie (never on the dashboard: that gets a 429).
-    const notice = source === "chat" && hardTrigger && (await limits.noticeOnce(groupId)) ? { text: shapeLine(BREATHER, effectiveDials(personality)) } : null;
+    // Only when someone was talking to Roomie (never on the dashboard: that gets a 429). The 10-minute cap says "a few
+    // minutes" once per window; the daily caps say "tomorrow" once a day.
+    const burst = capped === "group-burst";
+    const notice = source === "chat" && hardTrigger && (await limits.noticeOnce(groupId, burst ? "burst" : "day")) ? { text: shapeLine(burst ? BREATHER_SHORT : BREATHER, effectiveDials(personality)) } : null;
     root?.end({ output: { replied: !!notice, capped }, metadata: gateMeta });
     return { out: notice, gate, toolCalls: [], traceId: root?.traceId, capped };
   }

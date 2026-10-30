@@ -4,7 +4,8 @@
 //   - Jev (the Gate's classifier, one call per Chat message): 2,000 a day per Group; past that, hard triggers only
 //   - new Groups: 3 a day per person who adds Roomie (onboarding.ts)
 //   - input: 2,000 characters per message (longer is cut before the Gate, and stored cut)
-// Over a run cap Roomie says BREATHER once per Group per day (only when it was addressed), then stays quiet.
+// Over a daily run cap Roomie says BREATHER once per Group per day (only when it was addressed), over the 10-minute one
+// BREATHER_SHORT once per window, then stays quiet.
 import type { CounterStore } from "./window-limit";
 import { WindowLimiter } from "./window-limit";
 
@@ -21,6 +22,8 @@ export const CAPS = {
 
 export const MAX_INPUT_CHARS = 2_000;
 export const BREATHER = "I'm taking a breather; back tomorrow.";
+/** The 10-minute cap: back soon, not tomorrow. */
+export const BREATHER_SHORT = "Give me a few minutes, I'm catching my breath.";
 export const TOO_MANY_GROUPS = "I'm in enough groups for today for you; try tomorrow.";
 
 export const capKeys = {
@@ -28,8 +31,11 @@ export const capKeys = {
   groupBurst: (groupId: string) => `group:${groupId}:10m`,
   groupDay: (groupId: string) => `group:${groupId}:day`,
   jev: (groupId: string) => `jev:group:${groupId}:day`,
+  /** The dashboard's Asks have their own Jev budget, so they never push the Chat into hard-triggers-only. */
+  jevUi: (groupId: string) => `jev:ui:group:${groupId}:day`,
   adder: (channel: string, userExternalId: string) => `adder:${channel}:${userExternalId}:day`,
   notice: (groupId: string) => `notice:group:${groupId}:day`,
+  noticeBurst: (groupId: string) => `notice:group:${groupId}:10m`,
 };
 
 /** Cut a message to MAX_INPUT_CHARS (on a code point, so no half emoji). */
@@ -42,14 +48,14 @@ export function clipInput(text: string, max = MAX_INPUT_CHARS): string {
 export type RunCap = "member" | "group-burst" | "group-day";
 
 export type Caps = {
-  /** Counts one agent run for the Member and the Group; the cap it hit (nothing counted past it), or null. */
+  /** Checks the Member's and the Group's caps, then counts one run on each; the cap it hit (nothing counted), or null. */
   run(groupId: string, memberId: string): Promise<RunCap | null>;
-  /** Counts one Jev call for the Group; false past the daily cap. */
-  jev(groupId: string): Promise<boolean>;
+  /** Counts one Jev call for the Group (the Chat's and the dashboard's budgets apart); false past the daily cap. */
+  jev(groupId: string, source?: "chat" | "ui"): Promise<boolean>;
   /** Counts one new Group for this adder; false past the daily cap. */
   newGroup(channel: string, userExternalId: string): Promise<boolean>;
-  /** True the first time today for this Group (the breather line goes out once). */
-  noticeOnce(groupId: string): Promise<boolean>;
+  /** True the first time in the window for this Group: "day" once a day (BREATHER), "burst" once per 10 minutes. */
+  noticeOnce(groupId: string, kind?: "day" | "burst"): Promise<boolean>;
   /** The Group's agent runs in today's window. */
   limiter: { groupDay: WindowLimiter };
 };
@@ -62,17 +68,23 @@ export function makeCaps(store: CounterStore, clock: () => number = Date.now): C
   const jev = lim(CAPS.jevDay);
   const adder = lim(CAPS.adderDay);
   const notice = lim({ max: 1, windowMs: DAY });
+  const noticeBurst = lim({ max: 1, windowMs: CAPS.groupBurst.windowMs });
   return {
-    // Most specific first, so one Member over their cap never uses up the Group's budget.
+    // Look at every cap first and count only when all of them have room, so a refused run uses up nobody's budget.
+    // (Two runs racing past the check can both count; hit() still stops at the max.)
     async run(groupId, memberId) {
-      if (!(await member.hit(capKeys.member(memberId)))) return "member";
-      if (!(await burst.hit(capKeys.groupBurst(groupId)))) return "group-burst";
-      if (!(await groupDay.hit(capKeys.groupDay(groupId)))) return "group-day";
+      const checks: [RunCap, WindowLimiter, string, number][] = [
+        ["member", member, capKeys.member(memberId), CAPS.memberDay.max],
+        ["group-burst", burst, capKeys.groupBurst(groupId), CAPS.groupBurst.max],
+        ["group-day", groupDay, capKeys.groupDay(groupId), CAPS.groupDay.max],
+      ];
+      for (const [cap, l, key, max] of checks) if ((await l.used(key)) >= max) return cap;
+      for (const [cap, l, key] of checks) if (!(await l.hit(key))) return cap;
       return null;
     },
-    jev: (groupId) => jev.hit(capKeys.jev(groupId)),
+    jev: (groupId, source = "chat") => jev.hit(source === "ui" ? capKeys.jevUi(groupId) : capKeys.jev(groupId)),
     newGroup: (channel, userExternalId) => adder.hit(capKeys.adder(channel, userExternalId)),
-    noticeOnce: (groupId) => notice.hit(capKeys.notice(groupId)),
+    noticeOnce: (groupId, kind = "day") => (kind === "burst" ? noticeBurst.hit(capKeys.noticeBurst(groupId)) : notice.hit(capKeys.notice(groupId))),
     limiter: { groupDay },
   };
 }

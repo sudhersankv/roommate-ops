@@ -32,14 +32,17 @@ export type Requirements = {
 export type AdminAsk = {
   /** Words naming the action, as a case-insensitive regex source ("promote|admin"). */
   action: string;
-  /** The input field naming who or what it's for ("name", "toolkit"), or "*" for any value passed. One of its words
-   * must be in the message too. */
+  /** The input field naming who or what it's for ("name", "toolkit"). One of its words must be in the message too. */
   target?: string;
-  /** "both" (default): the action words and the target; "either": one of them is enough (settings). */
-  needs?: "both" | "either";
-  /** The question Roomie asks instead; "{target}" is the target's value. */
+  /** For a tool that changes several things (settings): every input field the call sets must be asked for by its own
+   * words; `action` then only counts for a call that changes nothing. */
+  fields?: Record<string, AdminField>;
+  /** The question Roomie asks instead; "{target}" is the target's value (or the fields nobody asked for). */
   ask: string;
 };
+
+/** How a message asks for one field: its words (a regex source), or with `byValue` the value itself ("Chicago"). */
+export type AdminField = { words: string; byValue?: boolean };
 
 export type NavEntry = { label: string; href: (groupId: string) => string; icon: IconName; order: number };
 
