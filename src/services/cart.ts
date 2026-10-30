@@ -1,21 +1,21 @@
 // The shared grocery Cart. Items are attributed to whoever added them; a Checkout snapshots the open Cart into an
-// Instacart shopping list; "I paid" logs ONE Expense split by who added what (weighted by estCents, shared items
-// split evenly across active Members). The split math is pure, in cart-split.ts, so the dashboard previews with it.
+// Instacart shopping list; "I paid" logs ONE Expense split by who added what (by item count, shared items split
+// evenly across active Members). The split math is pure, in cart-split.ts, so the dashboard previews with it. No
+// prices here: real money comes from the receipt (or "I paid 84"). Every change is an Activity row with its source.
 import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import { db, schema } from "@/db";
 import type { CheckoutItem } from "@/db/schema";
-import { estimate } from "@/lib/prices";
-import { measurementOrEach, parseAmount } from "@/lib/units";
+import { clarifyQuantities, measurementOrEach, parseAmount } from "@/lib/units";
 import { dashboardUrl } from "@/lib/urls";
 import { InstacartUnavailableError, instacartClient } from "@/integrations/instacart";
-import { record } from "./activity";
+import { record, sourceOf } from "./activity";
 import { NotAllowedError, requireActive } from "./authz";
-import { canRemoveItem, cartTotal, computeCartSplits } from "./cart-split";
+import { canRemoveItem, computeCartSplits } from "./cart-split";
 import { listMembers } from "./members";
 import { logExpense, type Expense } from "./money";
 import { dollars, type Ctx, type GroupCtx } from "./types";
 
-export { canRemoveItem, cartTotal, computeCartSplits, type SplitItem } from "./cart-split";
+export { canRemoveItem, computeCartSplits, type SplitItem } from "./cart-split";
 
 const { cartItems, cartCheckouts, members, recipes } = schema;
 
@@ -79,13 +79,27 @@ export async function listOpenItems(ctx: GroupCtx): Promise<CartItem[]> {
   return rows.map((r) => toItem(r, names, titles));
 }
 
-/** Items are attributed to ctx.memberId. estCents comes from lib/prices (catalog), not the LLM. */
-export async function addItems(ctx: Ctx, input: { items: { name: string; qty?: string }[]; shared?: boolean }): Promise<CartItem[]> {
+/** "eggs", "eggs and milk", "eggs, milk, bread and 2 more" (lower case, for Activity lines). */
+export function itemList(names: string[], max = 3): string {
+  const n = names.map((s) => s.trim().toLowerCase()).filter(Boolean);
+  if (n.length <= 1) return n[0] ?? "nothing";
+  if (n.length <= max) return `${n.slice(0, -1).join(", ")} and ${n[n.length - 1]}`;
+  return `${n.slice(0, max).join(", ")} and ${n.length - max} more`;
+}
+
+/**
+ * Items are attributed to ctx.memberId, or to `forMemberId` ("add oat milk for Dev"). Quantities are kept as said
+ * ("2 cartons"); there are no prices (estCents stays null): real money comes from the receipt.
+ */
+export async function addItems(ctx: Ctx, input: { items: { name: string; qty?: string }[]; shared?: boolean; forMemberId?: string }): Promise<CartItem[]> {
   await requireActive(ctx);
   const items = input.items
     .map((i) => ({ name: i.name.trim().replace(/\s+/g, " "), qty: (i.qty ?? "").trim() || "1" }))
     .filter((i) => i.name);
   if (items.length === 0) throw new Error("Add what? Give me at least one item name.");
+  const addedBy = input.forMemberId ?? ctx.memberId;
+  const names = await namesFor(ctx.groupId);
+  if (!names.has(addedBy)) throw new Error("That person isn't in this group.");
   const rows = await db
     .insert(cartItems)
     .values(
@@ -97,15 +111,31 @@ export async function addItems(ctx: Ctx, input: { items: { name: string; qty?: s
           qty: i.qty,
           quantity: amount ? String(amount.quantity) : null,
           unit: amount?.unit ?? null,
-          addedBy: ctx.memberId,
+          addedBy,
           shared: !!input.shared,
-          estCents: estimate(i.name, i.qty),
+          estCents: null,
         };
       }),
     )
     .returning();
-  const names = await namesFor(ctx.groupId);
+  const forWhom = input.shared ? " for everyone" : addedBy !== ctx.memberId ? ` for ${names.get(addedBy)}` : "";
+  await record(ctx.groupId, ctx.memberId, "cart.added", `put ${itemList(items.map((i) => i.name))} on the Cart${forWhom}`, rows.length === 1 ? { table: "cart_items", id: rows[0].id } : undefined, sourceOf(ctx));
   return rows.map((r) => toItem(r, names, new Map()));
+}
+
+/**
+ * What people say, added as said: items whose quantity can't be read one way ("eggs, 12, 18") are held back with one
+ * short question each (lib/units clarifyQuantities); the rest go in.
+ */
+export async function addAsSaid(ctx: Ctx, input: { items: { name: string; qty?: string }[]; shared?: boolean; forMemberId?: string }): Promise<{ added: CartItem[]; needsClarification: string[] }> {
+  const { ok, questions } = clarifyQuantities(input.items);
+  const added = ok.length ? await addItems(ctx, { ...input, items: ok }) : [];
+  return { added, needsClarification: questions };
+}
+
+async function recordRemoved(ctx: Ctx, item: { id: string; name: string; addedBy: string }) {
+  const whose = item.addedBy === ctx.memberId ? "" : ` (${(await namesFor(ctx.groupId)).get(item.addedBy) ?? "someone"}'s)`;
+  await record(ctx.groupId, ctx.memberId, "cart.removed", `took ${item.name.toLowerCase()}${whose} off the Cart`, { table: "cart_items", id: item.id }, sourceOf(ctx));
 }
 
 function checkRemove(actor: { id: string; role: string }, item: { addedBy: string; name: string }, adderName: string) {
@@ -132,8 +162,9 @@ export async function removeItem(ctx: Ctx, input: { name: string }): Promise<boo
   if (hits.length === 0) return false;
   const mine = hits.find((r) => canRemoveItem(actor, r));
   if (!mine) checkRemove(actor, hits[0], (await namesFor(ctx.groupId)).get(hits[0].addedBy) ?? "whoever");
-  await db.delete(cartItems).where(eq(cartItems.id, mine!.id));
-  return true;
+  const gone = await db.delete(cartItems).where(and(eq(cartItems.id, mine!.id), eq(cartItems.status, "open"))).returning({ id: cartItems.id });
+  if (gone.length) await recordRemoved(ctx, mine!);
+  return gone.length > 0;
 }
 
 /** Remove one open item by id. Group-scoped, so a stale or foreign id can't touch another Group's Cart. */
@@ -148,6 +179,7 @@ export async function removeItemById(ctx: Ctx, input: { id: string }): Promise<b
   if (!item) return false;
   checkRemove(actor, item, (await namesFor(ctx.groupId)).get(item.addedBy) ?? "whoever");
   const gone = await db.delete(cartItems).where(and(eq(cartItems.id, id), eq(cartItems.status, "open"))).returning({ id: cartItems.id });
+  if (gone.length) await recordRemoved(ctx, item);
   return gone.length > 0;
 }
 
@@ -169,7 +201,6 @@ export type Checkout = {
   url: string | null;
   unavailable?: string;
   itemCount: number;
-  estCents: number;
   items: CheckoutItem[];
   createdAt: Date;
 };
@@ -202,7 +233,6 @@ export async function checkout(ctx: Ctx): Promise<Checkout> {
   const rows = await openRows(ctx.groupId);
   if (rows.length === 0) throw new Error("The cart is empty, so there's nothing to check out. Add items first ('roomie, add milk').");
   const items = rows.map(snapshotOf);
-  const estCents = cartTotal(items);
   const sameItems = (snap: CheckoutItem[]) => snap.length === items.length && snap.every((s, k) => s.id === items[k].id && s.qty === items[k].qty);
   const [last] = await db
     .select()
@@ -211,7 +241,7 @@ export async function checkout(ctx: Ctx): Promise<Checkout> {
     .orderBy(desc(cartCheckouts.createdAt))
     .limit(1);
   if (last?.instacartUrl && sameItems(last.itemsSnapshot)) {
-    return { id: last.id, url: last.instacartUrl, itemCount: items.length, estCents, items, createdAt: last.createdAt };
+    return { id: last.id, url: last.instacartUrl, itemCount: items.length, items, createdAt: last.createdAt };
   }
 
   let url: string | null = null;
@@ -223,9 +253,9 @@ export async function checkout(ctx: Ctx): Promise<Checkout> {
     if (!(e instanceof InstacartUnavailableError)) throw e;
     unavailable = e.message;
   }
-  const [row] = await db.insert(cartCheckouts).values({ groupId: ctx.groupId, createdBy: ctx.memberId, itemsSnapshot: items, estCents, instacartUrl: url }).returning();
-  await record(ctx.groupId, ctx.memberId, "cart.checkout", `checked out the Cart (${items.length} item${items.length === 1 ? "" : "s"}, about ${dollars(estCents)})`, { table: "cart_checkouts", id: row.id });
-  return { id: row.id, url, ...(unavailable ? { unavailable } : {}), itemCount: items.length, estCents, items, createdAt: row.createdAt };
+  const [row] = await db.insert(cartCheckouts).values({ groupId: ctx.groupId, createdBy: ctx.memberId, itemsSnapshot: items, estCents: 0, instacartUrl: url }).returning();
+  await record(ctx.groupId, ctx.memberId, "cart.checkout", `made the Instacart list (${items.length} item${items.length === 1 ? "" : "s"})`, { table: "cart_checkouts", id: row.id }, sourceOf(ctx));
+  return { id: row.id, url, ...(unavailable ? { unavailable } : {}), itemCount: items.length, items, createdAt: row.createdAt };
 }
 
 /** The newest Checkout nobody has paid for yet. */
@@ -237,14 +267,14 @@ export async function lastUnpaidCheckout(ctx: GroupCtx): Promise<Checkout | unde
     .orderBy(desc(cartCheckouts.createdAt))
     .limit(1);
   if (!row) return undefined;
-  return { id: row.id, url: row.instacartUrl, itemCount: row.itemsSnapshot.length, estCents: row.estCents, items: row.itemsSnapshot, createdAt: row.createdAt };
+  return { id: row.id, url: row.instacartUrl, itemCount: row.itemsSnapshot.length, items: row.itemsSnapshot, createdAt: row.createdAt };
 }
 
 /* ---------- paying for it ---------- */
 
 /**
- * Payer bought the cart: one Expense (exact Shares, category groceries) split by who added what, weighted by
- * estCents and scaled to the real total; shared items split evenly. With `checkoutId` only that Checkout's items
+ * Payer bought the cart: one Expense (exact Shares, category groceries) split by who added what (each item counts
+ * the same, see computeCartSplits) and scaled to the real total; shared items split evenly. With `checkoutId` only that Checkout's items
  * (still open) are charged; otherwise every open item, and the newest unpaid Checkout they cover is marked paid.
  *
  * Atomic against retries and double-clicks. Inside one transaction the items are flipped to "purchased" FIRST
@@ -272,7 +302,8 @@ export async function markPurchased(ctx: Ctx, input: { totalCents: number; payer
     if (c.paidAt) throw new Error("That checkout was already paid for.");
     only = c.itemsSnapshot.map((i) => i.id);
   }
-  return db.transaction(async (tx) => {
+  let count = 0;
+  const expense = await db.transaction(async (tx) => {
     const items = await tx
       .update(cartItems)
       .set({ status: "purchased" })
@@ -309,6 +340,9 @@ export async function markPurchased(ctx: Ctx, input: { totalCents: number; payer
       if (c && c.snap.some((s) => bought.has(s.id))) checkoutId = c.id;
     }
     if (checkoutId) await tx.update(cartCheckouts).set({ expenseId: expense.id, paidAt: new Date() }).where(eq(cartCheckouts.id, checkoutId));
+    count = items.length;
     return expense;
   });
+  await record(ctx.groupId, ctx.memberId, "cart.purchased", `marked the Cart bought (${count} item${count === 1 ? "" : "s"}, ${dollars(input.totalCents)})`, { table: "expenses", id: expense.id }, sourceOf(ctx));
+  return expense;
 }

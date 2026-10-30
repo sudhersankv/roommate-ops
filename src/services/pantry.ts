@@ -2,7 +2,7 @@
 // Groceries Toolkit's settings (group_toolkits.settings.pantry); any active Member can change it.
 import { and, eq, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
-import { record } from "./activity";
+import { record, sourceOf } from "./activity";
 import { requireActive } from "./authz";
 import { pantryName } from "./recipe-math";
 import type { Ctx, GroupCtx } from "./types";
@@ -67,6 +67,6 @@ export async function updatePantry(ctx: Ctx, input: { add?: string[]; remove?: s
     return list;
   });
   const parts = [add.length ? `added ${add.join(", ")} to` : "", remove.size ? `took ${[...remove].join(", ")} out of` : ""].filter(Boolean);
-  await record(ctx.groupId, ctx.memberId, "pantry.changed", `${parts.join(" and ")} the pantry`);
+  await record(ctx.groupId, ctx.memberId, "pantry.changed", `${parts.join(" and ")} the pantry`, undefined, sourceOf(ctx));
   return next;
 }

@@ -106,6 +106,37 @@ export function parseAmount(qty: string | null | undefined): { quantity: number;
   return toInstacartMeasurement(n, second ? `${first} ${second}` : first) ?? toInstacartMeasurement(n, first) ?? { quantity: roundQuantity(n), unit: "each" };
 }
 
+/** What a bare count of the thing usually comes in, for the "12 and 18 what?" question. */
+const PACKS: Record<string, string> = { egg: "cartons", eggs: "cartons", milk: "cartons", "oat milk": "cartons", water: "bottles", soda: "cans", beer: "cans", yogurt: "cups", bread: "loaves" };
+
+export type QtyItem = { name: string; qty?: string };
+
+/**
+ * Free-text Cart quantities, stored as people said them ("2 cartons", "12", "1 lb"), except when they can't be
+ * read one way: several bare numbers for one thing ("eggs, 12, 18" arrives as "12, 18", or as two eggs lines
+ * with "12" and "18"). Those are held back with one short question each; everything else is fine as is.
+ */
+export function clarifyQuantities(items: QtyItem[]): { ok: QtyItem[]; questions: string[] } {
+  const key = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
+  const bare = (q: string | undefined) => /^\s*\d+(?:\.\d+)?\s*$/.test(q ?? "");
+  const numbersIn = (q: string | undefined) => {
+    const parts = (q ?? "").split(/\s*(?:,|\bor\b|\band\b|&)\s*/i).map((p) => p.trim()).filter(Boolean);
+    return parts.length > 1 && parts.every((p) => /^\d+(?:\.\d+)?$/.test(p)) ? parts : null;
+  };
+  const counts = new Map<string, string[]>();
+  for (const i of items) if (bare(i.qty)) counts.set(key(i.name), [...(counts.get(key(i.name)) ?? []), i.qty!.trim()]);
+  const ok: QtyItem[] = [];
+  const asked = new Map<string, string[]>();
+  for (const i of items) {
+    const k = key(i.name);
+    const several = numbersIn(i.qty) ?? (bare(i.qty) && new Set(counts.get(k)).size > 1 ? counts.get(k)! : null);
+    if (several) asked.set(k, [...new Set([...(asked.get(k) ?? []), ...several])]);
+    else ok.push(i);
+  }
+  const questions = [...asked].map(([name, nums]) => `${name}: ${nums.join(" and ")} what? ${PACKS[name] ?? "packs"} or ${name}?`);
+  return { ok, questions };
+}
+
 const PLURAL: Partial<Record<InstacartUnit, string>> = { cup: "cups", gallon: "gallons", milliliter: "ml", liter: "liters", pint: "pints", quart: "quarts", tablespoon: "tbsp", teaspoon: "tsp", gram: "g", kilogram: "kg", ounce: "oz", pound: "lb", bunch: "bunches", can: "cans", head: "heads", package: "packages", packet: "packets" };
 const SHORT: Partial<Record<InstacartUnit, string>> = { tablespoon: "tbsp", teaspoon: "tsp", gram: "g", kilogram: "kg", ounce: "oz", pound: "lb", milliliter: "ml" };
 

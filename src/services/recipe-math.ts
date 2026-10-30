@@ -1,8 +1,9 @@
 // Pure Recipe helpers (no DB import, so the dashboard can use them too): Pantry matching, have/need, scaling to
 // servings and the fingerprint that decides when an Instacart recipe link is stale. Unit-tested in recipes.test.ts.
 import type { RecipeIngredient } from "@/db/schema";
-import { normalizeName } from "@/lib/prices";
 import { normalizeUnit, roundQuantity } from "@/lib/units";
+
+const normalizeName = (s: string) => s.trim().toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
 
 const singular = (s: string) => (s.length > 3 && s.endsWith("es") && /(ch|sh|ss|x|o)es$/.test(s) ? s.slice(0, -2) : s.length > 3 && s.endsWith("s") && !s.endsWith("ss") ? s.slice(0, -1) : s);
 const words = (s: string) => normalizeName(s).split(" ").filter(Boolean).map(singular);

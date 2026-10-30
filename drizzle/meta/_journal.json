@@ -64,6 +64,13 @@
       "when": 1793311652777,
       "tag": "0008_trick_votes",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1793323096104,
+      "tag": "0011_activity_source",
+      "breakpoints": true
     }
   ]
 }

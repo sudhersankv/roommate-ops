@@ -2,39 +2,31 @@
 // uses. Unit-tested in cart.test.ts.
 import type { SplitRow } from "./split";
 
-/** The bits of an item the split needs. */
-export type SplitItem = { addedBy: string; shared: boolean; estCents: number | null };
+/** The bits of an item the split needs. `estCents` is ignored: there are no prices in the Cart (old rows have one). */
+export type SplitItem = { addedBy: string; shared: boolean; estCents?: number | null };
 
 /** Whoever added an item, or an Admin, can take it off the Cart. */
 export const canRemoveItem = (actor: { id: string; role: string }, item: { addedBy: string }) => actor.role === "admin" || item.addedBy === actor.id;
 
-/** Sum of estimates (unknown = 0). */
-export function cartTotal(items: { estCents: number | null }[]): number {
-  return items.reduce((s, i) => s + (i.estCents ?? 0), 0);
-}
-
 /**
- * Split `totalCents` across people by what they put in the cart:
- *  - each person's own items weigh their estCents;
- *  - shared items (and items added by someone no longer active) are weighed evenly across `activeMemberIds`;
+ * Split `totalCents` across people by what they put in the cart, one share per item (the Cart has no prices; a
+ * receipt photo through Splitting splits item by item with the real prices):
+ *  - each person's own items count 1 each;
+ *  - shared items (and items added by someone no longer active) are split evenly across `activeMemberIds`;
  *  - weights scale to totalCents; rounding remainder cents go one each, payer first, then by largest leftover fraction.
- * Members with zero weight are omitted. Rows always sum to exactly totalCents. If no item has an estimate, each
- * item counts 1 so the split is by item count.
+ * Members with zero weight are omitted. Rows always sum to exactly totalCents.
  */
 export function computeCartSplits(items: SplitItem[], activeMemberIds: string[], totalCents: number, payerId?: string): SplitRow[] {
   const active = [...new Set(activeMemberIds)];
   if (active.length === 0 || items.length === 0) return [];
   const activeSet = new Set(active);
-  const noEstimates = items.every((i) => !((i.estCents ?? 0) > 0));
-  const weightOf = (i: SplitItem) => (noEstimates ? 1 : Math.max(0, i.estCents ?? 0));
 
+  // Integer weights: an item is `active.length` units, so a shared one is 1 unit each.
   const weight = new Map<string, number>();
   const bump = (id: string, w: number) => weight.set(id, (weight.get(id) ?? 0) + w);
   for (const i of items) {
-    const w = weightOf(i);
-    if (w <= 0) continue;
-    if (i.shared || !activeSet.has(i.addedBy)) for (const id of active) bump(id, w / active.length);
-    else bump(i.addedBy, w);
+    if (i.shared || !activeSet.has(i.addedBy)) for (const id of active) bump(id, 1);
+    else bump(i.addedBy, active.length);
   }
   const totalWeight = [...weight.values()].reduce((s, w) => s + w, 0);
   if (totalWeight <= 0) return [];

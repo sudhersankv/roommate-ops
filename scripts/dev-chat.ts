@@ -137,7 +137,7 @@ async function run(line: string) {
       // Open items (and, with a total, the split "I paid" would save), straight from services.
       const gid = await groupId();
       const items = await cart.listOpenItems({ groupId: gid });
-      for (const i of items) console.log(`  ${i.name} ${i.qty} [${i.shared ? "shared" : i.addedByName}${i.recipeTitle ? `, ${i.recipeTitle}` : ""}] est ${i.estCents}c`);
+      for (const i of items) console.log(`  ${i.name} ${i.qty} [${i.shared ? "shared" : i.addedByName}${i.recipeTitle ? `, ${i.recipeTitle}` : ""}]`);
       const total = Math.round(Number(tail) * 100);
       if (total > 0) {
         const people = await members.listMembers({ groupId: gid });
