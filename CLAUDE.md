@@ -237,19 +237,21 @@ src/
   lib/operator.ts       currentOperator(): the signed-in user if their email is in ROOMIE_OPERATOR_EMAILS (lib/env.ts)
   components/ui/        shadcn components; components/roomie/ the mascot; components/app/ shared app bits
                         (sign-in, doorway, avatars, money-bits, categories, theme) and the self-contained Settings ->
-                        Personality: personality-section.tsx (server, <PersonalitySection groupId />), -panel.tsx
-                        (client), -actions.ts (its own server actions)
+                        "Reset what it's learned" (ADR 0020, Admins): learned-reset.tsx (server, <LearnedReset groupId />),
+                        -button.tsx (client), -actions.ts (its own server action)
   app/
     layout.tsx globals.css   Figtree, theme script, toasts; the design tokens
     page.tsx            the landing page for everyone (_landing/, docs/landing.md); signed in, the nav says "Open dashboard"
     app/                /app: where a signed-in person lands: their one Group, a list of 2+ (name, chat app, your seat), or
                         "No groups yet" (+ paste a Claim link);
                         signed out -> /signin. The default `next` after sign-in (APP_PATH)
-    _landing/           landing.tsx (sections), demos.ts (the fake chats; Roomie's lines from ARCHETYPES), chat.tsx
-                        (ChatWindow), landing.css (CSS-only motion), beta-form.tsx + actions.ts (the WhatsApp beta form)
-                        tricks.ts (Tricks + group presets from the manifests/PRESETS, accents), stage.tsx (the dino
-                        watching a chat), vote-button.tsx, share-row.tsx, marks.tsx (links, share links, logos)
-    help/               /help: how Roomie works + FAQ (public, indexable; reuses _landing/tricks.ts and marks.tsx)
+    _landing/           landing.tsx (sections, HEADLINE/SUBLINE), demos.ts (the Apt 4B chats; arithmetic checked by
+                        demos.test.ts), chat.tsx (ChatWindow: lines, DMs, Polls), landing.css (CSS-only motion),
+                        beta-form.tsx + actions.ts (the WhatsApp beta form), tricks.ts (Tricks from the manifests, accents),
+                        stage.tsx (the dino watching a chat), vote-button.tsx (Tricks and Soon channels), share-row.tsx,
+                        marks.tsx (links, share links, logos); words.test.ts = no AI/bot/brain/assistant/smart/toolkit/
+                        feature/enable/vibe in anything a person reads
+    help/               /help: how Roomie works + FAQ (faq.tsx; faq.test.ts keeps the JSON-LD text equal to the page)
     signin/             the sign-in screen: Google + paste a Claim link + "Sign-in didn't complete"; ?next= afterwards
     privacy/            the short privacy page (what's kept, per Group, forget me)
     claim/[token]/      Claim link: sign in, consume, link the Account, -> /g/<id>
@@ -348,9 +350,9 @@ scripts/studio-presets.ts  writes .mastra-presets.json for Studio (run by mastra
 - **Groceries requires Money:** "I paid 84" ends in an Expense, so teaching Groceries with Money off is refused ("it needs Money first") and forgetting Money while Groceries is on is refused ("Groceries needs Money, so I'm keeping it"); `cart_from_photo` no longer checks and a receipt always points at `expense_from_receipt`.
 - **First contact** (`channels/text.ts`, shared by both adapters): `/help` (group or DM) is at most 8 lines naming the Group's Tricks (`helpText`), `/start` in a DM is one line and never a link (on WhatsApp nobody needs either; they work when typed, and other text starting with "/" goes through as text there), on Telegram other slash commands are ignored, a failure while Roomie was addressed gets one friendly line (`OOPS`) and the stack goes to the log. `npm run telegram` prints a `[roomie]` line per message (gate, tools, time, trace id) and per reply.
 
-## Personality (the group pet)
+## Personality (one voice)
 
-[docs/personality.md](docs/personality.md), [ADR 0012](docs/adr/0012-personality-archetype-sliders-learned-style.md). Personality = archetype (chill default, hype, deadpan, mom, gremlin, butler) + what an Admin sets (name, up to 3 quirks, languages, emoji / humor / formality sliders) + the Learned style, all in `groups.personality` (read it through `normalizePersonality`; `{}` is chill "Roomie").
+[docs/personality.md](docs/personality.md), [ADR 0012](docs/adr/0012-personality-archetype-sliders-learned-style.md), [ADR 0020](docs/adr/0020-one-voice-and-private-dms.md). Roomie is the chill archetype, called Roomie, plus the Learned style. The other archetypes, the name, quirks and sliders stay in code behind a dev switch: `normalizePersonality` ignores a stored `base` / `name` / `quirks` / dials unless `ROOMIE_ARCHETYPES=1` and `NODE_ENV !== "production"` (`archetypesUnlocked`), so an old Group's "hype, Dino" is inert. Settings keeps only "Reset what it's learned" (Admins). `set_group_settings`'s `personality` fields are to be removed from the tool schema (toolkits owner).
 
 - **Instructions are composed in code** (`mastra/persona.ts`), never one free-text prompt: core rules (facts from tools, no math, brevity) first, then the voice, sliders as sentences, quirks, learned style, `/* TOOLKIT_PERSONA */` (enabled manifests' optional `persona: string`), mood, what Roomie knows about people. Jokes are a trait, not a Toolkit.
 - **Adaptation is bounded by code:** confidence comes from messages seen (`confidenceFor`); below 0.3 no slang, 0.3-0.6 one phrase per 5 replies (checked against Roomie's last 4 chat lines), above 0.6 free but never more than the group; nicknames only after 3 sightings by others. Counts come from the messages (`lib/style-stats.ts`); the model only proposes candidates. Change the rules there, with a test.
@@ -383,7 +385,7 @@ scripts/studio-presets.ts  writes .mastra-presets.json for Studio (run by mastra
 - The Tricks page (`/g/<id>/tricks`, same page as `/toolkits`) is the one place Tricks are taught or forgotten in the UI; Settings only summarizes and links there. In UI text it's "Tricks", not a store or marketplace (Roomie is a groupmate).
 - Dashboard pattern: a page (server) calls `currentMember(groupId)`, reads services through `_components/data.ts` and renders a client screen; writes are server actions in `g/[groupId]/actions.ts` that call a service with the session's Ctx and `revalidatePath`. They return `{ ok, error, status }`, so screens toast errors. Coming-soon Toolkits (Lease stuff, Outings, Cooking, Research, Trips, PDFs, Stickers) are manifest-only stubs: listed on the Toolkits page and refused kindly.
 - Schema changes: edit `src/db/schema.ts`, `npm run db:generate`, commit the SQL in `drizzle/`, `npm run db:migrate`. Never `drizzle-kit push`.
-- Roomie's replies are 1 to 3 short lines unless someone asks for more (the archetype can make that 1). The trigger words are "roomie" and the Group's name for its pet (`callsPet`); the @mention always works.
+- Roomie's replies are 1 to 3 short lines unless someone asks for more. The trigger word is "roomie" (`callsPet`); the @mention always works. There is no other name (ADR 0020).
 - Use the glossary's words in code and UI text (Member, Group, Expense, Cart...), and avoid the words it lists under _Avoid_.
 ## Library notes (versions in package-lock)
 

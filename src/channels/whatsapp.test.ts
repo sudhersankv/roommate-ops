@@ -501,7 +501,7 @@ describe("groups", () => {
   });
 
   test("the Admin's setup DM goes out right away, the Claim link as a trailing line; the intro still waits", async () => {
-    const dm = { text: "Hi 👋 You added me to Apt 4B, so you're its admin.\nAnswer the setup here or in the group: what's the group for, currency, city, vibe.", buttons: [{ text: "Open dashboard", url: "https://roomie.fly.dev/claim/abc" }] };
+    const dm = { text: "Hi 👋 You added me to Apt 4B, so you're its admin.\nAnswer the setup here or in the group: what's the group for, currency, city.", buttons: [{ text: "Open dashboard", url: "https://roomie.fly.dev/claim/abc" }] };
     const h = harness({ deps: { onGroupJoined: async (...args) => (h.seen.joined.push(args), { intro: { text: "intro" }, setupDm: dm }) } });
     await h.open();
     h.sock().emit("group-participants.update", { id: GROUP, author: MAYA.lid, authorPn: MAYA.pn, action: "add", participants: [{ id: ROOMIE_LID, phoneNumber: ROOMIE_PN }] });

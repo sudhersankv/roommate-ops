@@ -1,5 +1,6 @@
 // Trick votes: "I want this" on a coming-soon Trick (a Toolkit with status "coming-soon") on the landing page
-// (docs/landing.md). Anyone can vote; one row per vote in trick_votes, the IP only as an HMAC. No Group, no Account.
+// (docs/landing.md), and on a Channel that isn't built yet (the channel strip: Discord, iMessage). Anyone can vote;
+// one row per vote in trick_votes, the IP only as an HMAC. No Group, no Account.
 import { count, inArray } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { WindowLimiter } from "@/lib/window-limit";
@@ -12,7 +13,15 @@ export const VOTE_PER_TRICK = { max: 1, windowMs: 24 * 60 * 60 * 1000 };
 /** Counts show on the page only from this many votes up (a lone "1 wants this" reads as nobody). */
 export const SHOW_COUNT_FROM = 5;
 
-export const votableTrickIds = (): string[] => CATALOG.filter((m) => m.status === "coming-soon").map((m) => m.id);
+/** Channels people can vote for, as `channel:<id>` rows next to the Tricks (ADR 0015: Discord and iMessage are Soon). */
+export const SOON_CHANNELS = [
+  { id: "channel:discord", name: "Discord" },
+  { id: "channel:imessage", name: "iMessage" },
+] as const;
+export type SoonChannelId = (typeof SOON_CHANNELS)[number]["id"];
+
+/** Everything "I want this" accepts: the coming-soon Tricks, then the Channels that aren't built yet. */
+export const votableTrickIds = (): string[] => [...CATALOG.filter((m) => m.status === "coming-soon").map((m) => m.id), ...SOON_CHANNELS.map((c) => c.id)];
 
 export type VoteResult = { ok: true; counted: boolean } | { ok: false; reason: "unknown_trick" | "rate_limited" | "failed"; message: string };
 
@@ -52,7 +61,7 @@ export async function voteForTrick(trickId: unknown, meta: { ip: string }, deps:
   return { ok: true, counted: true };
 }
 
-/** Votes per coming-soon Trick. An empty map when the database can't be reached: the page still renders. */
+/** Votes per coming-soon Trick and Channel (`channel:…`). An empty map when the database can't be reached: the page still renders. */
 export async function trickVoteCounts(): Promise<Record<string, number>> {
   try {
     const rows = await db

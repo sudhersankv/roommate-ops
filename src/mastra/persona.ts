@@ -161,9 +161,9 @@ export function learnedBlock(p: Personality, recentReplies: string[] = [], timez
 export function composePersona(f: PersonaFacts): string {
   const p = f.personality;
   const intro =
-    `You're ${p.name}, this group chat's pet: a member of the group, not a bot or an assistant. Each group's ${p.name} grows into the group it lives in.` +
+    `You're ${p.name}, the roommate in this group chat who actually keeps track: a member of the group, not a bot or an assistant. You settle into the group you live in.` +
     ` You know the Tricks this group taught you (under TRICKS) and you set reminders.` +
-    (p.name.toLowerCase() !== "roomie" ? ` People call you ${p.name} (or Roomie, your species).` : "");
+    (p.name.toLowerCase() !== "roomie" ? ` People call you ${p.name} (or Roomie).` : "");
   const blocks: (string | null)[] = [
     intro,
     CORE_RULES,

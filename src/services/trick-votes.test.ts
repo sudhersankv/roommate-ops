@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { WindowLimiter } from "@/lib/window-limit";
 import { MANIFESTS } from "@/toolkits/manifests";
-import { SHOW_COUNT_FROM, shownCount, voteForTrick, votableTrickIds } from "./trick-votes";
+import { SHOW_COUNT_FROM, SOON_CHANNELS, shownCount, voteForTrick, votableTrickIds } from "./trick-votes";
 
 const silence = async <T>(fn: () => Promise<T>): Promise<T> => {
   const [log, err] = [console.log, console.error];
@@ -18,17 +18,34 @@ const silence = async <T>(fn: () => Promise<T>): Promise<T> => {
 
 const fresh = () => ({ limiter: new WindowLimiter(3, 60_000), perTrick: new WindowLimiter(1, 60_000) });
 
-test("only coming-soon Tricks can be voted for", async () => {
+test("only coming-soon Tricks and the Soon Channels can be voted for", async () => {
   const ids = votableTrickIds();
-  assert.ok(ids.includes("trips") && ids.includes("research"));
-  assert.ok(ids.includes("household-admin") && ids.includes("outings") && ids.includes("cooking"));
+  assert.ok(ids.includes("trips") && ids.includes("stickers"));
+  assert.ok(ids.includes("outings") && ids.includes("cooking"));
   for (const m of MANIFESTS) assert.ok(!ids.includes(m.id), `${m.id} is built, not votable`);
   const rows: unknown[] = [];
-  for (const bad of ["splitting", "nope", 42, undefined]) {
+  for (const bad of ["splitting", "nope", 42, undefined, "channel:telegram", "channel:whatsapp", "channel:"]) {
     const r = await voteForTrick(bad, { ip: "1.2.3.4" }, { ...fresh(), insert: async (row) => void rows.push(row) });
-    assert.deepEqual(r.ok, false);
+    assert.deepEqual(r.ok, false, String(bad));
   }
   assert.equal(rows.length, 0);
+});
+
+test("channel votes (ADR 0015): channel:discord and channel:imessage are rows like any Trick, with the same per-address limit", async () => {
+  assert.deepEqual(
+    SOON_CHANNELS.map((c) => c.id),
+    ["channel:discord", "channel:imessage"],
+  );
+  const rows: { trickId: string }[] = [];
+  const deps = { ...fresh(), insert: async (row: { trickId: string }) => void rows.push(row) };
+  assert.deepEqual(await silence(() => voteForTrick("channel:discord", { ip: "1.2.3.4" }, deps)), { ok: true, counted: true });
+  assert.deepEqual(await silence(() => voteForTrick("channel:imessage", { ip: "1.2.3.4" }, deps)), { ok: true, counted: true });
+  assert.deepEqual(await silence(() => voteForTrick("channel:discord", { ip: "1.2.3.4" }, deps)), { ok: true, counted: false }, "one per Channel per address a day");
+  assert.deepEqual(
+    rows.map((r) => r.trickId),
+    ["channel:discord", "channel:imessage"],
+  );
+  assert.equal(shownCount(SHOW_COUNT_FROM), SHOW_COUNT_FROM, "a Channel's count shows from the same threshold");
 });
 
 test("a vote stores the Trick and an IP hash, never the IP; a repeat that day is a quiet no-op", async () => {

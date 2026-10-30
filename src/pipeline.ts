@@ -175,13 +175,7 @@ export async function mediaWantedFor(q: MediaQuestion): Promise<boolean> {
   const lastRoomieAt = await lastRoomieReplyAt(group.id);
   // This message isn't logged yet, so it's one more than what's in the log.
   const inWindow = !!lastRoomieAt && inFollowUpWindow({ lastRoomieAt, humanSinceRoomie: (await humanMessagesSince(group.id, lastRoomieAt)) + 1 });
-  return mediaWanted({
-    kind: q.kind,
-    caption: q.caption,
-    petName: normalizePersonality(group.personality).name,
-    inWindow,
-    setupPending: setupPendingFor(group, member),
-  });
+  return mediaWanted({ kind: q.kind, caption: q.caption, inWindow, setupPending: setupPendingFor(group, member) });
 }
 
 /** Setup is unfinished and this is the Admin, within a day of Roomie joining: what they say in the Chat is for Roomie. */
@@ -214,9 +208,9 @@ export async function respond(input: RespondInput): Promise<PipelineResult> {
   if (group?.pausedAt) return quiet("paused");
   const earlier = chat ? chatter.slice(0, -1) : chatter; // everything before this message
   const personality = normalizePersonality(group?.personality);
-  const petted = isPetCommand(text, personality.name);
+  const petted = isPetCommand(text);
   // A voice note is no hard trigger by itself: adapters only transcribe one that was addressed (or in the window).
-  let hardTrigger = isHardTrigger({ groupChat: chat, petted, isReplyToRoomie: input.isReplyToRoomie, mentionsRoomie: input.mentionsRoomie, isVoice: input.isVoice, text, petName: personality.name });
+  let hardTrigger = isHardTrigger({ groupChat: chat, petted, isReplyToRoomie: input.isReplyToRoomie, mentionsRoomie: input.mentionsRoomie, isVoice: input.isVoice, text });
   let inWindow = false;
   const lastRoomieAt = chat ? await lastRoomieReplyAt(groupId) : null;
   if (chat && !hardTrigger) {
