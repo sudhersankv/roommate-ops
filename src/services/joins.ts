@@ -226,13 +226,28 @@ export function setJoinLimits(store: CounterStore | null, clock: () => number = 
 
 export type ClaimSeatResult = { kind: "connected" | "already" | "pending"; groupId: string; memberName: string };
 
+/**
+ * A Google display name as Roomie will say it in the chat: no links, quotes, brackets or control characters, at most 40
+ * characters. It's someone else's text going into Roomie's own line, so it must read as a name, never an instruction.
+ */
+export function cleanName(raw: string | null | undefined): string {
+  const name = (raw ?? "")
+    .replace(/https?:\/\/\S+|www\.\S+/gi, "")
+    .replace(/[\p{Cc}\p{Cf}"'`<>[\]{}()\\|*_~#@:]/gu, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 40)
+    .trim();
+  return name;
+}
+
 /** The name a Join link Pending Member goes by: their Google name, made unique in the Group. */
 async function pendingName(groupId: string, account: { name: string | null; email: string }): Promise<string> {
-  const base = (account.name?.trim() || account.email.split("@")[0] || "Someone").replace(/\s+/g, " ").slice(0, 60);
+  const base = cleanName(account.name) || cleanName(account.email.split("@")[0]) || "Someone";
   const taken = new Set((await db.select({ n: members.displayName }).from(members).where(and(eq(members.groupId, groupId), ne(members.status, "removed")))).map((r) => r.n.toLowerCase()));
   if (!taken.has(base.toLowerCase())) return base;
-  const handle = account.email.split("@")[0];
-  const withHandle = `${base} (${handle})`.slice(0, 80);
+  const handle = cleanName(account.email.split("@")[0]).replace(/\s/g, "").slice(0, 30);
+  const withHandle = `${base} (${handle})`;
   return taken.has(withHandle.toLowerCase()) ? `${base} (${Date.now().toString(36).slice(-4)})` : withHandle;
 }
 
