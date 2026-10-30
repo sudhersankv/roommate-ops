@@ -162,7 +162,7 @@ Each step gets its own branch and PR, and you test locally before it's merged. S
 - [x] `/` reframed as an AI that joins any group chat and learns **Tricks** (the user-facing word for Toolkits): new headline, one hero chat with a reacting dino, Trick-labelled demos (+ a trip group), the Tricks strip from the catalog with coming-soon votes (`trick_votes`, migration 0008), a vibe strip, "What's your group?" from `PRESETS`, a share row, ember accents and CSS motion with reduced-motion fallbacks. `/help` with a 14-question FAQ ([docs/landing.md](./landing.md)).
 
 ### Audit fixes: abuse limits (`fix/audit-abuse`, [audit](./audit-public-beta.md) B3, H1, H2, H3, H4, H6)
-- [x] Caps on agent runs (60/day per Member, 30 per 10 min and 200/day per Group), Jev (2,000/day per Group), new Groups (3/day per adder) and input (2,000 characters), counted in `rate_counters` (migration 0010); the breather line once a day; 429 on the dashboard's Ask.
+- [x] Caps on agent runs (60/day per Member, 30 per 10 min and 200/day per Group), Jev (2,000/day per Group), new Groups (3/day per adder) and input (2,000 characters), counted in `rate_counters` (migration 0009); the breather line once a day; 429 on the dashboard's Ask.
 - [x] `ROOMIE_PAUSED=1` and per-Group pause (`groups.paused_at`) with `/admin/groups` (pause, resume, leave chat).
 - [x] Photos and voice notes only when Roomie is addressed (or in the follow-up window / setup); a voice note is no hard trigger.
 - [x] `wa_contacts` only for Members (+ `scripts/wa-contacts-prune.ts`), the WhatsApp adder allowlist, admin-only tools that need the Admin's own ask (manifest `adminOnly`).
