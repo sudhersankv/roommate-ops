@@ -49,6 +49,7 @@ import makeWASocket, {
 import QRCode from "qrcode";
 import type { ChatRef } from "@/onboarding";
 import { KeyedQueue } from "./queue";
+import { planDelivery } from "./humanize";
 import { envMs, SendLimiter, sleep as realSleep } from "./rate-limit";
 import { BAD_VOICE, chunkText, commandOf, helpText, MANY_GROUPS, NO_GROUP, NO_VOICE, OOPS, startReply, wasAddressed } from "./text";
 import { logPaused, roomiePaused } from "@/lib/kill-switch";
@@ -243,7 +244,7 @@ export class ContactBook {
 export type WhatsAppChannelOptions = {
   limiter?: SendLimiter;
   sleep?: (ms: number) => Promise<void>;
-  /** Pause after "composing" before each reply. Default REPLY_DELAY_MS, else 1.2-3.2 s. */
+  /** Fixed "composing" pause per bubble (tests, REPLY_DELAY_MS). Default: sized to the text (humanize.ts). */
   replyDelayMs?: number;
   /** A LID recipient -> their phone JID when known. */
   recipientOf?: (jid: string) => Promise<string>;
@@ -322,17 +323,20 @@ export class WhatsAppChannel implements Channel {
     }
   }
 
+  /** Typed like a person (humanize.ts): "typing…", a pause sized to the text, then the bubble; longer replies in 2-3 bubbles. */
   private async send(jid: string, msg: Outgoing) {
     const sock = this.socket();
     if (!sock) throw new WhatsAppNotConnectedError();
-    await sock.sendPresenceUpdate("composing", jid).catch(() => {});
-    await this.sleep(this.replyDelayMs ?? 1_200 + Math.floor(Math.random() * 2_000));
-    for (const chunk of chunkText(withButtonLines(msg), WHATSAPP_MAX_TEXT)) {
-      await this.limiter.acquire(jid);
-      const live = this.socket();
-      if (!live) throw new WhatsAppNotConnectedError();
-      const sent = await live.sendMessage(jid, { text: chunk });
-      if (sent) this.opts.onSent?.(sent);
+    for (const bubble of planDelivery(withButtonLines(msg))) {
+      await sock.sendPresenceUpdate("composing", jid).catch(() => {});
+      await this.sleep(this.replyDelayMs ?? bubble.typingMs);
+      for (const chunk of chunkText(bubble.text, WHATSAPP_MAX_TEXT)) {
+        await this.limiter.acquire(jid);
+        const live = this.socket();
+        if (!live) throw new WhatsAppNotConnectedError();
+        const sent = await live.sendMessage(jid, { text: chunk });
+        if (sent) this.opts.onSent?.(sent);
+      }
     }
     await sock.sendPresenceUpdate("paused", jid).catch(() => {});
   }

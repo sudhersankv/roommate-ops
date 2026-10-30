@@ -157,6 +157,9 @@ src/
                         adapters pass them through the optional `tricksIn` dep), startReply, OOPS, NO_GROUP, wasAddressed
   channels/queue.ts     KeyedQueue: inbound work per Chat, in order
   channels/rate-limit.ts     token buckets (TokenBucket, SendLimiter) with an injectable clock; envMs
+  channels/humanize.ts  replies typed like a person: planDelivery(text) -> bubbles with typing delays (first ~1.2-4 s, between
+                        0.8-1.8 s, max 3 bubbles, sentences packed to ~160 chars, lists whole, a link alone, 10 s cap). Both
+                        adapters send every bubble after "typing…"; REPLY_DELAY_MS pins the delay (tests)
   lib/auth/             server.ts (createNeonAuth), client.ts (createAuthClient), dev.ts (DEV_AUTH_EMAIL bypass)
   lib/session.ts        sessionUser -> currentAccount -> memberSession(groupId) / currentMember(groupId) (redirect/404)
   lib/env.ts            loads .env with override (import first in every entry point)

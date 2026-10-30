@@ -12,6 +12,7 @@ import { Api, Bot, GrammyError, InlineKeyboard } from "grammy";
 import type { ChatMember, Message, User, UserFromGetMe } from "grammy/types";
 import type { ChatRef } from "@/onboarding";
 import { KeyedQueue } from "./queue";
+import { planDelivery } from "./humanize";
 import { envMs, SendLimiter, sleep as realSleep } from "./rate-limit";
 import { BAD_VOICE, chunkText, commandOf, helpText, MANY_GROUPS, MAX_TEXT, NO_GROUP, NO_VOICE, OOPS, startReply, wasAddressed } from "./text";
 import { logPaused, roomiePaused } from "@/lib/kill-switch";
@@ -213,13 +214,17 @@ export class TelegramChannel implements Channel {
       console.warn("[telegram] APP_URL is local, and Telegram won't take localhost buttons: sending those links as text (docs/telegram.md)");
     }
     const text = [msg.text, ...asText.map((b) => `${b.text}: ${b.url}`)].join("\n");
-    await this.api.sendChatAction(chatId, "typing").catch(() => {});
-    await this.sleep(this.replyDelayMs ?? 600 + Math.floor(Math.random() * 1200));
-    const chunks = chunkText(text);
-    for (const [i, chunk] of chunks.entries()) {
-      const markup = i === chunks.length - 1 ? keyboardFor(buttons) : undefined;
-      await this.limiter.acquire(chatId);
-      await this.retryOn429(() => this.api.sendMessage(chatId, chunk, { link_preview_options: { is_disabled: true }, ...(markup ? { reply_markup: markup } : {}) }));
+    // Typed like a person (humanize.ts): "typing…" sized to the text, then the bubble; the buttons ride on the last one.
+    const bubbles = planDelivery(text);
+    for (const [bi, bubble] of bubbles.entries()) {
+      await this.api.sendChatAction(chatId, "typing").catch(() => {});
+      await this.sleep(this.replyDelayMs ?? bubble.typingMs);
+      const chunks = chunkText(bubble.text);
+      for (const [i, chunk] of chunks.entries()) {
+        const markup = bi === bubbles.length - 1 && i === chunks.length - 1 ? keyboardFor(buttons) : undefined;
+        await this.limiter.acquire(chatId);
+        await this.retryOn429(() => this.api.sendMessage(chatId, chunk, { link_preview_options: { is_disabled: true }, ...(markup ? { reply_markup: markup } : {}) }));
+      }
     }
   }
 
