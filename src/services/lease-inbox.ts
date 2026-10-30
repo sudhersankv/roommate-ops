@@ -2,6 +2,9 @@
 // Member. The pure rules live next door (send-rule.ts, lease-inbox-rules.ts, lib/forwarded.ts); this module is the
 // DB and the mail client around them. The classifier is injected (setClassifier, like setReceiptReader).
 //
+// Refining ADR 0016 decision 3: a forward teaches the landlord only when a known Member sent it (their Account
+// email); a sender on a public mail domain (gmail.com, outlook.com...) is trusted by exact address, never its domain.
+//
 // What a class *does* beyond this module (a Reminder row, the urgent slot, Documents, the Admin's DM, the rent
 // proposal, a utility prefill) goes through `InboundHooks`, no-ops until #24 (core slots) and #25 (Money) land.
 import { createHash, randomBytes } from "node:crypto";
@@ -97,12 +100,13 @@ async function addTrusted(groupId: string, addressOrDomain: string, source: Send
 }
 
 /** An Admin's "yes, that's our building" (source admin), or the intro email's recipient. */
-export async function trustSender(ctx: Ctx, addressOrDomain: string, source: SenderSource): Promise<{ trusted: string[] }> {
+export async function trustSender(ctx: Ctx, addressOrDomain: string, source: SenderSource): Promise<{ trusted: string[]; line: string }> {
   if (source === "admin") await requireAdmin(ctx);
   else await requireActive(ctx);
   const trusted = await addTrusted(ctx.groupId, addressOrDomain, source);
-  await recordFor(ctx, "lease.trust", `trusted ${trusted.at(-1)} as the landlord`);
-  return { trusted };
+  const widest = trusted.at(-1)!;
+  await recordFor(ctx, "lease.trust", `marked ${widest} as the landlord`);
+  return { trusted, line: `I'll treat ${widest} as the landlord from now on.` };
 }
 
 export async function knownSenders(groupId: string): Promise<string[]> {
@@ -390,7 +394,7 @@ export async function sendToLandlord(ctx: Ctx, input: SendInput, now = new Date(
     if (!inbound && !ours) throw new Error("I can't find that email thread.");
     to = inbound?.from ?? ours!.to;
     replyTo = inbound ? { messageId: inbound.messageId } : { messageId: ours!.messageId, to: ours!.to };
-    // "reply" is simple only in a thread the landlord wrote in; a follow-up on our own repair request is still one.
+    // "reply" is simple only in a thread the landlord wrote in; a follow-up on our own work order is still one.
     if (intent === "reply" && !inbound?.trusted) intent = ours?.intent === "maintenance" ? "maintenance" : "other";
   } else {
     to = input.to ?? (await landlordAddress(ctx.groupId));
@@ -437,14 +441,14 @@ export async function sendToLandlord(ctx: Ctx, input: SendInput, now = new Date(
   return { sent: true, line: `Sent: ${input.summary}.`, threadId: ref.threadId, messageId: ref.messageId, sentMailId: row.id };
 }
 
-/** "The sink's leaking, tell them": a repair request to the landlord and a work order to follow it. */
+/** "The sink's leaking, tell them": a work order emailed to the landlord, and followed from then on. */
 export async function reportIssue(ctx: Ctx, input: { what: string; instruction: string; confirmed?: boolean }): Promise<SendResult & { workOrderId?: string }> {
   await requireActive(ctx);
   const [group] = await db.select({ name: groups.name }).from(groups).where(eq(groups.id, ctx.groupId));
   const what = input.what.trim();
   // TODO(lease-inbox toolkit pass): the body drafted by the model from the Member's words; this is the plain fallback.
-  const body = `Hi,\n\nWe'd like to report a repair at ${group?.name ?? "our apartment"}: ${what}.\nCould someone take a look?\n\nThanks.`;
-  const r = await sendToLandlord(ctx, { intent: "maintenance", subject: `Repair request: ${what}`, body, instruction: input.instruction, summary: `reported ${what}`, confirmed: input.confirmed });
+  const body = `Hi,\n\nWe'd like to put in a work order for ${group?.name ?? "our apartment"}: ${what}.\nCould someone take a look?\n\nThanks.`;
+  const r = await sendToLandlord(ctx, { intent: "maintenance", subject: `Work order: ${what}`, body, instruction: input.instruction, summary: `reported ${what}`, confirmed: input.confirmed });
   if (!r.sent) return r;
   const order = await createWorkOrder(ctx, { title: what, threadId: r.threadId });
   await db.update(sentMail).set({ workOrderId: order.id }).where(eq(sentMail.id, r.sentMailId));

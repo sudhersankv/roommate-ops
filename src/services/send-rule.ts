@@ -1,11 +1,11 @@
 // Pure: may Roomie send this email to the landlord at once, or ask first? (ADR 0016 decision 6.) The model drafts;
-// this rule decides, and the model never skips it. Simple = a reply in the landlord's thread or a new repair request,
+// this rule decides, and the model never skips it. Simple = a reply in the landlord's thread or a new work order,
 // to a known landlord address, with no amount, no date the Member didn't say and no lease term, and no other Member
 // asking for something else within the hour. Each refusal is the question Roomie asks, in one message.
 import { addressOf, domainOf } from "@/lib/forwarded";
 
 /**
- * reply = in a thread the landlord started; maintenance = a new repair request; intro = the one-time intro email (fixed
+ * reply = in a thread the landlord started; maintenance = a new work order; intro = the one-time intro email (fixed
  * text, offered by Roomie and asked for by a Member); other = anything else new.
  */
 export type SendIntent = "reply" | "maintenance" | "intro" | "other";
@@ -100,7 +100,7 @@ export function sendRule(draft: SendDraft, ctx: SendContext): SendVerdict {
   const to = addressOf(draft.to) ?? draft.to;
 
   if (!isKnown(draft.to, ctx.knownSenders)) ask.push(`${to} hasn't emailed us before. Send it there anyway?`);
-  else if (ctx.intent === "other") ask.push(`This isn't a reply or a repair request. Send it to ${to} as it is?`);
+  else if (ctx.intent === "other") ask.push(`This isn't a reply or a work order. Send it to ${to} as it is?`);
 
   const amount = AMOUNT.exec(draft.body)?.[0];
   if (amount) ask.push(`It mentions ${amount.trim()}. OK to put that amount in writing?`);

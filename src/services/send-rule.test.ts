@@ -43,9 +43,9 @@ describe("sendRule: complex mail asks first", () => {
     return (r as { ok: false; ask: string[] }).ask;
   };
 
-  test("a new email that isn't a repair request", () => {
+  test("a new email that isn't a work order", () => {
     const ask = asks(draft("Hi, we'd like to know if we can paint the living room."), ctx({ intent: "other", memberText: "ask them if we can paint" }));
-    assert.deepEqual(ask, ["This isn't a reply or a repair request. Send it to leasing@brookfieldresidential.com as it is?"]);
+    assert.deepEqual(ask, ["This isn't a reply or a work order. Send it to leasing@brookfieldresidential.com as it is?"]);
   });
 
   test("a new recipient", () => {

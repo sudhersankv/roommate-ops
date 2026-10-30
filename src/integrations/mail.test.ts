@@ -41,7 +41,7 @@ describe("FakeMail", () => {
   test("a follow-up on a message we sent replies in its thread to whoever we sent it to", async () => {
     const mail = new FakeMail();
     const { inboxId } = await mail.createInbox(GROUP, "apt-4b-k2x9");
-    const first = await mail.send(inboxId, { to: "leasing@brookfieldresidential.com", subject: "Repair request: the leaking kitchen sink", text: "Hi," });
+    const first = await mail.send(inboxId, { to: "leasing@brookfieldresidential.com", subject: "Work order: the leaking kitchen sink", text: "Hi," });
     const again = await mail.reply(inboxId, first.messageId, { text: "Any news?", to: "leasing@brookfieldresidential.com" });
     assert.equal(again.threadId, first.threadId);
     assert.equal(mail.sent[1].to, "leasing@brookfieldresidential.com");

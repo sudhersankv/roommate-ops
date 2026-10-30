@@ -70,10 +70,16 @@ describe("isUrgent: a notice dated within 72 hours", () => {
     assert.equal(isUrgent("2026-11-03", now, KOL), false); // 76 h away
   });
 
-  test("the same local day is still urgent; an earlier day is not", () => {
+  test("a time that has already passed is not urgent: it's news for the next Bundle", () => {
+    const shutOff = "2026-10-30T09:00"; // Fri 09:00 CDT
+    assert.equal(isUrgent(shutOff, new Date("2026-10-30T16:00:00Z"), CHI), false); // received Fri 11:00
+    assert.equal(isUrgent(shutOff, new Date("2026-10-30T01:00:00Z"), CHI), true); // received Thu 20:00
+    assert.equal(isUrgent(shutOff, new Date("2026-10-30T14:00:00Z"), CHI), false); // received at 09:00 sharp
+  });
+
+  test("a bare date is urgent until its local day is over; an earlier day is not", () => {
     const now = new Date("2026-10-30T23:00:00Z"); // Fri 18:00 CDT, already Saturday in UTC
     assert.equal(isUrgent("2026-10-30", now, CHI), true);
-    assert.equal(isUrgent("2026-10-30T10:00", now, CHI), true);
     assert.equal(isUrgent("2026-10-29", now, CHI), false);
   });
 

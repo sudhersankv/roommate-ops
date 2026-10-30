@@ -602,7 +602,7 @@ export const landlordSenders = pgTable(
   (t) => [primaryKey({ columns: [t.groupId, t.value] })],
 );
 
-/** A repair request sent to the landlord, and how far it got (sent -> acknowledged -> scheduled -> done). */
+/** A work order emailed to the landlord, and how far it got (sent -> acknowledged -> scheduled -> done). */
 export const workOrders = pgTable(
   "work_orders",
   {

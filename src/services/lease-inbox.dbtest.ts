@@ -121,7 +121,8 @@ describe("Lease Inbox services against the dev DB", () => {
   });
 
   test("after trustSender (an Admin's yes), the whole domain is trusted", async () => {
-    await leaseInbox.trustSender(maya, "leasing@brookfieldresidential.com", "admin");
+    const yes = await leaseInbox.trustSender(maya, "leasing@brookfieldresidential.com", "admin");
+    assert.equal(yes.line, "I'll treat brookfieldresidential.com as the landlord from now on.");
     assert.equal(await leaseInbox.isTrusted(groupId, "leasing@brookfieldresidential.com"), true);
     assert.equal(await leaseInbox.isTrusted(groupId, "Work Orders <WorkOrders@BrookfieldResidential.com>"), true);
     assert.equal(await leaseInbox.isTrusted(groupId, "leasing@brookfield-scam.com"), false);
@@ -205,7 +206,7 @@ describe("Lease Inbox services against the dev DB", () => {
     assert.equal(mail.sent.length, before + 1);
     const email = mail.sent.at(-1)!;
     assert.equal(email.to, "leasing@brookfieldresidential.com");
-    assert.match(email.subject, /leaking kitchen sink/i);
+    assert.equal(email.subject, "Work order: the leaking kitchen sink");
     assert.ok(email.text.endsWith("at Dev's request.\nReplies reach all residents."), email.text);
     assert.ok(email.headers?.["Idempotency-Key"], "an idempotency key on every send");
     sinkThread = email.threadId;
@@ -217,7 +218,7 @@ describe("Lease Inbox services against the dev DB", () => {
   });
 
   test('the landlord replies "plumber Tuesday 10-12": the work order is scheduled with the date', async () => {
-    const { result } = await deliver({ from: "Brookfield Work Orders <workorders@brookfieldresidential.com>", subject: "Re: Repair request", text: "A plumber will come Tuesday between 10 and 12.", threadId: sinkThread });
+    const { result } = await deliver({ from: "Brookfield Work Orders <workorders@brookfieldresidential.com>", subject: "Re: Work order: the leaking kitchen sink", text: "A plumber will come Tuesday between 10 and 12.", threadId: sinkThread });
     nextClassifications.push({ class: "work-order", reply: "scheduled", date: "2026-11-03T10:00", summary: "plumber Tuesday 10-12" });
     const out = await leaseInbox.classifyInbound(groupId, result.id!);
     assert.equal(out.class, "work-order");
