@@ -14,7 +14,9 @@ import type { ChatRef } from "@/onboarding";
 import { KeyedQueue } from "./queue";
 import { envMs, SendLimiter, sleep as realSleep } from "./rate-limit";
 import { BAD_VOICE, chunkText, commandOf, helpText, MANY_GROUPS, MAX_TEXT, NO_GROUP, NO_VOICE, OOPS, startReply, wasAddressed } from "./text";
-import { CantMessagePrivatelyError, type Button, type Channel, type ChannelUser, type IncomingMessage, type Outgoing } from "./types";
+import { logPaused, roomiePaused } from "@/lib/kill-switch";
+import { mediaWanted } from "@/mastra/gate/policy";
+import { CantMessagePrivatelyError, type Button, type Channel, type ChannelUser, type IncomingMessage, type MediaQuestion, type Outgoing } from "./types";
 
 export const TELEGRAM_MAX_TEXT = MAX_TEXT;
 export { chunkText, commandOf, helpText, OOPS, startReply };
@@ -35,6 +37,9 @@ export type TelegramDeps = {
   saveImage(chatExternalId: string, fileUniqueId: string, bytes: Buffer): Promise<string>;
   /** Voice note -> text. Absent: Roomie says once per Chat that it can't hear voice notes yet. */
   transcribe?: (audio: ArrayBuffer, opts: { mime?: string; filename?: string }) => Promise<string>;
+  /** A photo or voice note nobody @mentioned, replied to or named Roomie in: handle it anyway? (the pipeline's
+   * mediaWantedFor: follow-up window, setup pending). Absent: no. */
+  mediaWanted?: (q: MediaQuestion) => Promise<boolean>;
 };
 
 /* ---------- pure helpers (telegram.test.ts) ---------- */
@@ -169,6 +174,17 @@ export class TelegramChannel implements Channel {
     while (this.intros.size) await Promise.all([...this.intros.values()].map((i) => i.done));
   }
 
+  /** Leave the group (the intro, if still waiting, never goes out). */
+  async leaveChat(chatExternalId: string) {
+    const intro = this.intros.get(chatExternalId);
+    if (intro) {
+      this.intros.delete(chatExternalId);
+      clearTimeout(intro.timer);
+      intro.resolve();
+    }
+    await this.api.leaveChat(chatExternalId);
+  }
+
   private async flushIntro(chatExternalId: string) {
     const intro = this.intros.get(chatExternalId);
     if (!intro) return;
@@ -262,10 +278,22 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
     if (res.intro) channel.introLater(externalId, res.intro, joinDelayMs);
   }
 
+  /** Photos and voice notes are only fetched when Roomie is being talked to (policy.ts mediaWanted). */
+  async function wanted(kind: "photo" | "voice", addressed: ReturnType<typeof readAddress>, from: User, chatId: string, isPrivate: boolean) {
+    if (mediaWanted({ kind, isPrivate, mentionsRoomie: addressed.mentionsRoomie, isReplyToRoomie: addressed.isReplyToRoomie, caption: addressed.text })) return true;
+    if (!deps.mediaWanted) return false;
+    return deps.mediaWanted({ channel: "telegram", chatExternalId: chatId, userExternalId: String(from.id), kind, caption: addressed.text }).catch((err) => {
+      console.error("[telegram] media check failed", err);
+      return false;
+    });
+  }
+
   /** Text, voice transcript or photo -> what the pipeline gets; null = nothing to pass on. */
-  async function readContent(me: UserFromGetMe, m: Message, replyTo: string, folderChat: string) {
+  async function readContent(me: UserFromGetMe, m: Message, from: User, replyTo: string, folderChat: string, isPrivate = false) {
     const addressed = readAddress(me, m);
     if (m.voice) {
+      // Not for Roomie: logged as "(voice note)", never downloaded or sent to the transcriber.
+      if (!(await wanted("voice", addressed, from, folderChat, isPrivate))) return { ...addressed, text: "", skippedMedia: "voice" as const };
       if (!deps.transcribe) {
         if (!toldNoVoice.has(replyTo)) {
           toldNoVoice.add(replyTo);
@@ -285,6 +313,8 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
       }
     }
     if (m.photo?.length) {
+      // Not for Roomie: the caption goes on as text, the photo itself is never fetched or stored.
+      if (!(await wanted("photo", addressed, from, folderChat, isPrivate))) return { ...addressed, skippedMedia: "photo" as const };
       const largest = m.photo[m.photo.length - 1];
       const file = await fetchFile(largest.file_id);
       return { ...addressed, imageUrl: await deps.saveImage(folderChat, largest.file_unique_id, Buffer.from(file.bytes)) };
@@ -310,7 +340,7 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
   async function groupMessage(me: UserFromGetMe, m: Message, from: User) {
     const chatId = String(m.chat.id);
     if (commandOf(m.text, me.username) === "help") return channel.sendToChat(chatId, { text: helpText(await deps.tricksIn?.(chatId).catch(() => undefined)) });
-    const content = await readContent(me, m, chatId, chatId);
+    const content = await readContent(me, m, from, chatId, chatId);
     if (!content) return;
     await pipeline(
       { channel: "telegram", chatExternalId: chatId, chatTitle: "title" in m.chat ? m.chat.title : undefined, userExternalId: String(from.id), userName: userName(from), ...content },
@@ -325,13 +355,15 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
     if (command === "help") return channel.sendPrivate(userId, { text: helpText(chats.length === 1 ? await deps.tricksIn?.(chats[0]).catch(() => undefined) : undefined) });
     if (command === "start") return channel.sendPrivate(userId, { text: startReply(from.first_name, chats.length) });
     if (chats.length !== 1) return channel.sendPrivate(userId, { text: chats.length ? MANY_GROUPS : NO_GROUP });
-    const content = await readContent(me, m, userId, chats[0]);
+    const content = await readContent(me, m, from, userId, chats[0], true);
     if (!content) return;
     await pipeline({ channel: "telegram", chatExternalId: chats[0], userExternalId: userId, userName: userName(from), ...content, isPrivate: true }, (out) => channel.sendPrivate(userId, out));
   }
 
   bot.use(async (ctx, next) => {
     channel.username ??= ctx.me.username;
+    // The kill switch: nothing is read, answered or joined (the webhook still answers 200, so nothing is replayed).
+    if (roomiePaused()) return logPaused("Telegram updates");
     await next();
   });
 

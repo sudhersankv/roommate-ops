@@ -15,6 +15,9 @@ export type IncomingMessage = {
   isVoice?: boolean;
   /** A photo sent with the message (stored by the adapter where the server can read it), e.g. a receipt. */
   imageUrl?: string;
+  /** A photo or voice note nobody addressed to Roomie: not downloaded, not transcribed (`text` is the caption, or
+   * empty). The pipeline logs "(photo) ..." / "(voice note)" and, with no caption, goes no further. */
+  skippedMedia?: "photo" | "voice";
   isReplyToRoomie?: boolean;
   mentionsRoomie?: boolean; // @-mention (the pipeline also checks the word "roomie")
   /** A 1:1 message to Roomie from a Member of the Group (`chatExternalId` is still the Group's Chat): always
@@ -46,4 +49,16 @@ export interface Channel {
   /** A private 1:1 message (Claim links go out this way, ADR 0003). Throws CantMessagePrivatelyError when the
    * Channel needs the person to message Roomie first. */
   sendPrivate(userExternalId: string, msg: Outgoing): Promise<void>;
+  /** Roomie leaves the Chat (an operator's "Leave chat", too many new Groups from one person). */
+  leaveChat(chatExternalId: string): Promise<void>;
 }
+
+/** What the adapters ask before downloading a photo or transcribing a voice note nobody explicitly addressed to
+ * Roomie (the pipeline's mediaWantedFor: the follow-up window, setup pending for this Admin, the pet's name). */
+export type MediaQuestion = {
+  channel: ChannelName;
+  chatExternalId: string;
+  userExternalId: string;
+  kind: "photo" | "voice";
+  caption?: string;
+};

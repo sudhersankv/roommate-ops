@@ -35,12 +35,13 @@ const clip = (s: string, n = 90) => {
 };
 
 export async function telegramDeps(): Promise<TelegramDeps> {
-  const [{ respondToIncoming }, onboarding, groups, { saveUpload }, voice] = await Promise.all([
+  const [{ respondToIncoming, mediaWantedFor }, onboarding, groups, { saveUpload }, voice, kill] = await Promise.all([
     import("@/pipeline"),
     import("@/onboarding"),
     import("@/services/groups"),
     import("@/services/receipts"),
     import("@/lib/voice"),
+    import("@/lib/kill-switch"),
   ]);
   return {
     // One "[roomie]" line per message (what the Gate decided, the tools, the time) and one per reply, for bug reports.
@@ -49,19 +50,28 @@ export async function telegramDeps(): Promise<TelegramDeps> {
       const r = await respondToIncoming(msg);
       const tools = r.toolCalls.filter((t) => t !== "updateWorkingMemory");
       const gate = `${r.gate.decision}/${r.gate.reason}${r.gate.toolkit ? `/${r.gate.toolkit}` : ""}`;
-      console.log(`[roomie] ${msg.isPrivate ? "dm" : "chat"} ${msg.chatExternalId} ${msg.userName}: ${clip(msg.text)} | gate ${gate}${tools.length ? ` | tools ${tools.join(",")}` : ""} | ${((Date.now() - started) / 1000).toFixed(1)}s${r.traceId ? ` | trace ${r.traceId}` : ""}`);
+      console.log(`[roomie] ${msg.isPrivate ? "dm" : "chat"} ${msg.chatExternalId} ${msg.userName}: ${clip(msg.text)} | gate ${gate}${tools.length ? ` | tools ${tools.join(",")}` : ""}${r.capped ? ` | capped ${r.capped}` : ""} | ${((Date.now() - started) / 1000).toFixed(1)}s${r.traceId ? ` | trace ${r.traceId}` : ""}`);
       console.log(`[roomie]   ${r.out ? `-> ${clip(r.out.text, 140)}${r.out.buttons?.length ? ` [${r.out.buttons.length} button${r.out.buttons.length === 1 ? "" : "s"}]` : ""}` : "(stays quiet)"}`);
       return r.out;
     },
     onGroupJoined: async (chat, participants, addedBy, opts) => {
-      const res = await onboarding.onGroupJoined(chat, participants, addedBy, opts);
-      console.log(`[roomie] joined ${clip(chat.title ?? "")} (${chat.externalId}), added by ${addedBy.name}; ${res.created ? `new Group ${res.group.id}, intro queued` : "already known"}`);
-      return res;
+      if (kill.roomiePaused()) {
+        kill.logPaused(`joining ${chat.externalId}`);
+        return { intro: null };
+      }
+      try {
+        const res = await onboarding.onGroupJoined(chat, participants, addedBy, opts);
+        console.log(`[roomie] joined ${clip(chat.title ?? "")} (${chat.externalId}), added by ${addedBy.name}; ${res.created ? `new Group ${res.group.id}, intro queued` : "already known"}`);
+        return res;
+      } catch (e) {
+        if (e instanceof onboarding.JoinRefusedError) return { intro: null };
+        throw e;
+      }
     },
     onParticipantJoined: async (groupId, user) => {
       const res = await onboarding.onParticipantJoined(groupId, user);
       console.log(`[roomie] ${user.name} joined group ${groupId}: ${res.member.status}${res.announce ? ", asked the Admins to approve" : ""}`);
-      return res;
+      return kill.roomiePaused() ? { ...res, announce: null } : res;
     },
     groupIdOfChat: async (id) => (await groups.chatFor("telegram", id))?.group.id,
     chatsOfUser: async (userId) => (await groups.chatsOfChannelUser("telegram", userId)).map((c) => c.externalId),
@@ -75,6 +85,7 @@ export async function telegramDeps(): Promise<TelegramDeps> {
       return saved.url || saved.path;
     },
     ...(process.env.OPENROUTER_API_KEY ? { transcribe: voice.transcribe } : {}),
+    mediaWanted: mediaWantedFor,
   };
 }
 

@@ -1,6 +1,6 @@
 // Postgres behind the WhatsApp adapter: the login rows (wa_sessions) and the people it learned (wa_contacts). Only
 // loaded lazily (whatsapp-auth.ts, whatsapp-boot.ts), so importing the adapter never builds a DB client.
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, or, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import type { AuthRows } from "./whatsapp-auth";
 
@@ -56,3 +56,26 @@ export const pgContacts = {
       });
   },
 };
+
+/**
+ * Forget a person's wa_contacts row ("forget me"): the row whose LID or phone JID is `jid` (a Member's
+ * channel_user_id is either). Returns how many rows went.
+ */
+export async function deleteContactFor(jid: string): Promise<number> {
+  if (!jid) return 0;
+  const gone = await db
+    .delete(waContacts)
+    .where(or(eq(waContacts.lid, jid), eq(waContacts.pn, jid)))
+    .returning({ lid: waContacts.lid });
+  return gone.length;
+}
+
+/** Rows for nobody who's a Member anywhere (neither the LID nor the phone JID is a channel_user_id). */
+export async function pruneNonMemberContacts(opts: { dryRun?: boolean } = {}): Promise<{ total: number; stale: number; deleted: number }> {
+  const notMember = sql`not exists (select 1 from ${schema.members} m where m.channel_user_id = ${waContacts.lid} or (${waContacts.pn} is not null and m.channel_user_id = ${waContacts.pn}))`;
+  const [{ total }] = await db.select({ total: sql<number>`count(*)::int` }).from(waContacts);
+  const [{ stale }] = await db.select({ stale: sql<number>`count(*)::int` }).from(waContacts).where(notMember);
+  if (opts.dryRun) return { total, stale, deleted: 0 };
+  const gone = await db.delete(waContacts).where(notMember).returning({ lid: waContacts.lid });
+  return { total, stale, deleted: gone.length };
+}
