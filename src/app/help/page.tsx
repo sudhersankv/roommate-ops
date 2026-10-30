@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button"
 import { ToolkitIcon } from "@/components/app/toolkit-icon"
 import { Roomie } from "@/components/roomie/mascot"
 import { ARCHETYPES, ARCHETYPE_IDS } from "@/lib/personality"
-import { GITHUB_URL, TelegramMark, linkClass, telegramAddUrl } from "../_landing/marks"
+import { GITHUB_URL, TelegramMark, WhatsAppMark, linkClass, telegramAddUrl } from "../_landing/marks"
 import { accentOf, builtTricks, comingSoonTricks, taughtBy, teachLine } from "../_landing/tricks"
 
 const TITLE = "How Roomie works"
@@ -55,7 +55,7 @@ export default function HelpPage() {
         <div className="mx-auto flex max-w-3xl items-end justify-between gap-6 px-5 pt-6 pb-10 sm:px-8 sm:pt-10">
           <div className="flex flex-col gap-3">
             <h1 className="m-0 text-[clamp(2.4rem,7vw,3.75rem)] leading-[0.98] font-extrabold tracking-[-0.04em] text-mint">How Roomie works</h1>
-            <p className="m-0 max-w-[40ch] text-base leading-snug text-mint/80 sm:text-lg">Everything a new person in the group needs, on one page.</p>
+            <p className="m-0 max-w-[40ch] text-base leading-snug text-mint/80 sm:text-lg">Roomie keeps the receipts. Here&apos;s everything a new person in the group needs, on one page.</p>
           </div>
           <Roomie mood="happy" size={88} animated className="hidden shrink-0 sm:block" />
         </div>
@@ -75,9 +75,12 @@ export default function HelpPage() {
 
       <main className="mx-auto flex w-full max-w-3xl flex-col gap-16 px-5 py-12 sm:px-8 sm:py-16">
         <Part id="what" title="What Roomie is">
-          <p>Roomie is an AI that joins your group chat. It&apos;s a little dino that becomes the group&apos;s newest member.</p>
-          <p>It knows Tricks: splitting costs, the shared grocery Cart, chores. Teach it more whenever you like.</p>
-          <p>Any group works: roommates, a trip, friends, family, a team, a club.</p>
+          <p>
+            Roomie is the groupmate that handles the shared-living admin: who paid, what you&apos;re out of, whose turn it is. It does the asking and the reminding, so
+            nobody has to be that roommate.
+          </p>
+          <p>It does that with Tricks: Splitting, Groceries, Chores and Upkeep. Teach it more whenever you like.</p>
+          <p>Made for roommates first, and just as handy on a trip. Friends, families, teams and clubs work too.</p>
         </Part>
 
         <Part id="add" title="Add it to a group">
@@ -114,8 +117,8 @@ export default function HelpPage() {
             <li>reply to one of its messages.</li>
           </ul>
           <p>
-            It mostly answers when addressed. Sometimes it chimes in when a message is clearly for it, and it answers voice notes addressed to it. It also posts a short
-            hello once a day, a cheer when someone hits a streak, and a morning nudge when a chore is due.
+            Otherwise it mostly naps. It chimes in only when it&apos;s clearly needed, and it answers voice notes addressed to it. It also posts a short hello once a day, a
+            cheer when someone hits a streak, and a morning nudge when a chore is due.
           </p>
           <p>
             Send <Kbd>/pet</Kbd> and it tells you about its day.
@@ -124,7 +127,8 @@ export default function HelpPage() {
 
         <Part id="tricks" title="Tricks">
           <p>
-            A Trick is something Roomie knows how to do. To teach it one, say <q>{teachLine({ name: "Chores" })}</q>, or switch it on in the dashboard&apos;s Settings (Admins).
+            A Trick is a job Roomie takes off the group&apos;s hands. Tricks snap on like blocks, and each one brings its own page on the dashboard. To teach it one,
+            say <q>{teachLine({ name: "Chores" })}</q>, or tap Teach on the dashboard&apos;s Tricks page (Admins).
           </p>
           <div className="not-prose mt-2 flex flex-col gap-3">
             {builtTricks().map((m) => (
@@ -178,7 +182,7 @@ export default function HelpPage() {
             <dt>Members</dt>
             <dd>Everyone in the group that Roomie knows. Members can open the dashboard and log things.</dd>
             <dt>Admins</dt>
-            <dd>Whoever added Roomie, plus anyone they promote. Admins approve people, teach or drop Tricks, and change the vibe, name and settings.</dd>
+            <dd>Whoever added Roomie, plus anyone they promote. Admins approve people, teach Roomie Tricks or make it forget one, and change the vibe, name and settings.</dd>
             <dt>Pending</dt>
             <dd>
               Someone who joined after Roomie did. Roomie answers them but won&apos;t log anything for them until an Admin approves, with <q>roomie approve Priya</q> or on
@@ -240,13 +244,19 @@ export default function HelpPage() {
         <div className="flex flex-col items-start gap-4 rounded-3xl border bg-card p-6 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-3">
             <Roomie mood="happy" size={52} animated />
-            <p className="type-heading m-0">Ready when your group is.</p>
+            <p className="type-heading m-0">Roomie keeps the receipts. Try it.</p>
           </div>
-          <Button nativeButton={false} render={<a href={addUrl} target="_blank" rel="noopener noreferrer" />}>
-            <TelegramMark />
-            Add to Telegram
-            <span className="sr-only">(opens Telegram in a new tab)</span>
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button nativeButton={false} render={<a href={addUrl} target="_blank" rel="noopener noreferrer" />}>
+              <TelegramMark />
+              Add to Telegram
+              <span className="sr-only">(opens Telegram in a new tab)</span>
+            </Button>
+            <Button variant="secondary" nativeButton={false} render={<Link href="/#whatsapp-beta" />}>
+              <WhatsAppMark />
+              WhatsApp beta
+            </Button>
+          </div>
         </div>
       </main>
 
@@ -342,9 +352,9 @@ const FAQ: { q: string; a: ReactNode; text: string }[] = [
     ),
   },
   {
-    q: "Can I turn a Trick off?",
-    text: "Yes. An Admin says \"roomie, turn off chores\" or switches it off in the dashboard's Settings. What it kept stays, so turning it back on picks up where you left off.",
-    a: <p>Yes. An Admin says <q>roomie, turn off chores</q> or switches it off in Settings. What it kept stays, so turning it back on picks up where you left off.</p>,
+    q: "Can Roomie forget a Trick?",
+    text: "Yes. An Admin says \"roomie, forget chores\" or taps Forget on the dashboard's Tricks page. What it kept stays, so teaching it again picks up where you left off.",
+    a: <p>Yes. An Admin says <q>roomie, forget chores</q> or taps Forget on the dashboard&apos;s Tricks page. What it kept stays, so teaching it again picks up where you left off.</p>,
   },
   {
     q: "Can I use it in more than one group?",

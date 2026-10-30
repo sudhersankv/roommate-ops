@@ -17,7 +17,7 @@ const figtree = Figtree({
 
 export const metadata: Metadata = {
   title: { default: "Roomie", template: "%s | Roomie" },
-  description: "Your group's money, groceries and chores, kept by the groupmate in your WhatsApp chat.",
+  description: "Roomie keeps the receipts: who paid, what you're out of and whose turn it is, kept by the groupmate in your roommate group chat.",
   icons: { icon: "/brand/roomie-icon.svg" },
 }
 

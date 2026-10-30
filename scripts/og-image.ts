@@ -49,8 +49,8 @@ async function main() {
   </svg>`;
 
   const [bold, semi] = await Promise.all([font(800), font(600)]);
-  const headline = await text(`<span foreground="${MINT}" letter_spacing="-1600">Your group chat finally has a brain.</span>`, bold, "Figtree ExtraBold 70", 600);
-  const sub = await text(`<span foreground="${SPROUT}">An AI for your group chat that learns Tricks.</span>`, semi, "Figtree SemiBold 28", 640);
+  const headline = await text(`<span foreground="${MINT}" letter_spacing="-1600">Roomie keeps the receipts.</span>`, bold, "Figtree ExtraBold 76", 560);
+  const sub = await text(`<span foreground="${SPROUT}">Who paid, the grocery list, the chore chart.\nSo nobody has to be that roommate.</span>`, semi, "Figtree SemiBold 28", 620);
   const headMeta = await sharp(headline).metadata();
 
   await sharp(Buffer.from(base))
