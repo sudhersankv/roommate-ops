@@ -57,8 +57,8 @@ export const memberTools = {
   forget_me: createTool({
     id: "forget_me",
     description:
-      "The sender asked Roomie to forget them ('roomie forget me'): deletes their chat history and Member note. Their expenses and shares stay so balances still add up. Only for the sender, never for someone else.",
+      "The sender asked Roomie to forget them ('roomie forget me'): deletes their chat history, Member note, Roomie's memory of them and their photos, and takes them out of the group here (they show as Former member; if they write again they're a new member an admin approves). Their expenses and shares stay so balances still add up. Only for the sender, never for someone else.",
     inputSchema: z.object({}),
-    execute: async (_input, context) => ({ ...(await members.forgetMe(ctxOf(context))), keptLedger: true }),
+    execute: async (_input, context) => ({ ...(await members.forgetMe(ctxOf(context))), keptLedger: true, removedFromGroup: true }),
   }),
 };
