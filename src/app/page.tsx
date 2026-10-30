@@ -7,9 +7,9 @@ import { appUrl, isAbsoluteUrl } from "@/lib/urls"
 import { trickVoteCounts } from "@/services/trick-votes"
 import { Landing } from "./_landing/landing"
 
-const TITLE = "Roomie — your group chat finally has a brain"
+const TITLE = "Roomie keeps the receipts"
 const DESCRIPTION =
-  "Roomie is an AI that joins your Telegram or WhatsApp group chat and learns Tricks: splitting costs and receipts, the shared grocery Cart, chores. Every group gets its own dashboard."
+  "Add Roomie to your roommate group chat on Telegram or WhatsApp. It tracks who paid, keeps the grocery list, runs the chore chart, and does the asking, so nobody has to be that roommate."
 
 export function generateMetadata(): Metadata {
   const base = appUrl()
@@ -24,7 +24,7 @@ export function generateMetadata(): Metadata {
       title: TITLE,
       description: DESCRIPTION,
       url: "/",
-      images: [{ url: "/landing/og.png", width: 1200, height: 630, alt: "Your group chat finally has a brain. Roomie, the dino, in its doorway." }],
+      images: [{ url: "/landing/og.png", width: 1200, height: 630, alt: "Roomie keeps the receipts. Roomie, the dino, in its doorway." }],
     },
     twitter: { card: "summary_large_image", title: TITLE, description: DESCRIPTION, images: ["/landing/og.png"] },
   }
