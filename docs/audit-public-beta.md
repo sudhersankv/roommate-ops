@@ -54,6 +54,29 @@ Right after those come the High items: a kill switch, processing photos and voic
 | I2 | Info | Config | `.env` still has `AGENTMAIL_API_KEY` / `AGENTMAIL_INBOX` (removed feature). Fly has no `MASTRA_PLATFORM_*`, so traces stay in Postgres only (good for privacy). | `.env` names | Delete the AgentMail key and rotate it at AgentMail. |
 | I3 | Info | Ops | Migrations run on every boot (`db:migrate && npm start`). All of 0001-0008 are additive. 0000 drops pre-step-4 tables, but it's already applied (journal has 9 rows). A failing migration keeps the server down. | `Dockerfile:19`; `drizzle/0000_baseline.sql:4`; `drizzle/0002_refs_per_group.sql:1-2` | Keep it additive. Before a risky migration, `neon branches create` a backup branch. |
 
+## Status: fixed on `fix/audit-data`
+
+| ID | Status | Commit | What changed |
+|---|---|---|---|
+| B1 | **Fixed** | `0d02962` (+ Neon, outside git) | Neon branch `dev` (`br-shy-credit-b46mcjnt`, from `production`) is in the laptop `.env` (`DATABASE_URL` and `NEON_AUTH_BASE_URL`); prod's URL lives only in `fly secrets`. The dev copy was scrubbed (`scripts/scrub-dev.ts`): the 2 Telegram, 2 WhatsApp and 1 chatless Groups, `wa_sessions`, `wa_contacts`, beta requests, Trick votes, every span and score, memory of deleted Groups and 7 unused Accounts are gone; Apt 4B re-seeded. On prod, the 3 `dev` Channel Groups (Apt 4B, Test Group 1793217676819, Dev chat) were deleted; one chatless 0-member leftover "Eval pantry-list 1793262378479" was left (not a `dev` Chat). Prod PITR is now 604800 s (7 days; via the API, the CLI has no flag). seed / dev-chat / evals / test:tools refuse the prod branch; `npm run telegram` and `telegram:webhook --delete` refuse while `APP_URL` is roomie.fly.dev, `--set` refuses any other target (`ALLOW_PROD_BOT=1`). Still open: the other worktrees' `.env` files (`D:\kevin\kevin`, `D:\kevin\roomie-abuse`) still point at prod until someone copies the two dev lines over; a non-owner app role (M12). |
+| B2 | **Fixed** | `836dc84` | `next` 16.3.8 → 16.4.3. Redeploy needed. |
+| B4 | **Fixed (code + copy)** | `94ad103`, `5d25685` | (a) `runRetention` also deletes `mastra_ai_spans` (by `startedAt`), `mastra_scorers` and `mastra_messages` (+ their vectors, via `memory.deleteMessages`) older than 30 days and logs the counts. (b) `UnaddressedTextFilter` (`src/mastra/observability.ts`, registered in `mastra/index.ts`): when the "gate" span ends with `speak: false`, or "roomie message" ends with `replied: false` / only the greeting, the stored input becomes `{ text: "(not addressed to Roomie: text not kept)", chars }`. PostgresStore writes spans on start and updates them on end, so the update replaces the text (checked end to end against the dev branch, start rows flushed first). (c) `deleteGroupData` / `deleteGroup` also delete the Group's traces (root `metadata.groupId`, whole traces, plus scorer runs pointing at them with `metadata.targetTraceId`), its scores (`traceId` or `resourceId`), its upload folders (`g-<id>`, `tg/<chat>`, `wa/<jid>`) and `scheduled_posts` claims older than 8 days. (d) `/privacy` and `/help` rewritten to say what's sent where, kept how long, who can see it. |
+| H5 | **Fixed** | `94ad103` | `forgetMe`: memory lines under every name (current, `+<number>` placeholder, `wa_contacts` names) and by text match against their chat lines; Roomie's replies naming them; photos in those lines (unless an Expense's receipt); their traces (`metadata.memberId`) and scores; their `wa_contacts` row (unless another live Member has the id); Activity names → "Former member"; then `displayName = Former member`, `channel_user_id = null`, `account_id = null`, `status = removed`, `role = member`; the last Admin leaving promotes the longest-standing active Member. Ledger stays. Idempotent (tested). |
+| H7 | **Partly** | `836dc84` | zod 4.6.7 everywhere (an `overrides` entry forces `@neondatabase/auth`'s nested zod), `re2js` 2.9.1. `@neondatabase/auth` 0.7.0-beta is still the newest and pins `better-auth` 1.7.6 (fixed in 1.7.14). Roomie runs no Better Auth server code (only the client and Neon's hosted handler), so the OAuth Proxy advisory is on Neon's side; upgrade when Neon ships (to-do in `docs/plan.md`). `npm audit --omit=dev` after: 15 (1 critical `better-auth`, 0 high, 4 moderate `drizzle-kit`/`esbuild` dev chain, 10 low). |
+| M6 (part) | Fixed | `94ad103` | Files are deleted by forget me and delete group data. Storage location and auth are still open. |
+| M12 (part) | Fixed | (Neon) | `wa_sessions` is truncated on the dev branch. |
+| L7 (part), M11 (part) | Fixed | `5d25685` | `/privacy` mentions the IP HMAC and browser name, and that the form is the way to ask for deletion. |
+| I1 | Fixed | the commit adding this table | CLAUDE.md: chores add is any active Member, remove is Admin; Settlements between two others are intended. |
+
+<!-- TODO(pipeline.ts, B4b): no change is required: the redaction is a span output processor (src/mastra/observability.ts),
+     so pipeline.ts stays as is. It depends on the span names "roomie message" / "gate" and on the root ending with
+     { replied: false } (or { replied: true, greeting }) and the gate span with { speak }: if pipeline.ts renames those or
+     changes those outputs, update ROOT_SPAN / GATE_SPAN / isUnaddressed there. Optional belt and braces (survives a crash
+     between the span's start and end): in pipeline.ts:145-146 start the root with `{ chars: line.length }` instead of
+     `{ text: line }` (and the gate span without `latest`), then add `root?.update({ input: { text: line } })` right after
+     the `if (!gate.speak) { ... }` block. -->
+
+
 ## Per-area notes
 
 ### 1. Authorization and tenancy: done well, don't touch
