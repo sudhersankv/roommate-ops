@@ -1,9 +1,9 @@
 // Pure Lease Inbox rules (ADR 0016): the work-order state machine and when a notice is urgent (ADR 0017's urgent
 // slot). The classifier reads the landlord's reply; these decide what it does.
+import { WORK_ORDER_STATUSES, type WorkOrderStatus } from "@/db/enums";
 import { dayInZone, parseInZone, zonedTimeToUtc } from "@/lib/time";
 
-export const WORK_ORDER_STATUSES = ["sent", "acknowledged", "scheduled", "done"] as const;
-export type WorkOrderStatus = (typeof WORK_ORDER_STATUSES)[number];
+export { WORK_ORDER_STATUSES, type WorkOrderStatus };
 
 /** scheduledFor is the visit as the landlord gave it: a local "YYYY-MM-DD" or "YYYY-MM-DDTHH:mm" (Group zone). */
 export type WorkOrderState = { status: WorkOrderStatus; scheduledFor: string | null };

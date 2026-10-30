@@ -2,7 +2,19 @@
 // Money is always integer cents. Accounts point at Neon Auth users (schema neon_auth) by id, as text; we never
 // write to neon_auth.
 import { sql } from "drizzle-orm";
-import { BETA_GROUP_SIZES, BETA_STATUSES, EXPENSE_CATEGORIES, EXPENSE_SOURCES, GROUP_PURPOSES, RECURRENCES, SPLIT_METHODS } from "./enums";
+import {
+  BETA_GROUP_SIZES,
+  BETA_STATUSES,
+  EXPENSE_CATEGORIES,
+  EXPENSE_SOURCES,
+  GROUP_PURPOSES,
+  LANDLORD_SENDER_SOURCES,
+  MAIL_CLASSES,
+  RECURRENCES,
+  SEND_INTENTS,
+  SPLIT_METHODS,
+  WORK_ORDER_STATUSES,
+} from "./enums";
 import { boolean, char, date, index, integer, jsonb, numeric, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid, type AnyPgColumn } from "drizzle-orm/pg-core";
 
 const id = () => uuid("id").primaryKey().defaultRandom();
@@ -519,3 +531,113 @@ export const maintenance = pgTable("maintenance", {
   everyDays: integer("every_days").notNull(),
   lastDone: timestamp("last_done", { withTimezone: true }),
 });
+
+/* ---------- Lease Inbox (services/lease-inbox.ts, ADR 0016) ---------- */
+
+/**
+ * The Group's own email address (one AgentMail inbox per Group). Its own table rather than columns on groups: the
+ * webhook finds the Group by inbox id, releasing the address deletes one row, and "delete group data" keeps the Group.
+ */
+export const groupInboxes = pgTable("group_inboxes", {
+  groupId: uuid("group_id")
+    .primaryKey()
+    .references(() => groups.id, { onDelete: "cascade" }),
+  inboxId: text("inbox_id").notNull().unique(),
+  address: text("address").notNull().unique(),
+  createdAt: createdAt(),
+});
+
+/** Webhook deliveries already handled, by AgentMail's event_id (retried for ~27 h, out of order). */
+export const mailEvents = pgTable("mail_events", {
+  eventId: text("event_id").primaryKey(),
+  groupId: uuid("group_id").references(() => groups.id, { onDelete: "cascade" }),
+  createdAt: createdAt(),
+});
+
+/** Every email that reached a Group's inbox, with what Roomie made of it. */
+export const mailMessages = pgTable(
+  "mail_messages",
+  {
+    id: id(),
+    groupId: uuid("group_id").notNull().references(() => groups.id, { onDelete: "cascade" }),
+    inboxId: text("inbox_id").notNull(),
+    messageId: text("message_id").notNull(),
+    threadId: text("thread_id").notNull(),
+    // The envelope sender as written, and its bare address.
+    fromHeader: text("from_header").notNull(),
+    fromAddress: text("from_address").notNull(),
+    // A forward: the original sender from the quoted header block (lib/forwarded.ts) and the Member who forwarded it.
+    originalFrom: text("original_from"),
+    forwardedBy: uuid("forwarded_by").references(() => members.id, { onDelete: "set null" }),
+    to: jsonb("to").$type<string[]>().notNull().default([]),
+    subject: text("subject").notNull().default(""),
+    text: text("text").notNull().default(""),
+    html: text("html"),
+    receivedAt: timestamp("received_at", { withTimezone: true }).notNull(),
+    // Null until classified; "new-sender" when the sender isn't a trusted landlord sender.
+    class: text("class", { enum: MAIL_CLASSES }),
+    trusted: boolean("trusted").notNull().default(false),
+    summary: text("summary"),
+    // From the classifier: the notice's date (local "YYYY-MM-DD" or wall-clock), an amount, a utility's name.
+    noticeDate: text("notice_date"),
+    amountCents: integer("amount_cents"),
+    utility: text("utility"),
+    // Documents filed from its attachments (ADR 0018); filled once Documents exist.
+    documentIds: jsonb("document_ids").$type<string[]>().notNull().default([]),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("mail_messages_group_message").on(t.groupId, t.messageId), index("mail_messages_group_thread").on(t.groupId, t.threadId)],
+);
+
+/** Who counts as the landlord: an address or a whole domain, learned from a forward, the intro email or an Admin's yes. */
+export const landlordSenders = pgTable(
+  "landlord_senders",
+  {
+    groupId: uuid("group_id").notNull().references(() => groups.id, { onDelete: "cascade" }),
+    // Lowercased "leasing@brookfield.com" or "brookfield.com".
+    value: text("value").notNull(),
+    source: text("source", { enum: LANDLORD_SENDER_SOURCES }).notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [primaryKey({ columns: [t.groupId, t.value] })],
+);
+
+/** A repair request sent to the landlord, and how far it got (sent -> acknowledged -> scheduled -> done). */
+export const workOrders = pgTable(
+  "work_orders",
+  {
+    id: id(),
+    groupId: uuid("group_id").notNull().references(() => groups.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    reportedBy: uuid("reported_by").references(() => members.id, { onDelete: "set null" }),
+    threadId: text("thread_id").notNull(),
+    status: text("status", { enum: WORK_ORDER_STATUSES }).notNull().default("sent"),
+    // The visit as the landlord gave it: local "YYYY-MM-DD" or "YYYY-MM-DDTHH:mm" in the Group's zone.
+    scheduledFor: text("scheduled_for"),
+    lastReply: text("last_reply"),
+    lastActivityAt: timestamp("last_activity_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: createdAt(),
+  },
+  (t) => [index("work_orders_group_thread").on(t.groupId, t.threadId)],
+);
+
+/** Every email Roomie sent, who asked for it and in their words (the send rule reads the last hour's). */
+export const sentMail = pgTable(
+  "sent_mail",
+  {
+    id: id(),
+    groupId: uuid("group_id").notNull().references(() => groups.id, { onDelete: "cascade" }),
+    memberId: uuid("member_id").references(() => members.id, { onDelete: "set null" }),
+    intent: text("intent", { enum: SEND_INTENTS }).notNull(),
+    to: text("to").notNull(),
+    subject: text("subject").notNull(),
+    // What the Member said, and the one line Roomie posts ("Sent: reported the leaking kitchen sink").
+    instruction: text("instruction").notNull(),
+    summary: text("summary").notNull(),
+    messageId: text("message_id").notNull(),
+    threadId: text("thread_id").notNull(),
+    workOrderId: uuid("work_order_id").references(() => workOrders.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+  },
+  (t) => [index("sent_mail_group_thread").on(t.groupId, t.threadId)],
+);
