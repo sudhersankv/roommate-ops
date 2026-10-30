@@ -1,17 +1,17 @@
 // Started once from instrumentation.ts (one long-running process; DISABLE_SCHEDULER=1 skips it).
-// Every 60 s: due reminders (the whole Group's in the Chat, a Member's privately), then per Group the daily chores
-// nudge and the weekly Group Report at their local hours (services/schedule.ts), the Group style refresh
+// Every 60 s: due reminders (the whole Group's in the Chat, a Member's privately), then per Group the morning Bundle
+// and the weekly Group Report at their local hours (services/schedule.ts), the Group style refresh
 // (jobs/style-note.ts, posts nothing), recurring Expenses, Splitwise mirror pushes and the daily chat retention sweep.
 // Posts Roomie makes on its own are claimed in scheduled_posts first, so each goes out once per day / week even across
-// restarts (ADR 0001: at most one chores nudge per Group per day, nothing when nothing is due). The tick never rejects.
-// ROOMIE_PAUSED=1 skips the whole tick; a paused Group (groups.paused_at) gets no reminders or posts until resumed.
+// restarts (ADR 0001: at most one Bundle per Group per day, nothing when no Toolkit has anything to say). The tick
+// never rejects. ROOMIE_PAUSED=1 skips the whole tick; a paused Group (groups.paused_at) gets no reminders or posts
+// until resumed.
 import { deliver, deliverPrivate } from "@/channels";
 import { CantMessagePrivatelyError } from "@/channels/types";
+import { groupBundle } from "@/services/bundle";
 import { groupsWithChat } from "@/services/groups";
-import { choresDue } from "@/services/chores";
 import { claimReminder, dueReminders, releaseReminder, reminderLine, scheduleNext, type Reminder } from "@/services/reminders";
-import { choresNudgeText } from "@/services/report";
-import { choresNudgeWindow, claimPost, getSchedule, releasePost, weeklyReportWindow, type PostKind } from "@/services/schedule";
+import { bundleWindow, claimPost, getSchedule, releasePost, weeklyReportWindow, type PostKind } from "@/services/schedule";
 import { runRecurring } from "@/services/recurring";
 import { runSplitwiseOutbox } from "@/services/splitwise";
 import { pausedGroupIds } from "@/services/operator-groups";
@@ -114,13 +114,15 @@ async function postOnce(g: GroupRow, kind: PostKind, period: string, text: strin
   }
 }
 
-/** The daily chores nudge, in the Group's nudge hour, only when something is due or late. Returns the text posted. */
-export async function choresNudgeJob(g: GroupRow, now: Date): Promise<string | null> {
-  if (!g.toolkits.includes("chores")) return null;
+/**
+ * The morning Bundle (ADR 0017), in the Group's nudge hour: the enabled Toolkits' lines, only when one has something
+ * to say. Claimed under the chores nudge's kind, the post it grew out of. Returns the text posted.
+ */
+export async function bundleJob(g: GroupRow, now: Date): Promise<string | null> {
   const { nudgeHour } = await getSchedule({ groupId: g.id });
-  const w = choresNudgeWindow(now, g.timezone, nudgeHour);
+  const w = bundleWindow(now, g.timezone, nudgeHour);
   if (!w.open) return null;
-  const text = choresNudgeText(await choresDue({ groupId: g.id }, now));
+  const text = await groupBundle({ groupId: g.id }, now);
   if (!text) return null;
   return (await postOnce(g, "chores.nudge", w.period, text)) ? text : null;
 }
@@ -150,9 +152,9 @@ async function runGroupJobs(now: Date, paused: ReadonlySet<string>) {
       console.error(`scheduler: weekly report failed for ${g.name}`, e);
     }
     try {
-      await choresNudgeJob(g, now);
+      await bundleJob(g, now);
     } catch (e) {
-      console.error(`scheduler: chores nudge failed for ${g.name}`, e);
+      console.error(`scheduler: bundle failed for ${g.name}`, e);
     }
     try {
       await refreshStyleNote(g.id, g.styleNoteAt, now);

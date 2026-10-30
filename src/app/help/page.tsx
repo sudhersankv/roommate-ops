@@ -101,7 +101,7 @@ export default function HelpPage() {
           <ol>
             <li>It says hi and introduces itself in one short message.</li>
             <li>It asks one setup question: what&apos;s the group for, your currency, your city, and which vibe. One reply covers it all.</li>
-            <li>Skip it and it uses the defaults: USD, Chicago time, the chill vibe, and Splitting, Groceries, Chores and Upkeep.</li>
+            <li>Skip it and it uses the defaults: USD, Chicago time, the chill vibe, and Money, Groceries and House.</li>
           </ol>
           <p>On Telegram it also asks everyone to press Start with @imroomiebot once, so it can message you privately.</p>
         </Part>
@@ -124,7 +124,7 @@ export default function HelpPage() {
 
         <Part id="tricks" title="Tricks">
           <p>
-            A Trick is something Roomie knows how to do. To teach it one, say <q>{teachLine({ name: "Chores" })}</q>, or switch it on in the dashboard&apos;s Settings (Admins).
+            A Trick is something Roomie knows how to do. To teach it one, say <q>{teachLine({ name: "House" })}</q>, or switch it on in the dashboard&apos;s Settings (Admins).
           </p>
           <div className="not-prose mt-2 flex flex-col gap-3">
             {builtTricks().map((m) => (

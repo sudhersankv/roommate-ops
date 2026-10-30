@@ -9,6 +9,7 @@ import { canChangeExpense, NotAllowedError, requireActive } from "./authz";
 import { guessCategory, isCategory } from "./categories";
 import { listMembers } from "./members";
 import { enqueueSplitwisePush } from "./outbox";
+import { joinNames, type ReportPart } from "./report";
 import { checkPayers, computeShares, SplitError, type PayerRow, type PercentRow, type SharesRow, type SplitIntent, type SplitRow } from "./split";
 import { dollars, type Ctx, type GroupCtx } from "./types";
 
@@ -514,6 +515,14 @@ export async function getSettlePlan(ctx: GroupCtx): Promise<Transfer[]> {
   return g && !g.simplify ? pairwiseDebts(ctx) : computeSettlePlan(await getBalances(ctx));
 }
 
+/** Money's section of the weekly Group Report: the Settle plan, at most three payments named. Pure. */
+export function settleReportParts(plan: readonly Transfer[]): ReportPart[] {
+  if (plan.length === 0) return [{ icon: "💸", text: "All square. Love that for us." }];
+  const shown = plan.slice(0, 3).map((t) => `${t.fromName} pays ${t.toName} ${dollars(t.cents)}`);
+  const more = plan.length - shown.length;
+  return [{ icon: "💸", text: `${joinNames(shown)}${more > 0 ? `, +${more} more` : ""}.` }];
+}
+
 /** The Settle plan row between two Members, whichever way it goes. */
 export async function debtBetween(ctx: GroupCtx, a: string, b: string): Promise<Transfer | undefined> {
   return (await getSettlePlan(ctx)).find((t) => (t.fromId === a && t.toId === b) || (t.fromId === b && t.toId === a));
@@ -598,4 +607,22 @@ export async function listExpenses(ctx: GroupCtx, limit = 50, opts: { expenseId?
 export async function getExpense(ctx: GroupCtx, expenseId: string): Promise<Expense | undefined> {
   if (!/^[0-9a-f-]{36}$/i.test(expenseId)) return undefined;
   return (await listExpenses(ctx, 1, { expenseId }))[0];
+}
+
+/** What the model reads back about an Expense (Money's tools, the Cart's "I paid"): names and ready-made dollar strings, so it never formats or adds cents itself. */
+export function expenseSummary(e: Expense) {
+  return {
+    id: e.id,
+    description: e.description,
+    total: dollars(e.cents),
+    date: e.occurredOn,
+    category: e.category,
+    method: e.method,
+    paidBy: (e.payers ?? []).map((p) => ({ name: p.name, paid: dollars(p.cents) })),
+    shares: (e.splits ?? []).map((s) => ({ name: s.name, owes: dollars(s.cents), ...(s.weight != null ? { [e.method === "percent" ? "percent" : "shares"]: s.weight } : {}) })),
+    ...(e.note ? { note: e.note } : {}),
+    ...(e.recurring ? { repeats: e.recurring } : {}),
+    ...(e.receiptUrl ? { hasReceipt: true } : {}),
+    ...(e.splitwiseId ? { inSplitwise: true } : {}),
+  };
 }

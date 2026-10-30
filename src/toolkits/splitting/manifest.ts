@@ -1,15 +1,16 @@
 import { defineManifest } from "../define";
 
+// The id stays "splitting" (group_toolkits rows, evals, tests); people see "Money" (ADR 0015).
 export const splitting = defineManifest({
   id: "splitting",
-  name: "Splitting",
+  name: "Money",
   description: "Shared Expenses (any split, several payers, receipts), Balances, settling up with pay links, and Splitwise import/export.",
   summary: "Log shared costs, split them any way, settle up with pay links.",
   longDescription:
     "Tell Roomie what you paid and it splits it: evenly, by exact amounts, percentages or shares, even with several payers. Send a photo of a receipt and it splits it item by item. Balances and the Settle plan are always exact, and Settle up hands out Venmo, PayPal or Cash App links with the amount filled in. Bring an old Splitwise group along, or keep one in sync.",
   icon: "Wallet",
   category: "money",
-  tags: ["expenses", "balances", "settle up", "receipts", "Splitwise", "Venmo"],
+  tags: ["expenses", "split", "splitting", "balances", "settle up", "receipts", "Splitwise", "Venmo"],
   defaultOn: true,
   worksWith: { integrations: ["splitwise"] },
   status: "stable",
@@ -49,6 +50,8 @@ export const splitting = defineManifest({
     splitwise_export: { action: String.raw`^(?=.*\bsplitwise\b)(?=.*\b(?:export\w*|copy|push|send\b.*\bto)\b)`, ask: `Copy this group's expenses to Splitwise? Say "roomie, yes export to Splitwise".` },
     splitwise_mirror: { action: String.raw`^(?=.*\bsplitwise\b)(?=.*\b(?:mirror\w*|sync\w*|keep\b.*\bin sync)\b)`, ask: `Change the Splitwise mirror? Say "roomie, yes mirror Splitwise" (or "roomie, yes stop the Splitwise mirror").` },
   },
+  // Money leads the Bundle and the report (ADR 0017).
+  postOrder: 10,
   dashboard: {
     nav: { label: "Money", href: (g) => `/g/${g}/money`, icon: "Wallet", order: 10 },
     pages: ["money"],

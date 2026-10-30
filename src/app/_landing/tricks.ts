@@ -10,8 +10,7 @@ import type { ToolkitManifest } from "@/toolkits/types"
 const ACCENT: Record<string, string> = {
   splitting: "#86efa0",
   groceries: "#ffb547",
-  chores: "#7cc7ff",
-  upkeep: "#c4a5ff",
+  house: "#7cc7ff",
   research: "#5eead4",
   trips: "#ff8a5c",
   pdf: "#f9a8d4",

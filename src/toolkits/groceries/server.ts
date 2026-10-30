@@ -1,3 +1,4 @@
+import { cartReportParts, listOpenItems } from "@/services/cart";
 import { seedPantry } from "@/services/pantry";
 import { defineToolkit } from "../define";
 import { cartTools } from "./cart";
@@ -12,4 +13,6 @@ export const groceries = defineToolkit(manifest, {
   },
   // A Pantry to start from (salt, pepper, oil), only if the Group never had one.
   onEnable: (ctx) => seedPantry(ctx),
+  // The weekly report says how full the Cart is (no prices).
+  report: async (ctx) => cartReportParts((await listOpenItems(ctx)).length),
 });

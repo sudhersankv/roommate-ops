@@ -15,7 +15,7 @@ export const core = defineManifest({
   gate: {
     criterion:
       "Reminders at a time or date, and the group itself: members and approvals, settings (including Roomie's name, vibe and quirks), what Roomie can do and which Tricks it knows, teaching Roomie a Trick or making it learn or forget one ('roomie learn trips', 'roomie forget groceries', 'turn on chores'), lasting facts about a member ('remember I'm vegetarian', 'what do you know about me'), the dashboard link (for me, or for everyone: the group's Join link, rotating it, who may join, disconnecting someone's dashboard seat), the weekly report.",
-    examples: ["remind everyone trash goes out tuesday 8pm", "what can you do?", "learn chores", "approve Priya", "send me the dashboard", "send us the dashboard"],
+    examples: ["remind everyone trash goes out tuesday 8pm", "what can you do?", "learn house", "approve Priya", "send me the dashboard", "send us the dashboard"],
   },
   adminOnly: {
     approve_member: { action: String.raw`\b(?:approve|accept|admit)|\blet\b.*\bin\b`, target: "name", ask: `Approve {target}? Say "roomie, yes approve {target}".` },

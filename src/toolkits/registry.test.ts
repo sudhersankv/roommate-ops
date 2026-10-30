@@ -75,6 +75,15 @@ describe("the manifest contract", () => {
     for (const t of TOOLKITS) for (const id of Object.keys(t.abilities ?? {})) assert.ok(id in t.tools, `${t.id}.abilities.${id} isn't one of its tools`);
   });
 
+  test("House is one Trick: both halves' tools, one nav tab, one page", () => {
+    const house = TOOLKITS.find((t) => t.id === "house")!;
+    for (const id of ["log_chore", "chore_add", "chore_status", "chore_skip", "hall_of_shame", "upkeep_add", "upkeep_done", "upkeep_status", "upkeep_remove"]) assert.ok(id in house.tools, id);
+    assert.equal(house.dashboard?.nav?.label, "House");
+    assert.equal(house.dashboard?.nav?.href("g1"), "/g/g1/house");
+    assert.deepEqual(house.dashboard?.pages, ["house"]);
+    assert.ok(house.bundle && house.report && house.onEnable, "it speaks in the Bundle and the report, and sets itself up");
+  });
+
   test("nav entries and owned pages", () => {
     for (const t of TOOLKITS) {
       const nav = t.dashboard?.nav;
@@ -83,11 +92,16 @@ describe("the manifest contract", () => {
     }
   });
 
-  test("findManifest knows names, ids, nav labels and near misses", () => {
+  test("findManifest knows names, ids, nav labels, tags and near misses", () => {
     assert.equal(findManifest("Groceries")?.id, "groceries");
     assert.equal(findManifest("grocery")?.id, "groceries");
-    assert.equal(findManifest("the chores toolkit")?.id, "chores");
-    assert.equal(findManifest("money")?.id, "splitting");
+    assert.equal(findManifest("House")?.id, "house");
+    assert.equal(findManifest("the house trick")?.id, "house");
+    // The words people still say for House's two halves find it.
+    assert.equal(findManifest("the chores toolkit")?.id, "house");
+    assert.equal(findManifest("upkeep")?.id, "house");
+    // Money answers to its id, its name and the words for what it does.
+    for (const word of ["splitting", "split", "Money", "money", "expenses"]) assert.equal(findManifest(word)?.id, "splitting", word);
     assert.equal(findManifest("pdfs")?.id, "pdf");
     assert.equal(findManifest("household admin")?.id, "household-admin");
     assert.equal(findManifest("lease stuff")?.id, "household-admin");
@@ -109,7 +123,7 @@ describe("the manifest contract", () => {
     const groceries = MANIFESTS.find((m) => m.id === "groceries")!.persona!;
     assert.ok(all.includes(splitting) && all.includes(groceries));
     assert.ok(groceriesOnly.includes(groceries) && !groceriesOnly.includes(splitting));
-    assert.match(groceriesOnly, /Not learned here yet: Splitting, Chores, Upkeep/);
+    assert.match(groceriesOnly, /Not learned here yet: Money, House/);
     assert.match(groceriesOnly, /TRICKS\n- Tricks you know here: Groceries/);
     assert.ok(!all.includes("{TOOLKITS}"));
   });

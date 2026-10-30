@@ -121,7 +121,7 @@ function ToolkitsSummary() {
   )
 }
 
-/** Splitting's settings section (Admins): simplify debts and Splitwise. */
+/** Money's settings section (Admins): simplify debts and Splitwise. */
 export function SplittingSettingsSection({ splitwise }: { splitwise: SplitwiseView }) {
   const { group } = useGroup()
   const [, start] = useTransition()
@@ -133,7 +133,7 @@ export function SplittingSettingsSection({ splitwise }: { splitwise: SplitwiseVi
   return (
     <>
       <FieldSet>
-        <FieldLegend className="type-heading">Splitting</FieldLegend>
+        <FieldLegend className="type-heading">Money</FieldLegend>
         <Field orientation="horizontal">
           <FieldContent>
             <FieldLabel htmlFor="simplify">Simplify debts</FieldLabel>
@@ -160,7 +160,7 @@ export function SplittingSettingsSection({ splitwise }: { splitwise: SplitwiseVi
 }
 
 function AdminSettings({ zones, schedule }: { zones: ZoneGroup[]; schedule: ScheduleView }) {
-  const { group, toolkits: on } = useGroup()
+  const { group } = useGroup()
   const [name, setName] = useState(group.name)
   const [, start] = useTransition()
   const [browserZone, setBrowserZone] = useState<string | null>(null)
@@ -294,7 +294,7 @@ function AdminSettings({ zones, schedule }: { zones: ZoneGroup[]; schedule: Sche
 
       <JoinPolicySettings />
 
-      <ScheduleSettings schedule={schedule} choresOn={on.chores} />
+      <ScheduleSettings schedule={schedule} />
     </>
   )
 }
@@ -341,45 +341,64 @@ function JoinPolicySettings() {
   )
 }
 
-/** When Roomie posts on its own: the daily chores nudge and the weekly report, in the Group's time zone. */
-function ScheduleSettings({ schedule, choresOn }: { schedule: ScheduleView; choresOn: boolean }) {
+/** Saves a schedule change with one toast. */
+function useSaveSchedule() {
   const { group } = useGroup()
   const [, start] = useTransition()
-  const nudgeItems = [{ label: "Off", value: "off" }, ...hours]
-  const save = (patch: Partial<ScheduleView>, title: string) =>
+  return (patch: Partial<ScheduleView>, title: string) =>
     start(async () => {
       const res = await updateSchedule(group.id, patch)
       if (!res.ok) return void toast.add({ title: "Couldn't save that", description: res.error, type: "error" })
       toast.add({ title })
     })
+}
+
+const zoneWords = (timezone: string) => `${(timezone.split("/").pop() ?? timezone).replace(/_/g, " ")} time`
+
+/** House's settings section (Admins): the hour of the morning chores nudge, in the Group's time zone. */
+export function HouseSettingsSection({ schedule }: { schedule: ScheduleView }) {
+  const { group } = useGroup()
+  const save = useSaveSchedule()
+  const nudgeItems = [{ label: "Off", value: "off" }, ...hours]
+  return (
+    <FieldSet>
+      <FieldLegend className="type-heading">House</FieldLegend>
+      <FieldDescription>At most one chores nudge a day, only when something is due or late. Times are {zoneWords(group.timezone)}.</FieldDescription>
+      <Field>
+        <FieldLabel htmlFor="nudge-hour">Chores nudge</FieldLabel>
+        <Select
+          items={nudgeItems}
+          value={schedule.nudgeHour === null ? "off" : String(schedule.nudgeHour)}
+          onValueChange={(v) => v && save({ nudgeHour: v === "off" ? null : Number(v) }, v === "off" ? "Chores nudge off" : `Chores nudge at ${hourLabel(Number(v))}`)}
+        >
+          <SelectTrigger id="nudge-hour" className="w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectGroup>
+              {nudgeItems.map((h) => (
+                <SelectItem key={h.value} value={h.value}>
+                  {h.label}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+        <FieldDescription>Roomie names whose turn it is on anything due or late.</FieldDescription>
+      </Field>
+    </FieldSet>
+  )
+}
+
+/** When Roomie posts the weekly report, in the Group's time zone. */
+function ScheduleSettings({ schedule }: { schedule: ScheduleView }) {
+  const { group } = useGroup()
+  const save = useSaveSchedule()
   return (
     <FieldSet>
       <FieldLegend className="type-heading">Roomie&apos;s own posts</FieldLegend>
-      <FieldDescription>At most one chores nudge a day, only when something is due, and one report a week. Times are {(group.timezone.split("/").pop() ?? group.timezone).replace(/_/g, " ")} time.</FieldDescription>
+      <FieldDescription>One Group Report a week. Times are {zoneWords(group.timezone)}.</FieldDescription>
       <FieldGroup>
-        <Field data-disabled={choresOn ? undefined : true}>
-          <FieldLabel htmlFor="nudge-hour">Chores nudge</FieldLabel>
-          <Select
-            items={nudgeItems}
-            value={schedule.nudgeHour === null ? "off" : String(schedule.nudgeHour)}
-            disabled={!choresOn}
-            onValueChange={(v) => v && save({ nudgeHour: v === "off" ? null : Number(v) }, v === "off" ? "Chores nudge off" : `Chores nudge at ${hourLabel(Number(v))}`)}
-          >
-            <SelectTrigger id="nudge-hour" className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                {nudgeItems.map((h) => (
-                  <SelectItem key={h.value} value={h.value}>
-                    {h.label}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-          <FieldDescription>{choresOn ? "Roomie names whose turn it is on anything due or late." : "Switch Chores on to get the nudge."}</FieldDescription>
-        </Field>
         <div className="flex gap-3">
           <Field>
             <FieldLabel htmlFor="report-day">Weekly report</FieldLabel>

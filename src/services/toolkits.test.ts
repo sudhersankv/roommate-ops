@@ -1,15 +1,22 @@
-// Pure tests for the Toolkit rules: requirements with their red/green state and Roomie's one-line announcement.
+// Pure tests for the Toolkit rules: requirements with their red/green state, post order and Roomie's one-line announcement.
 // Run: npx tsx --test src/services/toolkits.test.ts
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { manifestOf } from "@/toolkits/manifests";
-import { announcement, checkRequirements, unmet, type RequirementFacts } from "./toolkits";
+import { manifestOf, MANIFESTS } from "@/toolkits/manifests";
+import { announcement, byPostOrder, checkRequirements, unmet, type RequirementFacts } from "./toolkits";
 
 const facts = (over: Partial<RequirementFacts> = {}): RequirementFacts => ({ hasEnv: () => false, enabled: [], integrations: {}, ...over });
 
 describe("checkRequirements", () => {
   test("a Toolkit with nothing required has no blocking requirements", () => {
-    assert.deepEqual(unmet(checkRequirements(manifestOf("chores")!, facts())), []);
+    assert.deepEqual(unmet(checkRequirements(manifestOf("house")!, facts())), []);
+  });
+
+  test("Groceries needs Money: red with Money off, green with it on, and the line names Money", () => {
+    const groceries = manifestOf("groceries")!;
+    const off = checkRequirements(groceries, facts());
+    assert.deepEqual(unmet(off), [{ label: "Needs Money first", ok: false, blocking: true }]);
+    assert.deepEqual(unmet(checkRequirements(groceries, facts({ enabled: ["splitting"] }))), []);
   });
 
   test("integrations: missing is red and blocking, with the hint; present is green", () => {
@@ -22,7 +29,7 @@ describe("checkRequirements", () => {
 
   test("required Toolkits must be on", () => {
     const trips = manifestOf("trips")!;
-    assert.deepEqual(checkRequirements(trips, facts()), [{ label: "Needs Splitting first", ok: false, blocking: true }]);
+    assert.deepEqual(checkRequirements(trips, facts()), [{ label: "Needs Money first", ok: false, blocking: true }]);
     assert.equal(checkRequirements(trips, facts({ enabled: ["splitting"] }))[0].ok, true);
   });
 
@@ -33,10 +40,18 @@ describe("checkRequirements", () => {
   });
 
   test("worksWith extras show up but never block", () => {
-    const reqs = checkRequirements(manifestOf("groceries")!, facts({ integrations: { instacart: { ok: false, hint: "The Instacart link needs COMPOSIO_API_KEY on the server." } } }));
-    assert.deepEqual(reqs, [{ label: "Works with Instacart (through Composio)", ok: false, detail: "The Instacart link needs COMPOSIO_API_KEY on the server.", blocking: false }]);
+    const reqs = checkRequirements(manifestOf("groceries")!, facts({ enabled: ["splitting"], integrations: { instacart: { ok: false, hint: "The Instacart link needs COMPOSIO_API_KEY on the server." } } }));
+    assert.deepEqual(reqs.filter((r) => !r.blocking), [{ label: "Works with Instacart (through Composio)", ok: false, detail: "The Instacart link needs COMPOSIO_API_KEY on the server.", blocking: false }]);
     assert.deepEqual(unmet(reqs), []);
   });
+});
+
+test("byPostOrder: money, then the house, then groceries (ADR 0017), whatever the nav says; no postOrder = nav order, then last", () => {
+  assert.deepEqual(byPostOrder(MANIFESTS).map((m) => m.name), ["Money", "House", "Groceries"]);
+  type Entry = { id: string; postOrder?: number; dashboard?: { nav: { label: string; href: () => string; icon: "Wallet"; order: number } } };
+  const nav = (order: number): Entry["dashboard"] => ({ nav: { label: "x", href: () => "/", icon: "Wallet", order } });
+  const sorted = byPostOrder<Entry>([{ id: "late" }, { id: "nav", dashboard: nav(5) }, { id: "post", postOrder: 20, dashboard: nav(1) }]);
+  assert.deepEqual(sorted.map((m) => m.id), ["nav", "post", "late"]);
 });
 
 test("announcement: one line with the first example, in Tricks words", () => {

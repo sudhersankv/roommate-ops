@@ -413,7 +413,7 @@ describe("private messages", () => {
   });
 
   test("/help in a Group with a Join link: 'Dashboard: <link>' on the Always line, still 8 lines at most", async () => {
-    const h = harness({ deps: { tricksIn: async () => ["splitting", "groceries", "chores", "upkeep"], dashboardIn: async () => "https://roomie.example/j/abcdefghij" } });
+    const h = harness({ deps: { tricksIn: async () => ["splitting", "groceries", "house"], dashboardIn: async () => "https://roomie.example/j/abcdefghij" } });
     await h.feed(message(MAYA, { text: "/help" }));
     const text = String(h.sent()[0].payload.text);
     assert.match(text, /Dashboard: https:\/\/roomie\.example\/j\/abcdefghij/);
@@ -449,7 +449,7 @@ describe("commands and failures in a group", () => {
     const texts = h.sent().map((c) => String(c.payload.text));
     assert.equal(texts.length, 2);
     assert.equal(texts[0], helpText(["splitting", "groceries"]));
-    assert.match(texts[0], /Tricks I know here: Splitting and Groceries\./);
+    assert.match(texts[0], /Tricks I know here: Money and Groceries\./);
     assert.ok(texts[0].split("\n").length <= 8);
     assert.match(texts[0], /Say "roomie"/);
     assert.ok(!/https?:\/\//.test(texts[0]));

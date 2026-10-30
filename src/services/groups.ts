@@ -8,8 +8,6 @@ import { MANIFESTS, TOOLKIT_IDS, type ToolkitId } from "@/toolkits/manifests";
 import { presetFor } from "@/toolkits/presets";
 import { recordFor } from "./activity";
 import { requireAdmin } from "./authz";
-import { addStarterChores } from "./chores";
-import { addDefaults } from "./upkeep";
 import type { Ctx, GroupCtx } from "./types";
 
 const { groups, chats, groupToolkits, members } = schema;
@@ -78,19 +76,13 @@ export async function chatOfGroup(groupId: string): Promise<Chat | undefined> {
   return c;
 }
 
-/** Groups with a Chat (the only ones Roomie can post to unprompted), with their enabled Toolkits. */
-export async function groupsWithChat(onlyGroupId?: string): Promise<(Pick<Group, "id" | "name" | "timezone" | "styleNoteAt"> & { toolkits: ToolkitId[] })[]> {
-  const rows = await db
+/** Groups with a Chat (the only ones Roomie can post to unprompted). */
+export async function groupsWithChat(onlyGroupId?: string): Promise<Pick<Group, "id" | "name" | "timezone" | "styleNoteAt">[]> {
+  return db
     .select({ id: groups.id, name: groups.name, timezone: groups.timezone, styleNoteAt: groups.styleNoteAt })
     .from(groups)
     .innerJoin(chats, eq(chats.groupId, groups.id))
     .where(onlyGroupId ? eq(groups.id, onlyGroupId) : undefined);
-  if (!rows.length) return [];
-  const flags = await db.select().from(groupToolkits).where(inArray(groupToolkits.groupId, rows.map((r) => r.id)));
-  return rows.map((r) => {
-    const mine = new Map(flags.filter((f) => f.groupId === r.id).map((f) => [f.toolkit, f.enabled]));
-    return { ...r, toolkits: MANIFESTS.filter((m) => mine.get(m.id) ?? m.defaultOn).map((m) => m.id) };
-  });
 }
 
 /** Every Toolkit with its on/off state. A Toolkit with no row follows its manifest's `defaultOn`. */
@@ -151,12 +143,10 @@ export async function initToolkits(groupId: string, on: readonly ToolkitId[] = p
 
 /**
  * Admin: change Group settings. The first time a purpose arrives during Onboarding, the Group gets that purpose's
- * default Toolkits (unless `toolkits` says otherwise) and Onboarding is marked done.
+ * default Toolkits (unless `toolkits` says otherwise) and Onboarding is marked done. Each Toolkit that goes on runs
+ * its own onEnable (the starter chores, the Pantry): Onboarding names none of them.
  */
-export async function updateGroupSettings(
-  ctx: Ctx,
-  patch: SettingsPatch & { toolkits?: ToolkitId[] },
-): Promise<{ group: Group; toolkits: ToolkitId[]; starters?: { chores: number; upkeep: number } }> {
+export async function updateGroupSettings(ctx: Ctx, patch: SettingsPatch & { toolkits?: ToolkitId[] }): Promise<{ group: Group; toolkits: ToolkitId[] }> {
   await requireAdmin(ctx);
   const clean = validateSettings(patch);
   const before = await getGroup(ctx.groupId);
@@ -179,18 +169,7 @@ export async function updateGroupSettings(
     const { runHooks } = await import("./toolkits");
     await runHooks(ctx, onboarding ? toolkits : toolkits.filter((t) => !wasOn.includes(t)), wasOn.filter((t) => !toolkits.includes(t)));
   }
-  const starters = onboarding && isHousehold(clean.purpose) ? await startHousehold(ctx, toolkits) : undefined;
-  return { group, toolkits, ...(starters ? { starters } : {}) };
-}
-
-export const isHousehold = (purpose: GroupPurpose | null | undefined) => purpose === "roommates" || purpose === "family";
-
-/** Onboarding for roommates and families: three starter chores and the usual five upkeep items, if those are on. */
-async function startHousehold(ctx: Ctx, toolkits: ToolkitId[]): Promise<{ chores: number; upkeep: number }> {
-  return {
-    chores: toolkits.includes("chores") ? await addStarterChores(ctx) : 0,
-    upkeep: toolkits.includes("upkeep") ? await addDefaults(ctx) : 0,
-  };
+  return { group, toolkits };
 }
 
 /** Admin: the "simplify debts" switch (getSettlePlan follows it). Unlike updateGroupSettings it never ends Onboarding. */

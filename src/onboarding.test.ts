@@ -48,14 +48,14 @@ test("the Admin's setup DM (ADR 0014): who they are to the group, then the setup
 });
 
 test("the setup line names the Tricks Roomie learned and what to say next", () => {
-  assert.equal(learnedLine(defaultToolkitsFor("trip")), `Learned Splitting and Groceries. Say "roomie, learn chores" any time.`);
-  assert.equal(learnedLine(defaultToolkitsFor("friends")), `Learned Splitting. Say "roomie, learn groceries" any time.`);
-  assert.equal(learnedLine(defaultToolkitsFor("roommates")), `Learned Splitting, Groceries, Chores and Upkeep. Say "roomie, what can you do?" any time.`);
+  assert.equal(learnedLine(defaultToolkitsFor("trip")), `Learned Money and Groceries. Say "roomie, learn house" any time.`);
+  assert.equal(learnedLine(defaultToolkitsFor("friends")), `Learned Money. Say "roomie, learn groceries" any time.`);
+  assert.equal(learnedLine(defaultToolkitsFor("roommates")), `Learned Money, Groceries and House. Say "roomie, what can you do?" any time.`);
   assert.equal(
     learnedLine(defaultToolkitsFor(null), { defaulted: true }),
-    `You didn't say what this group is for, so I kept the roommates set: learned Splitting, Groceries, Chores and Upkeep. Say "roomie, what can you do?" any time.`,
+    `You didn't say what this group is for, so I kept the roommates set: learned Money, Groceries and House. Say "roomie, what can you do?" any time.`,
   );
-  assert.equal(learnedLine([]), `No Tricks yet. Say "roomie, learn splitting" any time.`);
+  assert.equal(learnedLine([]), `No Tricks yet. Say "roomie, learn money" any time.`);
   for (const p of ["roommates", "trip", "friends", "family", "work", "other"] as const) {
     const line = learnedLine(defaultToolkitsFor(p));
     assert.equal(line.split("\n").length, 1);
@@ -81,10 +81,10 @@ test("approval prompt: asks the Admins by name and says what Pending means", () 
 });
 
 test("default Toolkits per purpose (core is always on and not listed)", () => {
-  assert.deepEqual(defaultToolkitsFor("roommates"), ["splitting", "groceries", "chores", "upkeep"]);
+  assert.deepEqual(defaultToolkitsFor("roommates"), ["splitting", "groceries", "house"]);
   assert.deepEqual(defaultToolkitsFor("trip"), ["splitting", "groceries"]);
   assert.deepEqual(defaultToolkitsFor("friends"), ["splitting"]);
-  assert.deepEqual(defaultToolkitsFor("family"), ["splitting", "groceries", "chores", "upkeep"]);
+  assert.deepEqual(defaultToolkitsFor("family"), ["splitting", "groceries", "house"]);
   assert.deepEqual(defaultToolkitsFor("work"), ["splitting"]);
   assert.deepEqual(defaultToolkitsFor(null), defaultToolkitsFor("roommates"), "no answer yet: every defaultOn Toolkit");
 });

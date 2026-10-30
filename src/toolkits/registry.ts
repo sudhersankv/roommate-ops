@@ -6,8 +6,7 @@ import { isNotAllowed } from "@/services/authz";
 import { core } from "./core/server";
 import { splitting } from "./splitting/server";
 import { groceries } from "./groceries/server";
-import { chores } from "./chores/server";
-import { upkeep } from "./upkeep/server";
+import { house } from "./house/server";
 import { TOOLKIT_IDS, type ToolkitId } from "./manifests";
 import { checkAdminAsk, CONFIRM_TTL_MS } from "./admin-ask";
 import type { AdminAsk, AnyTool, Toolkit } from "./types";
@@ -15,7 +14,7 @@ import type { AdminAsk, AnyTool, Toolkit } from "./types";
 export { core };
 
 /** One entry per id in manifests.ts; a missing or extra one is a type error. */
-const BY_ID = { splitting, groceries, chores, upkeep } satisfies Record<ToolkitId, Toolkit>;
+const BY_ID = { splitting, groceries, house } satisfies Record<ToolkitId, Toolkit>;
 
 export const TOOLKITS: readonly Toolkit<ToolkitId>[] = TOOLKIT_IDS.map((id) => BY_ID[id] as Toolkit<ToolkitId>);
 export const ALL_TOOLKIT_IDS: ToolkitId[] = [...TOOLKIT_IDS];
@@ -117,4 +116,4 @@ export function toolsFor(toolkit?: GateToolkit, enabled: readonly ToolkitId[] = 
 }
 
 /** Every tool in the registry, keyed by id, with each tool's own types. Used by tests. */
-export const allTools = () => ({ ...core.tools, ...BY_ID.splitting.tools, ...BY_ID.groceries.tools, ...BY_ID.chores.tools, ...BY_ID.upkeep.tools });
+export const allTools = () => ({ ...core.tools, ...BY_ID.splitting.tools, ...BY_ID.groceries.tools, ...BY_ID.house.tools });

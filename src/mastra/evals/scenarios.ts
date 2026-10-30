@@ -52,7 +52,7 @@ export type Expect = {
 
 export type Scenario = {
   id: string;
-  area: "splitting" | "groceries" | "chores" | "upkeep" | "reminders" | "core" | "gate" | "personality";
+  area: "splitting" | "groceries" | "house" | "reminders" | "core" | "gate" | "personality";
   /** Leave the day's greeting unclaimed (the runner claims it for every other scenario so it doesn't add a line). */
   greet?: boolean;
   /** Rows to create with services before the turn (no LLM). */
@@ -347,7 +347,6 @@ export const SCENARIOS: Scenario[] = [
     id: "photo-list-all-common",
     area: "groceries",
     seed: async (e) => {
-      await toolkits.setToolkit(e.ctx, { toolkit: "splitting", enabled: false });
       e.photo = (await receipts.saveUpload("evals", Buffer.from("a shopping list"), "image/jpeg")).path;
     },
     turn: { text: "roomie all common", photo: true },
@@ -356,16 +355,17 @@ export const SCENARIOS: Scenario[] = [
     alt: { tools: ["cart_from_photo"], excludes: [...NO_PRICE, /can't (open|see|read)/i], check: async (e) => fail((await cart.listOpenItems(e.ctx)).filter((i) => i.shared).length >= 4, "the list's items, shared") },
   },
   {
-    id: "photo-receipt-splitting-off",
+    // Groceries needs Money, so a receipt with Money off means both are off: Roomie says it hasn't learned Money here.
+    id: "photo-receipt-money-off",
     area: "groceries",
     seed: async (e) => {
+      await toolkits.setToolkit(e.ctx, { toolkit: "groceries", enabled: false });
       await toolkits.setToolkit(e.ctx, { toolkit: "splitting", enabled: false });
       e.photo = (await receipts.saveUpload("evals", Buffer.from("a receipt"), "image/jpeg")).path;
     },
     turn: { text: "roomie split this", photo: true },
-    expect: { replyIncludes: [/receipt/i, /splitting/i], maxLines: 2, excludes: [/can't (open|see)/i], check: async (e) => fail((await expenseCount(e)) === 0 && (await cart.listOpenItems(e.ctx)).length === 0, "nothing logged or added") },
-    // "split this" already says what it is: "I haven't learned Splitting here ... say 'roomie, learn splitting'" is right too.
-    alt: { replyIncludes: [/splitting/i], noTools: "actions", maxLines: 2, excludes: [/can't (open|see)/i], check: async (e) => fail((await expenseCount(e)) === 0, "nothing logged") },
+    // "I haven't learned Money here ... say 'roomie, learn money'".
+    expect: { replyIncludes: [/money/i], noTools: "actions", maxLines: 2, excludes: [/can't (open|see)/i], check: async (e) => fail((await expenseCount(e)) === 0 && (await cart.listOpenItems(e.ctx)).length === 0, "nothing logged or added") },
   },
   {
     id: "checkout-link",
@@ -523,21 +523,21 @@ export const SCENARIOS: Scenario[] = [
   /* ---------- chores ---------- */
   {
     id: "did-dishes",
-    area: "chores",
+    area: "house",
     seed: async (e) => void (await chores.addChore(e.ctx, { name: "Dishes", everyDays: 1 })),
     turn: { text: "roomie I did the dishes", from: "Dev" },
     expect: { tools: ["log_chore"], check: async (e) => fail((await chores.choreStatus(e.ctx)).find((c) => c.name === "Dishes")?.lastDoneBy === "Dev", "Dishes done by Dev") },
   },
   {
     id: "did-dishes-unprompted-asks",
-    area: "chores",
+    area: "house",
     seed: async (e) => void (await chores.addChore(e.ctx, { name: "Dishes", everyDays: 1 })),
     turn: { text: "I did the dishes", from: "Dev" },
     expect: { asks: true, noTools: ["log_chore"] },
   },
   {
     id: "whose-turn",
-    area: "chores",
+    area: "house",
     seed: async (e) => {
       await chores.addChore(e.ctx, { name: "Take out trash", everyDays: 3 });
       await chores.logChore(e.ctx, { chore: "trash" });
@@ -547,20 +547,20 @@ export const SCENARIOS: Scenario[] = [
   },
   {
     id: "add-chore",
-    area: "chores",
+    area: "house",
     turn: { text: "roomie add vacuuming to the chart, every 7 days" },
     expect: { tools: ["chore_add"], check: async (e) => fail((await chores.choreStatus(e.ctx)).some((c) => /vacuum/i.test(c.name)), "vacuuming on the chart") },
   },
   {
     id: "chore-for-someone-else",
-    area: "chores",
+    area: "house",
     seed: async (e) => void (await chores.addChore(e.ctx, { name: "Take out trash", everyDays: 3 })),
     turn: { text: "roomie Dev took out the trash" },
     expect: { tools: ["log_chore"], check: async (e) => fail((await chores.choreStatus(e.ctx)).find((c) => /trash/i.test(c.name))?.lastDoneBy === "Dev", "trash done by Dev") },
   },
   {
     id: "whose-turn-rotation",
-    area: "chores",
+    area: "house",
     seed: async (e) => {
       await chores.addChore(e.ctx, { name: "Take out trash", everyDays: 2, rotation: [e.member.Maya, e.member.Dev, e.member.Sam] });
       await chores.logChore(e.ctx, { chore: "trash" });
@@ -570,7 +570,7 @@ export const SCENARIOS: Scenario[] = [
   },
   {
     id: "skip-my-turn",
-    area: "chores",
+    area: "house",
     seed: async (e) => void (await chores.addChore(e.ctx, { name: "Take out trash", everyDays: 2, rotation: [e.member.Dev, e.member.Sam, e.member.Maya] })),
     turn: { text: "roomie can you skip my turn on trash? I'm away tonight", from: "Dev" },
     expect: {
@@ -581,7 +581,7 @@ export const SCENARIOS: Scenario[] = [
   },
   {
     id: "add-chore-rotation",
-    area: "chores",
+    area: "house",
     turn: { text: "roomie add mopping every 3 days: Sam first, then Dev, then me" },
     expect: {
       tools: ["chore_add"],
@@ -594,7 +594,7 @@ export const SCENARIOS: Scenario[] = [
   },
   {
     id: "the-chart",
-    area: "chores",
+    area: "house",
     seed: async (e) => {
       await chores.addChore(e.ctx, { name: "Dishes", everyDays: 1 });
       await chores.logChore(e.ctx, { chore: "dishes" });
@@ -608,20 +608,20 @@ export const SCENARIOS: Scenario[] = [
   /* ---------- upkeep ---------- */
   {
     id: "track-ac-filter",
-    area: "upkeep",
+    area: "house",
     turn: { text: "roomie track the AC filter, it needs changing every 90 days" },
     expect: { tools: ["upkeep_add"], check: async (e) => fail((await upkeep.listMaintenance(e.ctx)).some((m) => m.everyDays === 90), "an upkeep item every 90 days") },
   },
   {
     id: "maintenance-done",
-    area: "upkeep",
+    area: "house",
     seed: async (e) => void (await upkeep.addMaintenance(e.ctx, { item: "Replace HVAC filter", everyDays: 90 })),
     turn: { text: "roomie I replaced the hvac filter", from: "Dev" },
     expect: { tools: ["upkeep_done"], check: async (e) => fail((await upkeep.listMaintenance(e.ctx))[0]?.status === "ok", "filter marked done") },
   },
   {
     id: "air-filter-done",
-    area: "upkeep",
+    area: "house",
     seed: async (e) => void (await upkeep.addDefaults(e.ctx)),
     turn: { text: "roomie changed the air filter", from: "Sam" },
     expect: {
@@ -631,7 +631,7 @@ export const SCENARIOS: Scenario[] = [
   },
   {
     id: "whats-due-this-week",
-    area: "upkeep",
+    area: "house",
     seed: async (e) => {
       await upkeep.addDefaults(e.ctx);
       await chores.addChore(e.ctx, { name: "Dishes", everyDays: 1 });
@@ -732,12 +732,12 @@ export const SCENARIOS: Scenario[] = [
     turn: { text: "it's a trip! EUR, Lisbon time" },
     expect: {
       tools: ["set_group_settings"],
-      replyIncludes: [/learned splitting and groceries/i],
-      excludes: [...TOOLKIT_WORDS, /learned[^.]*chores/i],
+      replyIncludes: [/learned money and groceries/i],
+      excludes: [...TOOLKIT_WORDS, /learned[^.]*house/i],
       check: async (e) => {
         const g = await groups.getGroup(e.ctx.groupId);
         const on = [...(await groups.enabledToolkits(e.ctx))].sort().join(",");
-        return fail(g?.purpose === "trip" && g.currency === "EUR" && on === "groceries,splitting", `trip, EUR, Splitting + Groceries only; got ${g?.purpose} ${g?.currency} ${on}`);
+        return fail(g?.purpose === "trip" && g.currency === "EUR" && on === "groceries,splitting", `trip, EUR, Money + Groceries only; got ${g?.purpose} ${g?.currency} ${on}`);
       },
     },
   },
@@ -822,13 +822,10 @@ export const SCENARIOS: Scenario[] = [
   {
     id: "what-tricks-brief",
     area: "core",
-    seed: async (e) => {
-      await toolkits.setToolkit(e.ctx, { toolkit: "splitting", enabled: false });
-      await toolkits.setToolkit(e.ctx, { toolkit: "upkeep", enabled: false });
-    },
+    seed: async (e) => void (await toolkits.setToolkit(e.ctx, { toolkit: "house", enabled: false })),
     turn: { text: "roomie what tricks do you have?", from: "Sam" },
-    // "Groceries and Chores here. Admins can add Splitting and Upkeep."
-    expect: { tools: ["list_toolkits"], noTools: "actions", replyIncludes: [/groceries/i, /chores/i], maxLines: 2, excludes: [...TOOLKIT_WORDS, /https?:\/\//, /coming (soon|later)|research|stickers/i] },
+    // "Money and Groceries here. Admins can add House."
+    expect: { tools: ["list_toolkits"], noTools: "actions", replyIncludes: [/money|split/i, /groceries/i], maxLines: 2, excludes: [...TOOLKIT_WORDS, /https?:\/\//, /coming (soon|later)|research|stickers/i] },
   },
   {
     id: "learn-research-not-yet",
@@ -842,15 +839,15 @@ export const SCENARIOS: Scenario[] = [
     },
   },
   {
-    id: "learn-chores",
+    id: "learn-house",
     area: "core",
-    seed: async (e) => void (await toolkits.setToolkit(e.ctx, { toolkit: "chores", enabled: false })),
-    turn: { text: "roomie learn chores" },
+    seed: async (e) => void (await toolkits.setToolkit(e.ctx, { toolkit: "house", enabled: false })),
+    turn: { text: "roomie learn house" },
     expect: {
       tools: ["toggle_toolkit"],
-      replyIncludes: [/learn|chores/i],
+      replyIncludes: [/learn|house/i],
       excludes: TOOLKIT_WORDS,
-      check: async (e) => fail((await groups.enabledToolkits(e.ctx)).includes("chores"), "chores is learned"),
+      check: async (e) => fail((await groups.enabledToolkits(e.ctx)).includes("house"), "house is learned"),
     },
   },
   {

@@ -18,7 +18,7 @@ export const settingsTools = {
   set_group_settings: createTool({
     id: "set_group_settings",
     description:
-      "Admin only: change the group's settings, including the Onboarding answers ('roommates, USD, Chicago, hype'). Only pass what changed. The first purpose picks the Tricks you learn unless you pass toolkits; roommates and family also get three starter chores and the usual upkeep items. When setup finishes the result has `say`: two ready lines (the Tricks you learned, then the group's Join link for everyone's dashboard); post `say` exactly as it is, the link included, nothing else about links. With postedInGroup (they answered in a DM) it's already in the group chat: say it here too. Also the daily chores nudge hour and the weekly report's day and hour. personality: your vibe (base), the name the group calls you, and up to 3 quirks (the full list).",
+      "Admin only: change the group's settings, including the Onboarding answers ('roommates, USD, Chicago, hype'). Only pass what changed. The first purpose picks the Tricks you learn unless you pass toolkits (each Trick sets itself up: a chore chart, a Pantry). When setup finishes the result has `say`: two ready lines (the Tricks you learned, then the group's Join link for everyone's dashboard); post `say` exactly as it is, the link included, nothing else about links. With postedInGroup (they answered in a DM) it's already in the group chat: say it here too. Also the daily chores nudge hour and the weekly report's day and hour. personality: your vibe (base), the name the group calls you, and up to 3 quirks (the full list).",
     inputSchema: z.object({
       name: z.string().optional().describe("The group's name (not yours: yours is personality.name)"),
       purpose: z.enum(GROUP_PURPOSES).optional(),
@@ -27,7 +27,7 @@ export const settingsTools = {
       chattiness: z.enum(["quiet", "normal", "chatty"]).optional(),
       simplifyDebts: z.boolean().optional(),
       toolkits: z.array(z.enum(TOOLKIT_IDS)).optional().describe("The full list of Tricks to know"),
-      choresNudgeHour: z.number().int().min(0).max(23).nullable().optional().describe("Local hour (0-23) of the daily chores nudge; null = off"),
+      choresNudgeHour: z.number().int().min(0).max(23).nullable().optional().describe("Local hour (0-23) of Roomie's morning post (the chores nudge); null = off"),
       reportDay: z.enum(WEEKDAY_NAMES).optional().describe("Weekday of the weekly report"),
       reportHour: z.number().int().min(0).max(23).optional().describe("Local hour (0-23) of the weekly report"),
       personality: z
@@ -86,7 +86,6 @@ export const settingsTools = {
         simplifyDebts: group.simplifyDebts,
         toolkits,
         ...schedule.describeSchedule(sched),
-        ...(res?.starters ? { added: `${res.starters.chores} starter chores, ${res.starters.upkeep} upkeep items` } : {}),
         personality: { vibe: p.base, yourName: p.name, quirks: p.quirks },
       };
     },

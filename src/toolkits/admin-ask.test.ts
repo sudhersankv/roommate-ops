@@ -5,12 +5,12 @@ import assert from "node:assert/strict";
 import { checkAdminAsk, namesTarget } from "./admin-ask";
 import { adminAskGate, adminOnlyTools, callKey } from "./registry";
 import { core } from "./core/manifest";
-import { chores } from "./chores/manifest";
+import { house } from "./house/manifest";
 import { splitting } from "./splitting/manifest";
 import type { AdminAsk } from "./types";
 
 const spec = (id: string): AdminAsk => {
-  const s = core.adminOnly?.[id] ?? splitting.adminOnly?.[id] ?? chores.adminOnly?.[id];
+  const s = core.adminOnly?.[id] ?? splitting.adminOnly?.[id] ?? house.adminOnly?.[id];
   assert.ok(s, id);
   return s;
 };
@@ -82,7 +82,7 @@ describe("checkAdminAsk", () => {
     assert.equal(ok("approve_member", { name: "Priya" }, "roomie never let priya in"), false);
     assert.equal(ok("decline_member", { name: "Priya" }, "roomie don't approve Priya"), true);
     assert.equal(ok("promote_member", { name: "Eve" }, "roomie don't promote eve"), false);
-    assert.equal(ok("toggle_toolkit", { toolkit: "chores", enabled: false }, "roomie don't forget chores"), false);
+    assert.equal(ok("toggle_toolkit", { toolkit: "house", enabled: false }, "roomie don't forget house"), false);
     assert.equal(ok("chore_remove", { chore: "Dishes" }, "roomie don't remove dishes"), false);
     assert.equal(ok("splitwise_connect", {}, "roomie don't connect splitwise"), false);
     assert.equal(ok("set_group_settings", { currency: "EUR" }, "roomie don't change the currency"), false);
@@ -127,16 +127,16 @@ describe("checkAdminAsk", () => {
   });
 
   test("Tricks: learn / forget / turn on with the Trick's name", () => {
-    assert.equal(ok("toggle_toolkit", { toolkit: "chores", enabled: true }, "roomie learn chores"), true);
+    assert.equal(ok("toggle_toolkit", { toolkit: "house", enabled: true }, "roomie learn house"), true);
     assert.equal(ok("toggle_toolkit", { toolkit: "groceries", enabled: false }, "roomie forget groceries"), true);
-    assert.equal(ok("toggle_toolkit", { toolkit: "chores", enabled: true }, "turn on chores"), true);
-    assert.equal(ok("toggle_toolkit", { toolkit: "splitting", enabled: false }, "roomie learn chores"), false, "a different Trick");
+    assert.equal(ok("toggle_toolkit", { toolkit: "house", enabled: true }, "turn on house"), true);
+    assert.equal(ok("toggle_toolkit", { toolkit: "splitting", enabled: false }, "roomie learn house"), false, "a different Trick");
     assert.equal(ok("toggle_toolkit", { toolkit: "splitting", enabled: false }, "roomie hi"), false);
   });
 
   test("settings: every field the call changes needs its own words (the Onboarding answer sets only what it says)", () => {
     assert.equal(ok("set_group_settings", { purpose: "roommates", currency: "USD", timezone: "America/Chicago" }, "roommates, USD, Chicago"), true);
-    assert.equal(ok("set_group_settings", { purpose: "roommates", currency: "USD", toolkits: ["chores"] }, "roommates, USD"), false, "Tricks nobody asked for");
+    assert.equal(ok("set_group_settings", { purpose: "roommates", currency: "USD", toolkits: ["house"] }, "roommates, USD"), false, "Tricks nobody asked for");
     assert.equal(ok("set_group_settings", { purpose: "roommates", personality: { base: "gremlin" } }, "roommates, USD"), false, "a vibe nobody asked for");
     assert.equal(ok("set_group_settings", { purpose: "roommates", personality: { base: "hype" } }, "roommates, USD, Chicago, hype"), true);
     assert.equal(ok("set_group_settings", { timezone: "Europe/London" }, "we're in london"), true, "the value is enough for a time zone");
@@ -144,15 +144,15 @@ describe("checkAdminAsk", () => {
     assert.equal(ok("set_group_settings", { chattiness: "quiet" }, "roomie be quieter please"), true);
     assert.equal(ok("set_group_settings", { personality: { name: "Dino" } }, "roomie we'll call you Dino"), true);
     assert.equal(ok("set_group_settings", { toolkits: [] }, "roomie hi"), false);
-    assert.equal(ok("set_group_settings", { personality: { name: "roomie" }, toolkits: ["chores"] }, "roomie hi"), false, "'roomie' is never evidence");
+    assert.equal(ok("set_group_settings", { personality: { name: "roomie" }, toolkits: ["house"] }, "roomie hi"), false, "'roomie' is never evidence");
     assert.equal(ok("set_group_settings", { currency: "EUR", reportHour: 9 }, "roomie how was the trip"), false, "an everyday word changes nothing");
     assert.equal(ok("set_group_settings", { reportDay: "monday", reportHour: 9 }, "roomie move the report to monday 9am"), true);
   });
 
   test("settings: the question names what nobody asked for; 'yes change the settings' confirms it", () => {
-    const r = checkAdminAsk(spec("set_group_settings"), { purpose: "roommates", toolkits: ["chores"] }, "roommates");
+    const r = checkAdminAsk(spec("set_group_settings"), { purpose: "roommates", toolkits: ["house"] }, "roommates");
     assert.deepEqual(r, { ok: false, ask: `Change the group's settings (toolkits)? Say "roomie, yes change the settings".` });
-    assert.equal(ok("set_group_settings", { purpose: "roommates", toolkits: ["chores"] }, "roomie, yes change the settings", true), true);
+    assert.equal(ok("set_group_settings", { purpose: "roommates", toolkits: ["house"] }, "roomie, yes change the settings", true), true);
   });
 
   test("Splitwise: each operation needs its own verb; a status question authorizes none of them", () => {

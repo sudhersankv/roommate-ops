@@ -1,7 +1,7 @@
-// When Roomie posts on its own: the daily chores nudge (group_toolkits "chores".settings.nudgeHour, default 9 local, null
-// = off) and the weekly Group Report (group_toolkits "core".settings.report = { weekday, hour }, default Sunday 18:00
-// local). Both are claimed in scheduled_posts before sending, so each goes out at most once per local day / week
-// (ADR 0001). The window checks are pure (schedule.test.ts).
+// When Roomie posts on its own: the morning Bundle (group_toolkits "house".settings.nudgeHour, default 9 local, null
+// = off; the hour the chores nudge always had) and the weekly Group Report (group_toolkits "core".settings.report =
+// { weekday, hour }, default Sunday 18:00 local). Both are claimed in scheduled_posts before sending, so each goes out
+// at most once per local day / week (ADR 0001). The window checks are pure (report.test.ts).
 import { and, eq, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { dayInZone, WEEKDAY_NAMES, zonedParts } from "@/lib/time";
@@ -39,8 +39,8 @@ export function validateSchedule(patch: Partial<Schedule>): Partial<Schedule> {
 }
 
 /** Stored settings -> a Schedule, defaults for anything missing or odd. */
-export function readSchedule(chores: Record<string, unknown> | undefined, core: Record<string, unknown> | undefined): Schedule {
-  const nudge = chores?.nudgeHour;
+export function readSchedule(house: Record<string, unknown> | undefined, core: Record<string, unknown> | undefined): Schedule {
+  const nudge = house?.nudgeHour;
   const report = (core?.report ?? {}) as { weekday?: unknown; hour?: unknown };
   return {
     nudgeHour: nudge === null ? null : hourOk(nudge) ? (nudge as number) : DEFAULT_SCHEDULE.nudgeHour,
@@ -49,8 +49,8 @@ export function readSchedule(chores: Record<string, unknown> | undefined, core: 
   };
 }
 
-/** The chores nudge goes out in the nudge hour (local); `period` is the local day it belongs to. */
-export function choresNudgeWindow(now: Date, tz: string, nudgeHour: number | null): { open: boolean; period: string } {
+/** The Bundle goes out in the nudge hour (local); `period` is the local day it belongs to. */
+export function bundleWindow(now: Date, tz: string, nudgeHour: number | null): { open: boolean; period: string } {
   const period = dayInZone(tz, now);
   return { open: nudgeHour !== null && zonedParts(tz, now).hour === nudgeHour, period };
 }
@@ -82,9 +82,12 @@ async function settingsOf(groupId: string, toolkit: string): Promise<Record<stri
   return row?.settings;
 }
 
+/** The nudge hour lives on House's row: it's the chores line's hour, and the Bundle's with it (ADR 0017). */
+const NUDGE_TOOLKIT = "house";
+
 export async function getSchedule(ctx: GroupCtx): Promise<Schedule> {
-  const [chores, core] = await Promise.all([settingsOf(ctx.groupId, "chores"), settingsOf(ctx.groupId, "core")]);
-  return readSchedule(chores, core);
+  const [house, core] = await Promise.all([settingsOf(ctx.groupId, NUDGE_TOOLKIT), settingsOf(ctx.groupId, "core")]);
+  return readSchedule(house, core);
 }
 
 async function mergeSettings(groupId: string, toolkit: string, value: Record<string, unknown>) {
@@ -101,7 +104,7 @@ async function mergeSettings(groupId: string, toolkit: string, value: Record<str
 export async function updateSchedule(ctx: Ctx, patch: Partial<Schedule>): Promise<Schedule> {
   await requireAdmin(ctx);
   const clean = validateSchedule(patch);
-  if (clean.nudgeHour !== undefined) await mergeSettings(ctx.groupId, "chores", { nudgeHour: clean.nudgeHour });
+  if (clean.nudgeHour !== undefined) await mergeSettings(ctx.groupId, NUDGE_TOOLKIT, { nudgeHour: clean.nudgeHour });
   if (clean.reportWeekday !== undefined || clean.reportHour !== undefined) {
     const now = await getSchedule(ctx);
     await mergeSettings(ctx.groupId, "core", { report: { weekday: clean.reportWeekday ?? now.reportWeekday, hour: clean.reportHour ?? now.reportHour } });

@@ -20,18 +20,18 @@ import type { ShameRow } from "@/services/chores";
 import type { CartItem } from "@/services/cart";
 import { registerChannel } from "@/channels";
 import { DevChannel, devUserId, type DevOutput } from "@/channels/dev";
-import { choresNudgeJob, sendDueReminders, weeklyReportJob } from "@/jobs/scheduler";
+import { bundleJob, sendDueReminders, weeklyReportJob } from "@/jobs/scheduler";
 import { addDaysInZone, addDaysToDay, dayInZone, nextWeekday, zonedParts, zonedTimeToUtc } from "@/lib/time";
 import { onGroupJoined, onParticipantJoined } from "@/onboarding";
 import { deleteGroup, groupsWithChat } from "@/services/groups";
-import { activity, cart, chatlog, chores, members, money, personality as personalitySvc, receipts, recipes, recurring, splitwise, toolkits as toolkitsSvc } from "@/services";
+import { activity, cart, chatlog, chores, groups, members, money, personality as personalitySvc, receipts, recipes, recurring, splitwise, toolkits as toolkitsSvc } from "@/services";
 import { composioHealth } from "@/integrations/composio";
 import { FakeSplitwise, setSplitwiseClient } from "@/integrations/splitwise";
 import { ComposioInstacart, FakeInstacart, setInstacartClient } from "@/integrations/instacart";
 import { readFile, rm } from "node:fs/promises";
 import { runRetention } from "@/jobs/retention";
+import { expenseSummary } from "@/services/money";
 import { allTools } from "./registry";
-import { expenseSummary } from "./splitting/money";
 import { assertNotProdDb } from "../../scripts/lib/prod-guard";
 
 // The tools are called directly here, with no chat message for the admin-only check to read (toolkits/admin-ask.ts).
@@ -635,20 +635,24 @@ describe("Roomie tools against the dev DB", () => {
     assert.ok(r.text.split("\n").length <= 12, "stays short");
   });
 
-  test("scheduler: the chores nudge posts once in the nudge hour, only when something's due; the report once on its day", async () => {
+  test("scheduler: the Bundle (House's chores line) posts once in the nudge hour, only when something's due; the report once on its day", async () => {
     await run("chore_add", { name: "Mop the floor", everyDays: 7 });
     const [g] = await groupsWithChat(groupId);
     const today = zonedParts(CHI, new Date());
     const at = (hour: number, dayOffset = 0) => zonedTimeToUtc(CHI, { year: today.year, month: today.month, day: today.day + dayOffset, hour, minute: 15 });
     outbox.length = 0;
-    assert.equal(await choresNudgeJob(g, at(10)), null, "outside the 9 AM hour");
-    const text = await choresNudgeJob(g, at(9));
+    assert.equal(await bundleJob(g, at(10)), null, "outside the 9 AM hour");
+    const text = await bundleJob(g, at(9));
     assert.match(text ?? "", /^🧹 On the chart today: .*mop the floor/);
-    assert.equal(await choresNudgeJob(g, at(9)), null, "once per local day");
+    assert.equal(await bundleJob(g, at(9)), null, "once per local day");
     assert.equal(outbox.filter((o) => o.to === "chat").length, 1);
+    const [claim] = await db.select().from(schema.scheduledPosts).where(and(eq(schema.scheduledPosts.groupId, groupId), eq(schema.scheduledPosts.kind, "chores.nudge")));
+    assert.equal(claim?.period, dayInZone(CHI, at(9)), "claimed under the nudge's kind and local day");
 
     await run("set_group_settings", { choresNudgeHour: null, reportDay: "Wednesday", reportHour: 7 });
-    assert.equal(await choresNudgeJob(g, at(9, 1)), null, "nudge switched off");
+    assert.equal(await bundleJob(g, at(9, 1)), null, "nudge switched off");
+    const [houseRow] = await db.select().from(schema.groupToolkits).where(and(eq(schema.groupToolkits.groupId, groupId), eq(schema.groupToolkits.toolkit, "house")));
+    assert.equal(houseRow?.settings.nudgeHour, null, "the nudge hour lives on House's row");
     const wed = nextWeekday(CHI, 3, 7, at(0));
     const report = await weeklyReportJob(g, new Date(wed.getTime() + 10 * 60_000));
     assert.match(report ?? "", /Group report/);
@@ -940,7 +944,7 @@ describe("Roomie tools against the dev DB", () => {
     assert.equal((await cart.listOpenItems(ctx)).length, 0);
   });
 
-  test("cart_from_photo: a list photo is read (fake vision), summarized, added as shared only on confirm; a receipt says Splitting", async () => {
+  test("cart_from_photo: a list photo is read (fake vision), summarized, added as shared only on confirm; a receipt points at Money's tool", async () => {
     const photos = await import("@/services/grocery-photos");
     const list = await receipts.saveUpload("test", Buffer.from("a shopping list"), "image/jpeg");
     const bill = await receipts.saveUpload("test", Buffer.from("a receipt"), "image/jpeg");
@@ -959,7 +963,7 @@ describe("Roomie tools against the dev DB", () => {
       assert.equal(open.find((i) => i.name === "eggs")?.qty, "12");
       assert.equal((await lastActivity()).summary, "put eggs, milk, bread and 1 more on the Cart for everyone");
       const r = await run("cart_from_photo", { photo_url: bill.path });
-      assert.deepEqual([r.kind, r.splitting, r.next], ["receipt", true, "expense_from_receipt"]);
+      assert.deepEqual(r, { kind: "receipt", next: "expense_from_receipt" }, "no Money check: Groceries requires it");
       const theirs = await receipts.saveUpload("g-00000000-0000-4000-8000-000000000000", Buffer.from("their list"), "image/jpeg");
       try {
         await assert.rejects(run("cart_from_photo", { photo_url: theirs.path }), /only read photos sent in this group's chat/);
@@ -1027,19 +1031,54 @@ describe("Roomie tools against the dev DB", () => {
     assert.equal(s.currency, "EUR");
     assert.equal(s.timezone, "Europe/Berlin");
     assert.deepEqual([...s.toolkits].sort(), ["groceries", "splitting"]);
-    assert.equal(s.learned, `Learned Splitting and Groceries. Say "roomie, learn chores" any time.`, "the one setup line");
+    assert.equal(s.learned, `Learned Money and Groceries. Say "roomie, learn house" any time.`, "the one setup line");
     const [g] = await db.select().from(schema.groups).where(eq(schema.groups.id, groupId));
     assert.ok(g.onboardedAt, "Onboarding is done");
     await assert.rejects(run("set_group_settings", { timezone: "Mars/Olympus" }), /don't know the time zone "Mars\/Olympus"\. Which city/);
     assert.equal((await run("set_group_settings", { timezone: "India" })).timezone, "Asia/Kolkata");
     assert.equal((await run("set_group_settings", { timezone: "CST" })).timezone, "America/Chicago");
-    const t = await run("toggle_toolkit", { toolkit: "chores", enabled: true }, contextFor(member.Ryan, "Ryan", "admin", "active"));
-    assert.ok(t.toolkits.includes("chores"));
-    assert.equal((await run("toggle_toolkit", { toolkit: "upkeep", enabled: true }, alex)).reason, "admin-only");
+    const t = await run("toggle_toolkit", { toolkit: "house", enabled: true }, contextFor(member.Ryan, "Ryan", "admin", "active"));
+    assert.ok(t.toolkits.includes("house"));
+    assert.equal((await run("toggle_toolkit", { toolkit: "upkeep", enabled: true }, alex)).reason, "admin-only", "'upkeep' is House's word too");
     assert.equal((await run("set_group_settings", { reportHour: 9 }, alex)).reason, "admin-only");
   });
 
-  test("Onboarding a household ('roommates, USD, Chicago'): three starter chores for everyone and the usual upkeep", async () => {
+  test("Groceries needs Money: teaching Groceries with Money off is refused and says why; so is forgetting Money while Groceries is on", async () => {
+    const people = ["Maya", "Dev", "Sam"].map((name) => ({ userExternalId: devUserId(`money-${name}-${Date.now()}`), name }));
+    const joined = await onGroupJoined({ channel: "dev", externalId: `money-${Date.now()}`, title: "Money test" }, people, people[0]);
+    const gid = joined.group.id;
+    const rc = new RequestContext<unknown>([
+      ["groupId", gid],
+      ["memberId", joined.members[0].id],
+      ["memberName", "Maya"],
+      ["role", "admin"],
+      ["status", "active"],
+      ["source", "chat"],
+    ]);
+    try {
+      const on = () => groups.enabledToolkits({ groupId: gid });
+      const keep = await run("toggle_toolkit", { toolkit: "money", enabled: false }, rc);
+      assert.equal(keep.reason, "needed-by");
+      assert.equal(keep.message, "Groceries needs Money, so I'm keeping it.");
+      assert.ok((await on()).includes("splitting"), "Money stays on");
+
+      assert.equal((await run("toggle_toolkit", { toolkit: "groceries", enabled: false }, rc)).enabled, false);
+      const off = await run("toggle_toolkit", { toolkit: "splitting", enabled: false }, rc);
+      assert.equal(off.enabled, false, "with Groceries off, Money can go");
+      const refused = await run("toggle_toolkit", { toolkit: "groceries", enabled: true }, rc);
+      assert.equal(refused.reason, "requirements");
+      assert.equal(refused.message, "I can't learn Groceries yet: it needs Money first.");
+      assert.ok(!(await on()).includes("groceries"), "Groceries stays off");
+      assert.ok(!/toolkit|feature|enable/i.test(refused.message + keep.message), "Tricks vocabulary only");
+
+      await run("toggle_toolkit", { toolkit: "money", enabled: true }, rc);
+      assert.equal((await run("toggle_toolkit", { toolkit: "groceries", enabled: true }, rc)).enabled, true, "Money on, Groceries follows");
+    } finally {
+      await deleteGroup(gid);
+    }
+  });
+
+  test("Onboarding a household ('roommates, USD, Chicago'): House's onEnable adds three starter chores for everyone and the usual upkeep, once", async () => {
     const people = ["Maya", "Dev"].map((name) => ({ userExternalId: devUserId(`house-${name}-${Date.now()}`), name }));
     const joined = await onGroupJoined({ channel: "dev", externalId: `house-${Date.now()}`, title: "House test" }, people, people[0]);
     const gid = joined.group.id;
@@ -1054,13 +1093,20 @@ describe("Roomie tools against the dev DB", () => {
       ]);
       const s = await run("set_group_settings", { purpose: "roommates", currency: "USD", timezone: "Chicago" }, rc);
       assert.equal(s.timezone, "America/Chicago");
-      assert.equal(s.added, "3 starter chores, 5 upkeep items");
-      const chart = await db.select().from(schema.chores).where(eq(schema.chores.groupId, gid));
+      const chartOf = async () => db.select().from(schema.chores).where(eq(schema.chores.groupId, gid));
+      const upkeepOf = async () => db.select().from(schema.maintenance).where(eq(schema.maintenance.groupId, gid));
+      const chart = await chartOf();
       assert.deepEqual(chart.map((c) => c.name).sort(), ["Clean the bathroom", "Dishes", "Take out the trash"]);
       assert.ok(chart.every((c) => c.rotation === null), "everyone, new people included");
-      assert.equal((await db.select().from(schema.maintenance).where(eq(schema.maintenance.groupId, gid))).length, 5);
-      const again = await run("set_group_settings", { purpose: "roommates" }, rc);
-      assert.equal(again.added, undefined, "only at Onboarding");
+      assert.equal((await upkeepOf()).length, 5);
+      await run("set_group_settings", { purpose: "roommates" }, rc);
+      assert.equal((await chartOf()).length, 3, "only at Onboarding");
+      // "roomie, forget house" then "roomie, learn house": the hook runs again and adds nothing twice.
+      await run("chore_remove", { chore: "Dishes" }, rc);
+      await run("toggle_toolkit", { toolkit: "house", enabled: false }, rc);
+      await run("toggle_toolkit", { toolkit: "house", enabled: true }, rc);
+      assert.deepEqual((await chartOf()).map((c) => c.name).sort(), ["Clean the bathroom", "Take out the trash"], "a chart with chores on it is left alone");
+      assert.equal((await upkeepOf()).length, 5, "the usual five are already tracked");
     } finally {
       await deleteGroup(gid);
     }
@@ -1086,12 +1132,13 @@ describe("Roomie tools against the dev DB", () => {
     assert.match((await run("toggle_toolkit", { toolkit: "spaceships", enabled: true })).message, /don't know a "spaceships" Trick/);
 
     const list = await run("list_toolkits", {}, alex);
-    assert.ok(list.known.some((t: { name: string; try?: string[] }) => t.name === "Splitting" && t.try?.length));
+    assert.ok(list.known.some((t: { name: string; try?: string[] }) => t.name === "Money" && t.try?.length));
     assert.ok(list.couldLearn.some((t: { name: string }) => t.name === "Groceries"));
     assert.ok(list.comingSoon.includes("Research") && list.comingSoon.includes("Stickers"));
     assert.ok(["Lease stuff", "Outings", "Cooking"].every((n) => list.comingSoon.includes(n)));
     assert.ok(!list.known.concat(list.couldLearn).some((t: { name: string }) => t.name === "Core"), "core isn't a Trick");
-    assert.match(list.say, /^Tricks I know here: .*Splitting.*\. Could learn: .*Groceries.*\. Coming soon: /);
+    assert.match(list.say, /^Tricks I know here: .*Money.*\. Could learn: .*Groceries.*\. Coming soon: /);
+    assert.doesNotMatch(JSON.stringify(list), /Splitting/, "the Trick is called Money");
     assert.ok(!/toolkit|feature|enable/i.test(list.say + list.whoCanTeach), "Tricks vocabulary only");
     assert.equal(list.links, undefined, "no Browse Tricks link: links only when asked");
 
@@ -1663,7 +1710,7 @@ describe("Join links and seats", () => {
   test("setup answered in a DM: the learned line and the Join link go to the group chat too", async () => {
     const s = await run("set_group_settings", { purpose: "friends", currency: "USD" }, as("Maya", [["isPrivate", true]]));
     assert.equal(s.postedInGroup, true);
-    assert.match(s.say, /^Learned Splitting\. Say "roomie, learn groceries" any time\.\nEveryone: your dashboard is at .*\/j\//);
+    assert.match(s.say, /^Learned Money\. Say "roomie, learn groceries" any time\.\nEveryone: your dashboard is at .*\/j\//);
     const lines = (await chatlog.roomieLines(gid, 20)).map((l) => l.text);
     assert.ok(lines.includes(s.say), "posted (and logged) in the group");
   });

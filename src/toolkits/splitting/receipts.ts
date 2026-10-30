@@ -2,9 +2,9 @@ import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { EXPENSE_CATEGORIES } from "@/db/enums";
 import { members, money, receipts } from "@/services";
+import { expenseSummary } from "@/services/money";
 import { dollars } from "@/services/types";
 import { ctxOf, memberIdByName, toCents } from "../util";
-import { expenseSummary } from "./money";
 
 export const receiptTools = {
   expense_from_receipt: createTool({

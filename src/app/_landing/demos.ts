@@ -75,7 +75,7 @@ export const DEMOS: Demo[] = [
   },
   {
     id: "chores",
-    trick: "chores",
+    trick: "house",
     title: "The 7-day dish streak.",
     body: "It knows whose turn it is, and nudges once a day at most.",
     group: { title: "Apt 4B", people: "Maya, Dev, Sam, Roomie", vibe: "hype" },
