@@ -1,4 +1,5 @@
 import type { Metadata } from "next"
+import Link from "next/link"
 import { notFound } from "next/navigation"
 
 import { RoomieAvatar } from "@/components/app/roomie-avatar"
@@ -12,10 +13,11 @@ export const metadata: Metadata = { title: "Groups", robots: { index: false, fol
 export const dynamic = "force-dynamic"
 
 /** The operator's list of every Group: who's in it, how busy Roomie is there today, and pause / resume / leave. */
-export default async function GroupsAdminPage() {
+export default async function GroupsAdminPage({ searchParams }: { searchParams: Promise<{ page?: string }> }) {
   const op = await currentOperator()
   if (!op) notFound()
-  const rows = await listGroupsForOperator(op)
+  const { page: raw } = await searchParams
+  const { rows, total, paused: pausedCount, page, pages } = await listGroupsForOperator(op, { page: Number(raw) || 1 })
   const paused = roomiePaused()
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-3xl flex-col gap-6 px-6 py-10">
@@ -24,7 +26,7 @@ export default async function GroupsAdminPage() {
         <div>
           <h1 className="type-title m-0">Groups</h1>
           <p className="type-caption text-muted-foreground">
-            {rows.length === 0 ? "None yet." : `${rows.length} groups, ${rows.filter((r) => r.pausedAt).length} paused.`} Runs today count against {CAPS.groupDay.max} a day per group. Only operators see this page.
+            {total === 0 ? "None yet." : `${total} groups, ${pausedCount} paused${pages > 1 ? `; page ${page} of ${pages}, newest first` : ""}.`} Runs today count against {CAPS.groupDay.max} a day per group. Only operators see this page.
           </p>
         </div>
       </header>
@@ -47,6 +49,15 @@ export default async function GroupsAdminPage() {
           pausedAt: r.pausedAt?.toISOString() ?? null,
         }))}
       />
+      {pages > 1 && (
+        <nav aria-label="Pages" className="type-body flex items-center justify-between">
+          {page > 1 ? <Link href={`/admin/groups?page=${page - 1}`} className="underline underline-offset-4">Newer</Link> : <span />}
+          <span className="text-muted-foreground">
+            Page {page} of {pages}
+          </span>
+          {page < pages ? <Link href={`/admin/groups?page=${page + 1}`} className="underline underline-offset-4">Older</Link> : <span />}
+        </nav>
+      )}
     </main>
   )
 }

@@ -82,6 +82,9 @@ describe("caps", () => {
     now += 10 * 60 * 1000;
     assert.equal(await c.noticeOnce("g", "burst"), true);
     assert.equal(await c.noticeOnce("g", "day"), false);
+    assert.equal(await c.noticeOnce("m1", "member"), true);
+    assert.equal(await c.noticeOnce("m1", "member"), false);
+    assert.equal(await c.noticeOnce("m2", "member"), true, "per Member");
     for (let i = 0; i < 2000; i++) await c.jev("g", "ui");
     assert.equal(await c.jev("g", "ui"), false);
     assert.equal(await c.jev("g", "chat"), true, "the Chat still gets Jev");

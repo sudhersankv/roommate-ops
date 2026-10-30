@@ -295,6 +295,16 @@ describe("the kill switch", () => {
   });
 });
 
+describe("a paused Group", () => {
+  test("/help in its Chat, and /help or /start from its Member in a DM, get nothing", async () => {
+    const h = harness({ deps: { chatPaused: async () => true } });
+    await h.feed(message(MAYA, { text: "/help" }));
+    await h.feed(message(SAM, { text: "/help" }, { id: 12, type: "private", first_name: "Sam" }));
+    await h.feed(message(SAM, { text: "/start" }, { id: 12, type: "private", first_name: "Sam" }));
+    assert.equal(h.sent().length, 0);
+  });
+});
+
 describe("leaving", () => {
   test("leaveChat calls leaveChat and drops a waiting intro", async () => {
     const h = harness();

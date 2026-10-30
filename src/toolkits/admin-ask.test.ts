@@ -41,11 +41,28 @@ describe("checkAdminAsk", () => {
     assert.deepEqual(r, { ok: false, ask: `Make Eve an admin? Say "roomie, yes promote Eve".` });
   });
 
-  test("after Roomie asked: yes plus the action or the person passes, a bare yes doesn't", () => {
+  test("after Roomie asked: yes plus the action passes; a bare yes, or yes plus only the name, doesn't", () => {
     assert.equal(ok("promote_member", { name: "Eve" }, "yes", true), false);
-    assert.equal(ok("promote_member", { name: "Eve" }, "roomie yes eve", true), true);
+    assert.equal(ok("promote_member", { name: "Eve" }, "roomie yes eve", true), false);
     assert.equal(ok("promote_member", { name: "Eve" }, "yes promote", true), true);
-    assert.equal(ok("promote_member", { name: "Eve" }, "roomie yes eve", false), false, "only when Roomie just asked");
+    assert.equal(ok("promote_member", { name: "Eve" }, "yes promote", false), false, "only when Roomie just asked");
+  });
+
+  test("a reply naming the opposite action never confirms: asked to approve Priya, 'yes decline Priya' doesn't", () => {
+    assert.equal(ok("approve_member", { name: "Priya" }, "yes decline Priya", true), false);
+    assert.equal(ok("approve_member", { name: "Priya" }, "yes approve Priya", true), true);
+  });
+
+  test("negated asks don't count: 'don't approve Priya' approves nobody (and is decline's own words)", () => {
+    assert.equal(ok("approve_member", { name: "Priya" }, "roomie don't approve Priya"), false);
+    assert.equal(ok("approve_member", { name: "Priya" }, "roomie do not approve priya yet"), false);
+    assert.equal(ok("approve_member", { name: "Priya" }, "roomie never let priya in"), false);
+    assert.equal(ok("decline_member", { name: "Priya" }, "roomie don't approve Priya"), true);
+    assert.equal(ok("promote_member", { name: "Eve" }, "roomie don't promote eve"), false);
+    assert.equal(ok("toggle_toolkit", { toolkit: "chores", enabled: false }, "roomie don't forget chores"), false);
+    assert.equal(ok("chore_remove", { chore: "Dishes" }, "roomie don't remove dishes"), false);
+    assert.equal(ok("splitwise_connect", {}, "roomie don't connect splitwise"), false);
+    assert.equal(ok("set_group_settings", { currency: "EUR" }, "roomie don't change the currency"), false);
   });
 
   test("approve / decline", () => {
@@ -116,8 +133,8 @@ describe("adminAskGate (the registry wrapper)", () => {
     const first = adminAskGate("promote_member", spec("promote_member"), { name: "Eve" }, rc("roomie hi"), 1_000);
     assert.equal(first?.refused, "confirm");
     assert.match(first!.ask, /Make Eve an admin\?/);
-    assert.equal(adminAskGate("promote_member", spec("promote_member"), { name: "Eve" }, rc("yes eve"), 2_000), null);
-    assert.notEqual(adminAskGate("promote_member", spec("promote_member"), { name: "Eve" }, rc("yes eve"), 3_000), null, "the confirmation is used up");
+    assert.equal(adminAskGate("promote_member", spec("promote_member"), { name: "Eve" }, rc("yes, promote"), 2_000), null);
+    assert.notEqual(adminAskGate("promote_member", spec("promote_member"), { name: "Eve" }, rc("yes, promote"), 3_000), null, "the confirmation is used up");
   });
 
   test("a confirmation expires after 10 minutes", () => {

@@ -1,9 +1,18 @@
 // rate_counters in Postgres behind WindowLimiter.hit (lib/caps.ts). The DB client is imported on first use, so
-// importing this file (the pipeline, unit tests) never builds one. A DB error lets the try through: a broken counter
-// shouldn't silence Roomie, and the pipeline needs the DB for everything else anyway.
-import type { CounterStore } from "./window-limit";
+// importing this file (the pipeline, unit tests) never builds one. When the counter queries fail, the caps keep
+// working on this process's own memory instead (a restart forgets those counts), so an outage never means "no caps".
+import { MemoryCounters, type CounterStore } from "./window-limit";
 
 const dbOf = () => import("@/db");
+
+/** Where counts go while Postgres can't be reached. */
+const fallback = new MemoryCounters();
+let warnedAt = 0;
+const warn = (key: string, e: unknown) => {
+  if (Date.now() - warnedAt < 60_000) return;
+  warnedAt = Date.now();
+  console.error(`[caps] rate_counters unavailable (${key}); counting in memory for now:`, e instanceof Error ? e.message : e);
+};
 
 export const pgCounters: CounterStore = {
   async hit(key, windowStart, max) {
@@ -16,8 +25,8 @@ export const pgCounters: CounterStore = {
         returning count`);
       return res.rows.length > 0;
     } catch (e) {
-      console.warn(`[caps] couldn't count ${key}; letting it through`, e instanceof Error ? e.message : e);
-      return true;
+      warn(key, e);
+      return fallback.hit(key, windowStart, max);
     }
   },
   async count(key, windowStart) {
@@ -25,9 +34,10 @@ export const pgCounters: CounterStore = {
       const { db } = await dbOf();
       const { sql } = await import("drizzle-orm");
       const res = await db.execute<{ count: number }>(sql`select count from rate_counters where key = ${key} and window_start = ${windowStart.toISOString()}`);
-      return Number(res.rows[0]?.count ?? 0);
-    } catch {
-      return 0;
+      return Math.max(Number(res.rows[0]?.count ?? 0), await fallback.count(key, windowStart));
+    } catch (e) {
+      warn(key, e);
+      return fallback.count(key, windowStart);
     }
   },
 };

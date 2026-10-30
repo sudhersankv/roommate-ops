@@ -71,8 +71,10 @@ export async function telegramDeps(): Promise<TelegramDeps> {
     onParticipantJoined: async (groupId, user) => {
       const res = await onboarding.onParticipantJoined(groupId, user);
       console.log(`[roomie] ${user.name} joined group ${groupId}: ${res.member.status}${res.announce ? ", asked the Admins to approve" : ""}`);
-      return kill.roomiePaused() ? { ...res, announce: null } : res;
+      // Paused (everywhere, or this Group): the Pending Member is still recorded, the approval ask isn't posted.
+      return kill.roomiePaused() || (await groups.getGroup(groupId))?.pausedAt ? { ...res, announce: null } : res;
     },
+    chatPaused: async (id) => !!(await groups.chatFor("telegram", id))?.group.pausedAt,
     groupIdOfChat: async (id) => (await groups.chatFor("telegram", id))?.group.id,
     chatsOfUser: async (userId) => (await groups.chatsOfChannelUser("telegram", userId)).map((c) => c.externalId),
     tricksIn: async (id) => {

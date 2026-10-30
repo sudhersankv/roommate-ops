@@ -22,7 +22,7 @@ import type { RoomieContext } from "@/mastra/context";
 import { inFollowUpWindow, isHardTrigger, parseSilent, runGate, type Chattiness, type GateRun } from "@/mastra/gate";
 import { threadFor } from "@/mastra/memory";
 import { JoinRefusedError, onGroupJoined, onUnknownSender } from "@/onboarding";
-import { BREATHER, BREATHER_SHORT, caps, clipInput } from "@/lib/caps";
+import { BREATHER, BREATHER_MEMBER, BREATHER_SHORT, caps, clipInput } from "@/lib/caps";
 import { localDay } from "@/lib/dates";
 import { logPaused, roomiePaused } from "@/lib/kill-switch";
 import { effectiveDials, isPetCommand, normalizePersonality, shapeLine, winsFrom, type Personality } from "@/lib/personality";
@@ -108,7 +108,8 @@ export async function resolveIncoming(msg: IncomingMessage): Promise<{ groupId: 
   if (msg.isPrivate) throw new Error("A private message needs a Member of the Group.");
   // A missed join event fails safe (Pending), except where the Channel can't list members (ADR 0010).
   const joined = await onUnknownSender(known.chat, sender);
-  if (joined.announce) await deliver(groupId, joined.announce);
+  // A paused Group still gets the Pending Member, but Roomie doesn't post the approval ask there.
+  if (joined.announce && !known.group.pausedAt) await deliver(groupId, joined.announce);
   return { groupId, member: joined.member };
 }
 
@@ -158,7 +159,8 @@ export async function mediaWantedFor(q: MediaQuestion): Promise<boolean> {
   if (roomiePaused()) return false;
   const addressed = mediaWanted({ kind: q.kind, caption: q.caption, isPrivate: q.isPrivate, mentionsRoomie: q.mentionsRoomie, isReplyToRoomie: q.isReplyToRoomie });
   const known = await chatFor(q.channel, q.chatExternalId);
-  if (!known) return addressed; // a Chat Roomie hasn't onboarded yet: the message itself decides
+  // A Chat Roomie hasn't onboarded (and may yet refuse: the new-Groups cap): nothing is fetched before it has a Group.
+  if (!known) return false;
   if (known.group.pausedAt) return false; // paused by an operator: nothing is fetched, addressed or not
   if (addressed) return true;
   const { group } = known;
@@ -274,8 +276,10 @@ export async function respond(input: RespondInput): Promise<PipelineResult> {
     console.log(`[caps] group ${groupId} member ${member.id}: ${capped} cap reached, no agent run`);
     // Only when someone was talking to Roomie (never on the dashboard: that gets a 429). The 10-minute cap says "a few
     // minutes" once per window; the daily caps say "tomorrow" once a day.
-    const burst = capped === "group-burst";
-    const notice = source === "chat" && hardTrigger && (await limits.noticeOnce(groupId, burst ? "burst" : "day")) ? { text: shapeLine(burst ? BREATHER_SHORT : BREATHER, effectiveDials(personality)) } : null;
+    // One Member over their own cap hears about themselves (once a day each), not that Roomie is gone for everyone.
+    const [kind, id, line] =
+      capped === "group-burst" ? (["burst", groupId, BREATHER_SHORT] as const) : capped === "member" ? (["member", member.id, BREATHER_MEMBER] as const) : (["day", groupId, BREATHER] as const);
+    const notice = source === "chat" && hardTrigger && (await limits.noticeOnce(id, kind)) ? { text: shapeLine(line, effectiveDials(personality)) } : null;
     root?.end({ output: { replied: !!notice, capped }, metadata: gateMeta });
     return { out: notice, gate, toolCalls: [], traceId: root?.traceId, capped };
   }

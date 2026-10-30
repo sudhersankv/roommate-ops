@@ -62,8 +62,10 @@ export async function whatsappDeps(): Promise<WhatsAppDeps> {
     onParticipantJoined: async (groupId, user) => {
       const res = await onboarding.onParticipantJoined(groupId, user);
       console.log(`[roomie] ${user.name} joined group ${groupId}: ${res.member.status}${res.announce ? ", asked the Admins to approve" : ""}`);
-      return kill.roomiePaused() ? { ...res, announce: null } : res;
+      // Paused (everywhere, or this Group): the Pending Member is still recorded, the approval ask isn't posted.
+      return kill.roomiePaused() || (await groups.getGroup(groupId))?.pausedAt ? { ...res, announce: null } : res;
     },
+    chatPaused: async (jid) => !!(await groups.chatFor("whatsapp", jid))?.group.pausedAt,
     groupIdOfChat: async (jid) => (await groups.chatFor("whatsapp", jid))?.group.id,
     chatsOfUser: async (userId) => (await groups.chatsOfChannelUser("whatsapp", userId)).map((c) => c.externalId),
     tricksIn: async (jid) => {

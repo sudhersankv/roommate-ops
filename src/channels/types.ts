@@ -51,6 +51,8 @@ export interface Channel {
   sendPrivate(userExternalId: string, msg: Outgoing): Promise<void>;
   /** Roomie leaves the Chat (an operator's "Leave chat", too many new Groups from one person). */
   leaveChat(chatExternalId: string): Promise<void>;
+  /** Forget an intro still waiting to go out (the Group was paused). */
+  dropIntro?(chatExternalId: string): void;
 }
 
 /** What the adapters ask before downloading a photo or transcribing a voice note (the pipeline's mediaWantedFor: a

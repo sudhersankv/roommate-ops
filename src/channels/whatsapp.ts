@@ -90,6 +90,8 @@ export type WhatsAppDeps = {
   /** May this person add Roomie to a group (the beta allowlist, services/whatsapp-access.ts)? `say` is the one line
    * before Roomie leaves. Absent: anyone may. */
   admission?: (adder: ChannelUser) => Promise<{ ok: true } | { ok: false; say: string }>;
+  /** An operator paused this Chat's Group (/admin/groups): Roomie answers nothing there, /help included. */
+  chatPaused?: (chatExternalId: string) => Promise<boolean>;
 };
 
 /** The part of a Baileys socket the adapter uses (the tests' fake implements just this). */
@@ -534,8 +536,9 @@ export function createWhatsApp(opts: WhatsAppOptions): WhatsApp {
    */
   async function person(ids: (string | null | undefined)[], heardName?: string | null, opts: { member?: boolean } = {}): Promise<ChannelUser | null> {
     const all = ids.map(norm).filter((j): j is string => !!j);
-    const lid = all.find((j) => isLidUser(j));
     let pn = all.find((j) => isPnUser(j));
+    // Only the phone JID on this message, but we know their LID (Baileys' map): a Member stored under it still moves.
+    const lid = all.find((j) => isLidUser(j)) ?? (pn ? book.lidOf(pn) : undefined);
     if (pn && lid) book.pair(lid, pn);
     else if (!pn && lid) pn = await pnOfLid(lid);
     const id = pn ?? lid ?? all[0];
@@ -690,6 +693,8 @@ export function createWhatsApp(opts: WhatsAppOptions): WhatsApp {
     if (out) await reply(out);
   }
 
+  const paused = (jid: string) => deps.chatPaused?.(jid).catch(() => false) ?? Promise.resolve(false);
+
   /** Text, voice transcript or photo -> what the pipeline gets; null = nothing to pass on. */
   async function content(m: WAMessage, read: ReadMessage, replyTo: (out: Outgoing) => Promise<void>, toldKey: string, folderChat: string, from: ChannelUser, isPrivate = false) {
     const base = { text: read.text, mentionsRoomie: read.mentionsRoomie, isReplyToRoomie: read.isReplyToRoomie };
@@ -743,7 +748,10 @@ export function createWhatsApp(opts: WhatsAppOptions): WhatsApp {
     }
     const from = await member(senderIds, m.pushName);
     if (!from) return;
-    if (commandOf(read.text) === "help") return channel.sendToChat(jid, { text: helpText(await deps.tricksIn?.(jid).catch(() => undefined)) });
+    if (commandOf(read.text) === "help") {
+      if (await paused(jid)) return;
+      return channel.sendToChat(jid, { text: helpText(await deps.tricksIn?.(jid).catch(() => undefined)) });
+    }
     const say = (out: Outgoing) => channel.sendToChat(jid, out);
     const got = await content(m, read, say, jid, jid, from);
     if (!got) return;
@@ -770,6 +778,7 @@ export function createWhatsApp(opts: WhatsAppOptions): WhatsApp {
         from.userExternalId = lid;
       }
     } else if (chats.length) await member(ids, m.pushName); // a Member's DM: keep their pair and name
+    if ((command === "help" || command === "start") && chats.length === 1 && (await paused(chats[0]))) return;
     if (command === "help") return say({ text: helpText(chats.length === 1 ? await deps.tricksIn?.(chats[0]).catch(() => undefined) : undefined) });
     if (command === "start") return say({ text: startReply(from.name.split(" ")[0], chats.length, "whatsapp") });
     if (chats.length !== 1) {

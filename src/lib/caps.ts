@@ -24,6 +24,8 @@ export const MAX_INPUT_CHARS = 2_000;
 export const BREATHER = "I'm taking a breather; back tomorrow.";
 /** The 10-minute cap: back soon, not tomorrow. */
 export const BREATHER_SHORT = "Give me a few minutes, I'm catching my breath.";
+/** One Member's daily cap: about them, not the whole Group. */
+export const BREATHER_MEMBER = "You've asked me a lot today; back tomorrow.";
 export const TOO_MANY_GROUPS = "I'm in enough groups for today for you; try tomorrow.";
 
 export const capKeys = {
@@ -36,6 +38,7 @@ export const capKeys = {
   adder: (channel: string, userExternalId: string) => `adder:${channel}:${userExternalId}:day`,
   notice: (groupId: string) => `notice:group:${groupId}:day`,
   noticeBurst: (groupId: string) => `notice:group:${groupId}:10m`,
+  noticeMember: (memberId: string) => `notice:member:${memberId}:day`,
 };
 
 /** Cut a message to MAX_INPUT_CHARS (on a code point, so no half emoji). */
@@ -54,8 +57,9 @@ export type Caps = {
   jev(groupId: string, source?: "chat" | "ui"): Promise<boolean>;
   /** Counts one new Group for this adder; false past the daily cap. */
   newGroup(channel: string, userExternalId: string): Promise<boolean>;
-  /** True the first time in the window for this Group: "day" once a day (BREATHER), "burst" once per 10 minutes. */
-  noticeOnce(groupId: string, kind?: "day" | "burst"): Promise<boolean>;
+  /** True the first time in the window: "day" once a day per Group (BREATHER), "burst" once per 10 minutes per Group,
+   * "member" once a day per Member (`id` is then the Member's id). */
+  noticeOnce(id: string, kind?: "day" | "burst" | "member"): Promise<boolean>;
   /** The Group's agent runs in today's window. */
   limiter: { groupDay: WindowLimiter };
 };
@@ -84,7 +88,8 @@ export function makeCaps(store: CounterStore, clock: () => number = Date.now): C
     },
     jev: (groupId, source = "chat") => jev.hit(source === "ui" ? capKeys.jevUi(groupId) : capKeys.jev(groupId)),
     newGroup: (channel, userExternalId) => adder.hit(capKeys.adder(channel, userExternalId)),
-    noticeOnce: (groupId, kind = "day") => (kind === "burst" ? noticeBurst.hit(capKeys.noticeBurst(groupId)) : notice.hit(capKeys.notice(groupId))),
+    noticeOnce: (id, kind = "day") =>
+      kind === "burst" ? noticeBurst.hit(capKeys.noticeBurst(id)) : kind === "member" ? notice.hit(capKeys.noticeMember(id)) : notice.hit(capKeys.notice(id)),
     limiter: { groupDay },
   };
 }

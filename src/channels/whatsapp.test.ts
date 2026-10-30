@@ -693,6 +693,24 @@ describe("groups", () => {
     assert.equal(h.seen.incoming[0]?.userExternalId, SAM.lid);
   });
 
+  test("a Member stored under their LID who later speaks with only their phone JID still moves (no second Member)", async () => {
+    const h = harness();
+    h.markKnown();
+    await h.open();
+    h.sock().emit("lid-mapping.update", { lid: SAM.lid, pn: SAM.pn });
+    await h.settle();
+    await h.feed([msg({ key: { participant: SAM.pn, participantAlt: undefined }, pushName: "Sam" })]);
+    assert.deepEqual(h.seen.rekeyed, [[SAM.lid, SAM.pn]]);
+  });
+
+  test("/help in a paused Group's chat gets nothing", async () => {
+    const h = harness({ deps: { chatPaused: async () => true } });
+    h.markKnown();
+    await h.open();
+    await h.feed([msg({ message: { conversation: "/help" } })]);
+    assert.deepEqual(h.sock().sent, []);
+  });
+
   test("a DM from someone in no Group stores nothing", async () => {
     const h = harness({ deps: { chatsOfUser: async () => [] } });
     await h.open();

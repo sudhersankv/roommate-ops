@@ -9,7 +9,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { devUserId } from "@/channels/dev";
 import { deleteContactFor, pruneNonMemberContacts } from "@/channels/whatsapp-store";
-import { BREATHER, CAPS, makeCaps, setCaps } from "@/lib/caps";
+import { BREATHER_MEMBER, CAPS, makeCaps, setCaps } from "@/lib/caps";
 import { pgCounters } from "@/lib/rate-counters";
 import { MemoryCounters } from "@/lib/window-limit";
 import { JoinRefusedError, onGroupJoined } from "@/onboarding";
@@ -83,7 +83,9 @@ describe("abuse fixes against the dev DB", () => {
     assert.equal((await lastLine())?.length, 2000);
     const addressedPhoto = { channel: "dev" as const, chatExternalId: `abuse-${ts}`, userExternalId: samExternal, kind: "photo" as const, caption: "roomie split this", mentionsRoomie: true };
     assert.equal(await mediaWantedFor(addressedPhoto), false, "a paused Group's media isn't fetched, addressed or not");
-    const row = (await listGroupsForOperator(op)).find((g) => g.id === groupId);
+    const list = await listGroupsForOperator(op, { perPage: 500 });
+    assert.ok(list.total >= 1 && list.paused >= 1);
+    const row = list.rows.find((g) => g.id === groupId);
     assert.ok(row?.pausedAt);
     assert.equal(row?.members, 2);
     await assert.rejects(() => setGroupPaused(null, groupId, false), /people who run Roomie/);
@@ -101,10 +103,10 @@ describe("abuse fixes against the dev DB", () => {
     setCaps(caps);
     const first = await chat(admin, "roomie hi");
     assert.equal(first.capped, "member");
-    assert.equal(first.out?.text.toLowerCase(), BREATHER.toLowerCase());
+    assert.equal(first.out?.text.toLowerCase(), BREATHER_MEMBER.toLowerCase(), "about them, not 'Roomie is gone for everyone'");
     const second = await chat(admin, "roomie hi again");
     assert.equal(second.capped, "member");
-    assert.equal(second.out, null, "once a day per Group");
+    assert.equal(second.out, null, "once a day per Member");
     setCaps(undefined);
   });
 

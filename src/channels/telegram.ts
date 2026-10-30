@@ -40,6 +40,8 @@ export type TelegramDeps = {
   /** A photo or voice note nobody @mentioned, replied to or named Roomie in: handle it anyway? (the pipeline's
    * mediaWantedFor: follow-up window, setup pending). Absent: no. */
   mediaWanted?: (q: MediaQuestion) => Promise<boolean>;
+  /** An operator paused this Chat's Group (/admin/groups): Roomie answers nothing there, /help included. */
+  chatPaused?: (chatExternalId: string) => Promise<boolean>;
 };
 
 /* ---------- pure helpers (telegram.test.ts) ---------- */
@@ -176,13 +178,17 @@ export class TelegramChannel implements Channel {
 
   /** Leave the group (the intro, if still waiting, never goes out). */
   async leaveChat(chatExternalId: string) {
-    const intro = this.intros.get(chatExternalId);
-    if (intro) {
-      this.intros.delete(chatExternalId);
-      clearTimeout(intro.timer);
-      intro.resolve();
-    }
+    this.dropIntro(chatExternalId);
     await this.api.leaveChat(chatExternalId);
+  }
+
+  /** The intro, if still waiting, never goes out (the Group was paused, or Roomie left). */
+  dropIntro(chatExternalId: string) {
+    const intro = this.intros.get(chatExternalId);
+    if (!intro) return;
+    this.intros.delete(chatExternalId);
+    clearTimeout(intro.timer);
+    intro.resolve();
   }
 
   private async flushIntro(chatExternalId: string) {
@@ -278,6 +284,8 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
     if (res.intro) channel.introLater(externalId, res.intro, joinDelayMs);
   }
 
+  const paused = (chatId: string) => deps.chatPaused?.(chatId).catch(() => false) ?? Promise.resolve(false);
+
   /** Photos and voice notes are only fetched when Roomie is being talked to (policy.ts mediaWanted). */
   async function wanted(kind: "photo" | "voice", addressed: ReturnType<typeof readAddress>, from: User, chatId: string, isPrivate: boolean) {
     const flags = { kind, isPrivate, mentionsRoomie: addressed.mentionsRoomie, isReplyToRoomie: addressed.isReplyToRoomie, caption: addressed.text };
@@ -340,7 +348,10 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
 
   async function groupMessage(me: UserFromGetMe, m: Message, from: User) {
     const chatId = String(m.chat.id);
-    if (commandOf(m.text, me.username) === "help") return channel.sendToChat(chatId, { text: helpText(await deps.tricksIn?.(chatId).catch(() => undefined)) });
+    if (commandOf(m.text, me.username) === "help") {
+      if (await paused(chatId)) return;
+      return channel.sendToChat(chatId, { text: helpText(await deps.tricksIn?.(chatId).catch(() => undefined)) });
+    }
     const content = await readContent(me, m, from, chatId, chatId);
     if (!content) return;
     await pipeline(
@@ -353,6 +364,7 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
     const userId = String(from.id);
     const command = commandOf(m.text, me.username);
     const chats = await deps.chatsOfUser(userId);
+    if ((command === "help" || command === "start") && chats.length === 1 && (await paused(chats[0]))) return;
     if (command === "help") return channel.sendPrivate(userId, { text: helpText(chats.length === 1 ? await deps.tricksIn?.(chats[0]).catch(() => undefined) : undefined) });
     if (command === "start") return channel.sendPrivate(userId, { text: startReply(from.first_name, chats.length) });
     if (chats.length !== 1) return channel.sendPrivate(userId, { text: chats.length ? MANY_GROUPS : NO_GROUP });
