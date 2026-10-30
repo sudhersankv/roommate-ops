@@ -75,6 +75,7 @@ export const DEMOS: Demo[] = [
   },
   {
     // Receipt split: unclaimed items shared, tax proportional. $42.18 = wine 12.99 (Dev) + 27.34 shared + 1.85 tax.
+    // "the wine's mine" must match a receipt line (matchItem), so the photo's line is "Pinot noir wine".
     // Dev 12.99 + 9.11 + 1.01 tax = 23.12; Maya and Sam 9.11 + 0.42 tax = 9.53 each; 23.12 + 9.53 + 9.53 = 42.18.
     id: "receipts",
     trick: "splitting",

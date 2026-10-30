@@ -153,7 +153,8 @@ export function ListPhoto() {
 /** A receipt as a photo in the chat: paper, a store, a few lines and the total. */
 export function ReceiptPhoto() {
   const rows: [string, string][] = [
-    ["Pinot noir", "12.99"],
+    // Named so "the wine's mine" finds it the way the receipt matcher does (services/receipts.ts matchItem).
+    ["Pinot noir wine", "12.99"],
     ["Mandarin chicken", "5.49"],
     ["Everything bagels", "3.99"],
     ["Greek yogurt", "6.49"],
