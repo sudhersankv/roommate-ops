@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { rm } from "node:fs/promises";
 import { clearPhotoCache, parsePhotoJson, photoIngredients, photoSummary, readGroceryPhoto, SAMPLE_LIST_JSON, setPhotoReader } from "./grocery-photos";
-import { saveUpload } from "./receipts";
+import { saveUpload, uploadBelongsTo } from "./receipts";
 
 test("parsePhotoJson: a shopping list -> items as written (names lower case, qty kept)", () => {
   const p = parsePhotoJson(SAMPLE_LIST_JSON);
@@ -43,14 +43,21 @@ test("photoIngredients: amounts read with lib/units ('a pinch' too), unreadable 
   ]);
 });
 
-test("readGroceryPhoto: only our own uploads, never a URL someone typed", async () => {
+const GROUP = "11111111-1111-4111-8111-111111111111";
+const OTHER = "22222222-2222-4222-8222-222222222222";
+
+test("readGroceryPhoto: only this Group's own uploads, never a URL someone typed or another Group's photo", async () => {
   setPhotoReader({ read: async () => SAMPLE_LIST_JSON });
+  const theirs = await saveUpload(`g-${OTHER}`, Buffer.from("their list"), "image/jpeg");
   try {
-    for (const url of ["https://169.254.169.254/latest/meta-data.jpg", "http://127.0.0.9:1/uploads/x/a.jpg", "file:///etc/passwd", "/uploads/../../.env"]) {
-      await assert.rejects(readGroceryPhoto(url), /only read photos sent in the chat/, url);
+    for (const url of ["https://169.254.169.254/latest/meta-data.jpg", "http://127.0.0.9:1/uploads/x/a.jpg", "file:///etc/passwd", "/uploads/../../.env", theirs.path, "/uploads/other/a.jpg"]) {
+      await assert.rejects(readGroceryPhoto(url, GROUP), /only read photos sent in this group's chat/, url);
     }
+    assert.equal(await uploadBelongsTo(theirs.path, OTHER), true, "the dashboard folder is its own Group's");
+    assert.equal(await uploadBelongsTo(theirs.path, GROUP), false);
   } finally {
     setPhotoReader(null);
+    await rm(theirs.file, { force: true });
   }
 });
 
@@ -66,8 +73,8 @@ test("readGroceryPhoto: the reader seam, cached per url so 'yes, add them' doesn
   });
   try {
     clearPhotoCache();
-    const a = await readGroceryPhoto(photo.path);
-    const b = await readGroceryPhoto(photo.path);
+    const a = await readGroceryPhoto(photo.path, GROUP);
+    const b = await readGroceryPhoto(photo.path, GROUP);
     assert.equal(a.items.length, 5);
     assert.equal(b, a);
     assert.equal(reads, 1);

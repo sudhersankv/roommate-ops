@@ -6,7 +6,7 @@ import { db, schema } from "@/db";
 import type { ExpenseCategory } from "@/db/enums";
 import { splitwiseAvailability, splitwiseClient, SplitwiseNotConnectedError, type SplitwiseAvailability, type SwExpense, type SwExpenseInput, type SwGroup, type SwShare } from "@/integrations/splitwise";
 import { dashboardUrl } from "@/lib/urls";
-import { record } from "./activity";
+import { recordFor } from "./activity";
 import { requireAdmin } from "./authz";
 import { guessCategory } from "./categories";
 import { insertExpenseRows, listExpenses } from "./money";
@@ -90,14 +90,14 @@ export async function finishConnect(ctx: Ctx): Promise<{ splitwiseUser: string }
     .insert(splitwiseLinks)
     .values({ groupId: ctx.groupId, connectedBy: ctx.memberId })
     .onConflictDoUpdate({ target: splitwiseLinks.groupId, set: { connectedBy: ctx.memberId } });
-  await record(ctx.groupId, ctx.memberId, "splitwise.connected", "connected Splitwise", { table: "groups", id: ctx.groupId });
+  await recordFor(ctx, "splitwise.connected", "connected Splitwise", { table: "groups", id: ctx.groupId });
   return { splitwiseUser: `${me.firstName} ${me.lastName}`.trim() };
 }
 
 export async function disconnectSplitwise(ctx: Ctx): Promise<void> {
   await requireAdmin(ctx);
   await db.delete(splitwiseLinks).where(eq(splitwiseLinks.groupId, ctx.groupId));
-  await record(ctx.groupId, ctx.memberId, "splitwise.disconnected", "disconnected Splitwise", { table: "groups", id: ctx.groupId });
+  await recordFor(ctx, "splitwise.disconnected", "disconnected Splitwise", { table: "groups", id: ctx.groupId });
 }
 
 /** Admin: the connected Splitwise account's groups. */
@@ -256,7 +256,7 @@ export async function importSplitwiseGroup(ctx: Ctx, input: { splitwiseGroupId: 
   const link = await getLink(ctx.groupId);
   await db.update(splitwiseLinks).set({ mode: link?.mode === "mirror" ? "mirror" : "import", lastSyncedAt: new Date() }).where(eq(splitwiseLinks.groupId, ctx.groupId));
   const extra = [result.settlements ? `${result.settlements} payment${result.settlements === 1 ? "" : "s"}` : "", created.length ? `added ${created.join(", ")} as pending` : ""].filter(Boolean).join("; ");
-  await record(ctx.groupId, ctx.memberId, "splitwise.imported", `imported ${result.expenses} expense${result.expenses === 1 ? "" : "s"} from Splitwise (${sw.name})${extra ? `; ${extra}` : ""}`, { table: "groups", id: ctx.groupId });
+  await recordFor(ctx, "splitwise.imported", `imported ${result.expenses} expense${result.expenses === 1 ? "" : "s"} from Splitwise (${sw.name})${extra ? `; ${extra}` : ""}`, { table: "groups", id: ctx.groupId });
   return result;
 }
 
@@ -365,7 +365,7 @@ export async function exportToSplitwise(ctx: Ctx, input: { splitwiseGroupId?: st
   }
 
   await db.update(splitwiseLinks).set({ lastSyncedAt: new Date() }).where(eq(splitwiseLinks.groupId, ctx.groupId));
-  await record(ctx.groupId, ctx.memberId, "splitwise.exported", `copied ${result.expenses} expense${result.expenses === 1 ? "" : "s"} to Splitwise (${result.splitwiseGroup})`, { table: "groups", id: ctx.groupId });
+  await recordFor(ctx, "splitwise.exported", `copied ${result.expenses} expense${result.expenses === 1 ? "" : "s"} to Splitwise (${result.splitwiseGroup})`, { table: "groups", id: ctx.groupId });
   return result;
 }
 
@@ -377,7 +377,7 @@ export async function setSplitwiseMirror(ctx: Ctx, input: { on: boolean; splitwi
   if (input.on && !link.splitwiseGroupId) throw new Error("Pick a Splitwise group to mirror to first.");
   const mode = input.on ? "mirror" : link.mode === "mirror" ? "import" : link.mode;
   await db.update(splitwiseLinks).set({ mode }).where(eq(splitwiseLinks.groupId, ctx.groupId));
-  await record(ctx.groupId, ctx.memberId, "splitwise.mirror", input.on ? "turned on the Splitwise mirror" : "turned off the Splitwise mirror", { table: "groups", id: ctx.groupId });
+  await recordFor(ctx, "splitwise.mirror", input.on ? "turned on the Splitwise mirror" : "turned off the Splitwise mirror", { table: "groups", id: ctx.groupId });
   return { mode };
 }
 

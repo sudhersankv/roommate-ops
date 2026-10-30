@@ -14,7 +14,7 @@ import {
   type PersonalityPatch,
   type PetMood,
 } from "@/lib/personality";
-import { record } from "./activity";
+import { recordFor } from "./activity";
 import { requireAdmin } from "./authz";
 import { getBalances } from "./money";
 import type { Ctx, GroupCtx } from "./types";
@@ -49,7 +49,7 @@ export async function updatePersonality(ctx: Ctx, patch: PersonalityPatch): Prom
     .set({ personality: sql`(${groups.personality} || ${JSON.stringify(set)}::jsonb) - ${`{${drop.join(",")}}`}::text[]` })
     .where(eq(groups.id, ctx.groupId));
   const shown = Object.keys(patch).filter((k) => k in clean);
-  await record(ctx.groupId, ctx.memberId, "group.personality", `changed Roomie's ${shown.map((k) => LABELS[k] ?? k).join(", ")}`, { table: "groups", id: ctx.groupId });
+  await recordFor(ctx, "group.personality", `changed Roomie's ${shown.map((k) => LABELS[k] ?? k).join(", ")}`, { table: "groups", id: ctx.groupId });
   return getPersonality(ctx);
 }
 
@@ -71,7 +71,7 @@ export async function resetLearned(ctx: Ctx): Promise<Personality> {
   await db.update(groups).set({ styleNoteAt: new Date() }).where(eq(groups.id, ctx.groupId));
   const { resetStyleInMemory } = await import("@/mastra/forget");
   await resetStyleInMemory(ctx.groupId).catch((e) => console.warn("[personality] memory reset failed", e));
-  await record(ctx.groupId, ctx.memberId, "group.personality", "reset what Roomie learned about the group's style", { table: "groups", id: ctx.groupId });
+  await recordFor(ctx, "group.personality", "reset what Roomie learned about the group's style", { table: "groups", id: ctx.groupId });
   return getPersonality(ctx);
 }
 

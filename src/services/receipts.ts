@@ -271,6 +271,30 @@ export function isOwnUpload(url: string): boolean {
   return UPLOAD_PATH.test(url) && (url.startsWith("/uploads/") || (!!base && url.startsWith(`${base}/uploads/`)));
 }
 
+const folderPart = (s: string) => s.replace(/[^a-z0-9-]/gi, "");
+
+/**
+ * Is this upload one of this Group's? Folders are where saveUpload put them: `g-<groupId>` (the dashboard),
+ * `tg/<chat id>` and `wa/<jid user>` (the Group's Chats). `test` / `evals` count only outside production.
+ */
+export async function uploadBelongsTo(url: string, groupId: string): Promise<boolean> {
+  const m = UPLOAD_PATH.exec(url);
+  if (!m || !isOwnUpload(url)) return false;
+  const [top, rest] = [m[1].split("/")[0], m[1].split("/").slice(1).join("/")];
+  if (!rest && top === `g-${groupId}`) return true;
+  if (!rest && (top === "test" || top === "evals")) return process.env.NODE_ENV !== "production";
+  if (top !== "tg" && top !== "wa") return false;
+  const { db, schema } = await import("@/db");
+  const { eq } = await import("drizzle-orm");
+  const chats = await db.select({ channel: schema.chats.channel, externalId: schema.chats.externalId }).from(schema.chats).where(eq(schema.chats.groupId, groupId));
+  return chats.some((c) => (top === "tg" ? c.channel === "telegram" && folderPart(c.externalId) === rest : c.channel === "whatsapp" && folderPart(c.externalId.split("@")[0]) === rest));
+}
+
+/** Throws the friendly error unless the photo was sent in (or uploaded for) this Group. */
+export async function requireGroupUpload(url: string, groupId: string): Promise<void> {
+  if (!(await uploadBelongsTo(url, groupId))) throw new Error("I can only read photos sent in this group's chat or uploaded on its dashboard.");
+}
+
 /**
  * Our own uploads are read from disk (the gateway can't reach localhost); with `ownOnly` nothing else is read.
  * Otherwise an https image is fetched here: no redirects, and the size is checked before the body is read.

@@ -6,7 +6,7 @@ import { GROUP_PURPOSES, type ChannelName, type GroupPurpose } from "@/db/schema
 import { resolveTimeZone } from "@/lib/time";
 import { MANIFESTS, TOOLKIT_IDS, type ToolkitId } from "@/toolkits/manifests";
 import { presetFor } from "@/toolkits/presets";
-import { record } from "./activity";
+import { recordFor } from "./activity";
 import { requireAdmin } from "./authz";
 import { addStarterChores } from "./chores";
 import { addDefaults } from "./upkeep";
@@ -171,7 +171,7 @@ export async function updateGroupSettings(
   if (patch.toolkits) await writeToolkits(ctx.groupId, patch.toolkits);
   else if (onboarding && clean.purpose) await writeToolkits(ctx.groupId, defaultToolkitsFor(clean.purpose));
   const changed = Object.keys(clean);
-  if (changed.length) await record(ctx.groupId, ctx.memberId, "group.settings", `changed ${changed.join(", ")}`, { table: "groups", id: ctx.groupId });
+  if (changed.length) await recordFor(ctx, "group.settings", `changed ${changed.join(", ")}`, { table: "groups", id: ctx.groupId });
   const toolkits = await enabledToolkits(ctx);
   // Onboarding's preset counts as switching each of its Toolkits on; later, only the ones that just went on.
   const choseNow = !!patch.toolkits || (onboarding && !!clean.purpose);
@@ -197,7 +197,7 @@ async function startHousehold(ctx: Ctx, toolkits: ToolkitId[]): Promise<{ chores
 export async function setSimplifyDebts(ctx: Ctx, input: { on: boolean }): Promise<boolean> {
   await requireAdmin(ctx);
   await db.update(groups).set({ simplifyDebts: input.on }).where(eq(groups.id, ctx.groupId));
-  await record(ctx.groupId, ctx.memberId, "group.settings", `turned simplify debts ${input.on ? "on" : "off"}`, { table: "groups", id: ctx.groupId });
+  await recordFor(ctx, "group.settings", `turned simplify debts ${input.on ? "on" : "off"}`, { table: "groups", id: ctx.groupId });
   return input.on;
 }
 
@@ -211,7 +211,7 @@ const DATA_TABLES = [schema.outboxJobs, schema.splitwiseLinks, schema.cartChecko
 export async function deleteGroupData(ctx: Ctx): Promise<void> {
   await requireAdmin(ctx);
   await wipeGroupData(ctx.groupId);
-  await record(ctx.groupId, ctx.memberId, "group.data_deleted", "deleted the group's data");
+  await recordFor(ctx, "group.data_deleted", "deleted the group's data");
 }
 
 /** Rows, then what lives outside the app's tables: memory, traces and scores, uploaded photos. */

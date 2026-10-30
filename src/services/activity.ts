@@ -40,6 +40,10 @@ export async function record(
   await db.insert(activity).values({ groupId, actorMemberId, kind, summary, refTable: ref?.table ?? null, refId: ref?.id ?? null, source: source ?? null });
 }
 
+/** record() for whoever is acting in `ctx`, with where they did it (chat or dashboard). */
+export const recordFor = (ctx: Ctx, kind: string, summary: string, ref?: { table: string; id: string }) =>
+  record(ctx.groupId, ctx.memberId, kind, summary, ref, sourceOf(ctx));
+
 const select = {
   id: activity.id,
   actorMemberId: activity.actorMemberId,
@@ -105,8 +109,16 @@ export async function recentChanges(groupId: string, since: Date, now = new Date
   return rows.map(named).reverse().map((e) => changeLine(e, now));
 }
 
-/** recentChanges since Roomie last spoke in the Chat (an hour back when it never has): the agent's facts. */
-export async function changesSinceRoomieSpoke(groupId: string, now = new Date()): Promise<string[]> {
+/** How far back the dashboard's Ask Roomie looks: its replies aren't in the Chat log, so "last spoke" can't be known. */
+export const DASHBOARD_CHANGES_MS = 15 * 60_000;
+
+/**
+ * recentChanges since Roomie last spoke in the Chat (an hour back when it never has): the agent's facts. On the
+ * dashboard (`ui`) at most DASHBOARD_CHANGES_MS back, so an earlier Ask doesn't keep seeing the same old changes.
+ */
+export async function changesSinceRoomieSpoke(groupId: string, now = new Date(), opts: { ui?: boolean } = {}): Promise<string[]> {
   const last = await lastRoomieReplyAt(groupId);
-  return recentChanges(groupId, last ?? new Date(now.getTime() - 60 * 60_000), now);
+  let since = last ?? new Date(now.getTime() - 60 * 60_000);
+  if (opts.ui) since = new Date(Math.max(since.getTime(), now.getTime() - DASHBOARD_CHANGES_MS));
+  return recentChanges(groupId, since, now);
 }

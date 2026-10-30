@@ -35,7 +35,7 @@ export const roomie = new Agent({
       peopleFacts(g),
       roomieRecentTexts(ctx.groupId),
       ctx.toolkits ?? enabledToolkits(g),
-      changesSinceRoomieSpoke(ctx.groupId).catch(() => []),
+      changesSinceRoomieSpoke(ctx.groupId, new Date(), { ui: ctx.source === "ui" }).catch(() => []),
     ]);
     return roomieInstructions(ctx, describeMembers(people), new Date(), group?.timezone ?? DEFAULT_TIMEZONE, {
       onboarding: !!group && !group.onboardedAt,

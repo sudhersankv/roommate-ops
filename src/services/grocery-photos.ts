@@ -6,7 +6,7 @@ import type { RecipeIngredient } from "@/db/schema";
 import { measurementOrEach, parseAmount } from "@/lib/units";
 import { addAsSaid } from "./cart";
 import { listMembers } from "./members";
-import { askVision, imageDataUrl } from "./receipts";
+import { askVision, imageDataUrl, requireGroupUpload } from "./receipts";
 import { addRecipeToCart, saveRecipe } from "./recipes";
 import type { Ctx } from "./types";
 
@@ -97,14 +97,19 @@ const currentReader = () => reader ?? (process.env.RECEIPT_FAKE === "1" ? fakeRe
 
 const cache = new Map<string, GroceryPhoto>();
 
-/** Read a Groceries photo by URL. Cached per URL, so "yes, add them" doesn't read it again. */
-export async function readGroceryPhoto(url: string): Promise<GroceryPhoto> {
-  const hit = cache.get(url);
+/**
+ * Read a Groceries photo by URL, for one Group. Only this Group's own uploads (sent in its Chat or uploaded on its
+ * dashboard), never a URL someone typed or another Group's photo. Cached per Group and URL, so "yes, add them"
+ * doesn't read it again.
+ */
+export async function readGroceryPhoto(url: string, groupId: string): Promise<GroceryPhoto> {
+  const key = `${groupId}|${url}`;
+  const hit = cache.get(key);
   if (hit) return hit;
-  // Only photos someone sent in the chat or uploaded (stored by us): never a URL the model or a member typed.
+  await requireGroupUpload(url, groupId);
   const photo = parsePhotoJson(await currentReader().read({ dataUrl: await imageDataUrl(url, { ownOnly: true }) }));
   if (cache.size > 200) cache.delete(cache.keys().next().value!);
-  cache.set(url, photo);
+  cache.set(key, photo);
   return photo;
 }
 

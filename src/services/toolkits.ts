@@ -6,7 +6,7 @@ import { eq } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { CATALOG, findManifest, isToolkitId, manifestOf, MANIFESTS, type ToolkitId } from "@/toolkits/manifests";
 import type { HookCtx, Integration, ToolkitManifest } from "@/toolkits/types";
-import { record } from "./activity";
+import { recordFor } from "./activity";
 import { requireAdmin } from "./authz";
 import { logMessage } from "./chatlog";
 import { enabledToolkits, listToolkits } from "./groups";
@@ -143,7 +143,7 @@ export async function setToolkit(ctx: Ctx, input: { toolkit: string; enabled: bo
 
   const changed = wasOn !== input.enabled;
   if (changed) {
-    await record(ctx.groupId, ctx.memberId, "toolkit.toggled", `${input.enabled ? "taught Roomie" : "had Roomie forget"} ${m.name}`);
+    await recordFor(ctx, "toolkit.toggled", `${input.enabled ? "taught Roomie" : "had Roomie forget"} ${m.name}`);
     await runHooks({ groupId: ctx.groupId, memberId: ctx.memberId }, input.enabled ? [id] : [], input.enabled ? [] : [id]);
     if (input.enabled && ctx.source === "ui") await announceToolkitOn(ctx.groupId, id).catch((e) => console.error("[toolkits] announce failed", e));
   }

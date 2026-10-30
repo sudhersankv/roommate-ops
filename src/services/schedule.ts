@@ -5,7 +5,7 @@
 import { and, eq, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { dayInZone, WEEKDAY_NAMES, zonedParts } from "@/lib/time";
-import { record } from "./activity";
+import { recordFor } from "./activity";
 import { requireAdmin } from "./authz";
 import type { Ctx, GroupCtx } from "./types";
 
@@ -108,7 +108,7 @@ export async function updateSchedule(ctx: Ctx, patch: Partial<Schedule>): Promis
   }
   const next = await getSchedule(ctx);
   const d = describeSchedule(next);
-  await record(ctx.groupId, ctx.memberId, "group.settings", `set the chores nudge to ${d.nudge} and the weekly report to ${d.report}`, { table: "groups", id: ctx.groupId });
+  await recordFor(ctx, "group.settings", `set the chores nudge to ${d.nudge} and the weekly report to ${d.report}`, { table: "groups", id: ctx.groupId });
   return next;
 }
 

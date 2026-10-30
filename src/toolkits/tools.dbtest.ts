@@ -960,6 +960,13 @@ describe("Roomie tools against the dev DB", () => {
       assert.equal((await lastActivity()).summary, "put eggs, milk, bread and 1 more on the Cart for everyone");
       const r = await run("cart_from_photo", { photo_url: bill.path });
       assert.deepEqual([r.kind, r.splitting, r.next], ["receipt", true, "expense_from_receipt"]);
+      const theirs = await receipts.saveUpload("g-00000000-0000-4000-8000-000000000000", Buffer.from("their list"), "image/jpeg");
+      try {
+        await assert.rejects(run("cart_from_photo", { photo_url: theirs.path }), /only read photos sent in this group's chat/);
+        await assert.rejects(run("expense_from_receipt", { receipt_url: theirs.path }), /only read photos sent in this group's chat/);
+      } finally {
+        await rm(theirs.file, { force: true });
+      }
       for (const i of open) await cart.removeItemById(ctx, { id: i.id });
     } finally {
       photos.setPhotoReader(null);

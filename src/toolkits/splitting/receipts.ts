@@ -26,6 +26,7 @@ export const receiptTools = {
     }),
     execute: async (input, context) => {
       const ctx = ctxOf(context);
+      await receipts.requireGroupUpload(input.receipt_url, ctx.groupId);
       const parsed = await receipts.parseReceipt({ url: input.receipt_url });
       const everyone = (await members.listMembers(ctx)).map((m) => m.id);
       const payerId = input.payer ? await memberIdByName(ctx, input.payer) : ctx.memberId;

@@ -76,7 +76,7 @@ export const cartTools = {
     }),
     execute: async (input, context) => {
       const ctx = ctxOf(context);
-      const photo = await readGroceryPhoto(input.photo_url);
+      const photo = await readGroceryPhoto(input.photo_url, ctx.groupId);
       if (photo.kind === "receipt") {
         const splitting = (await enabledToolkits(ctx)).includes("splitting");
         return splitting
