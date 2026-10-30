@@ -303,11 +303,10 @@ describe("saysRoomie", () => {
     for (const t of ["my roomies are out", "roomiebot", "add milk", ""]) assert.equal(saysRoomie(t), false, t);
   });
 
-  test("callsPet: 'roomie' always, and the Group's own name for its pet", () => {
-    assert.equal(callsPet("dino add milk", "Dino"), true);
-    assert.equal(callsPet("roomie add milk", "Dino"), true, "the species name keeps working");
-    assert.equal(callsPet("dinosaurs rule", "Dino"), false);
-    assert.equal(callsPet("dino add milk"), false, "no custom name: only roomie");
+  test("callsPet: 'roomie' is the one name (ADR 0020); a name a Group once stored is not a trigger", () => {
+    assert.equal(callsPet("roomie add milk"), true);
+    assert.equal(callsPet("dino add milk"), false, "only roomie");
+    assert.equal(callsPet("dinosaurs rule"), false);
   });
 });
 
@@ -349,10 +348,11 @@ describe("hard triggers (audit H2: a voice note is not one by itself)", () => {
     assert.equal(chat({ isVoice: true, text: "roomie add milk" }), true);
   });
 
-  test("DMs and the dashboard, /pet, @mention, reply, the word roomie or the pet's name", () => {
+  test("DMs and the dashboard, /pet, @mention, reply, the word roomie; never another name", () => {
     assert.equal(isHardTrigger({ groupChat: false, text: "anything" }), true);
     assert.equal(chat({ petted: true }), true);
-    assert.equal(chat({ text: "dino add milk", petName: "Dino" }), true);
+    assert.equal(chat({ text: "roomie add milk" }), true);
+    assert.equal(chat({ text: "dino add milk" }), false);
     assert.equal(chat({ text: "lol same" }), false);
   });
 });
@@ -360,7 +360,7 @@ describe("hard triggers (audit H2: a voice note is not one by itself)", () => {
 describe("mediaWanted (photos and voice notes are only fetched when Roomie is talked to)", () => {
   test("photos: an addressed caption, a reply, an @mention, the window, a DM", () => {
     assert.equal(mediaWanted({ kind: "photo", caption: "roomie split this" }), true);
-    assert.equal(mediaWanted({ kind: "photo", caption: "Dino split this", petName: "Dino" }), true);
+    assert.equal(mediaWanted({ kind: "photo", caption: "Dino split this" }), false, "a stored name is not a trigger");
     assert.equal(mediaWanted({ kind: "photo", isReplyToRoomie: true }), true);
     assert.equal(mediaWanted({ kind: "photo", mentionsRoomie: true }), true);
     assert.equal(mediaWanted({ kind: "photo", inWindow: true }), true);

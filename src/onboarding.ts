@@ -19,7 +19,6 @@ import { issueDashboardLink } from "@/services/claims";
 import { newJoinCode } from "@/services/joins";
 import { chatFor, initToolkits, type Chat, type Group } from "@/services/groups";
 import { addMember, admins, memberByChannelUser, type Member } from "@/services/members";
-import { ARCHETYPE_IDS, DEFAULT_PET_NAME } from "@/lib/personality";
 import { MANIFESTS } from "@/toolkits/manifests";
 
 export type ChatRef = { channel: ChannelName; externalId: string; title?: string };
@@ -35,16 +34,15 @@ const joinNames = (n: string[]) => (n.length <= 1 ? n.join("") : `${n.slice(0, -
 export const isPlaceholderName = (name: string) => /^\+?\d[\d\s-]{5,}$/.test(name.trim()) || name.trim() === "Someone";
 
 /**
- * Roomie's first message, at most three lines and no feature list: who it is, what to tell it (the group's purpose
- * picks the Tricks it learns), and who the Admin is. `dmHandle` (Telegram's @username) adds the one nudge to open a
- * 1:1 chat, since a bot can't message anyone first.
+ * Roomie's first message, at most three lines and no list of what it does: who it is, what to tell it (the group's
+ * purpose picks the Tricks it learns), and who the Admin is. `dmHandle` (Telegram's @username) adds the one nudge to
+ * open a 1:1 chat, since on Telegram Roomie can't message anyone first. One voice, one name (ADR 0020): no vibe offer.
  */
-export function introMessage(adderName: string, opts: { dmHandle?: string; petName?: string } = {}): string {
-  const name = opts.petName?.trim() || DEFAULT_PET_NAME;
+export function introMessage(adderName: string, opts: { dmHandle?: string } = {}): string {
   const admin = isPlaceholderName(adderName) ? "Whoever added me is my admin." : `${adderName} added me, so ${adderName}'s my admin.`;
   return [
-    `Hey all, I'm ${name} 🦖 a small dino who lives in your group chat and learns Tricks.`,
-    `Tell me what this group is for (roommates, a trip, friends, family, work…) and I'll learn the right Tricks. Currency, city and a vibe (${ARCHETYPE_IDS.join(" / ")}) are welcome too.`,
+    `Hey all, I'm Roomie 🦖 the roommate who actually keeps track: rent, splits, groceries, chores, the landlord.`,
+    `Tell me what this group is for (roommates, a trip, friends, family, work…) and I'll learn the right Tricks. Currency and city are welcome too.`,
     `${admin}${opts.dmHandle ? ` Tap @${opts.dmHandle} and press Start, so I can DM you the setup and your dashboard link.` : ""}`,
   ].join("\n");
 }
@@ -58,7 +56,7 @@ export function setupDmText(adminName: string, groupName: string): string {
   const first = isPlaceholderName(adminName) ? "" : ` ${adminName.trim().split(/\s+/)[0]}`;
   return [
     `Hi${first} 👋 You added me to ${groupName}, so you're its admin. Your own dashboard link is below (just for you, it works once).`,
-    `Answer the setup here or in the group: what's the group for, currency, city, vibe.`,
+    `Answer the setup here or in the group: what's the group for, currency, city.`,
   ].join("\n");
 }
 

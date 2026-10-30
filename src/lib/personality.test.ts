@@ -5,6 +5,7 @@ import {
   ARCHETYPE_IDS,
   ARCHETYPES,
   applyPersonalityPatch,
+  archetypesUnlocked,
   confidenceFor,
   countEmoji,
   defaultPersonality,
@@ -14,13 +15,23 @@ import {
   moodFrom,
   normalizePersonality,
   previewOwes,
-  saysName,
   slangBudget,
   usableNicknames,
   validatePersonalityPatch,
   winLine,
   winsFrom,
 } from "./personality";
+
+/** Run `fn` with ROOMIE_ARCHETYPES / NODE_ENV set as given, then put them back. */
+function withEnv(env: { ROOMIE_ARCHETYPES?: string; NODE_ENV?: string }, fn: () => void) {
+  const before = { ROOMIE_ARCHETYPES: process.env.ROOMIE_ARCHETYPES, NODE_ENV: process.env.NODE_ENV };
+  for (const [k, v] of Object.entries(env)) if (v === undefined) delete process.env[k]; else process.env[k] = v;
+  try {
+    fn();
+  } finally {
+    for (const [k, v] of Object.entries(before)) if (v === undefined) delete process.env[k]; else process.env[k] = v;
+  }
+}
 
 test("every archetype has a voice, 3 examples, an emoji policy and lines for greetings and wins", () => {
   for (const id of ARCHETYPE_IDS) {
@@ -40,7 +51,7 @@ test("normalize: {} is chill Roomie; junk is dropped, never thrown", () => {
   assert.deepEqual(p.quirks, []);
   assert.equal(p.learned.confidence, 0);
   assert.equal(p.learned.hours.length, 24);
-  const junk = normalizePersonality({ base: "pirate", name: 5, quirks: ["a", 3, "b", "c", "d"], humor: 9, emoji: "lots", learned: { confidence: 4, slang: [{ phrase: "bet", count: 3 }, { nope: 1 }] } });
+  const junk = normalizePersonality({ base: "pirate", name: 5, quirks: ["a", 3, "b", "c", "d"], humor: 9, emoji: "lots", learned: { confidence: 4, slang: [{ phrase: "bet", count: 3 }, { nope: 1 }] } }, { archetypes: true });
   assert.equal(junk.base, "chill");
   assert.equal(junk.name, "Roomie");
   assert.deepEqual(junk.quirks, ["a", "b", "c"]);
@@ -48,6 +59,39 @@ test("normalize: {} is chill Roomie; junk is dropped, never thrown", () => {
   assert.equal(junk.emoji, "lots");
   assert.equal(junk.learned.confidence, 1);
   assert.deepEqual(junk.learned.slang, [{ phrase: "bet", count: 3 }]);
+});
+
+test("one voice (ADR 0020): a stored vibe, name, quirks and dials are ignored; languages and the Learned style are kept", () => {
+  const stored = { base: "hype", name: "Dino", quirks: ["loves the plant"], emoji: "lots", humor: 3, formality: 0, languages: ["Hindi"], learned: { messagesSeen: 90, confidence: 0.42, tone: ["teasing"] } };
+  withEnv({ ROOMIE_ARCHETYPES: undefined, NODE_ENV: "test" }, () => {
+    const p = normalizePersonality(stored);
+    assert.equal(p.base, "chill");
+    assert.equal(p.name, "Roomie");
+    assert.deepEqual(p.quirks, []);
+    assert.deepEqual(effectiveDials(p), effectiveDials(defaultPersonality()), "chill's own dials");
+    assert.deepEqual(p.languages, ["Hindi"]);
+    assert.equal(p.learned.messagesSeen, 90);
+    assert.deepEqual(p.learned.tone, ["teasing"]);
+  });
+});
+
+test("the dev switch: ROOMIE_ARCHETYPES=1 outside production honours the stored object; production never does", () => {
+  const stored = { base: "hype", name: "Dino", quirks: ["loves the plant"], humor: 3 };
+  withEnv({ ROOMIE_ARCHETYPES: "1", NODE_ENV: "test" }, () => {
+    assert.equal(archetypesUnlocked(), true);
+    const p = normalizePersonality(stored);
+    assert.equal(p.base, "hype");
+    assert.equal(p.name, "Dino");
+    assert.deepEqual(p.quirks, ["loves the plant"]);
+    assert.equal(p.humor, 3);
+  });
+  withEnv({ ROOMIE_ARCHETYPES: "1", NODE_ENV: "production" }, () => {
+    assert.equal(archetypesUnlocked(), false);
+    assert.equal(normalizePersonality(stored).base, "chill");
+  });
+  withEnv({ ROOMIE_ARCHETYPES: undefined, NODE_ENV: "development" }, () => assert.equal(archetypesUnlocked(), false));
+  assert.equal(normalizePersonality(stored, { archetypes: true }).base, "hype", "an explicit option wins over the env");
+  assert.equal(normalizePersonality(stored, { archetypes: false }).base, "chill");
 });
 
 test("patch validation: vibe, name, quirks and dials, with messages Roomie can repeat", () => {
@@ -93,16 +137,9 @@ test("nicknames need 3 sightings by others", () => {
   assert.deepEqual(usableNicknames(l).map((n) => n.nickname), ["Boss"]);
 });
 
-test("the custom name triggers as a whole word, any case", () => {
-  assert.ok(saysName("Dino, add milk", "Dino"));
-  assert.ok(saysName("ok dino?", "Dino"));
-  assert.ok(!saysName("dinosaur facts", "Dino"));
-  assert.ok(saysName("hey Mr. Fluff!", "Mr. Fluff"));
-});
-
-test("/pet and 'pet roomie' are pet commands; ordinary sentences aren't", () => {
-  for (const t of ["/pet", "/pet@roomie_house_bot", "/petRoomie", "pet roomie", "*pets roomie*", "pets dino 🥹", "pat Dino"]) assert.ok(isPetCommand(t, "Dino"), t);
-  for (const t of ["my pet roomie is cute lol", "roomie I paid for pet food", "/pets", "pet the dog"]) assert.ok(!isPetCommand(t, "Dino"), t);
+test("/pet and 'pet roomie' are pet commands; ordinary sentences and other names aren't", () => {
+  for (const t of ["/pet", "/pet@roomie_house_bot", "/petRoomie", "pet roomie", "*pets roomie*", "pets Roomie 🥹", "pat the roomie"]) assert.ok(isPetCommand(t), t);
+  for (const t of ["my pet roomie is cute lol", "roomie I paid for pet food", "/pets", "pet the dog", "pets dino 🥹", "pat Dino"]) assert.ok(!isPetCommand(t), t);
 });
 
 test("mood: worried > $100 owed, sleepy after 5 quiet days, happy when square, else calm", () => {

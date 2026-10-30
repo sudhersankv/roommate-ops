@@ -402,7 +402,7 @@ describe("private messages", () => {
 
   test("/start from the Admin of a Group still waiting for setup: the setup DM (with their Claim link button) instead", async () => {
     const asked: string[] = [];
-    const dm = { text: "Hi Maya 👋 You added me to Apt 4B, so you're its admin.\nAnswer the setup here or in the group: what's the group for, currency, city, vibe.", buttons: [{ text: "Open dashboard", url: "https://roomie.example/claim/abc" }] };
+    const dm = { text: "Hi Maya 👋 You added me to Apt 4B, so you're its admin.\nAnswer the setup here or in the group: what's the group for, currency, city.", buttons: [{ text: "Open dashboard", url: "https://roomie.example/claim/abc" }] };
     const h = harness({ deps: { setupDmFor: async (id) => (asked.push(id), id === "11" ? dm : null) } });
     await h.feed(message(MAYA, { text: "/start" }, { id: 11, type: "private", first_name: "Maya" }));
     assert.deepEqual(asked, ["11"]);
