@@ -48,7 +48,7 @@ export function VoteButton({ trickId, name, count, showFrom }: { trickId: string
         </span>
       ) : (
         <Button size="xs" variant="outline" onClick={vote} disabled={pending} aria-label={`I want ${name}`}>
-          {pending ? "Sending" : "I want this"}
+          {pending ? "Sending…" : "I want this"}
         </Button>
       )}
       {n >= showFrom && <span className="type-caption text-muted-foreground">{n} want this</span>}

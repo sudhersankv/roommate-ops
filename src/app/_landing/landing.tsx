@@ -18,7 +18,7 @@ import { DEMOS, HERO, VIBE_LINES } from "./demos"
 import { GITHUB_URL, TelegramMark, WhatsAppMark, linkClass, shareLinks, telegramAddUrl } from "./marks"
 import { CopyLink } from "./share-row"
 import { Stage } from "./stage"
-import { GROUP_KINDS, accentOf, builtTricks, comingSoonTricks, taughtBy, trickName } from "./tricks"
+import { GROUP_KINDS, accentOf, builtTricks, comingSoonTricks, trickName } from "./tricks"
 import { VoteButton } from "./vote-button"
 import "./landing.css"
 
@@ -228,52 +228,86 @@ function Demos({ addUrl }: { addUrl: string }) {
   )
 }
 
-/* ---------- Tricks: what it knows, and what's next (vote) ---------- */
+/* ---------- Tricks: blocks that snap onto Roomie, and the ones waiting (vote) ---------- */
+
+// The dino on the stack: asleep until the stack is on screen, awake as the first block lands, hops when the last one
+// does (landing.css: block k lands at 0.12 s + k * 0.16 s + 0.42 s).
+const STACK_CUES = { callMs: 300, replyMs: 1050, winMs: 1050 }
+// A hand-stacked look: each block sits a few px off the one below it.
+const NUDGE = ["0px", "5px", "-4px", "3px"]
 
 function Tricks({ votes }: { votes: Record<string, number> }) {
+  const built = builtTricks()
   return (
     <section id="tricks" aria-labelledby="tricks-title" className="mx-auto max-w-6xl scroll-mt-6 px-5 pt-32 sm:px-8 lg:pt-40">
-      <SectionHead id="tricks-title" title="Teach it Tricks.">
-        Say &ldquo;roomie, learn chores&rdquo; in the chat, or switch Tricks on in the dashboard.
+      <SectionHead id="tricks-title" title="Teach it Tricks. They snap on.">
+        Each Trick brings its own page on the dashboard.
       </SectionHead>
-      <ul className="m-0 mt-12 grid list-none gap-4 p-0 sm:grid-cols-2 lg:grid-cols-4">
-        {builtTricks().map((m) => (
-          <li key={m.id} style={accent(m.id)} className="lp-trick grid grid-cols-[auto_1fr] items-start gap-x-4 gap-y-1.5 rounded-3xl border bg-card p-4 sm:flex sm:flex-col sm:gap-3 sm:p-5">
-            <span aria-hidden className="row-span-2 flex size-11 items-center justify-center rounded-2xl bg-(--accent) text-ink">
-              <ToolkitIcon name={m.icon} className="size-5" />
-            </span>
-            <h3 className="m-0 text-xl leading-tight font-extrabold tracking-[-0.02em] sm:text-[1.625rem]">{m.name}</h3>
-            <p className="type-body m-0 text-muted-foreground">{m.summary}</p>
-            <div className="col-span-2 mt-auto flex flex-wrap items-center gap-1.5 pt-1.5">
-              <span className="type-caption text-muted-foreground">Taught by</span>
-              {taughtBy(m.id).map((g) => (
-                <span key={g} className="rounded-full bg-raised px-2.5 py-0.5 text-[0.8125rem] font-medium">
-                  {g}
-                </span>
-              ))}
-            </div>
-          </li>
-        ))}
-      </ul>
-      <h3 className="type-heading m-0 mt-12 text-muted-foreground">Coming soon. Vote for what it learns next.</h3>
-      <ul className="m-0 -mx-5 mt-4 flex list-none snap-x snap-mandatory gap-3 overflow-x-auto px-5 pt-2 pb-4 sm:mx-0 sm:grid sm:grid-cols-2 sm:overflow-visible sm:px-0 lg:grid-cols-5">
-        {comingSoonTricks().map((m) => (
-          <li key={m.id} style={accent(m.id)} className="lp-trick is-soon flex w-[64vw] max-w-64 shrink-0 snap-start flex-col gap-2.5 rounded-3xl border border-dashed bg-card/60 p-4 sm:w-auto sm:max-w-none">
-            <div className="flex items-center justify-between gap-2">
-              <span aria-hidden className="lp-soon-icon flex size-9 items-center justify-center rounded-xl bg-(--accent) text-ink">
-                <ToolkitIcon name={m.icon} className="size-4" />
-              </span>
-              <Badge variant="secondary">Coming soon</Badge>
-            </div>
-            <h4 className="type-heading m-0">{m.name}</h4>
-            <p className="type-caption m-0 text-muted-foreground">{m.summary}</p>
-            <div className="mt-auto pt-1">
-              <VoteButton trickId={m.id} name={m.name} count={votes[m.id] ?? 0} showFrom={SHOW_COUNT_FROM} />
-            </div>
-          </li>
-        ))}
-      </ul>
+      <div className="mt-10 grid items-start gap-14 lg:mt-12 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] lg:gap-16">
+        <div className="flex w-full max-w-md flex-col gap-4 lg:sticky lg:top-10">
+          <Stage cues={STACK_CUES} size={72} className="pt-16" dinoClassName="top-0 right-5">
+            {/* Splitting first in the list, at the bottom of the stack. */}
+            <ul aria-label="Tricks Roomie knows" className="m-0 flex list-none flex-col-reverse gap-2.5 p-0">
+              {built.map((m, k) => {
+                const page = m.dashboard?.nav?.label
+                return (
+                  <li key={m.id} style={{ ...accent(m.id), ["--k" as string]: k, ["--dx" as string]: NUDGE[k % NUDGE.length] }} className="lp-block">
+                    <div className="lp-brick flex items-center gap-3 rounded-2xl bg-(--accent) px-4 py-3.5 text-ink">
+                      <Studs />
+                      <span aria-hidden className="lp-sheen" />
+                      <span aria-hidden className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-ink/10">
+                        <ToolkitIcon name={m.icon} className="size-5" />
+                      </span>
+                      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                        <h3 className="m-0 text-lg leading-tight font-extrabold tracking-[-0.015em] sm:text-xl">{m.name}</h3>
+                        <span className="text-[0.875rem] leading-snug text-ink/75">{m.summary}</span>
+                      </span>
+                      {page && <span className="hidden shrink-0 rounded-full bg-ink/10 px-2.5 py-0.5 text-[0.8125rem] font-semibold sm:inline">{page} page</span>}
+                    </div>
+                  </li>
+                )
+              })}
+            </ul>
+          </Stage>
+          <p className="type-caption m-0 text-muted-foreground">Say &ldquo;roomie, learn chores&rdquo; in the chat, or tap Teach on the dashboard.</p>
+        </div>
+
+        <div className="flex flex-col gap-4">
+          <h3 className="type-heading m-0 text-muted-foreground">Waiting to snap on. Vote for what it learns next.</h3>
+          <ul className="m-0 grid list-none grid-cols-2 gap-x-3 gap-y-5 p-0 pt-2 sm:grid-cols-3 lg:grid-cols-2">
+            {comingSoonTricks().map((m) => (
+              <li key={m.id} style={accent(m.id)} className="lp-trick is-soon relative flex min-w-0 flex-col gap-2 rounded-2xl border-2 border-dashed bg-card/60 p-3 sm:p-4">
+                <Studs ghost />
+                <div className="flex min-w-0 items-center gap-2">
+                  <span aria-hidden className="lp-soon-icon flex size-8 shrink-0 items-center justify-center rounded-xl bg-(--accent) text-ink">
+                    <ToolkitIcon name={m.icon} className="size-4" />
+                  </span>
+                  <h4 className="type-heading m-0 min-w-0 break-words">{m.name}</h4>
+                </div>
+                <Badge variant="secondary" className="absolute -top-2.5 right-3">
+                  Soon
+                </Badge>
+                <p className="type-caption m-0 break-words text-muted-foreground">{m.summary}</p>
+                <div className="mt-auto pt-1">
+                  <VoteButton trickId={m.id} name={m.name} count={votes[m.id] ?? 0} showFrom={SHOW_COUNT_FROM} />
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
     </section>
+  )
+}
+
+/** The two bumps on top of a block: solid on a learned Trick, a dashed outline on one that's waiting. */
+function Studs({ ghost = false }: { ghost?: boolean }) {
+  const stud = ghost ? "border-2 border-b-0 border-dashed border-border bg-transparent" : "lp-stud bg-(--accent)"
+  return (
+    <span aria-hidden className="pointer-events-none absolute -top-2 left-5 flex gap-3">
+      <span className={cn("block h-2 w-6 rounded-t-md", stud)} />
+      <span className={cn("block h-2 w-6 rounded-t-md", stud)} />
+    </span>
   )
 }
 
