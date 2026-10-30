@@ -1,0 +1,481 @@
+// Lease Inbox (ADR 0016): the Group's own email address, what arrives in it, work orders, and mail Roomie sends for a
+// Member. The pure rules live next door (send-rule.ts, lease-inbox-rules.ts, lib/forwarded.ts); this module is the
+// DB and the mail client around them. The classifier is injected (setClassifier, like setReceiptReader).
+//
+// What a class *does* beyond this module (a Reminder row, the urgent slot, Documents, the Admin's DM, the rent
+// proposal, a utility prefill) goes through `InboundHooks`, no-ops until #24 (core slots) and #25 (Money) land.
+import { createHash, randomBytes } from "node:crypto";
+import { and, asc, desc, eq, gte, inArray, like, sql } from "drizzle-orm";
+import { z } from "zod";
+import { db, schema } from "@/db";
+import { MAIL_CLASSES } from "@/db/enums";
+import { mailClient, type MailMessage } from "@/integrations/mail";
+import { addressOf, domainOf, parseForwarded } from "@/lib/forwarded";
+import { addDaysToDay, zonedTimeToUtc } from "@/lib/time";
+import { recordFor } from "./activity";
+import { requireActive, requireAdmin } from "./authz";
+import { isUrgent, nextStatus, type WorkOrderReply, type WorkOrderState } from "./lease-inbox-rules";
+import { CONFLICT_WINDOW_MS, sendRule, signature, type OtherInstruction, type SendIntent } from "./send-rule";
+import type { Ctx, GroupCtx } from "./types";
+
+const { groupInboxes, mailEvents, mailMessages, landlordSenders, workOrders, sentMail, members, accounts, groups } = schema;
+
+export const NO_INBOX = 'There\'s no Lease Inbox here yet. An admin can say "roomie, learn lease inbox".';
+const NO_LANDLORD = "Who should I send it to? Forward me an email from the landlord first, or tell me their address.";
+
+/* ---------- the inbox ---------- */
+
+/** "Apt 4B" -> "apt-4b": AgentMail usernames are lowercase letters, digits and dashes. */
+export function inboxSlug(groupName: string): string {
+  const slug = groupName
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 24)
+    .replace(/-+$/, "");
+  return slug || "home";
+}
+
+const randomTail = () => {
+  const abc = "abcdefghijkmnpqrstuvwxyz23456789";
+  return [...randomBytes(4)].map((b) => abc[b % abc.length]).join("");
+};
+
+export async function inboxOf(groupId: string) {
+  const [row] = await db.select().from(groupInboxes).where(eq(groupInboxes.groupId, groupId));
+  return row ?? null;
+}
+
+/** The Group's address, made on first ask (teaching Lease Inbox). Asking again returns the same one. */
+export async function ensureInbox(ctx: Ctx): Promise<{ inboxId: string; address: string; created: boolean }> {
+  await requireActive(ctx);
+  const have = await inboxOf(ctx.groupId);
+  if (have) return { inboxId: have.inboxId, address: have.address, created: false };
+  const [group] = await db.select({ name: groups.name }).from(groups).where(eq(groups.id, ctx.groupId));
+  // AgentMail dedupes on clientId = the Group, so a retry after a crash gets the same inbox back.
+  const made = await mailClient().createInbox(ctx.groupId, `${inboxSlug(group?.name ?? "")}-${randomTail()}`);
+  const inserted = await db
+    .insert(groupInboxes)
+    .values({ groupId: ctx.groupId, inboxId: made.inboxId, address: made.address })
+    .onConflictDoNothing({ target: groupInboxes.groupId })
+    .returning();
+  if (inserted.length) await recordFor(ctx, "lease.inbox", `set up the Lease Inbox: ${made.address}`);
+  const row = inserted[0] ?? (await inboxOf(ctx.groupId))!;
+  return { inboxId: row.inboxId, address: row.address, created: inserted.length > 0 };
+}
+
+/* ---------- who the landlord is ---------- */
+
+/** Public mail providers: trusting the domain would trust everyone on it, so only the address counts. */
+const SHARED_DOMAINS = new Set([
+  "gmail.com", "googlemail.com", "yahoo.com", "ymail.com", "outlook.com", "hotmail.com", "live.com", "msn.com",
+  "icloud.com", "me.com", "mac.com", "aol.com", "proton.me", "protonmail.com", "gmx.com", "mail.com", "yandex.com", "zoho.com",
+]);
+
+type SenderSource = (typeof landlordSenders.$inferInsert)["source"];
+
+/** The rows trusting `addressOrDomain`: the address and, unless it's a public mail provider, its whole domain. */
+function trustRows(addressOrDomain: string): string[] {
+  const address = addressOf(addressOrDomain);
+  if (!address) {
+    const domain = addressOrDomain.trim().toLowerCase().replace(/^@/, "");
+    return /^[a-z0-9.-]+\.[a-z]{2,}$/.test(domain) && !SHARED_DOMAINS.has(domain) ? [domain] : [];
+  }
+  const domain = domainOf(address)!;
+  return SHARED_DOMAINS.has(domain) ? [address] : [address, domain];
+}
+
+async function addTrusted(groupId: string, addressOrDomain: string, source: SenderSource): Promise<string[]> {
+  const values = trustRows(addressOrDomain);
+  if (!values.length) throw new Error(`"${addressOrDomain}" isn't an email address or a domain.`);
+  await db
+    .insert(landlordSenders)
+    .values(values.map((value) => ({ groupId, value, source })))
+    .onConflictDoNothing();
+  return values;
+}
+
+/** An Admin's "yes, that's our building" (source admin), or the intro email's recipient. */
+export async function trustSender(ctx: Ctx, addressOrDomain: string, source: SenderSource): Promise<{ trusted: string[] }> {
+  if (source === "admin") await requireAdmin(ctx);
+  else await requireActive(ctx);
+  const trusted = await addTrusted(ctx.groupId, addressOrDomain, source);
+  await recordFor(ctx, "lease.trust", `trusted ${trusted.at(-1)} as the landlord`);
+  return { trusted };
+}
+
+export async function knownSenders(groupId: string): Promise<string[]> {
+  const rows = await db.select({ value: landlordSenders.value }).from(landlordSenders).where(eq(landlordSenders.groupId, groupId)).orderBy(asc(landlordSenders.createdAt));
+  return rows.map((r) => r.value);
+}
+
+export async function isTrusted(groupId: string, address: string): Promise<boolean> {
+  const a = addressOf(address);
+  if (!a) return false;
+  const hits = await db
+    .select({ value: landlordSenders.value })
+    .from(landlordSenders)
+    .where(and(eq(landlordSenders.groupId, groupId), inArray(landlordSenders.value, [a, domainOf(a)!])));
+  return hits.length > 0;
+}
+
+/** Where a new email to the landlord goes: the first landlord address Roomie learned. */
+async function landlordAddress(groupId: string): Promise<string | null> {
+  return (await knownSenders(groupId)).find((v) => v.includes("@")) ?? null;
+}
+
+/* ---------- inbound ---------- */
+
+export type StoreResult = { stored: boolean; duplicate: boolean; id?: string; sender?: string; trusted?: boolean };
+
+/** The Member whose Account email sent this (a Member forwarding mail), if any. */
+async function memberByEmail(groupId: string, address: string) {
+  const [m] = await db
+    .select({ id: members.id, status: members.status })
+    .from(members)
+    .innerJoin(accounts, eq(accounts.id, members.accountId))
+    .where(and(eq(members.groupId, groupId), sql`lower(${accounts.email}) = ${address}`));
+  return m ?? null;
+}
+
+/**
+ * Keep an inbound email once (webhook deliveries repeat: deduped on event_id, and on the message id). A forward is
+ * judged by its original sender; when a Member forwarded it, that sender becomes a landlord sender. Mail AgentMail
+ * labels unauthenticated never counts as trusted. Untrusted mail is filed as new-sender.
+ */
+export async function storeInbound(groupId: string, message: MailMessage, opts: { eventId?: string } = {}): Promise<StoreResult> {
+  if (opts.eventId) {
+    const fresh = await db.insert(mailEvents).values({ eventId: opts.eventId, groupId }).onConflictDoNothing().returning();
+    if (!fresh.length) return { stored: false, duplicate: true };
+  }
+  const envelope = addressOf(message.from) ?? message.from.toLowerCase();
+  const forwarded = parseForwarded(message.text, message.html);
+  const forwarder = forwarded ? await memberByEmail(groupId, envelope) : null;
+  const sender = forwarded?.from ?? envelope;
+  if (forwarded && forwarder?.status === "active") await addTrusted(groupId, sender, "forward");
+  const trusted = !message.labels.includes("unauthenticated") && (await isTrusted(groupId, sender));
+
+  const [row] = await db
+    .insert(mailMessages)
+    .values({
+      groupId,
+      inboxId: message.inboxId,
+      messageId: message.messageId,
+      threadId: message.threadId,
+      fromHeader: message.from,
+      fromAddress: envelope,
+      originalFrom: forwarded?.from ?? null,
+      forwardedBy: forwarder?.id ?? null,
+      to: message.to,
+      subject: message.subject,
+      text: message.text,
+      html: message.html,
+      receivedAt: message.receivedAt,
+      class: trusted ? null : "new-sender",
+      trusted,
+    })
+    .onConflictDoNothing()
+    .returning({ id: mailMessages.id });
+  if (!row) return { stored: false, duplicate: true };
+  return { stored: true, duplicate: false, id: row.id, sender, trusted };
+}
+
+/* ---------- classification ---------- */
+
+export const ClassificationSchema = z.object({
+  class: z.enum(["notice", "rent-lease", "work-order", "other"]),
+  /** The notice's or the visit's date: local "YYYY-MM-DD" or "YYYY-MM-DDTHH:mm" in the Group's zone. */
+  date: z.string().optional(),
+  amountCents: z.number().int().nonnegative().optional(),
+  utility: z.string().optional(),
+  /** For a work-order reply: how far it says the repair got. */
+  reply: z.enum(["acknowledged", "scheduled", "done", "other"]).optional(),
+  summary: z.string().min(1),
+});
+export type Classification = z.infer<typeof ClassificationSchema>;
+
+export type ClassifyInput = { from: string; subject: string; text: string; timezone: string; now: Date; workOrderTitle: string | null };
+export interface MailClassifier {
+  classify(input: ClassifyInput): Promise<Classification>;
+}
+
+// TODO(lease-inbox toolkit pass): the Haiku call on the gateway (strict JSON, one retry, as recipes.ts does).
+export const gatewayClassifier: MailClassifier = {
+  async classify() {
+    throw new Error("classifier not wired");
+  },
+};
+
+let classifier: MailClassifier | null = null;
+/** Tests swap the classifier; null goes back to the gateway one. */
+export function setClassifier(c: MailClassifier | null) {
+  classifier = c;
+}
+
+/** Side effects of a class that belong to other Tricks and slots. Every one defaults to a no-op. */
+export type InboundHooks = {
+  // TODO(#24): a whole-group Reminder (services/reminders.ts) at `at`.
+  remind?(groupId: string, at: Date, text: string): Promise<void>;
+  // TODO(#24): claim the day's urgent slot and post `line` now.
+  urgent?(groupId: string, line: string): Promise<void>;
+  // TODO(#24): Documents from the attachments, ids into mail_messages.document_ids.
+  fileDocuments?(groupId: string, mailId: string): Promise<void>;
+  // TODO(#24): DM the Admin (once per domain: pet_moments "new-sender:<domain>"); "yes" -> trustSender(..., "admin").
+  askAdmin?(groupId: string, text: string): Promise<void>;
+  // TODO(#25): DM the Admin the proposed set_rent intent; nothing changes until they say yes.
+  proposeRent?(groupId: string, mailId: string, amountCents: number | null): Promise<void>;
+  // TODO(#25): pending_amounts.prefill for the matching variable Expense.
+  prefillUtility?(groupId: string, utility: string, amountCents: number): Promise<void>;
+};
+
+export type ClassifyResult = {
+  class: (typeof MAIL_CLASSES)[number];
+  /** One line for the group chat, or null for nothing. */
+  line: string | null;
+  urgent: boolean;
+  reminderAt: Date | null;
+  /** For a new sender: the private question to the Admin. */
+  adminAsk: string | null;
+  workOrderId: string | null;
+};
+
+const capitalized = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+/** A notice's Reminder: 18:00 local on the day before its date. */
+export function eveningBefore(noticeDate: string, timezone: string): Date | null {
+  const day = /^(\d{4}-\d{2}-\d{2})/.exec(noticeDate.trim())?.[1];
+  if (!day) return null;
+  const [y, m, d] = addDaysToDay(day, -1).split("-").map(Number);
+  return zonedTimeToUtc(timezone, { year: y, month: m, day: d, hour: 18, minute: 0, second: 0 });
+}
+
+/** Read one stored email and do what its class says. Untrusted mail is never classified: the Admin is asked. */
+export async function classifyInbound(groupId: string, mailId: string, opts: { now?: Date; hooks?: InboundHooks } = {}): Promise<ClassifyResult> {
+  const now = opts.now ?? new Date();
+  const hooks = opts.hooks ?? {};
+  const [m] = await db.select().from(mailMessages).where(and(eq(mailMessages.groupId, groupId), eq(mailMessages.id, mailId)));
+  if (!m) throw new Error(`No such email: ${mailId}`);
+  const none = { line: null, urgent: false, reminderAt: null, adminAsk: null, workOrderId: null };
+
+  if (!m.trusted) {
+    const subject = parseForwarded(m.text, m.html)?.subject ?? m.subject;
+    const adminAsk = `${m.originalFrom ?? m.fromAddress} emailed about "${subject}": is that your building?`;
+    await hooks.askAdmin?.(groupId, adminAsk);
+    return { ...none, class: "new-sender", adminAsk };
+  }
+
+  const [group] = await db.select({ timezone: groups.timezone }).from(groups).where(eq(groups.id, groupId));
+  const timezone = group?.timezone ?? "America/Chicago";
+  const [order] = await db.select().from(workOrders).where(and(eq(workOrders.groupId, groupId), eq(workOrders.threadId, m.threadId))).orderBy(desc(workOrders.createdAt)).limit(1);
+  const raw = await (classifier ?? gatewayClassifier).classify({ from: m.fromHeader, subject: m.subject, text: m.text, timezone, now, workOrderTitle: order?.title ?? null });
+  const c = ClassificationSchema.parse(raw);
+
+  await db
+    .update(mailMessages)
+    .set({ class: c.class, summary: c.summary, noticeDate: c.date ?? null, amountCents: c.amountCents ?? null, utility: c.utility ?? null })
+    .where(eq(mailMessages.id, m.id));
+  await hooks.fileDocuments?.(groupId, m.id);
+  if (c.utility && c.amountCents !== undefined) await hooks.prefillUtility?.(groupId, c.utility, c.amountCents);
+
+  if (c.class === "notice") {
+    const line = `Notice from the landlord: ${c.summary}`;
+    const reminderAt = c.date ? eveningBefore(c.date, timezone) : null;
+    if (reminderAt && reminderAt > now) await hooks.remind?.(groupId, reminderAt, capitalized(c.summary));
+    const urgent = !!c.date && isUrgent(c.date, now, timezone);
+    if (urgent) await hooks.urgent?.(groupId, line);
+    return { ...none, class: "notice", line, urgent, reminderAt };
+  }
+  if (c.class === "rent-lease") {
+    await hooks.proposeRent?.(groupId, m.id, c.amountCents ?? null);
+    return { ...none, class: "rent-lease", line: "The landlord emailed about the rent or the lease. An admin has the details." };
+  }
+  if (c.class === "work-order" && order) {
+    const reply: WorkOrderReply = c.reply === "scheduled" ? { kind: "scheduled", date: c.date ?? "" } : { kind: c.reply ?? "other" };
+    await advanceWorkOrder(groupId, order.id, reply, c.summary, now);
+    return { ...none, class: "work-order", line: `Update on ${order.title}: ${c.summary}`, workOrderId: order.id };
+  }
+  return { ...none, class: c.class };
+}
+
+/* ---------- work orders ---------- */
+
+export async function createWorkOrder(ctx: Ctx, input: { title: string; threadId: string }) {
+  await requireActive(ctx);
+  const [row] = await db.insert(workOrders).values({ groupId: ctx.groupId, title: input.title, reportedBy: ctx.memberId, threadId: input.threadId }).returning();
+  await recordFor(ctx, "lease.work_order", `reported ${input.title}`, { table: "work_orders", id: row.id });
+  return row;
+}
+
+/** A landlord reply moves the work order (nextStatus); the reply's gist is kept either way. */
+export async function advanceWorkOrder(groupId: string, workOrderId: string, reply: WorkOrderReply, lastReply: string, now = new Date()) {
+  const [row] = await db.select().from(workOrders).where(and(eq(workOrders.groupId, groupId), eq(workOrders.id, workOrderId)));
+  if (!row) throw new Error(`No such work order: ${workOrderId}`);
+  const next = nextStatus({ status: row.status, scheduledFor: row.scheduledFor } satisfies WorkOrderState, reply);
+  const [updated] = await db
+    .update(workOrders)
+    .set({ status: next.status, scheduledFor: next.scheduledFor, lastReply, lastActivityAt: now })
+    .where(eq(workOrders.id, row.id))
+    .returning();
+  return { ...updated, changed: next.changed };
+}
+
+/** "What's up with the sink?": the newest work order whose title has a word of `what` (or the newest one). */
+export async function workOrderStatus(ctx: GroupCtx, input: { what?: string }) {
+  const rows = await db.select().from(workOrders).where(eq(workOrders.groupId, ctx.groupId)).orderBy(desc(workOrders.createdAt));
+  const words = (input.what ?? "").toLowerCase().match(/[a-z0-9]{3,}/g) ?? [];
+  const hit = words.length ? rows.find((r) => words.some((w) => r.title.toLowerCase().includes(w))) : rows[0];
+  if (!hit) return null;
+  return { id: hit.id, title: hit.title, status: hit.status, scheduledFor: hit.scheduledFor, lastReply: hit.lastReply, lastActivityAt: hit.lastActivityAt };
+}
+
+/* ---------- sending ---------- */
+
+export type SendInput = {
+  intent: SendIntent;
+  /** Reply in this thread (to its newest landlord email); otherwise a new email to `to` or the landlord. */
+  threadId?: string;
+  to?: string;
+  subject?: string;
+  body: string;
+  /** What the Member said, word for word (the send rule reads it). */
+  instruction: string;
+  /** The gist for the chat line: "asked them to move the inspection to Thursday". */
+  summary: string;
+  /**
+   * The Member answered Roomie's questions. TODO(lease-inbox toolkit pass): the tool sets this only when the
+   * Member's own latest message confirms (as admin-ask.ts checks), never on the model's say-so.
+   */
+  confirmed?: boolean;
+  workOrderId?: string;
+};
+
+export type SendResult = { sent: true; line: string; threadId: string; messageId: string; sentMailId: string } | { sent: false; ask: string[] };
+
+const idempotencyKey = (...parts: string[]) => createHash("sha256").update(parts.join("\u0000")).digest("hex").slice(0, 40);
+
+/** Other Members' replies in this thread within the hour: the send rule asks when they said something else. */
+async function othersInThread(groupId: string, threadId: string, now: Date): Promise<OtherInstruction[]> {
+  const rows = await db
+    .select({ memberId: sentMail.memberId, name: members.displayName, text: sentMail.instruction, at: sentMail.createdAt })
+    .from(sentMail)
+    .leftJoin(members, eq(members.id, sentMail.memberId))
+    .where(and(eq(sentMail.groupId, groupId), eq(sentMail.threadId, threadId), eq(sentMail.intent, "reply"), gte(sentMail.createdAt, new Date(now.getTime() - CONFLICT_WINDOW_MS))));
+  return rows.map((r) => ({ memberId: r.memberId ?? "", name: r.name ?? "Someone", text: r.text, at: r.at }));
+}
+
+/**
+ * Email the landlord for a Member. The send rule decides: simple mail goes at once, anything else comes back as the
+ * questions to ask. Every email ends with the signature naming the Member and is recorded in sent_mail.
+ */
+export async function sendToLandlord(ctx: Ctx, input: SendInput, now = new Date()): Promise<SendResult> {
+  const actor = await requireActive(ctx);
+  const inbox = await inboxOf(ctx.groupId);
+  if (!inbox) throw new Error(NO_INBOX);
+  const [group] = await db.select({ name: groups.name }).from(groups).where(eq(groups.id, ctx.groupId));
+
+  let to: string | null;
+  let replyTo: { messageId: string; to?: string } | null = null;
+  let intent = input.intent;
+  if (input.threadId) {
+    const [inbound] = await db
+      .select({ messageId: mailMessages.messageId, from: mailMessages.fromHeader, trusted: mailMessages.trusted })
+      .from(mailMessages)
+      .where(and(eq(mailMessages.groupId, ctx.groupId), eq(mailMessages.threadId, input.threadId)))
+      .orderBy(desc(mailMessages.receivedAt))
+      .limit(1);
+    const [ours] = inbound
+      ? []
+      : await db.select().from(sentMail).where(and(eq(sentMail.groupId, ctx.groupId), eq(sentMail.threadId, input.threadId))).orderBy(desc(sentMail.createdAt)).limit(1);
+    if (!inbound && !ours) throw new Error("I can't find that email thread.");
+    to = inbound?.from ?? ours!.to;
+    replyTo = inbound ? { messageId: inbound.messageId } : { messageId: ours!.messageId, to: ours!.to };
+    // "reply" is simple only in a thread the landlord wrote in; a follow-up on our own repair request is still one.
+    if (intent === "reply" && !inbound?.trusted) intent = ours?.intent === "maintenance" ? "maintenance" : "other";
+  } else {
+    to = input.to ?? (await landlordAddress(ctx.groupId));
+    if (!to) return { sent: false, ask: [NO_LANDLORD] };
+  }
+
+  const verdict = sendRule(
+    { to, body: input.body },
+    {
+      intent,
+      knownSenders: await knownSenders(ctx.groupId),
+      memberText: input.instruction,
+      memberId: ctx.memberId,
+      others: input.threadId ? await othersInThread(ctx.groupId, input.threadId, now) : [],
+      now,
+    },
+  );
+  if (!verdict.ok && !input.confirmed) return { sent: false, ask: verdict.ask };
+
+  const text = `${input.body.trim()}\n\n${signature(group?.name ?? "the apartment", actor.displayName)}`;
+  const headers = { "Idempotency-Key": idempotencyKey(ctx.groupId, input.threadId ?? "", to, text) };
+  const subject = input.subject ?? `From the residents of ${group?.name ?? "the apartment"}`;
+  const client = mailClient();
+  const ref = replyTo
+    ? await client.reply(inbox.inboxId, replyTo.messageId, { text, to: replyTo.to, headers })
+    : await client.send(inbox.inboxId, { to, subject, text, headers });
+
+  const [row] = await db
+    .insert(sentMail)
+    .values({
+      groupId: ctx.groupId,
+      memberId: ctx.memberId,
+      intent: input.intent,
+      to,
+      subject,
+      instruction: input.instruction,
+      summary: input.summary,
+      messageId: ref.messageId,
+      threadId: ref.threadId,
+      workOrderId: input.workOrderId ?? null,
+    })
+    .returning({ id: sentMail.id });
+  await recordFor(ctx, "lease.sent", `emailed the landlord: ${input.summary}`, { table: "sent_mail", id: row.id });
+  return { sent: true, line: `Sent: ${input.summary}.`, threadId: ref.threadId, messageId: ref.messageId, sentMailId: row.id };
+}
+
+/** "The sink's leaking, tell them": a repair request to the landlord and a work order to follow it. */
+export async function reportIssue(ctx: Ctx, input: { what: string; instruction: string; confirmed?: boolean }): Promise<SendResult & { workOrderId?: string }> {
+  await requireActive(ctx);
+  const [group] = await db.select({ name: groups.name }).from(groups).where(eq(groups.id, ctx.groupId));
+  const what = input.what.trim();
+  // TODO(lease-inbox toolkit pass): the body drafted by the model from the Member's words; this is the plain fallback.
+  const body = `Hi,\n\nWe'd like to report a repair at ${group?.name ?? "our apartment"}: ${what}.\nCould someone take a look?\n\nThanks.`;
+  const r = await sendToLandlord(ctx, { intent: "maintenance", subject: `Repair request: ${what}`, body, instruction: input.instruction, summary: `reported ${what}`, confirmed: input.confirmed });
+  if (!r.sent) return r;
+  const order = await createWorkOrder(ctx, { title: what, threadId: r.threadId });
+  await db.update(sentMail).set({ workOrderId: order.id }).where(eq(sentMail.id, r.sentMailId));
+  return { ...r, workOrderId: order.id };
+}
+
+const joinNames = (n: string[]) => (n.length <= 1 ? n.join("") : `${n.slice(0, -1).join(", ")} and ${n[n.length - 1]}`);
+
+/**
+ * The one-time intro email to the landlord, signed with every active Member's first name. Once per landlord domain.
+ * TODO(#24): offered once (pet_moments) when a landlord address becomes known.
+ */
+export async function sendIntro(ctx: Ctx): Promise<{ sent: true; line: string } | { sent: false; reason: "no-landlord" | "already-sent" }> {
+  await requireActive(ctx);
+  const to = await landlordAddress(ctx.groupId);
+  if (!to) return { sent: false, reason: "no-landlord" };
+  const already = await db
+    .select({ id: sentMail.id })
+    .from(sentMail)
+    .where(and(eq(sentMail.groupId, ctx.groupId), eq(sentMail.intent, "intro"), like(sentMail.to, `%@${domainOf(to)}`)));
+  if (already.length) return { sent: false, reason: "already-sent" };
+
+  const [group] = await db.select({ name: groups.name }).from(groups).where(eq(groups.id, ctx.groupId));
+  const people = await db
+    .select({ name: members.displayName })
+    .from(members)
+    .where(and(eq(members.groupId, ctx.groupId), eq(members.status, "active")))
+    .orderBy(asc(members.joinedAt));
+  const names = joinNames(people.map((p) => p.name.trim().split(/\s+/)[0]));
+  const body = `Hi,\n\nThis is the shared email address for the residents of ${group?.name ?? "our apartment"}: ${names}. Mail sent here reaches all of us, so it's the best place for repairs, building news and anything about the apartment.\n\nThanks,\n${names}`;
+  const r = await sendToLandlord(ctx, { intent: "intro", to, subject: `Our shared address for ${group?.name ?? "the apartment"}`, body, instruction: "send the intro email", summary: "introduced the shared inbox to the landlord" });
+  if (!r.sent) throw new Error(`The intro email was refused: ${r.ask.join(" ")}`);
+  return { sent: true, line: r.line };
+}
