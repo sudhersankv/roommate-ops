@@ -2,7 +2,7 @@ import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { chores, report } from "@/services";
 import type { ChoreStatus } from "@/services/chores";
-import { ctxOf, dashboardLinks, memberIdByName } from "../util";
+import { ctxOf, memberIdByName } from "../util";
 
 const dueText = (c: ChoreStatus) => (c.dueIn < 0 ? report.dueWord(c.dueIn, c.dueDay) : c.dueIn === 0 ? "due today" : `due ${report.dueWord(c.dueIn, c.dueDay)}`);
 
@@ -44,8 +44,7 @@ export const choreTools = {
     execute: async ({ name, everyDays, rotation }, context) => {
       const ctx = ctxOf(context);
       const ids = rotation ? await Promise.all(rotation.map((n) => (/^(me|myself|i)$/i.test(n.trim()) ? ctx.memberId : memberIdByName(ctx, n)))) : undefined;
-      const r = await chores.addChore(ctx, { name, everyDays, rotation: ids });
-      return { ...r, ...dashboardLinks("Open chores", `/g/${ctx.groupId}/chores`) };
+      return chores.addChore(ctx, { name, everyDays, rotation: ids });
     },
   }),
   chore_remove: createTool({

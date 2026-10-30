@@ -2,7 +2,7 @@ import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { report, upkeep } from "@/services";
 import type { MaintenanceItem } from "@/services/upkeep";
-import { ctxOf, dashboardLinks } from "../util";
+import { ctxOf } from "../util";
 
 const brief = (m: MaintenanceItem) => ({
   item: m.item,
@@ -24,7 +24,7 @@ export const upkeepTools = {
     }),
     execute: async ({ item, everyDays, usual }, context) => {
       const ctx = ctxOf(context);
-      if (usual) return { added: await upkeep.addDefaults(ctx), ...dashboardLinks("Open upkeep", `/g/${ctx.groupId}/chores?tab=upkeep`) };
+      if (usual) return { added: await upkeep.addDefaults(ctx) };
       if (!item) throw new Error("Which item, and how often?");
       return upkeep.addMaintenance(ctx, { item, everyDays: everyDays ?? 0 });
     },

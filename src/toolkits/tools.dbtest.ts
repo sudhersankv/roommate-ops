@@ -417,7 +417,7 @@ describe("Roomie tools against the dev DB", () => {
     assert.deepEqual(d.rotation, ["Sudhersan", "Ryan", "Alex"], "no Rotation = everyone");
     const t = await run("chore_add", { name: "Take out trash", everyDays: 3, rotation: ["Ryan", "Alex", "me"] });
     assert.deepEqual(t.rotation, ["Ryan", "Alex", "Sudhersan"]);
-    if (t.links) assert.match(t.links[0].url, new RegExp(`/g/${groupId}/chores$`), "the button opens this Group's Chores page");
+    assert.equal(t.links, undefined, "no link on a routine add");
     const again = await run("chore_add", { name: "take out trash", everyDays: 2 });
     assert.equal(again.created, false);
     assert.deepEqual(again.rotation, ["Ryan", "Alex", "Sudhersan"]);
@@ -1079,7 +1079,7 @@ describe("Roomie tools against the dev DB", () => {
     assert.ok(!list.known.concat(list.couldLearn).some((t: { name: string }) => t.name === "Core"), "core isn't a Trick");
     assert.match(list.say, /^Tricks I know here: .*Splitting.*\. Could learn: .*Groceries.*\. Coming soon: /);
     assert.ok(!/toolkit|feature|enable/i.test(list.say + list.whoCanTeach), "Tricks vocabulary only");
-    if (list.links) assert.match(list.links[0].url, /\/tricks$/);
+    assert.equal(list.links, undefined, "no Browse Tricks link: links only when asked");
 
     const learned = await run("toggle_toolkit", { toolkit: "groceries", enabled: true });
     assert.match(learned.say, /^Learned Groceries\. Try: "roomie, /);
