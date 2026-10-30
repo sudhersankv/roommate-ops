@@ -58,10 +58,10 @@ export const COMING_SOON = [
   defineManifest({
     ...soon,
     id: "household-admin",
-    name: "Lease stuff",
+    name: "Household admin",
     description: "Leases, utilities and renewals: whose name is on what, and when it's due.",
-    summary: "Its own inbox for the leasing office: what matters, reminders, replies.",
-    longDescription: "Point your leasing office at Roomie's address. It tells the group what actually matters, sets reminders for notices, and emails them for you (it asks first).",
+    summary: "Leases, utilities and renewals: whose name is on what, and when.",
+    longDescription: "Roomie keeps the boring paperwork straight: who holds the internet account, when the lease renews, which bills are on autopay. It nudges the right person before anything lapses.",
     icon: "ClipboardList",
     category: "home",
     tags: ["lease", "utilities", "renewals", "accounts"],

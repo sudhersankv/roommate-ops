@@ -39,18 +39,7 @@ export const GROUP_KINDS: GroupKind[] = [
 export const taughtBy = (id: string): string[] => GROUP_KINDS.filter((g) => (g.tricks as string[]).includes(id)).map((g) => g.plural)
 
 export const builtTricks = (): readonly ToolkitManifest[] => MANIFESTS
-
-/** The coming-soon Trick the landing page leads with (first card, accent ring, the block on top of the stack). */
-export const NEXT_TRICK = "household-admin"
-
-/** Coming soon, NEXT_TRICK first, the rest in catalog order. */
-export const comingSoonTricks = (): ToolkitManifest[] => {
-  const soon = CATALOG.filter((m) => m.status === "coming-soon")
-  return [...soon.filter((m) => m.id === NEXT_TRICK), ...soon.filter((m) => m.id !== NEXT_TRICK)]
-}
-
-/** The dashboard page a Trick brings (its nav label), if it has one. */
-export const pageOf = (m: Pick<ToolkitManifest, "dashboard">): string | undefined => m.dashboard?.nav?.label
+export const comingSoonTricks = (): ToolkitManifest[] => CATALOG.filter((m) => m.status === "coming-soon")
 export const trickName = (id: string) => CATALOG.find((m) => m.id === id)?.name ?? id
 
 /** What to say to teach it: "roomie, learn trips". */

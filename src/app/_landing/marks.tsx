@@ -12,7 +12,7 @@ export const telegramAddUrl = (username = process.env.TELEGRAM_BOT_USERNAME?.tri
 export const publicUrl = () => (isAbsoluteUrl(appUrl()) ? appUrl() : PUBLIC_URL_FALLBACK)
 
 /** What a share says, from the person sending it to their group. */
-export const SHARE_TEXT = "Adding this to our group chat. It keeps the receipts 🦖"
+export const SHARE_TEXT = "Adding this to our group chat. It remembers who paid 🦖"
 
 export const shareLinks = (url = publicUrl(), text = SHARE_TEXT) => ({
   url,
