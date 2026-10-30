@@ -21,10 +21,10 @@ Roomie is a groupmate, not a platform: brief, witty, exact about facts, and it s
 | Integrations | Instacart and Splitwise through **Composio**, wrapped in Roomie's own tools ([ADR 0004](./adr/0004-composio-for-instacart-and-splitwise.md)). |
 | Money | Integer cents, computed in code ([ADR 0007](./adr/0007-money-is-integer-cents-computed-in-code.md)). One currency per Group. |
 | Personality | Each Group's Roomie is its pet: an archetype (chill by default, hype, deadpan, mom, gremlin, butler), a name, quirks and sliders the Admin sets, plus a Learned style counted from the messages. It borrows slang gradually and never more than the group ([ADR 0012](./adr/0012-personality-archetype-sliders-learned-style.md), [docs/personality.md](./personality.md)). Jokes are a trait, not a Toolkit. |
-| Privacy | Raw chat is kept for 30 days. "roomie forget me" and an Admin "delete group data" are available ([ADR 0006](./adr/0006-chat-retention.md)). |
+| Privacy | Raw chat, Roomie's memory-thread messages, traces and live scores are kept for 30 days; a message the Gate stayed quiet on keeps no text in traces. "roomie forget me" (which also makes the Member a removed "Former member") and an Admin "delete group data" are available ([ADR 0006](./adr/0006-chat-retention.md)). `/privacy` says what is sent where and kept how long, and must change with the code (audit B4, H5). |
 | Dashboard | Next.js 16, mobile-first, **Tailwind + shadcn/ui**. One dashboard per Group, with a group switcher. An app-style dock (Home, up to 3 learned Tricks, Ask Roomie, More); More opens a drawer with every Trick (greyed slots for not learned yet and Soon), Members and Settings. |
 | Vocabulary (in-app) | People see **Tricks**: Roomie joins any group (roommates, a trip, friends, family, work, a club) and is **taught** Tricks ("roomie, learn trips") or made to **forget** them. "Toolkit" stays a code word only; "pet" and the slow adaptation stay implicit (GLOSSARY, docs/toolkits.md, docs/personality.md). |
-| Data | Fresh schema, using Drizzle **migrations** (`drizzle-kit generate` + `migrate`) instead of `push`. The new Neon database starts empty. |
+| Data | Fresh schema, using Drizzle **migrations** (`drizzle-kit generate` + `migrate`) instead of `push`. The new Neon database starts empty. Neon project `roomie` has two branches: `production` (Fly only; its URL lives only in `fly secrets`; 7 days of point-in-time restore) and `dev` (every laptop `.env`: seed, dev-chat, evals, test:tools, `npm run dev`; branched from prod on 2026-10-30 and scrubbed with `scripts/scrub-dev.ts`). The scripts refuse the production branch (`scripts/lib/prod-guard.ts`) (audit B1). |
 | Hosting | One always-on Fly machine (`fly.toml`, `Dockerfile`): Next serves the dashboard, API and Telegram webhook, runs the scheduler and, with `WHATSAPP_ENABLED=1`, holds the WhatsApp socket. Locally: `npm run dev`, `npm run telegram` (long polling), `npm run whatsapp`. CI runs typecheck and tests. |
 
 ## How a message flows
@@ -163,9 +163,16 @@ Each step gets its own branch and PR, and you test locally before it's merged. S
 
 ### Natural Groceries, dashboard awareness, short replies (`feat/groceries-natural`)
 - [x] Groceries without prices (track -> Instacart list -> receipt -> who had what -> confirm -> split; `lib/prices.ts` gone, "I paid" splits one share per item), quantities as said with one question when ambiguous, `cart_from_photo` for recipe / list photos ([docs/toolkits.md](./toolkits.md#groceries)).
-- [x] Activity has a source (chat | dashboard, migration 0011); every Cart / Recipe / Pantry / chore change is recorded, and Roomie reads what changed since it last spoke ([docs/personality.md](./personality.md#since-you-last-spoke)).
+- [x] Activity has a source (chat | dashboard, migration 0010); every Cart / Recipe / Pantry / chore change is recorded, and Roomie reads what changed since it last spoke ([docs/personality.md](./personality.md#since-you-last-spoke)).
 - [x] House style: answer first, one or two lines, links only when asked; the style job asks for JSON in plain text (the gateway rejects structured output).
 - **Done when:** the new Groceries scenarios pass in evals on a dev branch and a real "removed it on the dashboard, then asked" reads as one line.
+
+### Audit fixes: abuse limits (`fix/audit-abuse`, [audit](./audit-public-beta.md) B3, H1, H2, H3, H4, H6)
+- [x] Caps on agent runs (60/day per Member, 30 per 10 min and 200/day per Group), Jev (2,000/day per Group), new Groups (3/day per adder) and input (2,000 characters), counted in `rate_counters` (migration 0009); the breather line once a day; 429 on the dashboard's Ask.
+- [x] `ROOMIE_PAUSED=1` and per-Group pause (`groups.paused_at`) with `/admin/groups` (pause, resume, leave chat).
+- [x] Photos and voice notes only when Roomie is addressed (or in the follow-up window / setup); a voice note is no hard trigger.
+- [x] `wa_contacts` only for Members (+ `scripts/wa-contacts-prune.ts`), the WhatsApp adder allowlist, admin-only tools that need the Admin's own ask (manifest `adminOnly`).
+- **Done when:** the DB-backed checks (`npx tsx --test src/abuse.dbtest.ts`) pass on the dev branch, the prune has run on prod, and a paused test Group stays quiet on Fly.
 
 ## Parked (v2 / v3)
 
@@ -178,14 +185,16 @@ Each step gets its own branch and PR, and you test locally before it's merged. S
 
 - [ ] Create the Telegram bot with BotFather (privacy off, join groups on) and put `TELEGRAM_BOT_TOKEN` + `TELEGRAM_BOT_USERNAME` in `.env` ([docs/telegram.md](./telegram.md)).
 - [ ] Roomie's WhatsApp number: a real prepaid eSIM or SIM you **keep** (for example Tello, about $5/month). Not Google Voice and not a rented SMS-verification number. Use the WhatsApp Business app, turn on two-step verification, warm it up for a few days, and open it at least weekly. Then link it on Fly ([docs/whatsapp.md](./whatsapp.md)): `fly secrets set WHATSAPP_ENABLED=1 ROOMIE_OPERATOR_EMAILS=<you>`, deploy, scan the QR at `/admin/whatsapp`.
+- [ ] After `fix/audit-abuse` deploys: `npx tsx scripts/wa-contacts-prune.ts --yes` against prod (audit H3), set `WHATSAPP_ALLOWED_ADDERS` (or mark testers Onboarded on `/admin/beta`), and on Roomie's phone WhatsApp → Privacy → Groups → "My contacts".
 - [ ] Mastra platform: `MASTRA_PLATFORM_ACCESS_TOKEN` and `MASTRA_PROJECT_ID` in `.env`.
 - [ ] Composio: a valid `COMPOSIO_API_KEY` in `.env` (the current one is rejected with 401). Then connect Splitwise once from Settings and put the logged `COMPOSIO_SPLITWISE_AUTH_CONFIG_ID` in `.env`, and press "Get Instacart link" on the Cart page once to confirm Instacart works with no Instacart key.
+- [ ] `@neondatabase/auth` 0.7.0-beta (the newest) pins `better-auth` 1.7.6, inside GHSA-r4xp-prcw-77qf (OAuth Proxy sign-in as another user, critical) and a drizzle-adapter rate-limit advisory; fixed in 1.7.14. Roomie doesn't run the OAuth Proxy plugin itself (sign-in is Neon's hosted Better Auth behind `auth.handler()`), so the exposure is Neon's side. Upgrade as soon as Neon ships a release on a fixed better-auth (`npm view @neondatabase/auth versions`); its nested zod is already forced to the patched 4.6.7 by `overrides` in package.json (audit H7).
 - [ ] Google Cloud OAuth client for Neon Auth, before anyone outside the dev team signs in (dev uses Neon's shared Google keys; the consent screen shows Neon). Add it under the branch's Auth -> OAuth providers. At the same time, turn off email+password sign-up on that branch (Neon enables it by default; Roomie only uses Google).
 
 ## Environment
 
 ```
-DATABASE_URL                     Neon Postgres (app + Mastra memory)
+DATABASE_URL                     Neon Postgres (app + Mastra memory): the `dev` branch locally, `production` only in fly secrets
 NEON_AI_GATEWAY_BASE_URL/TOKEN   models
 LLM_MODEL=claude-sonnet-5-5      agent
 SMALL_MODEL=claude-haiku-5-5     background jobs
@@ -198,8 +207,11 @@ NEON_AUTH_BASE_URL               Neon Auth URL (branch -> Auth)
 NEON_AUTH_COOKIE_SECRET          32+ chars, ours
 DEV_AUTH_EMAIL                   dev-only sign-in bypass for browser automation
 APP_URL=http://localhost:3000    links Roomie sends
+ALLOW_PROD_BOT=1                 lets npm run telegram / telegram:webhook poll or move @imroomiebot (prod); off by default
 TELEGRAM_BOT_TOKEN, TELEGRAM_BOT_USERNAME, TELEGRAM_WEBHOOK_SECRET   Telegram (docs/telegram.md)
 WHATSAPP_ENABLED=1               this process holds the WhatsApp socket (docs/whatsapp.md); WA_LOG = Baileys' log level
 ROOMIE_OPERATOR_EMAILS           who may open /admin/whatsapp (comma-separated)
+WHATSAPP_ALLOWED_ADDERS          who may add Roomie to a WhatsApp group (digits, comma-separated; unset + no onboarded beta request = anyone)
+ROOMIE_PAUSED=1                  the kill switch: Roomie answers, posts and joins nothing
 JOIN_DELAY_MS, REPLY_DELAY_MS    pacing: intro delay after joining, pause before replies
 ```

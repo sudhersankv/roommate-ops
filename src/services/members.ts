@@ -1,7 +1,8 @@
 // Members: who is in a Group, approvals (Pending -> active), roles, payment handles and "forget me".
-import { and, asc, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, ne, or, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import type { ChannelName, MemberNote, PaymentApp } from "@/db/schema";
+import { anonymize } from "@/lib/forget-text";
 import { record } from "./activity";
 import { NotAllowedError, requireAdmin } from "./authz";
 import type { Ctx, GroupCtx } from "./types";
@@ -255,23 +256,110 @@ export async function peopleFacts(ctx: GroupCtx): Promise<string[]> {
 
 /* ---------- forget me (ADR 0006) ---------- */
 
+/** Names that aren't one person's (a WhatsApp Member with a hidden number is "Someone" until we hear their name). */
+const SHARED_NAMES = new Set(["someone", FORMER_MEMBER.toLowerCase()]);
+
+/** Every name a Member is known by: their name now, the number they were called before their name arrived, and the
+ * names WhatsApp gave us for their ids. */
+async function namesOf(me: Member): Promise<string[]> {
+  const names = [me.displayName];
+  const id = me.channelUserId;
+  if (id?.endsWith("@s.whatsapp.net")) names.push(`+${id.split("@")[0].split(":")[0]}`);
+  if (id?.includes("@")) {
+    const rows = await db.select({ name: schema.waContacts.name }).from(schema.waContacts).where(or(eq(schema.waContacts.lid, id), eq(schema.waContacts.pn, id)));
+    for (const r of rows) if (r.name) names.push(r.name);
+  }
+  return [...new Set(names.map((n) => n.trim()).filter((n) => n && !SHARED_NAMES.has(n.toLowerCase())))];
+}
+
 /**
- * "roomie forget me": deletes the Member's raw chat lines, their Member note (table + working memory) and their
- * messages in Roomie's memory thread. Ledger rows (Expenses, Shares, Settlements, chores) stay so the Group's
- * Balances still add up; a removed Member's name becomes "Former member".
+ * "roomie forget me" (ADR 0006, audit H5): deletes the Member's raw chat lines, Member note (table + working memory),
+ * Claim links, their lines in Roomie's memory thread under any name they went by (and Roomie's replies naming them),
+ * the photos those lines pointed at (unless an Expense keeps one as its receipt), the traces and scores of their
+ * messages, and the WhatsApp contact row behind their id. Their names in Activity become "Former member". Then they
+ * are removed: "Former member", no Channel id (a later message makes them a new Pending member) and no Account.
+ * Ledger rows (Expenses, Shares, Settlements, chores) stay so the Group's Balances still add up. Safe to run twice.
  */
 export async function forgetMe(ctx: Ctx): Promise<{ chatLines: number; memoryMessages: number }> {
   const me = await getMember(ctx, ctx.memberId);
   if (!me) throw new NotAllowedError("You're not a member of this group.", "not-member");
-  const gone = await db.delete(chatMessages).where(and(eq(chatMessages.groupId, ctx.groupId), eq(chatMessages.memberId, me.id))).returning({ id: chatMessages.id });
+  const names = await namesOf(me);
+  const others = (await listGroupMembers(ctx)).filter((m) => m.id !== me.id).map((m) => m.displayName);
+  const gone = await db
+    .delete(chatMessages)
+    .where(and(eq(chatMessages.groupId, ctx.groupId), eq(chatMessages.memberId, me.id)))
+    .returning({ id: chatMessages.id, text: chatMessages.text });
   await db.delete(memberNotes).where(eq(memberNotes.memberId, me.id));
   await db.delete(claimTokens).where(eq(claimTokens.memberId, me.id));
-  const { forgetMemberInMemory } = await import("@/mastra/forget");
-  const memoryMessages = await forgetMemberInMemory(ctx.groupId, me.displayName).catch((e) => {
-    console.warn("[forget-me] memory cleanup failed", e);
-    return 0;
-  });
-  if (me.status === "removed") await db.update(members).set({ displayName: FORMER_MEMBER, channelUserId: null }).where(eq(members.id, me.id));
-  await record(ctx.groupId, null, "member.forgotten", `forgot ${me.status === "removed" ? FORMER_MEMBER : me.displayName}'s chat history`, { table: "members", id: me.id });
+
+  const forget = await import("@/mastra/forget");
+  const { deleted: memoryMessages, photos } = await forget
+    .forgetMemberInMemory(ctx.groupId, { names, texts: gone.map((g) => g.text), others })
+    .catch((e) => {
+      console.warn("[forget-me] memory cleanup failed", e);
+      return { deleted: 0, photos: [] as string[] };
+    });
+  await forget.anonymizeInWorkingMemory(ctx.groupId, names, FORMER_MEMBER, others).catch((e) => console.warn("[forget-me] working memory cleanup failed", e));
+  // Only names no one else in the Group has: a shared name can't tell whose line it is.
+  const taken = new Set(others.map((o) => o.toLowerCase()));
+  const own = names.filter((n) => !taken.has(n.toLowerCase()));
+  const traces = () => forget.forgetMemberTraces(me.id, { groupId: ctx.groupId, names: own }).catch((e) => console.warn("[forget-me] trace cleanup failed", e));
+  await traces();
+  await removePhotos(ctx.groupId, photos);
+  // Reminders addressed to them privately (nobody to send them to now).
+  await db.delete(schema.reminders).where(and(eq(schema.reminders.groupId, ctx.groupId), eq(schema.reminders.memberId, me.id)));
+
+  // Activity summaries ("Maya added Costco $40") keep what happened, not who.
+  if (names.length) {
+    const rows = await db.select({ id: schema.activity.id, summary: schema.activity.summary }).from(schema.activity).where(eq(schema.activity.groupId, ctx.groupId));
+    for (const r of rows) {
+      const next = anonymize(r.summary, names, FORMER_MEMBER, others);
+      if (next !== r.summary) await db.update(schema.activity).set({ summary: next }).where(eq(schema.activity.id, r.id));
+    }
+  }
+  const channelId = me.channelUserId;
+  await db.update(members).set({ displayName: FORMER_MEMBER, channelUserId: null, accountId: null, status: "removed", role: "member" }).where(eq(members.id, me.id));
+  // The last Admin leaving hands the Group to whoever has been in it longest, so someone can still approve people.
+  if (me.role === "admin" && !(await admins(ctx)).length) {
+    const [next] = await listMembers(ctx);
+    if (next) {
+      await db.update(members).set({ role: "admin" }).where(eq(members.id, next.id));
+      await record(ctx.groupId, null, "member.promoted", `made ${next.displayName} an admin (the last admin left)`, { table: "members", id: next.id });
+    }
+  }
+  // The LID -> phone pair behind their WhatsApp id, unless someone with that id is still a Member somewhere.
+  if (channelId?.includes("@")) {
+    await db.execute(sql`
+      delete from ${schema.waContacts} w
+      where (w.lid = ${channelId} or w.pn = ${channelId})
+        and not exists (select 1 from ${members} m where m.status <> 'removed' and m.channel_user_id in (w.lid, w.pn))`);
+  }
+  await record(ctx.groupId, null, "member.forgotten", `forgot a member who asked (now ${FORMER_MEMBER})`, { table: "members", id: me.id });
+  // "forget me" runs as a tool inside the agent's turn: after it, Mastra still saves "[Name] roomie forget me" and the
+  // reply to memory and ends that turn's spans. Sweep once more when the turn is over (the daily retention job catches
+  // any trace left by a restart: forgetRemovedMembersTraces).
+  setTimeout(() => {
+    void forget
+      .forgetMemberInMemory(ctx.groupId, { names, others })
+      .then(traces)
+      .catch((e) => console.warn("[forget-me] follow-up cleanup failed", e));
+  }, FORGET_SWEEP_MS).unref?.();
   return { chatLines: gone.length, memoryMessages };
+}
+
+/** How long after "forget me" the follow-up sweep runs (the agent's turn is over by then). */
+const FORGET_SWEEP_MS = 90_000;
+
+const uploadPath = (url: string) => /\/uploads\/.+$/.exec(url)?.[0] ?? url;
+
+/** Deletes photo files from forgotten lines; one an Expense keeps as its receipt stays with the Expense. */
+async function removePhotos(groupId: string, urls: string[]) {
+  if (!urls.length) return;
+  const receipts = await db
+    .select({ url: schema.expenses.receiptUrl })
+    .from(schema.expenses)
+    .where(and(eq(schema.expenses.groupId, groupId), sql`${schema.expenses.receiptUrl} is not null`));
+  const kept = new Set(receipts.map((r) => uploadPath(r.url!)));
+  const { removeUpload } = await import("./receipts");
+  for (const url of urls) if (!kept.has(uploadPath(url))) await removeUpload(url).catch((e) => console.warn("[forget-me] couldn't delete a photo", e));
 }

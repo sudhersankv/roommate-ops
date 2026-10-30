@@ -1,0 +1,33 @@
+# Qodo Merge (PR-Agent) settings for this repo. Reviews run on PR open; `/review`, `/improve`, `/describe` in a PR
+# comment re-run them. Docs: https://qodo-merge-docs.qodo.ai/
+[pr_reviewer]
+require_security_review = true
+require_tests_review = true
+require_can_be_split_review = false
+num_max_findings = 8
+extra_instructions = """
+Project rules (CLAUDE.md, GLOSSARY.md, docs/adr/*):
+- Money is integer cents computed in code (ADR 0007); flag any float money math or model-produced amounts.
+- Authorization: every service call takes a Ctx whose Member is loaded from the session and scoped to one Group; flag queries missing a groupId predicate and admin actions enforced only in UI or in prompt text.
+- Claim links are private DMs only, single-use (ADR 0001/0003); flag anything that posts a Claim link into a group chat.
+- The agent never imports a messaging SDK; channel adapters normalize in/out (src/channels). Flag SDK imports elsewhere.
+- Toolkit manifests are the contract (ADR 0011): shell, gate criteria and persona render from manifests. User-facing text says "Trick", never toolkit/capability/module/plugin/feature.
+- Nothing may construct a DB client at import time (unit tests run without .env). Flag top-level db usage in modules imported by tests.
+- Migrations are additive (IF NOT EXISTS); journal order must be monotonic.
+- No secrets, phone numbers, real emails or bot tokens in code, fixtures, docs or screenshots.
+- Replies are short (1-2 lines unless a list was asked for); task lines keep names capitalized; the vibe shows in banter.
+Prefer concrete, file:line findings over general advice. Skip style nits that a formatter would catch.
+"""
+
+[pr_code_suggestions]
+num_code_suggestions_per_chunk = 4
+focus_only_on_problems = true
+extra_instructions = """
+Only suggest changes that fix a bug, a security/privacy issue, a cross-group data leak, a money rounding error, or a
+test gap. Don't suggest renames or reformatting.
+"""
+
+[pr_description]
+publish_labels = false
+add_original_user_description = true
+generate_ai_title = false

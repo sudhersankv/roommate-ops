@@ -5,6 +5,7 @@ import "../src/lib/env";
 import { Api } from "grammy";
 import { TOKEN_MISSING, telegramToken } from "../src/channels/telegram-boot";
 import { TELEGRAM_UPDATES } from "../src/channels/telegram";
+import { isProdAppUrl, isProdBot, PROD_APP_URL, PROD_BOT_USERNAME, prodBotAllowed, refuseProdBot } from "./lib/prod-guard";
 
 const token = telegramToken();
 if (!token) {
@@ -20,9 +21,11 @@ try {
     const secret = process.env.TELEGRAM_WEBHOOK_SECRET?.trim();
     if (!base?.startsWith("https://")) throw new Error("APP_URL must be a public https URL for a webhook (local dev: npm run telegram).");
     if (!secret || !/^[A-Za-z0-9_-]{1,256}$/.test(secret)) throw new Error("TELEGRAM_WEBHOOK_SECRET must be set: 1-256 characters of A-Z, a-z, 0-9, _ and -.");
+    if (!isProdAppUrl(base) && !prodBotAllowed() && (await isProdBot(api))) refuseProdBot(`--set would point @${PROD_BOT_USERNAME}, the production bot, at ${base} instead of ${PROD_APP_URL}.`);
     await api.setWebhook(`${base}/api/telegram`, { secret_token: secret, allowed_updates: [...TELEGRAM_UPDATES], drop_pending_updates: false });
     console.log(`Webhook set to ${base}/api/telegram`);
   } else if (mode === "--delete") {
+    if (!prodBotAllowed() && (await isProdBot(api))) refuseProdBot(`TELEGRAM_BOT_TOKEN is @${PROD_BOT_USERNAME}, the production bot; without its webhook real groups get no replies.`);
     await api.deleteWebhook();
     console.log("Webhook deleted (npm run telegram can poll now).");
   }

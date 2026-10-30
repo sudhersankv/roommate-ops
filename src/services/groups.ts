@@ -1,6 +1,6 @@
 // Groups: settings, Toolkits, the Account's group list, and "delete group data".
 // defaultToolkitsFor / validateSettings are pure (groups.test.ts).
-import { and, asc, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, lt, ne, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { GROUP_PURPOSES, type ChannelName, type GroupPurpose } from "@/db/schema";
 import { resolveTimeZone } from "@/lib/time";
@@ -205,20 +205,32 @@ const DATA_TABLES = [schema.outboxJobs, schema.splitwiseLinks, schema.cartChecko
 
 /**
  * Admin "delete group data" (ADR 0006): every Expense, Settlement, Cart item, chore, reminder, upkeep item, chat
- * line, Activity row, Member note, Splitwise link and Roomie's memory for the Group. The Group, its Chat, Members and settings
- * stay, so Roomie keeps working from the next message.
+ * line, Activity row, Member note, Splitwise link, uploaded photo, trace and score, and Roomie's memory for the Group.
+ * The Group, its Chat, Members and settings stay, so Roomie keeps working from the next message.
  */
 export async function deleteGroupData(ctx: Ctx): Promise<void> {
   await requireAdmin(ctx);
-  await wipeGroupRows(ctx.groupId);
-  const { forgetGroupInMemory } = await import("@/mastra/forget");
-  await forgetGroupInMemory(ctx.groupId);
+  await wipeGroupData(ctx.groupId);
   await record(ctx.groupId, ctx.memberId, "group.data_deleted", "deleted the group's data");
+}
+
+/** Rows, then what lives outside the app's tables: memory, traces and scores, uploaded photos. */
+async function wipeGroupData(groupId: string) {
+  const chat = await chatOfGroup(groupId);
+  await wipeGroupRows(groupId);
+  const { forgetGroupInMemory, forgetGroupTraces } = await import("@/mastra/forget");
+  await forgetGroupInMemory(groupId);
+  await forgetGroupTraces(groupId);
+  const { removeUploadFolder, uploadFoldersFor } = await import("./receipts");
+  for (const folder of uploadFoldersFor(groupId, chat)) await removeUploadFolder(folder);
 }
 
 async function wipeGroupRows(groupId: string) {
   await db.transaction(async (tx) => {
     for (const t of DATA_TABLES) await tx.delete(t).where(eq(t.groupId, groupId)); // splits and chore logs cascade
+    // Claims on the scheduler's own posts hold nothing personal; the current week's stay so a nudge or report isn't
+    // posted twice in its period.
+    await tx.delete(schema.scheduledPosts).where(and(eq(schema.scheduledPosts.groupId, groupId), lt(schema.scheduledPosts.createdAt, new Date(Date.now() - 8 * 24 * 60 * 60 * 1000))));
     const ids = tx.select({ id: members.id }).from(members).where(eq(members.groupId, groupId));
     await tx.delete(schema.memberNotes).where(inArray(schema.memberNotes.memberId, ids));
     await tx.delete(schema.claimTokens).where(inArray(schema.claimTokens.memberId, ids));
@@ -227,10 +239,8 @@ async function wipeGroupRows(groupId: string) {
   });
 }
 
-/** Internal (tests, evals, dev-chat): remove a Group and everything it owns, memory included. */
+/** Internal (tests, evals, dev-chat, scripts/scrub-dev.ts): remove a Group and everything it owns, memory included. */
 export async function deleteGroup(groupId: string): Promise<void> {
-  await wipeGroupRows(groupId);
-  await db.delete(groups).where(eq(groups.id, groupId)); // chats, members, toolkits cascade
-  const { forgetGroupInMemory } = await import("@/mastra/forget");
-  await forgetGroupInMemory(groupId);
+  await wipeGroupData(groupId);
+  await db.delete(groups).where(eq(groups.id, groupId)); // chats, members, toolkits, scheduled posts cascade
 }

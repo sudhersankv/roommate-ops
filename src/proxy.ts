@@ -29,21 +29,29 @@ export default async function proxy(request: NextRequest) {
     res.headers.set("x-roomie-proxy", "oauth-return")
     return res
   }
-  if (pathname === "/" || pathname === SIGNIN_PATH || pathname.startsWith("/claim/") || /^\/admin(\/|$)/.test(pathname)) {
+  if (pathname === SIGNIN_PATH || pathname.startsWith("/claim/") || /^\/admin(\/|$)/.test(pathname)) {
     const pass = NextResponse.next()
     pass.headers.set("x-roomie-proxy", "pass")
     return pass
   }
+  // The SDK refreshes or clears session cookies here, where cookie writes are allowed (a page render can't; see
+  // lib/session.ts). It also redirects signed-out visitors to the bare loginUrl.
   const res = await neonAuth(request)
-  // The SDK sends you to the bare loginUrl; remember where you were going so /signin can take you back.
   const location = res.headers.get("location")
-  if (location && new URL(location, request.url).pathname === SIGNIN_PATH) {
-    res.headers.set("location", new URL(signInPath(`${pathname}${search}`), request.url).toString())
+  const toLogin = !!location && new URL(location, request.url).pathname === SIGNIN_PATH
+  if (toLogin && pathname === "/") {
+    // The landing page is for everyone: keep the SDK's cookie changes, drop its redirect.
+    const pass = NextResponse.next()
+    res.headers.getSetCookie().forEach((c) => pass.headers.append("set-cookie", c))
+    pass.headers.set("x-roomie-proxy", "pass")
+    return pass
   }
+  // Remember where you were going so /signin can take you back.
+  if (toLogin) res.headers.set("location", new URL(signInPath(`${pathname}${search}`), request.url).toString())
   res.headers.set("x-roomie-proxy", "guard")
   return res
 }
 
 export const config = {
-  matcher: ["/", "/signin", "/g/:path*", "/admin/:path*", "/claim/:path*"],
+  matcher: ["/", "/app", "/signin", "/g/:path*", "/admin/:path*", "/claim/:path*"],
 }

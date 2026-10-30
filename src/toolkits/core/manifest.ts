@@ -17,4 +17,33 @@ export const core = defineManifest({
       "Reminders at a time or date, and the group itself: members and approvals, settings (including Roomie's name, vibe and quirks), what Roomie can do and which Tricks it knows, teaching Roomie a Trick or making it learn or forget one ('roomie learn trips', 'roomie forget groceries', 'turn on chores'), lasting facts about a member ('remember I'm vegetarian', 'what do you know about me'), the dashboard link, the weekly report.",
     examples: ["remind everyone trash goes out tuesday 8pm", "what can you do?", "learn chores", "approve Priya", "send me the dashboard"],
   },
+  adminOnly: {
+    approve_member: { action: String.raw`\b(?:approve|accept|admit)|\blet\b.*\bin\b`, target: "name", ask: `Approve {target}? Say "roomie, yes approve {target}".` },
+    decline_member: { action: String.raw`\b(?:decline|reject|deny|refuse|not approve|don'?t approve)`, target: "name", ask: `Decline {target}? Say "roomie, yes decline {target}".` },
+    promote_member: { action: String.raw`\b(?:promote|admin)`, target: "name", ask: `Make {target} an admin? Say "roomie, yes promote {target}".` },
+    toggle_toolkit: {
+      action: String.raw`\b(?:learn|forget|teach|unlearn|enable|disable|stop|start)|\b(?:turn|switch)\b.*\b(?:on|off)\b`,
+      target: "toolkit",
+      ask: `Learn or forget {target}? Say "roomie, yes learn {target}" or "roomie, yes forget {target}".`,
+    },
+    // Every field the call changes needs its own words: "roommates, USD, Chicago" sets purpose, currency and time zone,
+    // never Tricks or the personality.
+    set_group_settings: {
+      action: String.raw`\bsettings?\b`,
+      fields: {
+        name: { words: String.raw`\b(?:rename\w*|group'?s? name|name (?:the|this|our) (?:group|chat)|call (?:the|this|our) (?:group|chat))\b`, byValue: true },
+        purpose: { words: String.raw`\b(?:purpose|roommates?|flatmates?|housemates?|family|friends|trip|work(?:mates)?|colleagues|team)\b`, byValue: true },
+        currency: { words: String.raw`\b(?:currency|usd|eur|gbp|inr|cad|aud|dollars?|euros?|pounds?|rupees?)\b`, byValue: true },
+        timezone: { words: String.raw`\b(?:time\s?zones?|city|tz|we(?:'re| are) in|live in|based in)\b`, byValue: true },
+        chattiness: { words: String.raw`\b(?:chatt\w*|quiet\w*|talk (?:less|more)|speak up|pipe down|shush|normal)\b`, byValue: true },
+        simplifyDebts: { words: String.raw`\b(?:simplif\w*|fewest|pairwise|pair by pair)\b` },
+        toolkits: { words: String.raw`\b(?:tricks?|learn|forget|teach|unlearn)\b` },
+        choresNudgeHour: { words: String.raw`\b(?:nudge\w*|chores? (?:reminder|ping)s?)\b` },
+        reportDay: { words: String.raw`\breports?\b` },
+        reportHour: { words: String.raw`\breports?\b` },
+        personality: { words: String.raw`\b(?:vibe|personality|quirks?|call (?:you|yourself)|your name|name you|hype|chill|deadpan|mom|gremlin|butler)\b` },
+      },
+      ask: `Change the group's settings ({target})? Say "roomie, yes change the settings".`,
+    },
+  },
 });

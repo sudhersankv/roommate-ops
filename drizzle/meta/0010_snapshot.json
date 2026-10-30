@@ -1,6 +1,6 @@
 {
-  "id": "6df4260a-5b01-4865-be0a-7d18ba28a6c8",
-  "prevId": "9bbad1c0-4e4a-47b3-a75f-6f86b7e28961",
+  "id": "aeeaf62e-7c89-4909-979f-773bc33f1521",
+  "prevId": "41877908-9f0c-47fa-847b-3230558ef3ef",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -1520,6 +1520,12 @@
           "notNull": true,
           "default": "'{}'::jsonb"
         },
+        "paused_at": {
+          "name": "paused_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -1949,6 +1955,46 @@
             "group_id",
             "kind",
             "key"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.rate_counters": {
+      "name": "rate_counters",
+      "schema": "",
+      "columns": {
+        "key": {
+          "name": "key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "window_start": {
+          "name": "window_start",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "count": {
+          "name": "count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "rate_counters_key_window_start_pk": {
+          "name": "rate_counters_key_window_start_pk",
+          "columns": [
+            "key",
+            "window_start"
           ]
         }
       },

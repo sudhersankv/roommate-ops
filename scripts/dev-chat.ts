@@ -25,6 +25,7 @@ import { respondToIncoming } from "../src/pipeline";
 import { cart, claims, groups, members, money, receipts } from "../src/services";
 import { useFakeSplitwiseIfUnavailable } from "../src/integrations/splitwise";
 import { useFakeInstacartIfUnavailable } from "../src/integrations/instacart";
+import { assertNotProdDb } from "./lib/prod-guard";
 import { readFile } from "node:fs/promises";
 
 const args = process.argv.slice(2);
@@ -166,6 +167,7 @@ async function run(line: string) {
   }
 }
 
+await assertNotProdDb(db, "dev-chat");
 await useFakeSplitwiseIfUnavailable();
 await useFakeInstacartIfUnavailable();
 console.log(`dev-chat on Chat "${chatId}". Commands: join, add, say, photo, approve, link, ledger, cart, who, quit`);

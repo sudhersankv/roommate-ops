@@ -25,6 +25,9 @@ export const chores = defineManifest({
     chore_skip: "Pass your turn to the next person",
     hall_of_shame: "The chart: who's done the fewest this week, kept friendly",
   },
+  adminOnly: {
+    chore_remove: { action: String.raw`remove|delete|drop|take\b.*\boff|get rid|no more|stop`, target: "chore", ask: `Take {target} off the chart (its history goes too)? Say "roomie, yes remove {target}".` },
+  },
   dashboard: {
     nav: { label: "Chores", href: (g) => `/g/${g}/chores`, icon: "ListChecks", order: 30 },
     pages: ["chores"],

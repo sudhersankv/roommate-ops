@@ -17,6 +17,7 @@ import { db, schema } from "../src/db";
 import { respond, type PipelineResult } from "../src/pipeline";
 import { mastra } from "../src/mastra";
 import { deleteGroup } from "../src/services/groups";
+import { assertNotProdDb } from "./lib/prod-guard";
 import { shapeOf } from "../src/mastra/scorers/brevity-tone";
 import { dbMoments } from "../src/services/pet";
 import { localDay } from "../src/lib/dates";
@@ -134,6 +135,7 @@ async function runOne(s: Scenario): Promise<Row> {
 
 const cell = (s: string, n: number) => s.replace(/\|/g, "/").slice(0, n);
 
+await assertNotProdDb(db, "evals");
 const picked = SCENARIOS.filter((s) => !only || only.has(s.id));
 const rows: Row[] = [];
 for (const s of picked) {

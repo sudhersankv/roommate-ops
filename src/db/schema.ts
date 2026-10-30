@@ -33,6 +33,8 @@ export const groups = pgTable("groups", {
   // Roomie's personality (lib/personality.ts, ADR 0012): archetype, name, quirks, dials and the Learned style.
   // {} = the defaults (chill, "Roomie"); read it through normalizePersonality.
   personality: jsonb("personality").$type<Record<string, unknown>>().notNull().default({}),
+  // An operator paused Roomie here (/admin/groups): messages are still logged, Roomie says nothing and posts nothing.
+  pausedAt: timestamp("paused_at", { withTimezone: true }),
   createdAt: createdAt(),
 });
 
@@ -163,7 +165,7 @@ export const activity = pgTable(
     summary: text("summary").notNull(),
     refTable: text("ref_table"),
     refId: text("ref_id"),
-    /** Where it happened: "chat" | "dashboard"; null for Roomie's own work and rows from before migration 0011. */
+    /** Where it happened: "chat" | "dashboard"; null for Roomie's own work and rows from before migration 0010. */
     source: text("source", { enum: ["chat", "dashboard"] }),
     createdAt: createdAt(),
   },
@@ -479,6 +481,20 @@ export const trickVotes = pgTable(
     ipHash: text("ip_hash"),
   },
   (t) => [index("trick_votes_trick_id").on(t.trickId)],
+);
+
+/**
+ * Fixed-window counters behind the agent-run caps (lib/caps.ts): "group:<id>:day" in the window starting at
+ * `window_start` was used `count` times. Old windows are pruned by the scheduler.
+ */
+export const rateCounters = pgTable(
+  "rate_counters",
+  {
+    key: text("key").notNull(),
+    windowStart: timestamp("window_start", { withTimezone: true }).notNull(),
+    count: integer("count").notNull().default(0),
+  },
+  (t) => [primaryKey({ columns: [t.key, t.windowStart] })],
 );
 
 export const maintenance = pgTable("maintenance", {

@@ -15,6 +15,10 @@ export class DevChannel implements Channel {
   async sendPrivate(userExternalId: string, msg: Outgoing) {
     this.onSend({ to: "private", userExternalId, msg });
   }
+
+  async leaveChat(chatExternalId: string) {
+    console.log(`[dev] Roomie left ${chatExternalId}`);
+  }
 }
 
 /** Dev user ids look like a jid so nothing downstream special-cases them. */

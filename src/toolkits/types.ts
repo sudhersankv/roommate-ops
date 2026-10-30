@@ -28,6 +28,22 @@ export type Requirements = {
   integrations?: Integration[];
 };
 
+/** What an Admin's message must say for an admin-only tool to run (toolkits/admin-ask.ts). Plain strings only. */
+export type AdminAsk = {
+  /** Words naming the action, as a case-insensitive regex source ("promote|admin"). */
+  action: string;
+  /** The input field naming who or what it's for ("name", "toolkit"). One of its words must be in the message too. */
+  target?: string;
+  /** For a tool that changes several things (settings): every input field the call sets must be asked for by its own
+   * words; `action` then only counts for a call that changes nothing. */
+  fields?: Record<string, AdminField>;
+  /** The question Roomie asks instead; "{target}" is the target's value (or the fields nobody asked for). */
+  ask: string;
+};
+
+/** How a message asks for one field: its words (a regex source), or with `byValue` the value itself ("Chicago"). */
+export type AdminField = { words: string; byValue?: boolean };
+
 export type NavEntry = { label: string; href: (groupId: string) => string; icon: IconName; order: number };
 
 /** What a Toolkit is. Plain data, safe to import anywhere (services, client code, tests). */
@@ -56,6 +72,12 @@ export type ToolkitManifest<Id extends string = string> = {
   persona?: string;
   /** Plain-words lines for the detail sheet, by tool id. Tools without one show their own description. */
   abilities?: Record<string, string>;
+  /**
+   * Admin-only tools, by tool id (audit H6). The model sees other people's chat and working memory, so a planted
+   * instruction could run one with the next Admin's rights: these only run when the Admin's own current message asks
+   * for it (toolkits/admin-ask.ts); otherwise the tool returns { refused: "confirm", ask } and Roomie asks first.
+   */
+  adminOnly?: Record<string, AdminAsk>;
   dashboard?: {
     nav?: NavEntry;
     /** Route prefixes under /g/<id>/ it owns ("money"); they show the off state while it's off. */
