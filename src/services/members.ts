@@ -299,15 +299,21 @@ export async function forgetMe(ctx: Ctx): Promise<{ chatLines: number; memoryMes
       console.warn("[forget-me] memory cleanup failed", e);
       return { deleted: 0, photos: [] as string[] };
     });
-  await forget.anonymizeInWorkingMemory(ctx.groupId, names, FORMER_MEMBER).catch((e) => console.warn("[forget-me] working memory cleanup failed", e));
-  await forget.forgetMemberTraces(me.id).catch((e) => console.warn("[forget-me] trace cleanup failed", e));
+  await forget.anonymizeInWorkingMemory(ctx.groupId, names, FORMER_MEMBER, others).catch((e) => console.warn("[forget-me] working memory cleanup failed", e));
+  // Only names no one else in the Group has: a shared name can't tell whose line it is.
+  const taken = new Set(others.map((o) => o.toLowerCase()));
+  const own = names.filter((n) => !taken.has(n.toLowerCase()));
+  const traces = () => forget.forgetMemberTraces(me.id, { groupId: ctx.groupId, names: own }).catch((e) => console.warn("[forget-me] trace cleanup failed", e));
+  await traces();
   await removePhotos(ctx.groupId, photos);
+  // Reminders addressed to them privately (nobody to send them to now).
+  await db.delete(schema.reminders).where(and(eq(schema.reminders.groupId, ctx.groupId), eq(schema.reminders.memberId, me.id)));
 
   // Activity summaries ("Maya added Costco $40") keep what happened, not who.
   if (names.length) {
     const rows = await db.select({ id: schema.activity.id, summary: schema.activity.summary }).from(schema.activity).where(eq(schema.activity.groupId, ctx.groupId));
     for (const r of rows) {
-      const next = anonymize(r.summary, names, FORMER_MEMBER);
+      const next = anonymize(r.summary, names, FORMER_MEMBER, others);
       if (next !== r.summary) await db.update(schema.activity).set({ summary: next }).where(eq(schema.activity.id, r.id));
     }
   }
@@ -329,8 +335,20 @@ export async function forgetMe(ctx: Ctx): Promise<{ chatLines: number; memoryMes
         and not exists (select 1 from ${members} m where m.status <> 'removed' and m.channel_user_id in (w.lid, w.pn))`);
   }
   await record(ctx.groupId, null, "member.forgotten", `forgot a member who asked (now ${FORMER_MEMBER})`, { table: "members", id: me.id });
+  // "forget me" runs as a tool inside the agent's turn: after it, Mastra still saves "[Name] roomie forget me" and the
+  // reply to memory and ends that turn's spans. Sweep once more when the turn is over (the daily retention job catches
+  // any trace left by a restart: forgetRemovedMembersTraces).
+  setTimeout(() => {
+    void forget
+      .forgetMemberInMemory(ctx.groupId, { names, others })
+      .then(traces)
+      .catch((e) => console.warn("[forget-me] follow-up cleanup failed", e));
+  }, FORGET_SWEEP_MS).unref?.();
   return { chatLines: gone.length, memoryMessages };
 }
+
+/** How long after "forget me" the follow-up sweep runs (the agent's turn is over by then). */
+const FORGET_SWEEP_MS = 90_000;
 
 const uploadPath = (url: string) => /\/uploads\/.+$/.exec(url)?.[0] ?? url;
 

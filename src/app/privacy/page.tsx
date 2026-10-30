@@ -49,7 +49,7 @@ export default function PrivacyPage() {
       </Part>
 
       <Part title="What Roomie keeps, and for how long">
-        <p>Everything lives in a Postgres database on Neon, per group:</p>
+        <p>Per group, in a Postgres database on Neon (photos are files on our server, on Fly.io):</p>
         <ul>
           <li>
             <strong>Chat messages: 30 days.</strong> Every message in the group is saved so Roomie can follow the conversation. A job deletes older ones every day.
@@ -59,7 +59,8 @@ export default function PrivacyPage() {
           </li>
           <li>
             <strong>Debug records (traces): 30 days.</strong> For each message: who sent it, what Roomie decided, and, when it went to Claude, what the AI models were
-            given and said back. Messages that didn&apos;t go to Claude keep no text there.
+            given and said back. A message that didn&apos;t go to Claude keeps no text in its own record, but it can appear as recent chat in the record of a later
+            message that did.
           </li>
           <li>
             <strong>Until you delete them:</strong> Expenses, Settlements, the Cart and Recipes, Chores, upkeep and Reminders, the Activity of who changed what, what a
@@ -87,8 +88,8 @@ export default function PrivacyPage() {
       <Part title="Making it forget">
         <p>
           Say <strong>&ldquo;roomie forget me&rdquo;</strong> in the group and Roomie deletes, for that group: your chat messages, what it remembered about you, your
-          messages in its memory (under any name you had) and its replies that name you, the photos of yours it read, the debug records of your messages, and the WhatsApp number
-          pairing behind your id. Your name in the Activity becomes &ldquo;Former member&rdquo;, and you leave the group&apos;s Members (if you write again, you&apos;re a
+          messages in its memory (under any name you had) and its replies that name you, the photos of yours it read, reminders set for you, the debug records of your messages
+          (and of others&apos; messages that carried your lines as context), and the WhatsApp number pairing behind your id. Your name in the Activity becomes &ldquo;Former member&rdquo;, and you leave the group&apos;s Members (if you write again, you&apos;re a
           new member an Admin approves).
         </p>
         <p>

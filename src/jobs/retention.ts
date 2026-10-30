@@ -6,8 +6,12 @@ export type RetentionCounts = { chatLines: number; spans: number; scores: number
 
 export async function runRetention(now = new Date()): Promise<RetentionCounts> {
   const chatLines = await deleteOlderThan(RETENTION_DAYS, now);
-  const { deleteOldMemory, deleteOldTraces, MEMORY_RETENTION_DAYS, TRACE_RETENTION_DAYS } = await import("@/mastra/forget");
-  const { spans, scores } = await deleteOldTraces(now, TRACE_RETENTION_DAYS);
+  const { deleteOldMemory, deleteOldTraces, forgetRemovedMembersTraces, MEMORY_RETENTION_DAYS, TRACE_RETENTION_DAYS } = await import("@/mastra/forget");
+  const { FORMER_MEMBER } = await import("@/services/members");
+  const old = await deleteOldTraces(now, TRACE_RETENTION_DAYS);
+  // Traces a "forget me" turn left behind (its own last spans end after the tool ran).
+  const spans = old.spans + (await forgetRemovedMembersTraces(FORMER_MEMBER));
+  const scores = old.scores;
   const memoryMessages = await deleteOldMemory(now, MEMORY_RETENTION_DAYS);
   const counts = { chatLines, spans, scores, memoryMessages };
   if (chatLines || spans || scores || memoryMessages) {

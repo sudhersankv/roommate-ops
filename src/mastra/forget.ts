@@ -2,7 +2,7 @@
 // Kept apart from memory.ts's config so services can import it lazily.
 import { sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
-import { anonymize, isLineFrom, lineBody, mentions, photoUrls, senderOf } from "@/lib/forget-text";
+import { anonymize, isLineFrom, lineBody, mentionsAny, photoUrls, senderOf } from "@/lib/forget-text";
 import { dropMemberLines, readSection, replaceSection } from "@/lib/style-note";
 import { EMPTY_STYLE, memory, STYLE_HEADING, threadFor } from "./memory";
 
@@ -36,9 +36,11 @@ export type ForgetWho = {
  * their lines pointed at (the caller deletes the files).
  */
 export async function forgetMemberInMemory(groupId: string, who: ForgetWho): Promise<{ deleted: number; photos: string[] }> {
-  const names = [...new Set(who.names.map((n) => n.trim()).filter(Boolean))];
+  const otherNames = who.others ?? [];
+  const others = new Set(otherNames.map((n) => n.trim().toLowerCase()));
+  // A name another Member also has can't tell them apart: their lines are found by text instead.
+  const names = [...new Set(who.names.map((n) => n.trim()).filter((n) => n && !others.has(n.toLowerCase())))];
   const texts = new Set((who.texts ?? []).map(lineBody).filter(Boolean));
-  const others = new Set((who.others ?? []).map((n) => n.trim().toLowerCase()));
   const { thread, resource } = threadFor(groupId);
   const existing = await memory.getThreadById({ threadId: thread });
   let deleted = 0;
@@ -51,7 +53,7 @@ export async function forgetMemberInMemory(groupId: string, who: ForgetWho): Pro
       const theirs =
         m.role === "user"
           ? names.some((n) => isLineFrom(text, n)) || (texts.has(lineBody(text)) && !others.has((senderOf(text) ?? "").toLowerCase()))
-          : m.role === "assistant" && names.some((n) => mentions(text, n));
+          : m.role === "assistant" && mentionsAny(text, names, otherNames);
       if (!theirs) continue;
       ids.push(m.id);
       if (m.role === "user") photos.push(...photoUrls(text));
@@ -68,12 +70,12 @@ export async function forgetMemberInMemory(groupId: string, who: ForgetWho): Pro
   return { deleted, photos };
 }
 
-/** Names in the Group's working memory (the Group style mirror) swapped for `replacement`. */
-export async function anonymizeInWorkingMemory(groupId: string, names: string[], replacement: string): Promise<void> {
+/** Names in the Group's working memory (the Group style mirror) swapped for `replacement`; other Members' names stay. */
+export async function anonymizeInWorkingMemory(groupId: string, names: string[], replacement: string, others: string[] = []): Promise<void> {
   const { thread, resource } = threadFor(groupId);
   const wm = await memory.getWorkingMemory({ threadId: thread, resourceId: resource }).catch(() => null);
   if (!wm) return;
-  const next = anonymize(wm, names, replacement);
+  const next = anonymize(wm, names, replacement, others);
   if (next !== wm) await memory.updateWorkingMemory({ threadId: thread, resourceId: resource, workingMemory: next });
 }
 
@@ -116,8 +118,11 @@ const missingTable = (e: unknown) => (e as { code?: string; cause?: { code?: str
 async function deleteTraces(match: SQL, scoresToo: SQL = sql`false`): Promise<number> {
   try {
     const traces = sql`(select distinct "traceId" from mastra_ai_spans where ${match})`;
+    // A scorer run is its own trace: its root points back with targetTraceId, its children (the judge's model calls,
+    // with the scored message and reply) only share its traceId.
+    const scorerRuns = sql`(select distinct "traceId" from mastra_ai_spans where metadata->>'targetTraceId' in ${traces})`;
     await db.execute(sql`delete from mastra_scorers where "traceId" in ${traces} or ${scoresToo}`);
-    const res = await db.execute(sql`delete from mastra_ai_spans where "traceId" in ${traces} or metadata->>'targetTraceId' in ${traces}`);
+    const res = await db.execute(sql`delete from mastra_ai_spans where "traceId" in ${traces} or "traceId" in ${scorerRuns}`);
     return res.rowCount ?? 0;
   } catch (e) {
     if (missingTable(e)) return 0;
@@ -128,8 +133,33 @@ async function deleteTraces(match: SQL, scoresToo: SQL = sql`false`): Promise<nu
 /** Every trace and score of a Group ("delete group data"; the root span's metadata carries groupId). */
 export const forgetGroupTraces = (groupId: string) => deleteTraces(sql`metadata->>'groupId' = ${groupId}`, sql`"resourceId" = ${groupId}`);
 
-/** Every trace one Member's message started, with its scores ("forget me"). */
-export const forgetMemberTraces = (memberId: string) => deleteTraces(sql`metadata->>'memberId' = ${memberId}`);
+const likeEscape = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
+
+/**
+ * "forget me": every trace one Member's message started, and every trace in their Group whose spans carry one of their
+ * lines ("[Name] …" as context of someone else's message), with the scores and scorer runs of those traces.
+ */
+export async function forgetMemberTraces(memberId: string, opts: { groupId?: string; names?: string[] } = {}): Promise<number> {
+  let n = await deleteTraces(sql`metadata->>'memberId' = ${memberId}`);
+  const names = (opts.names ?? []).map((x) => x.trim()).filter((x) => x.length >= 2);
+  if (opts.groupId && names.length) {
+    const tags = names.flatMap((x) => [`%[${likeEscape(x)}]%`, `%[voice note from ${likeEscape(x)}]%`]);
+    const inGroup = sql`(select distinct "traceId" from mastra_ai_spans where metadata->>'groupId' = ${opts.groupId})`;
+    const anyTag = sql.join(
+      tags.map((t) => sql`(coalesce(input::text, '') || coalesce(output::text, '')) ilike ${t}`),
+      sql` or `,
+    );
+    n += await deleteTraces(sql`"traceId" in ${inGroup} and (${anyTag})`);
+  }
+  return n;
+}
+
+/** Traces still tied to Members that "forget me" already removed (their last turn ends after the tool runs). */
+export async function forgetRemovedMembersTraces(formerName: string): Promise<number> {
+  return deleteTraces(
+    sql`metadata->>'memberId' in (select id::text from members where status = 'removed' and display_name = ${formerName} and channel_user_id is null and account_id is null)`,
+  );
+}
 
 /**
  * Mastra keeps each time twice: "<col>" (timestamp, UTC wall-clock) and "<col>Z" (timestamptz, which defaults to now()

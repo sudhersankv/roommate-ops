@@ -1188,14 +1188,21 @@ describe("Roomie tools against the dev DB", () => {
     await say(mid(6), "assistant", "Ryan is all square.");
 
     // Traces: Alex's message (root + child), a scorer run that scored it, its score; and Ryan's trace, which stays.
-    const span = (traceId: string, spanId: string, metadata: Record<string, unknown>) =>
-      db.execute(sql`insert into mastra_ai_spans ("traceId", "spanId", name, "spanType", "isEvent", "startedAt", "createdAt", "createdAtZ", metadata) values (${traceId}, ${spanId}, 'roomie message', 'generic', false, ${now}, ${now}, ${now}, ${JSON.stringify(metadata)}::jsonb)`);
+    const span = (traceId: string, spanId: string, metadata: Record<string, unknown>, input: unknown = null) =>
+      db.execute(
+        sql`insert into mastra_ai_spans ("traceId", "spanId", name, "spanType", "isEvent", "startedAt", "createdAt", "createdAtZ", metadata, input) values (${traceId}, ${spanId}, 'roomie message', 'generic', false, ${now}, ${now}, ${now}, ${JSON.stringify(metadata)}::jsonb, ${JSON.stringify(input)}::jsonb)`,
+      );
     const t1 = `t-forget-${ts}-alex`;
     const t2 = `t-forget-${ts}-ryan`;
+    const t3 = `t-forget-${ts}-ryan-quoting-alex`;
     await span(t1, "root", { groupId, memberId: member.Alex });
     await span(t1, "child", {});
     await span(`${t1}-scorer`, "run", { targetTraceId: t1 });
-    await span(t2, "root", { groupId, memberId: member.Ryan });
+    await span(`${t1}-scorer`, "judge", {}, { prompt: "[Alex] hi" });
+    await span(t2, "root", { groupId, memberId: member.Ryan }, { text: "[Ryan] hi" });
+    await span(t3, "root", { groupId, memberId: member.Ryan }, { text: "[Ryan] roomie what did alex say" });
+    await span(t3, "agent", {}, { context: `Recent group chat:\n[${number}] remember me?` });
+    const [reminder] = await db.insert(schema.reminders).values({ groupId, text: "call mom", dueAt: new Date(Date.now() + 86_400_000), memberId: member.Alex, createdBy: member.Alex }).returning();
     await db.execute(
       sql`insert into mastra_scorers (id, "scorerId", "runId", scorer, score, input, output, source, "createdAt", "updatedAt", "traceId") values (${`s-${ts}`}, 'brevity-tone', 'r', '{}'::jsonb, 1, '{}'::jsonb, '{}'::jsonb, 'LIVE', ${now}, ${now}, ${t1})`,
     );
@@ -1218,7 +1225,8 @@ describe("Roomie tools against the dev DB", () => {
       assert.deepEqual(left, [mid(4), mid(6)], "Ryan's line with the same text and the reply that doesn't name Alex stay");
       await assert.rejects(readFile(photo.file), "the photo in a forgotten line is deleted");
       const spans = (await db.execute(sql`select "traceId" from mastra_ai_spans where "traceId" like ${`t-forget-${ts}%`}`)).rows.map((x) => (x as { traceId: string }).traceId);
-      assert.deepEqual(spans, [t2], "Alex's trace and its scorer run are gone; Ryan's stays");
+      assert.deepEqual(spans, [t2], "Alex's trace, its whole scorer run and Ryan's trace quoting Alex's line are gone; Ryan's own stays");
+      assert.equal((await db.select().from(schema.reminders).where(eq(schema.reminders.id, reminder.id))).length, 0, "reminders set for them");
       assert.equal((await db.execute(sql`select 1 from mastra_scorers where id = ${`s-${ts}`}`)).rows.length, 0);
       assert.equal((await db.select().from(schema.waContacts).where(eq(schema.waContacts.lid, lid))).length, 0, "the WhatsApp contact row behind their id");
       const [act] = await db.select().from(schema.activity).where(and(eq(schema.activity.groupId, groupId), eq(schema.activity.kind, "test.forget")));

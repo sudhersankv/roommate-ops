@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { anonymize, isLineFrom, lineBody, mentions, photoUrls, senderOf } from "./forget-text";
+import { anonymize, isLineFrom, lineBody, mentions, mentionsAny, photoUrls, senderOf } from "./forget-text";
 
 test("isLineFrom and senderOf read the pipeline's sender tags", () => {
   assert.ok(isLineFrom("[Maya] hi", "maya"));
@@ -35,4 +35,12 @@ test("anonymize swaps every name a Member went by, longest first", () => {
   assert.equal(anonymize("Maya R added rent; Maya paid; Mayank too", ["Maya", "Maya R"], "Former member"), "Former member added rent; Former member paid; Mayank too");
   assert.equal(anonymize("+15551234567 joined", ["+15551234567"], "Former member"), "Former member joined");
   assert.equal(anonymize("nothing here", [], "Former member"), "nothing here");
+});
+
+test("other Members' names are never touched: a longer name containing it, or the same name", () => {
+  assert.equal(anonymize("Alex K paid Alex", ["Alex"], "Former member", ["Alex K", "Ryan"]), "Alex K paid Former member");
+  assert.equal(anonymize("Alex paid", ["Alex"], "Former member", ["alex"]), "Alex paid", "two Alexes: can't tell which");
+  assert.ok(!mentionsAny("Alex K owes Ryan", ["Alex"], ["Alex K"]));
+  assert.ok(mentionsAny("Alex K owes Alex", ["Alex"], ["Alex K"]));
+  assert.ok(!mentionsAny("Alex owes Ryan", ["Alex"], ["Alex"]));
 });

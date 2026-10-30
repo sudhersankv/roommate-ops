@@ -1,11 +1,13 @@
 // Local scripts must not touch production by accident (audit B1).
-//   - The Telegram bot: polling deletes its webhook. We can't tell a token's bot from here, so the signal is APP_URL:
-//     the production URL means this .env talks to the production bot. ALLOW_PROD_BOT=1 says you mean it.
+//   - The Telegram bot: polling deletes its webhook, and the webhook script moves it. getMe tells which bot the token
+//     is; the production bot (@imroomiebot) needs ALLOW_PROD_BOT=1 to poll, lose its webhook or point it elsewhere.
 //   - The database: seed, dev-chat, evals and test:tools write throwaway Groups. They refuse on the production Neon
 //     branch (prod's DATABASE_URL lives only in `fly secrets`; .env points at the `dev` branch).
 import { sql } from "drizzle-orm";
 
 export const PROD_APP_URL = "https://roomie.fly.dev";
+/** The production Telegram bot. */
+export const PROD_BOT_USERNAME = "imroomiebot";
 /** Neon project `roomie`, branch `production`. */
 export const PROD_BRANCH_ID = "br-dawn-darkness-b48156vf";
 
@@ -15,10 +17,16 @@ export const isProdAppUrl = (url: string | undefined) => norm(url) === PROD_APP_
 
 export const prodBotAllowed = () => process.env.ALLOW_PROD_BOT === "1";
 
+/** Whether the token is the production bot (asks Telegram: getMe, read-only). */
+export async function isProdBot(api: { getMe: () => Promise<{ username?: string }> }): Promise<boolean> {
+  const me = await api.getMe();
+  return (me.username ?? "").toLowerCase() === PROD_BOT_USERNAME;
+}
+
 /** Exits with a clear message. */
 export function refuseProdBot(why: string): never {
   console.error(
-    `Refusing: ${why}\nThat would take Roomie away from every real group on ${PROD_APP_URL}. Use a separate dev bot (its own TELEGRAM_BOT_TOKEN and a local APP_URL), or set ALLOW_PROD_BOT=1 if you really mean to.`,
+    `Refusing: ${why}\nThat would take Roomie away from every real group on ${PROD_APP_URL}. Use a separate dev bot (its own TELEGRAM_BOT_TOKEN and TELEGRAM_BOT_USERNAME), or set ALLOW_PROD_BOT=1 if you really mean to.`,
   );
   process.exit(1);
 }
