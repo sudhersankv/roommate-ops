@@ -1,16 +1,16 @@
 # The landing page, /help, /signin and the WhatsApp beta
 
-`/` is Roomie's public page; `/help` explains how it works. Both pitch Roomie as **an AI that joins your group chat and learns Tricks**, for any group (roommates are one example among trips, friends, families, teams and clubs). The page is built to be shared, not to explain everything: one headline, one line, two buttons and one chat above the fold; the rest is below.
+`/` is Roomie's public page; `/help` explains how it works. Both pitch Roomie as **the roommate who actually keeps track** (ADR 0015): one apartment's group chat, rent, splits, groceries, chores and the landlord. Other kinds of group get one line. The page is built to be shared, not to explain everything: one headline, one line, two buttons and one chat above the fold; the rest is below. Nothing on either page says AI, bot, brain, assistant or smart, and there is no vibe picker (ADR 0020); `src/app/_landing/words.test.ts` checks.
 
 ## Routes
 
 | Route | What | Code |
 |---|---|---|
 | `/` | The landing page, for everyone. Signed in, the nav's "Sign in" becomes "Open dashboard" (`/app`). A stray `?auth_error=` is sent on to `/signin`. | `src/app/page.tsx`, `src/app/_landing/` |
-| `/help` | How Roomie works, for a new person, and the FAQ. Public, indexable (canonical `/help`, FAQPage JSON-LD). | `src/app/help/` |
+| `/help` | How Roomie works, for a new person in the apartment's chat, and the FAQ. Public, indexable (canonical `/help`, FAQPage JSON-LD). | `src/app/help/` |
 | `/app` | Where a signed-in person lands: the Group they were last in (or their first), else "no groups yet" with the paste-a-Claim-link form. Signed out: `/signin`. | `src/app/app/page.tsx` |
 | `/signin` | Google button, paste a Claim link, the "Sign-in didn't complete" alert. `?next=` is where to go afterwards. Signed in: straight to `next` (default `/app`; `/` is never a `next`). "New here?" links `/` and `/help`. | `src/app/signin/page.tsx` |
-| `/privacy` | What Roomie keeps, per Group, "forget me", who else sees it. Static. | `src/app/privacy/page.tsx` |
+| `/privacy` | What Roomie keeps, per Group, "forget me", who else sees it. Static. The one page allowed to say "AI model" and "AI Gateway", because it names what the code calls (audit B4). | `src/app/privacy/page.tsx` |
 | `/admin/beta` | Operators only (`ROOMIE_OPERATOR_EMAILS`, 404 for everyone else, `noindex`): the beta requests, newest first, with a status. | `src/app/admin/beta/` |
 
 ## Sign-in paths
@@ -24,34 +24,40 @@
 
 All in `src/app/_landing/landing.tsx` (server components). Client components: `stage.tsx` (the dino watching a chat), `vote-button.tsx`, `share-row.tsx` (copy link) and `beta-form.tsx`.
 
-1. **Hero** (forest band, dark tokens, embers): the logo, "How it works" (`/help`), "Sign in" / "Open dashboard", the headline **"Your group chat finally has a brain."** (`HEADLINE`), one line (`SUBLINE`), **Add to Telegram** (`https://t.me/<TELEGRAM_BOT_USERNAME or imroomiebot>?startgroup=true`, new tab) and **WhatsApp beta** (`#whatsapp-beta`), "Free while in beta.", and one chat (`HERO` in `demos.ts`: an argument about pizza money, settled) that plays on load while the dino reacts.
-2. **Demos** ("Moments worth a screenshot."): four chats, each labelled with its Trick and a different kind of group and vibe: a trip splitting the Airbnb (Splitting, hype), a receipt photo (Splitting, chill), the Cart -> Instacart (Groceries, gremlin), the 7-day dish streak with a glowing 🔥 (Chores, hype). Each is followed by a small "Add Roomie to your group" link.
-3. **Tricks** (`#tricks`, "Teach it Tricks. They snap on." / "Each Trick brings its own page on the dashboard."): the built Tricks from `MANIFESTS` as a stack of chunky blocks in their accents (studs on top, icon, name, `summary`, and from `sm` "<nav label> page"), Splitting at the bottom, with the dino sitting on top (a `Stage`), and "Say “roomie, learn chores” in the chat, or tap Teach on the dashboard." under it (the stack is sticky on `lg`). Beside it ("Waiting to snap on. Vote for what it learns next."), the coming-soon ones from the catalog in catalog order as greyed, dashed blocks (ghost studs, a "Soon" tag) with an **I want this** button (below): two columns on phones and `lg`, three on `sm`.
-4. **Vibes** ("Pick its vibe."): six cards, gremlin and deadpan first, each with one line from `ARCHETYPES` (`VIBE_LINES` in `demos.ts`: gremlin's dishes example, `previewOwes` for deadpan, mom, butler and chill, hype's "everyone's square" win). Scrolls sideways on phones.
-5. **What's your group?**: Roommates, Trip, Friends, Family, Work, Club (`GROUP_KINDS` in `_landing/tricks.ts`), each with a one-line scenario and the Tricks it starts with, read from `PRESETS` (`toolkits/presets.ts`). "Club" isn't a Group purpose yet, so it shows the `other` preset until a `club` one exists.
-6. **How it works** (`#how`): three steps, Add to Telegram, a link to `/help`, then "Speaks when spoken to" (with the dino asleep), "Stays in your group", "A dashboard per group".
-7. **Dashboard peek**: three phone frames from `public/landing/dashboard-{money,home,chores}.jpg` (600x1116, `next/image` with fixed dimensions).
-8. **WhatsApp beta form** (`#whatsapp-beta`).
-9. **Share row**: "Know a group chat that needs this?" with **Send on Telegram** (`https://t.me/share/url?url=<url>&text=<text>`), **Send on WhatsApp** (`https://wa.me/?text=<text> <url>`) and **Copy link**. `<url>` is `APP_URL` when absolute, else `https://roomie.fly.dev`; `<text>` is `SHARE_TEXT` in `_landing/marks.tsx`.
-10. Footer: How it works, Privacy, Sign in, GitHub, "Built with Mastra + Neon".
+1. **Hero** (forest band, dark tokens, embers): the logo, "How it works" (`/help`), "Sign in" / "Open dashboard", the headline **"The roommate who actually keeps track."** (`HEADLINE`), the one line (`SUBLINE`: "Add it to the group chat. It handles rent, splits, groceries, chores and the landlord, so none of you have to."), **WhatsApp beta** (primary, `#whatsapp-beta`) and **Works on Telegram today** (`https://t.me/<TELEGRAM_BOT_USERNAME or imroomiebot>?startgroup=true`, new tab), "Free while in beta.", and one chat (`HERO` in `demos.ts`: Apt 4B, with a rent line, a split and the landlord's reply in one scroll) that plays on load while the dino reacts.
+2. **Channels** (`#channels`, "Where it lives"): WhatsApp (Beta, "Ask to join" → the form) · Telegram ("Works today") · Discord and iMessage (Soon, dashed, an **I want this** each). The channel votes reuse `trick_votes` with the ids `channel:discord` / `channel:imessage` (`SOON_CHANNELS` in `services/trick-votes.ts`).
+3. **Demos** ("Five apps and a group mom. Or Roomie.", `DEMOS_TITLE`; the line under it names the five apps). Five chats from `DEMOS`, one per bucket, all in Apt 4B, each with its Trick chip (the name from ADR 0015: Money, Lease Inbox, Groceries, House, Money) and its arithmetic in a comment (`demos.test.ts` checks it):
+   1. *Nobody has to be that guy anymore.* (Money): the rent line for the group, then the viewer's DM "You owe Maya $800 for rent" with a Venmo button, "paid", square. The DM lines carry `dm: true` and render "to you, privately" with a dashed brand-green edge (`.lp-dm-bubble`). This is the settle-nudge story's title (the private pay link is the point), so there is no sixth demo.
+   2. *The landlord, handled.* (Lease Inbox): "roomie the sink's leaking, tell them" → "Sent: reported the leaking kitchen sink." → a day later "Landlord: plumber Tuesday 10-12. I'll remind you Monday."
+   3. *It notices before you run out.* (Groceries): the morning "Probably low: milk, dish soap. Add them?" → "yes" → "Added both as shared. Cart's at 4." → Sam's oat milk, 5.
+   4. *The 7-day dish streak.* (House): the streak in the one (chill) voice with a glowing 🔥, then the morning line.
+   5. *Who had pizza? Ask the room.* (Money): a Poll bubble (`poll` line shape: question, options with tallies and voters, "4 of 4 answered", bars that grow in CSS) and the split: $36 three ways, $12 each.
+   After the grid: "Say “roomie” and ask. Or message it privately: “what do I owe?”" and the two buttons again.
+4. **Tricks** (`#tricks`, "Teach it Tricks. They snap on." / "Roommates start with the stack."): the built Tricks from `MANIFESTS` as a stack of chunky blocks in their accents (studs on top, icon, name, `summary`, and from `sm` "<nav label> page"), the first manifest at the bottom, with the dino sitting on top (a `Stage`), and "Say “roomie, learn lease inbox” in the chat, or tap Teach on the dashboard." under it (the stack is sticky on `lg`). Beside it ("Waiting to snap on. Vote for what it learns next."), the coming-soon ones from `CATALOG` in catalog order as greyed, dashed blocks (ghost studs, a "Soon" tag) with an **I want this** button: two columns on phones and `lg`, three on `sm`. The names, summaries and the Soon list are the manifests' (`src/toolkits/`): renaming Splitting to Money or adding Guests and Move-out there changes the page by itself. Under the section, one line: **"Not roommates? It works for trips and friends too."** (`OTHER_GROUPS_LINE`). The six-card "What's your group?" grid and the "Pick its vibe" section are gone.
+5. **How it works** (`#how`): three steps (add it to the group chat; answer one question; open the dashboard through the Join link), the two buttons, a link to `/help`, then "Speaks when spoken to" (with the dino asleep; one morning post), "Stays in your group" (who owes what is said privately), "A dashboard per group".
+6. **Dashboard peek**: three phone frames from `public/landing/dashboard-{money,home,chores}.jpg` (600x1116, `next/image` with fixed dimensions). To be retaken with the read-first dashboard (issue #28, story 28).
+7. **WhatsApp beta form** (`#whatsapp-beta`, "Want it on WhatsApp?" / "Tell us about your apartment.").
+8. **Share row**: "Know an apartment chat that needs this?" with **Send on WhatsApp** (`https://wa.me/?text=<text> <url>`), **Send on Telegram** (`https://t.me/share/url?url=<url>&text=<text>`) and **Copy link**. `<url>` is `APP_URL` when absolute, else `https://roomie.fly.dev`; `<text>` is `SHARE_TEXT` in `_landing/marks.tsx`: "Adding this to our apartment chat. It remembers who paid 🦖".
+9. Footer: How it works, Privacy, Sign in, GitHub, "Built with Mastra + Neon".
 
 ### Words
 
-- User-facing, a Toolkit is a **Trick**; groups **teach** it and Roomie **learns** it ("roomie, learn trips"). Never "toolkit", "capability", "module", "plugin" or "feature" on the page.
-- Roomie is "it", an AI and a dino in the group chat. "Pet" is flavor at most two or three times, never the headline or the category.
+- User-facing, a Toolkit is a **Trick**; groups **teach** it and Roomie **learns** or **forgets** it ("roomie, learn lease inbox"). Never "toolkit", "capability", "module", "plugin", "feature" or "enable" on the page.
+- Roomie is "it", a roommate and a dino in the group chat. Never AI, bot, brain, assistant or smart; "pet" is flavour at most (`/pet` in `/help`). No vibes, no name field: one voice (ADR 0020).
 - Don't market that it picks up how a group talks; that's for people to notice. "It settles in over time" is the most either page may say.
-- The glossary's words (Member, Group, Cart, Expense) and none of its _Avoid_ words (no "bot", "assistant", "shopping list"). Never the operator's email.
+- The glossary's words (Member, Group, Cart, Expense, DM, Poll, Landlord) and none of its _Avoid_ words. Never the operator's email.
 - No paragraph longer than two lines on a phone.
+- `src/app/_landing/words.test.ts` scans the landing, `/help`, `/privacy` and `page.tsx` sources (comments and imports stripped), the Onboarding copy, every manifest's name / summary / longDescription / persona and `channels/text.ts`'s lines for `AI, bot, brain, assistant, smart, toolkit, feature, enable, vibe` (whole words, any case). The only allowlist is `/privacy`'s "AI model(s)" and "AI Gateway".
 
 ### Changing the copy
 
-- The chats: `src/app/_landing/demos.ts` (`HERO`, `DEMOS`, `VIBE_LINES`). Roomie's lines follow docs/personality.md's two registers: the task part capitalized with names written properly, the vibe in the aside. Keep the numbers adding up (each demo has its arithmetic in a comment; the receipt split is the service's rule: unclaimed items shared, tax proportional). A line with `win: true` gets the ember ring and makes the dino cheer.
-- Headline and sub-line: `HEADLINE` / `SUBLINE` in `landing.tsx`; the title and description in `generateMetadata` (`src/app/page.tsx`); the share image text in `scripts/og-image.ts`. After changing the headline, run `npx tsx scripts/og-image.ts` (it caches Figtree in the temp dir).
-- Tricks and presets come from the manifests and `PRESETS`; a new Trick shows up by itself. Its accent color is the `ACCENT` map in `_landing/tricks.ts` (brand green when missing).
+- The chats: `src/app/_landing/demos.ts` (`APARTMENT`, `HERO`, `DEMOS`). Roomie's lines follow docs/personality.md's two registers: the task part capitalized with names written properly, the aside in the one voice (`ARCHETYPES.chill`). Keep the numbers adding up: each chat has its arithmetic in a comment and `demos.test.ts` asserts it. A line with `win: true` gets the ember ring and makes the dino cheer; `dm: true` is a private line; a `{ poll, options, of, time }` line is a Poll.
+- Headline and sub-line: `HEADLINE` / `SUBLINE` / `DEMOS_TITLE` / `OTHER_GROUPS_LINE` in `landing.tsx`; the title and description in `generateMetadata` (`src/app/page.tsx`); the share image text in `scripts/og-image.ts`. After changing the headline, run `npx tsx scripts/og-image.ts` (it caches Figtree in the temp dir).
+- Tricks come from the manifests; a new Trick shows up by itself. Its accent color is the `ACCENT` map in `_landing/tricks.ts` (brand green when missing; today's ids and ADR 0015's are both in it). Whether a Trick is "On from the start for roommates" (in `/help`) comes from `PRESETS.roommates`.
 
-### Headline options (Oct 2026)
+### Headline (Oct 2026)
 
-Chosen: **"Your group chat finally has a brain."** Considered: "Settle it in the group chat." · "Who paid? Ask the group chat." · "The group chat's new favorite member." · "Stop doing group-chat math."
+**"The roommate who actually keeps track."** (ADR 0015). Before it: "Your group chat finally has a brain."
 
 ## Motion and color
 
@@ -61,25 +67,25 @@ CSS only (`_landing/landing.css`), transforms and opacity, no layout shift, no a
 |---|---|---|
 | Hero embers (11) and the warm glow behind them | `lp-rise` / `lp-drift`, transform + opacity | Embers rest in the glow, nothing moves |
 | Chat lines pop in | Hero: on load. Demos: `Stage` sets `data-state="armed"` (hidden), then `"play"` when 35% visible | Every line shown; no JS timers |
-| The dino on each chat | Naps (`sleepy`) until someone says "roomie", perks up (`calm`), `happy` when Roomie answers, the one-shot hop (`useCheer`) on a `win` line | Happy, still (the mascot's own CSS stops its animations) |
+| The dino on each chat | Naps (`sleepy`) until someone says "roomie", perks up (`calm`), `happy` when Roomie answers (a Poll counts), the one-shot hop (`useCheer`) on a `win` line | Happy, still (the mascot's own CSS stops its animations) |
 | The win | Ember ring pulse on the bubble, 🔥 flickers 6 times with an amber/coral glow | Ring and glow shown, no flicker |
+| A Poll's bars | `scaleX` from 0 to the option's share (`--w`) as the line lands (`lp-poll-grow`) | The final bars |
 | Trick blocks | `Stage` arms the stack (blocks hidden), then at 35% visible each block snaps on from 40px above, bottom first (`lp-snap-on`, 0.42 s, 0.16 s apart: the last lands at ~1 s); the dino goes sleepy -> calm (0.3 s) -> happy with a hop (1.05 s); then a sheen (`lp-sheen`) and a glow in each block's accent (`lp-glow-once`, opacity) run up the stack once. Hover / tap: the block lifts 4px and its accent glow shows (an `::after`, opacity) | The stacked final frame, the dino happy; hover shows the glow without the lift |
-| Coming-soon blocks | Lift 4px with a glow in the Trick's accent on hover / tap, a little less grey | Glow and border only |
-| Hype vibe card | Confetti bits wiggle on hover | Static confetti |
+| Coming-soon blocks and the Soon channels | Lift 4px with a glow in the Trick's accent on hover / tap, a little less grey | Glow and border only |
 | "Noted ✨" after a vote | Ring pulse and a six-dot spark | The badge, no spark |
 
-The ember palette (`--ember-1/2/3`: `#ffb547` amber, `#ff7a59` coral, `#ff4f9a` hot pink) is only for wins, the streak and the share card. Without JS, everything is simply visible. No new images; the LCP is the headline.
+The ember palette (`--ember-1/2/3`: `#ffb547` amber, `#ff7a59` coral, `#ff4f9a` hot pink) is only for wins, the streak and the share card. A DM line has a dashed edge in the brand green (`--color-owed`). Without JS, everything is simply visible. No new images; the LCP is the headline.
 
 ## Trick votes, end to end
 
-1. The coming-soon cards come from the catalog (`status: "coming-soon"`). `page.tsx` reads the counts (`trickVoteCounts`, an empty map if the database can't be reached) and passes them down; a count shows only from **5** (`SHOW_COUNT_FROM`).
-2. **I want this** calls the server action `voteTrick` (`_landing/actions.ts`) -> `voteForTrick` in `src/services/trick-votes.ts`: only coming-soon ids; the IP (`fly-client-ip`, else the first `x-forwarded-for`) becomes `hashIp` (the same HMAC as beta requests); **one vote per Trick per address a day** (a repeat is a quiet success, not stored) and **12 votes an hour per address** (`WindowLimiter`, in memory); then one row in `trick_votes` (`id`, `trick_id`, `created_at`, `ip_hash`; migration 0008). Logs `[votes] +1 <trick>`.
+1. The coming-soon cards come from the catalog (`status: "coming-soon"`); the Soon channels from `SOON_CHANNELS` (`channel:discord`, `channel:imessage`). `page.tsx` reads the counts (`trickVoteCounts`, an empty map if the database can't be reached) and passes them down; a count shows only from **5** (`SHOW_COUNT_FROM`).
+2. **I want this** calls the server action `voteTrick` (`_landing/actions.ts`) -> `voteForTrick` in `src/services/trick-votes.ts`: only coming-soon ids and the Soon channel ids (`votableTrickIds`); the IP (`fly-client-ip`, else the first `x-forwarded-for`) becomes `hashIp` (the same HMAC as beta requests); **one vote per id per address a day** (a repeat is a quiet success, not stored) and **12 votes an hour per address** (`WindowLimiter`, in memory); then one row in `trick_votes` (`id`, `trick_id`, `created_at`, `ip_hash`; migration 0008). Logs `[votes] +1 <id>`.
 3. The button turns into "Noted ✨" and the browser remembers it (`localStorage`, `roomie:trick-vote:<id>`).
 4. Reading them: `select trick_id, count(*) from trick_votes group by 1 order by 2 desc`.
 
 ## /help
 
-`src/app/help/page.tsx`, one page with a sticky jump bar: What Roomie is · Add it to a group (the Telegram link; WhatsApp: the beta form) · What happens when it joins (intro, one setup question, the defaults) · Talking to it ("roomie" or its name, @mention, a reply; quiet otherwise; `/pet`) · Tricks (each built Trick with three things to say from its manifest's `gate.examples`; coming-soon ones muted, linking to the votes) · The dashboard ("roomie send me the dashboard", one link per person; Members, Admins, Pending) · Vibes (the six taglines from `ARCHETYPES`) · Privacy (links `/privacy`, "forget me") · **FAQ**: 14 questions as `<details>` (no JS), with the same answers as FAQPage JSON-LD (each entry's `text`). Keep `a` and `text` saying the same thing.
+`src/app/help/page.tsx`, one page with a sticky jump bar: What Roomie is (the two ADR 0015 lines, the four Tricks, "Not roommates? …") · Add it to the group chat (WhatsApp: the beta form, first; Telegram: the link; Discord and iMessage soon) · What happens when it joins (intro, the one setup question: what for, currency, city; the defaults; the Join link) · Talking to it ("roomie", @mention, a reply; the one morning post; one line on DMs: "what do I owe", "remind me Friday"; `/pet`) · Tricks (each built Trick with three things to say from its manifest's `gate.examples`, "On from the start for roommates." from `PRESETS`; coming-soon ones muted, linking to the votes) · The dashboard (the Join link, "roomie send us the dashboard"; Members, Admins, Pending) · Privacy (links `/privacy`, "forget me") · **FAQ**: 16 questions as `<details>` (no JS) in `src/app/help/faq.tsx`, with the same answers as FAQPage JSON-LD (each entry's `text`). `faq.test.ts` renders each `a` and compares its words with `text`, so keep them saying the same thing. New since ADR 0015: "Does it nag people about money in the group?" (no: the private Settle nudge), "Does it work on iMessage?" ("Soon, through a relay we run."), "Does the landlord know it's a shared inbox?" ("Yes. Every email it sends says it's the residents' shared inbox and names who asked."). Gone: the vibe/name question.
 
 ## A beta request, end to end
 
@@ -89,8 +95,8 @@ The ember palette (`--ember-1/2/3`: `#ffb547` amber, `#ff7a59` coral, `#ff4f9a` 
 4. The visitor sees "Got it. You'll hear from us within a day or two." There is no mailer: the operator writes back by hand.
 5. The operator works the list at `/admin/beta` (status: new / contacted / onboarded / declined; `setBetaStatus` checks the operator again). The phone links to `wa.me`.
 
-For the DM to arrive, the operator must be a Member of some Telegram Group with Roomie (claimed with their operator Google account, so the Account exists) and must have pressed Start in a DM with the bot once.
+For the DM to arrive, the operator must be a Member of some Telegram Group with Roomie (claimed with their operator Google account, so the Account exists) and must have pressed Start in a DM once.
 
 ## Tests
 
-`src/services/beta.test.ts` (validation, honeypot, the limit, the summary, the DM and every fallback), `src/services/trick-votes.test.ts` (coming-soon only, one per Trick per address, the hourly limit, a failed insert, the count threshold), `src/lib/auth/oauth-paths.test.ts`, and `src/app/auth/callback/route.test.ts` (the proxy's `/signin?next=` redirect and pass-throughs). Screens: `design/screens/tricks-section-{desktop,mobile,reduced-motion}.jpeg`, `design/screens/tricks-page-upcoming{,-drawer}.jpeg` (the in-app Tricks page and the More drawer), `design/screens/help-mobile.jpeg`.
+`src/app/_landing/demos.test.ts` (every chat's arithmetic and the five buckets), `src/app/_landing/words.test.ts` (the forbidden words), `src/app/help/faq.test.ts` (the FAQ invariant, the trust questions), `src/services/beta.test.ts` (validation, honeypot, the limit, the summary, the DM and every fallback), `src/services/trick-votes.test.ts` (coming-soon and channel ids only, one per id per address, the hourly limit, a failed insert, the count threshold), `src/lib/auth/oauth-paths.test.ts`, and `src/app/auth/callback/route.test.ts` (the proxy's `/signin?next=` redirect and pass-throughs). Screens: `design/screens/tricks-section-{desktop,mobile,reduced-motion}.jpeg`, `design/screens/tricks-page-upcoming{,-drawer}.jpeg` (the in-app Tricks page and the More drawer), `design/screens/help-mobile.jpeg`; to be retaken for the roommates-first page (issue #28).
