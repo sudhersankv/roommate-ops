@@ -55,7 +55,7 @@ describe("the manifest contract", () => {
       assert.equal(m.status, "coming-soon");
       assert.ok(!TOOLKITS.some((t) => (t.id as string) === m.id), `${m.id} is a stub`);
     }
-    assert.deepEqual(COMING_SOON.map((m) => m.id), ["research", "pdf", "trips", "stickers", "household-admin"]);
+    assert.deepEqual(COMING_SOON.map((m) => m.id), ["household-admin", "outings", "cooking", "research", "trips", "pdf", "stickers"]);
   });
 
   test("every catalog entry is complete", () => {
@@ -90,6 +90,9 @@ describe("the manifest contract", () => {
     assert.equal(findManifest("money")?.id, "splitting");
     assert.equal(findManifest("pdfs")?.id, "pdf");
     assert.equal(findManifest("household admin")?.id, "household-admin");
+    assert.equal(findManifest("lease stuff")?.id, "household-admin");
+    assert.equal(findManifest("outings")?.id, "outings");
+    assert.equal(findManifest("cooking")?.id, "cooking");
     assert.equal(findManifest("spaceships"), undefined);
   });
 

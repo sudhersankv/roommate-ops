@@ -1076,6 +1076,12 @@ describe("Roomie tools against the dev DB", () => {
     assert.equal(soon.notAvailable, true);
     assert.equal(soon.reason, "coming-soon");
     assert.match(soon.message, /can't learn Research yet/);
+    for (const name of ["Lease stuff", "outings", "cooking"]) {
+      const r = await run("toggle_toolkit", { toolkit: name, enabled: true });
+      assert.equal(r.reason, "coming-soon", `${name} is coming soon`);
+      assert.match(r.message, /it's on the list/);
+      assert.ok(!/toolkit|feature|capabilit|module|plugin/i.test(r.message), "Tricks vocabulary only");
+    }
     assert.equal((await run("toggle_toolkit", { toolkit: "spaceships", enabled: true })).reason, "unknown");
     assert.match((await run("toggle_toolkit", { toolkit: "spaceships", enabled: true })).message, /don't know a "spaceships" Trick/);
 
@@ -1083,6 +1089,7 @@ describe("Roomie tools against the dev DB", () => {
     assert.ok(list.known.some((t: { name: string; try?: string[] }) => t.name === "Splitting" && t.try?.length));
     assert.ok(list.couldLearn.some((t: { name: string }) => t.name === "Groceries"));
     assert.ok(list.comingSoon.includes("Research") && list.comingSoon.includes("Stickers"));
+    assert.ok(["Lease stuff", "Outings", "Cooking"].every((n) => list.comingSoon.includes(n)));
     assert.ok(!list.known.concat(list.couldLearn).some((t: { name: string }) => t.name === "Core"), "core isn't a Trick");
     assert.match(list.say, /^Tricks I know here: .*Splitting.*\. Could learn: .*Groceries.*\. Coming soon: /);
     assert.ok(!/toolkit|feature|enable/i.test(list.say + list.whoCanTeach), "Tricks vocabulary only");

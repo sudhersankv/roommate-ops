@@ -16,7 +16,9 @@ const ACCENT: Record<string, string> = {
   trips: "#ff8a5c",
   pdf: "#f9a8d4",
   stickers: "#ff5fa2",
-  "household-admin": "#bef264",
+  "household-admin": "#fcd34d",
+  outings: "#ff7a9c",
+  cooking: "#ff9f43",
 }
 export const accentOf = (id: string) => ACCENT[id] ?? "#86efa0"
 

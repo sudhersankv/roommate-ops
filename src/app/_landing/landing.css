@@ -140,6 +140,59 @@
   box-shadow: 0 14px 40px -20px var(--accent);
 }
 
+/* ---------- Trick blocks: the learned ones stacked onto Roomie ---------- */
+
+/* The resting, final frame (SSR, no JS, reduced motion): each block a few px off the one below. The li carries the
+   snap-in; the brick inside carries the hover lift, so neither overrides the other. */
+.lp-block {
+  transform: translateX(var(--dx, 0));
+}
+.lp-brick {
+  position: relative;
+  transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.3, 1.25);
+}
+.lp-brick .lp-stud {
+  box-shadow: inset 0 -2px 0 rgb(0 0 0 / 0.1);
+}
+/* The glow in the block's own color: shown on hover / tap, flashed once up the stack after the last block lands. */
+.lp-brick::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow:
+    0 0 0 2px color-mix(in oklab, var(--accent) 60%, white),
+    0 16px 40px -12px var(--accent);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease;
+}
+@media (hover: hover) {
+  .lp-brick:hover::after {
+    opacity: 1;
+  }
+}
+.lp-brick:active::after {
+  opacity: 1;
+}
+/* A light sheen that sweeps across each block once, bottom block first. */
+.lp-sheen {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
+  pointer-events: none;
+}
+.lp-sheen::before {
+  content: "";
+  position: absolute;
+  inset: -10% auto -10% 0;
+  width: 45%;
+  background: linear-gradient(100deg, transparent, rgb(255 255 255 / 0.5), transparent);
+  opacity: 0;
+  transform: translateX(-120%) skewX(-12deg);
+}
+
 /* "Noted ✨": a spark when the vote lands. */
 .lp-spark {
   position: absolute;
@@ -218,8 +271,30 @@
   }
 
   .lp-trick:hover,
-  .lp-trick:active {
+  .lp-trick:active,
+  .lp-brick:active {
     transform: translateY(-4px);
+  }
+  @media (hover: hover) {
+    .lp-brick:hover {
+      transform: translateY(-4px);
+    }
+  }
+
+  /* Tricks: hidden until the stack is on screen, then each block snaps on from above, bottom first, then the sheen
+     and the glow run up the stack once, from when the last block lands (--land, set from the count in landing.tsx;
+     keep the 0.12 s / 0.16 s / 0.42 s here in step with landMs there). */
+  .lp-stage[data-state="armed"] .lp-block {
+    opacity: 0;
+  }
+  .lp-stage[data-state="play"] .lp-block {
+    animation: lp-snap-on 0.42s cubic-bezier(0.3, 0.9, 0.4, 1.25) calc(0.12s + var(--k, 0) * 0.16s) both;
+  }
+  .lp-stage[data-state="play"] .lp-sheen::before {
+    animation: lp-sheen 0.6s ease-out calc(var(--land, 1.02s) + 0.03s + var(--k, 0) * 0.08s);
+  }
+  .lp-stage[data-state="play"] .lp-brick::after {
+    animation: lp-glow-once 0.7s ease-out calc(var(--land, 1.02s) + 0.03s + var(--k, 0) * 0.08s);
   }
 
   .lp-vibe:hover .lp-confetti i,
@@ -232,6 +307,40 @@
   }
   .lp-voted.is-fresh .lp-spark {
     animation: lp-spark 0.7s ease-out both;
+  }
+}
+
+@keyframes lp-snap-on {
+  0% {
+    opacity: 0;
+    transform: translate(var(--dx, 0), -40px);
+  }
+  70% {
+    opacity: 1;
+    transform: translate(var(--dx, 0), 3px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(var(--dx, 0));
+  }
+}
+@keyframes lp-sheen {
+  0% {
+    opacity: 1;
+    transform: translateX(-120%) skewX(-12deg);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(260%) skewX(-12deg);
+  }
+}
+@keyframes lp-glow-once {
+  0%,
+  100% {
+    opacity: 0;
+  }
+  40% {
+    opacity: 0.85;
   }
 }
 

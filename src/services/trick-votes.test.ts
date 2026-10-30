@@ -21,6 +21,7 @@ const fresh = () => ({ limiter: new WindowLimiter(3, 60_000), perTrick: new Wind
 test("only coming-soon Tricks can be voted for", async () => {
   const ids = votableTrickIds();
   assert.ok(ids.includes("trips") && ids.includes("research"));
+  assert.ok(ids.includes("household-admin") && ids.includes("outings") && ids.includes("cooking"));
   for (const m of MANIFESTS) assert.ok(!ids.includes(m.id), `${m.id} is built, not votable`);
   const rows: unknown[] = [];
   for (const bad of ["splitting", "nope", 42, undefined]) {
