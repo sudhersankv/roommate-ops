@@ -6,8 +6,9 @@
 // one, the target (a word of spec.target's value). A tool with `fields` (settings) instead needs every field the call
 // would change to be asked for: its own words in the message, or for some fields the value itself ("Chicago"). Otherwise
 // the tool doesn't run and Roomie asks spec.ask. Within 10 minutes the Admin's "yes" plus the action passes, for exactly
-// the call Roomie asked about (the registry binds the confirmation to the input). Negated words ("don't approve Priya")
-// never count.
+// the call Roomie asked about (the registry binds the confirmation to the input). The action and the target have to
+// be in the same clause, and a negation earlier in the clause ("don't under any circumstances approve Priya") or on the
+// target ("approve Priya, not Sam") means it wasn't asked for.
 import type { AdminAsk, AdminField } from "./types";
 
 export const CONFIRM_TTL_MS = 10 * 60 * 1000;
@@ -39,30 +40,53 @@ export function targetValues(spec: AdminAsk, input: unknown): string[] {
 /** Whether the message names any word of any target value ("promote eve" names "Eve Smith"). */
 export const namesTarget = (text: string, values: string[]) => values.some((v) => words(v).some((w) => hasWord(text, w)));
 
-/** "don't", "do not", "never", "not", "no" right before the words (up to two words in between): "don't approve Priya". */
-const NEGATED = /\b(?:don'?t|do not|dont|never|not|no|nope)\s+(?:[\p{L}\p{N}']+\s+){0,2}$/iu;
+/** A negation anywhere in a clause: "don't under any circumstances approve Priya". */
+const NEG = /\b(?:don'?t|do not|dont|never|not|no|nope|won'?t|shouldn'?t|can'?t|cannot)\b/iu;
+
+/** The message's clauses: split at punctuation and at "and" / "but" / "then", so one ask can't lend its verb to another. */
+const clausesOf = (text: string) =>
+  text
+    .split(/[.,;:!?\n]+|\s(?:and|but|then)\s/iu)
+    .map((c) => c.trim())
+    .filter(Boolean);
 
 /**
- * Whether the message asks for it: one match of `source` that isn't negated. Phrases that are negations themselves
- * ("don't approve" in decline_member's words) start at the negation, so they still count.
+ * The first match of `source` in `clause` that isn't negated: no negation earlier in the clause. Phrases that are
+ * negations themselves ("don't approve", decline_member's words) start at the negation, so they still count; a
+ * whole-clause pattern (lookaheads, zero-length) counts only in a clause with no negation at all.
  */
-const matches = (text: string, source: string) => {
+function affirmedMatch(clause: string, source: string): RegExpExecArray | null {
   let re: RegExp;
   try {
     re = new RegExp(source, "giu");
   } catch {
-    return false;
+    return null;
   }
-  const one = text.replace(/\s+/g, " "); // one line, so ".*" spans the message
-  for (let m = re.exec(one); m; m = re.exec(one)) {
-    // A whole-message pattern (lookaheads, zero-length): any "don't" / "never" in the message counts against it.
-    if (m[0] === "") return !/\b(?:don'?t|do not|dont|never)\b/iu.test(one);
-    if (!NEGATED.test(one.slice(0, m.index))) return true;
+  for (let m = re.exec(clause); m; m = re.exec(clause)) {
+    if (m[0] === "") return NEG.test(clause) ? null : m;
+    if (!NEG.test(clause.slice(0, m.index))) return m;
   }
-  return false;
-};
+  return null;
+}
+
+/** Whether some clause of the message asks for it (an un-negated match of `source`). */
+const matches = (text: string, source: string) => clausesOf(text).some((c) => affirmedMatch(c, source) !== null);
 
 export const namesAction = (text: string, spec: AdminAsk) => matches(text, spec.action);
+
+/**
+ * The action and the target in the same clause, neither negated: "approve Priya" names approving Priya; "approve
+ * Priya, not Sam" and "approve Priya and decline Sam" don't name approving Sam.
+ */
+function asksFor(text: string, spec: AdminAsk, values: string[]): boolean {
+  return clausesOf(text).some((c) => {
+    const m = affirmedMatch(c, spec.action);
+    if (!m) return false;
+    if (!spec.target) return true;
+    const rest = `${c.slice(0, m.index)} ${c.slice(m.index + m[0].length)}`;
+    return !NEG.test(rest) && namesTarget(c, values);
+  });
+}
 
 /** The fields a call would change (set, and not an empty object). */
 function changedFields(input: unknown): [string, unknown][] {
@@ -70,7 +94,8 @@ function changedFields(input: unknown): [string, unknown][] {
   return Object.entries(input as Record<string, unknown>).filter(([, v]) => v !== undefined && !(v && typeof v === "object" && !Array.isArray(v) && !Object.keys(v).length));
 }
 
-const fieldAsked = (field: AdminField | undefined, value: unknown, text: string) => !!field && (matches(text, field.words) || (!!field.byValue && namesTarget(text, leaves(value))));
+const fieldAsked = (field: AdminField | undefined, value: unknown, text: string) =>
+  !!field && (matches(text, field.words) || (!!field.byValue && clausesOf(text).some((c) => !NEG.test(c) && namesTarget(c, leaves(value)))));
 
 /**
  * Whether `latest` (the Admin's own words in this message) asks for this tool call. `confirming`: Roomie asked about
@@ -83,16 +108,16 @@ export function checkAdminAsk(spec: AdminAsk, input: unknown, latest: string, co
     const unasked = changed.filter(([k, v]) => !fieldAsked(spec.fields![k], v, latest));
     const asked = changed.length ? !unasked.length : namesAction(latest, spec);
     if (asked) return { ok: true };
-    if (yes && (namesAction(latest, spec) || changed.some(([k]) => !!spec.fields![k] && matches(latest, spec.fields![k].words)))) return { ok: true };
+    // Confirming a settings call: "yes, change the settings" (the question named every field), or yes plus words for
+    // every field the call changes. "yes currency" doesn't also confirm the report hour.
+    if (yes && (namesAction(latest, spec) || (changed.length > 0 && changed.every(([k]) => !!spec.fields![k] && matches(latest, spec.fields![k].words))))) return { ok: true };
     const shown = (unasked.length ? unasked : changed).map(([k]) => k).join(", ");
     return { ok: false, ask: spec.ask.replaceAll("{target}", shown || "that") };
   }
   const values = targetValues(spec, input);
-  const action = namesAction(latest, spec);
-  const target = spec.target ? namesTarget(latest, values) : true;
-  if (action && target) return { ok: true };
+  if (asksFor(latest, spec, values)) return { ok: true };
   // Confirming needs "yes" and this tool's own (un-negated) action: "yes decline Priya" never confirms approving her.
-  if (yes && action) return { ok: true };
+  if (yes && namesAction(latest, spec)) return { ok: true };
   const shown = values.filter((v) => v.trim()).slice(0, 3).join(", ");
   return { ok: false, ask: spec.ask.replaceAll("{target}", shown || "that") };
 }

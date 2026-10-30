@@ -17,11 +17,14 @@ const warn = (key: string, e: unknown) => {
 export const pgCounters: CounterStore = {
   async hit(key, windowStart, max) {
     try {
+      // Tries let through in memory during an outage still count once Postgres is back (same key and window).
+      const outage = await fallback.count(key, windowStart);
+      if (outage >= max) return false;
       const { db } = await dbOf();
       const { sql } = await import("drizzle-orm");
       const res = await db.execute<{ count: number }>(sql`
         insert into rate_counters (key, window_start, count) values (${key}, ${windowStart.toISOString()}, 1)
-        on conflict (key, window_start) do update set count = rate_counters.count + 1 where rate_counters.count < ${max}
+        on conflict (key, window_start) do update set count = rate_counters.count + 1 where rate_counters.count < ${max - outage}
         returning count`);
       return res.rows.length > 0;
     } catch (e) {
@@ -34,7 +37,7 @@ export const pgCounters: CounterStore = {
       const { db } = await dbOf();
       const { sql } = await import("drizzle-orm");
       const res = await db.execute<{ count: number }>(sql`select count from rate_counters where key = ${key} and window_start = ${windowStart.toISOString()}`);
-      return Math.max(Number(res.rows[0]?.count ?? 0), await fallback.count(key, windowStart));
+      return Number(res.rows[0]?.count ?? 0) + (await fallback.count(key, windowStart));
     } catch (e) {
       warn(key, e);
       return fallback.count(key, windowStart);

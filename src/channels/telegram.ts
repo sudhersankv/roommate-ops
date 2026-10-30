@@ -284,7 +284,12 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
     if (res.intro) channel.introLater(externalId, res.intro, joinDelayMs);
   }
 
-  const paused = (chatId: string) => deps.chatPaused?.(chatId).catch(() => false) ?? Promise.resolve(false);
+  // A failed lookup counts as paused: /help and /start can wait, a paused Group shouldn't hear from Roomie.
+  const paused = (chatId: string) =>
+    deps.chatPaused?.(chatId).catch((err) => {
+      console.error(`[telegram] pause check for ${chatId} failed; not answering /help or /start there`, err);
+      return true;
+    }) ?? Promise.resolve(false);
 
   /** Photos and voice notes are only fetched when Roomie is being talked to (policy.ts mediaWanted). */
   async function wanted(kind: "photo" | "voice", addressed: ReturnType<typeof readAddress>, from: User, chatId: string, isPrivate: boolean) {

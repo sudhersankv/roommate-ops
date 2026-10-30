@@ -63,6 +63,29 @@ describe("checkAdminAsk", () => {
     assert.equal(ok("chore_remove", { chore: "Dishes" }, "roomie don't remove dishes"), false);
     assert.equal(ok("splitwise_connect", {}, "roomie don't connect splitwise"), false);
     assert.equal(ok("set_group_settings", { currency: "EUR" }, "roomie don't change the currency"), false);
+    assert.equal(ok("approve_member", { name: "Priya" }, "roomie, don't under any circumstances approve Priya"), false, "however far the negation is");
+    for (const [id, msg] of [
+      ["splitwise_connect", "roomie, not connect splitwise"],
+      ["splitwise_import", "no, don't import from splitwise group Apt"],
+      ["splitwise_export", "roomie, not export to Splitwise"],
+      ["splitwise_mirror", "roomie nope, no mirror with splitwise"],
+    ] as const)
+      assert.equal(ok(id, { group: "Apt", on: true }, msg), false, msg);
+  });
+
+  test("the action and the target in the same clause, the target not negated", () => {
+    assert.equal(ok("approve_member", { name: "Sam" }, "roomie approve Priya and decline Sam"), false);
+    assert.equal(ok("approve_member", { name: "Sam" }, "roomie approve Priya, not Sam"), false);
+    assert.equal(ok("approve_member", { name: "Priya" }, "roomie approve Priya, not Sam"), true);
+    assert.equal(ok("decline_member", { name: "Sam" }, "roomie approve Priya and decline Sam"), true);
+    assert.equal(ok("promote_member", { name: "Eve" }, "roomie promote Sam. Eve is cool"), false);
+  });
+
+  test("settings confirmation: yes plus one field doesn't confirm the others", () => {
+    assert.equal(ok("set_group_settings", { currency: "EUR", reportHour: 9 }, "roomie switch to euros"), false, "the report hour wasn't asked for");
+    assert.equal(ok("set_group_settings", { currency: "EUR", reportHour: 9 }, "yes currency", true), false);
+    assert.equal(ok("set_group_settings", { currency: "EUR", reportHour: 9 }, "yes, currency and the report", true), true);
+    assert.equal(ok("set_group_settings", { currency: "EUR", reportHour: 9 }, "roomie, yes change the settings", true), true);
   });
 
   test("approve / decline", () => {

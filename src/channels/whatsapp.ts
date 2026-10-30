@@ -693,7 +693,12 @@ export function createWhatsApp(opts: WhatsAppOptions): WhatsApp {
     if (out) await reply(out);
   }
 
-  const paused = (jid: string) => deps.chatPaused?.(jid).catch(() => false) ?? Promise.resolve(false);
+  // A failed lookup counts as paused: /help and /start can wait, a paused Group shouldn't hear from Roomie.
+  const paused = (jid: string) =>
+    deps.chatPaused?.(jid).catch((err) => {
+      console.error(`[whatsapp] pause check for ${jid} failed; not answering /help or /start there`, err);
+      return true;
+    }) ?? Promise.resolve(false);
 
   /** Text, voice transcript or photo -> what the pipeline gets; null = nothing to pass on. */
   async function content(m: WAMessage, read: ReadMessage, replyTo: (out: Outgoing) => Promise<void>, toldKey: string, folderChat: string, from: ChannelUser, isPrivate = false) {

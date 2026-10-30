@@ -303,6 +303,24 @@ describe("a paused Group", () => {
     await h.feed(message(SAM, { text: "/start" }, { id: 12, type: "private", first_name: "Sam" }));
     assert.equal(h.sent().length, 0);
   });
+
+  test("a failed pause check counts as paused for /help", async () => {
+    const h = harness({
+      deps: {
+        chatPaused: async () => {
+          throw new Error("db down");
+        },
+      },
+    });
+    const err = console.error;
+    console.error = () => {};
+    try {
+      await h.feed(message(MAYA, { text: "/help" }));
+    } finally {
+      console.error = err;
+    }
+    assert.equal(h.sent().length, 0);
+  });
 });
 
 describe("leaving", () => {
