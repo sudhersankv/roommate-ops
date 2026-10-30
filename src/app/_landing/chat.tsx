@@ -11,7 +11,7 @@ import { RoomieAvatar } from "@/components/app/roomie-avatar"
  * satisfying moment: the bubble gets an ember ring and its 🔥 a glow, and the stage's dino cheers when it lands.
  */
 export type ChatLine =
-  | { who: string; text: ReactNode; time: string; me?: boolean; button?: string; photo?: ReactNode; win?: boolean }
+  | { who: string; text: ReactNode; time: string; me?: boolean; button?: string; photo?: ReactNode; win?: boolean; after?: ReactNode }
   | { day: string }
 
 // Sender names in group chats are colored per person (as on WhatsApp and Telegram).
@@ -23,6 +23,7 @@ const NAME_COLOR: Record<string, string> = {
   Dev: "text-sky-700 dark:text-sky-300",
   Kai: "text-sky-700 dark:text-sky-300",
   Theo: "text-sky-700 dark:text-sky-300",
+  Jas: "text-fuchsia-700 dark:text-fuchsia-300",
   Sam: "text-fuchsia-700 dark:text-fuchsia-300",
   Ana: "text-fuchsia-700 dark:text-fuchsia-300",
   Mom: "text-fuchsia-700 dark:text-fuchsia-300",
@@ -95,7 +96,7 @@ function Said({ line, i }: { line: Exclude<ChatLine, { day: string }>; i: number
       <MessageContent className="gap-1.5">
         <Bubble variant={line.me ? "default" : "secondary"} align={align} className={cn("max-w-[85%]", line.win && "lp-win")}>
           {line.photo}
-          <BubbleContent className="rounded-2xl px-3 py-1.5 text-[0.9375rem] leading-snug">
+          <BubbleContent className="rounded-2xl px-3 py-1.5 text-[0.9375rem] leading-snug whitespace-pre-line">
             {!line.me && <span className={cn("block text-[0.8125rem] font-semibold", NAME_COLOR[line.who] ?? "text-muted-foreground")}>{line.who}</span>}
             {line.win ? withFire(line.text) : line.text}
             <span className="float-right mt-1.5 ml-3 text-[0.6875rem] leading-none opacity-60">{line.time}</span>
@@ -107,6 +108,7 @@ function Said({ line, i }: { line: Exclude<ChatLine, { day: string }>; i: number
             {line.button}
           </span>
         )}
+        {line.after}
       </MessageContent>
     </Message>
   )
@@ -128,6 +130,24 @@ export function cuesFor(lines: ChatLine[]) {
   }
   const at = (i: number | null) => (i === null ? null : Math.round((lineDelay(i) + 0.3) * 1000))
   return { callMs: at(call), replyMs: at(reply), winMs: at(win) }
+}
+
+/** The handwritten list on the fridge, as a photo in the chat. No prices: it's a list. */
+export const LIST_ITEMS = ["milk (1 gal)", "eggs", "tortillas", "dish soap", "limes"]
+
+export function ListPhoto() {
+  return (
+    <div className="mb-1 overflow-hidden rounded-2xl bg-raised p-3" role="img" aria-label={`A photo of a handwritten list: ${LIST_ITEMS.join(", ")}`}>
+      <div aria-hidden className="mx-auto w-40 rotate-2 rounded-sm bg-[#fff6b8] px-3 pt-2 pb-3 text-[0.75rem] leading-[1.6rem] text-[#3a3320] shadow-md [background-image:repeating-linear-gradient(transparent_0_1.55rem,#e7d77a_1.55rem_1.6rem)]">
+        <p className="m-0 font-semibold">we need:</p>
+        {LIST_ITEMS.map((item) => (
+          <p key={item} className="m-0 italic">
+            {item}
+          </p>
+        ))}
+      </div>
+    </div>
+  )
 }
 
 /** A receipt as a photo in the chat: paper, a store, a few lines and the total. */

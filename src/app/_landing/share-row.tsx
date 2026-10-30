@@ -6,7 +6,7 @@ import { CheckIcon, LinkIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 
 /** Copy the page's link. The Telegram and WhatsApp share links sit next to it as plain anchors. */
-export function CopyLink({ url }: { url: string }) {
+export function CopyLink({ url, size }: { url: string; size?: "sm" }) {
   const [copied, setCopied] = useState(false)
   const copy = async () => {
     try {
@@ -18,7 +18,7 @@ export function CopyLink({ url }: { url: string }) {
     }
   }
   return (
-    <Button variant="outline" onClick={copy}>
+    <Button variant="outline" size={size} onClick={copy}>
       {copied ? <CheckIcon data-icon="inline-start" aria-hidden /> : <LinkIcon data-icon="inline-start" aria-hidden />}
       <span aria-live="polite">{copied ? "Copied" : "Copy link"}</span>
     </Button>
