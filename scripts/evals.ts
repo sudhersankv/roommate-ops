@@ -52,6 +52,7 @@ const say = (env: EvalEnv, t: Turn) => {
     source: "chat",
     channel: "evals",
     isReplyToRoomie: t.isReplyToRoomie,
+    ...(t.private ? { isPrivate: true } : {}),
     ...(t.photo && env.photo ? { imageUrl: env.photo } : {}),
   });
 };

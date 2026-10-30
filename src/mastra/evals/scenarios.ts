@@ -6,14 +6,14 @@ import { db, schema } from "@/db";
 import { groupReportText } from "@/jobs/report-text";
 import { emptyLearned } from "@/lib/personality";
 import { nextWeekday, zonedParts } from "@/lib/time";
-import { cart, chatlog, chores, groups, members, money, pantry, personality, receipts, recipes, reminders, toolkits, upkeep } from "@/services";
+import { cart, chatlog, chores, groups, joins, members, money, pantry, personality, receipts, recipes, reminders, toolkits, upkeep } from "@/services";
 import type { Ctx } from "@/services/types";
 
 export const EVAL_MEMBERS = ["Maya", "Dev", "Sam"] as const;
 export type EvalMember = (typeof EVAL_MEMBERS)[number];
 
 /** `photo` sends the photo the scenario's seed saved (env.photo) with the message. */
-export type Turn = { text: string; from?: EvalMember; isReplyToRoomie?: boolean; photo?: boolean };
+export type Turn = { text: string; from?: EvalMember; isReplyToRoomie?: boolean; photo?: boolean; /** A 1:1 message with Roomie. */ private?: boolean };
 
 export type EvalEnv = {
   /** Ctx acting as Maya. */
@@ -103,6 +103,8 @@ const dinnerAndCab = async (env: EvalEnv) => {
   await money.logExpense(env.as("Dev"), { cents: 6000, description: "cab", category: "transport", splitAmong: [env.member.Dev, env.member.Sam] });
 };
 const fail = (ok: boolean, msg: string) => (ok ? null : msg);
+/** The Join code a rotate scenario started with (scenarios run one at a time). */
+let joinCodeBefore = "";
 /** Groceries has no prices: a "$4.29" in a cart reply is made up. */
 const NO_PRICE: RegExp[] = [/\$\d/];
 
@@ -737,6 +739,56 @@ export const SCENARIOS: Scenario[] = [
         const on = [...(await groups.enabledToolkits(e.ctx))].sort().join(",");
         return fail(g?.purpose === "trip" && g.currency === "EUR" && on === "groceries,splitting", `trip, EUR, Splitting + Groceries only; got ${g?.purpose} ${g?.currency} ${on}`);
       },
+    },
+  },
+  {
+    id: "setup-from-dm",
+    area: "core",
+    seed: async (e) => {
+      await db.update(schema.groups).set({ onboardedAt: null }).where(eq(schema.groups.id, e.ctx.groupId));
+      await groups.initToolkits(e.ctx.groupId);
+    },
+    turn: { text: "roommates, USD, Chicago", private: true },
+    expect: {
+      tools: ["set_group_settings"],
+      replyIncludes: [/learned/i],
+      excludes: [...TOOLKIT_WORDS, /\/claim\//],
+      check: async (e) => {
+        const g = await groups.getGroup(e.ctx.groupId);
+        const posted = (await chatlog.roomieLines(e.ctx.groupId, 10)).map((l) => l.text);
+        const inGroup = posted.some((t) => /^Learned /.test(t) && /\/j\/[a-z2-7]{10}\. Sign in with Google and pick your name\./.test(t));
+        return fail(g?.purpose === "roommates" && g.timezone === "America/Chicago" && inGroup, `roommates in Chicago, and the learned + Join link lines in the group chat; got ${g?.purpose} ${g?.timezone} / ${posted.join(" | ")}`);
+      },
+    },
+  },
+  {
+    id: "dashboard-for-everyone",
+    area: "core",
+    turn: { text: "roomie send us the dashboard", from: "Dev" },
+    expect: { tools: ["get_dashboard_link"], replyIncludes: [/\/j\/[a-z2-7]{10}/], excludes: [/\/claim\//, /\/g\/[0-9a-f-]{36}/], noButtons: true },
+  },
+  {
+    id: "rotate-join-link-admin",
+    area: "core",
+    seed: async (e) => void (joinCodeBefore = await joins.ensureJoinCode(e.ctx.groupId)),
+    turn: { text: "roomie rotate the join link, the old one got shared outside the group" },
+    expect: {
+      tools: ["rotate_join_link"],
+      replyIncludes: [/\/j\/[a-z2-7]{10}/],
+      check: async (e) => {
+        const now = await joins.ensureJoinCode(e.ctx.groupId);
+        return fail(now !== joinCodeBefore && !(await joins.groupByCode(joinCodeBefore)), "a new code, the old one dead");
+      },
+    },
+  },
+  {
+    id: "rotate-join-link-member-refused",
+    area: "core",
+    seed: async (e) => void (joinCodeBefore = await joins.ensureJoinCode(e.ctx.groupId)),
+    turn: { text: "roomie rotate the join link", from: "Sam" },
+    expect: {
+      replyIncludes: [/admin|maya/i],
+      check: async (e) => fail((await joins.ensureJoinCode(e.ctx.groupId)) === joinCodeBefore, "the code changed for a non-admin"),
     },
   },
   {
