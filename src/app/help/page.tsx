@@ -113,7 +113,10 @@ export default function HelpPage() {
             <li>@mention it, or</li>
             <li>reply to one of its messages.</li>
           </ul>
-          <p>Otherwise it stays quiet, apart from a short hello once a day, a cheer when someone hits a streak, and a morning nudge when a chore is due.</p>
+          <p>
+            It mostly answers when addressed. Sometimes it chimes in when a message is clearly for it, and it answers voice notes addressed to it. It also posts a short
+            hello once a day, a cheer when someone hits a streak, and a morning nudge when a chore is due.
+          </p>
           <p>
             Send <Kbd>/pet</Kbd> and it tells you about its day.
           </p>
@@ -207,7 +210,9 @@ export default function HelpPage() {
         <Part id="privacy" title="Privacy">
           <p>Each group is separate: its own memory, its own dashboard. Nothing crosses between groups.</p>
           <p>
-            Chat messages are kept for 30 days, then deleted. Say <q>roomie forget me</q> and it deletes what it knows about you. Details are on the{" "}
+            Every message goes to a small AI model that decides whether Roomie should answer; the ones it answers go to Claude. Chat messages, its memory of
+            conversations and its debug records are kept for 30 days, then deleted. Say <q>roomie forget me</q> and it deletes what it knows about you and takes you out of
+            the group&apos;s Members. What goes where, and who can see it, is on the{" "}
             <Link href="/privacy" className={linkClass}>
               privacy page
             </Link>
@@ -288,11 +293,20 @@ const FAQ: { q: string; a: ReactNode; text: string }[] = [
   },
   {
     q: "Does it read everything we say?",
-    text: "It sees the group's messages, because that's how it knows when someone is talking to it. It only acts on messages addressed to it, and only keeps what its Tricks need (an expense, a Cart item, a chore). Chat messages are deleted after 30 days. Each group's memory is separate.",
+    text: "Yes. Every message, with the few before it, goes to a small AI model that decides whether Roomie should answer. It mostly answers when addressed; sometimes it chimes in, and it answers voice notes addressed to it. What it answers goes to Claude with recent chat for context. Chat messages, its memory of conversations and its debug records are deleted after 30 days. Each group's memory is separate. The privacy page has the details.",
     a: (
       <>
-        <p>It sees the group&apos;s messages: that&apos;s how it knows when someone is talking to it. It only acts on messages addressed to it.</p>
-        <p>It keeps what its Tricks need (an expense, a Cart item, a chore), and chat messages are deleted after 30 days. Each group&apos;s memory is separate.</p>
+        <p>
+          Yes. Every message, with the few before it, goes to a small AI model that decides whether Roomie should answer. It mostly answers when addressed; sometimes
+          it chimes in, and it answers voice notes addressed to it. What it answers goes to Claude with recent chat for context.
+        </p>
+        <p>
+          Chat messages, its memory of conversations and its debug records are deleted after 30 days. Each group&apos;s memory is separate. The{" "}
+          <Link href="/privacy" className={linkClass}>
+            privacy page
+          </Link>{" "}
+          has the details.
+        </p>
       </>
     ),
   },
@@ -369,11 +383,12 @@ const FAQ: { q: string; a: ReactNode; text: string }[] = [
   },
   {
     q: "What does \"forget me\" delete?",
-    text: "Your chat messages, what Roomie remembered about you (like a diet or a Venmo handle) and its memory of you, in that group. Expenses you were part of stay so everyone else's Balances still add up; you show as Former member.",
+    text: "In that group: your chat messages, what Roomie remembered about you (like a diet or a Venmo handle), its memory of you under any name you had, the photos of yours it read and the debug records of your messages. You leave the group's Members and show as Former member; write again and you're a new member an Admin approves. Expenses you were part of stay so everyone else's Balances still add up.",
     a: (
       <p>
-        Your chat messages, what it remembered about you (a diet, a Venmo handle) and its memory of you, in that group. Expenses you were part of stay so everyone
-        else&apos;s Balances still add up; you show as &ldquo;Former member&rdquo;.
+        In that group: your chat messages, what it remembered about you (a diet, a Venmo handle), its memory of you under any name you had, the photos of yours it read
+        and the debug records of your messages. You leave the group&apos;s Members and show as &ldquo;Former member&rdquo;; write again and you&apos;re a new member an
+        Admin approves. Expenses you were part of stay so everyone else&apos;s Balances still add up.
       </p>
     ),
   },

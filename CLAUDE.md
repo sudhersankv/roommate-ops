@@ -94,7 +94,11 @@ src/
     persona.ts          pure: core rules + house style + archetype voice + sliders as sentences + quirks + learned
                         style (gated by confidence) + /* TOOLKIT_PERSONA */ + mood + people (ADR 0012)
     memory.ts           Memory: thread group-<id>, resource <groupId>; last 30, semantic recall, working memory
-    forget.ts           memory cleanup for "forget me" (a Member's lines + note) and "delete group data" (the thread)
+    forget.ts           memory + trace cleanup: "forget me" (a Member's lines under every name they had, matched by text too,
+                        Roomie's replies naming them, their note; traces their messages started), "delete group data"
+                        (the thread, the Group's traces and scores), retention (deleteOldTraces, deleteOldMemory)
+    observability.ts    UnaddressedTextFilter (a span output processor): a message the Gate stayed quiet on keeps no text
+                        in its "roomie message" / "gate" spans (the ended span's input replaces the stored one)
     gate/               policy.ts (pure: decideGate, Chattiness thresholds, follow-up window, parseSilent), jev.ts
                         (questionsFor(enabled): the toolkit choices are the enabled manifests' gate criteria + core + none),
                         index.ts
@@ -156,6 +160,7 @@ src/
   lib/money.ts          formatMoney / parseMoney (client-safe)
   lib/units.ts          Instacart's units, synonyms (tbsp, lb, pcs), clove/pinch/slice -> buyable, parseAmount, formatAmount
   lib/voice.ts lib/prices.ts lib/style-note.ts
+  lib/forget-text.ts    pure: sender tags, line bodies, photo URLs, whole-word mentions, anonymize (for forget me)
   lib/personality.ts    pure, client-safe: ARCHETYPES, Personality (normalize / validate / apply patch), confidenceFor,
                         slangBudget, usableNicknames, saysName, isPetCommand, moodFrom, greeting / win / preview lines
   lib/style-stats.ts    pure: the Learned style's counts (countPhrase, countNickname, mergeLearned, activeHours)
@@ -164,7 +169,8 @@ src/
                         nudge and the weekly Group Report (claimed in scheduled_posts, once per period); Group style
                         refresh; recurring Expenses (hourly check); Splitwise outbox; daily retention
   jobs/report-text.ts   groupReportText: the same text for the weekly post and group_report (casual from the style note)
-  jobs/retention.ts     deletes chat_messages older than 30 days (ADR 0006)
+  jobs/retention.ts     daily: chat_messages, trace spans + live scores (mastra_ai_spans, mastra_scorers) and memory-thread
+                        messages older than 30 days (ADR 0006, audit B4); logs the counts
   jobs/style-note.ts    every 50 chat lines: Haiku proposes style candidates, style-stats counts them into
                         groups.personality.learned (setCandidateReader() for tests)
   proxy.ts              THE middleware (a root proxy.ts is ignored because the app is under src/): Neon Auth guard on
@@ -218,6 +224,11 @@ src/
     admin/beta/         operators: the beta requests, newest first, status new / contacted / onboarded / declined
 drizzle/                generated migrations (0000 baseline drops the pre-step-4 tables)
 scripts/migrate.ts      npm run db:migrate
+scripts/lib/prod-guard.ts  seed, dev-chat, evals and test:tools refuse the production Neon branch; telegram (polling) and
+                        telegram:webhook --delete refuse while APP_URL is https://roomie.fly.dev, --set refuses any other
+                        target (ALLOW_PROD_BOT=1 overrides)
+scripts/scrub-dev.ts    npx tsx scripts/scrub-dev.ts: makes a fresh copy of prod safe (keeps only `dev` Channel Groups; drops
+                        the WhatsApp login, wa_contacts, beta requests, votes, traces, unused Accounts); refuses on prod
 scripts/seed.ts         demo Group "Apt 4B" (dev Chat dev-apt-4b); prints its id, a Claim link for Maya, a Studio requestContext
 scripts/dev-chat.ts     the terminal group chat stand-in (docs/dev-chat.md)
 scripts/telegram.ts     npm run telegram: long polling (deletes any webhook first); telegram-webhook.ts --set/--delete/--info
@@ -240,7 +251,7 @@ scripts/studio-presets.ts  writes .mastra-presets.json for Studio (run by mastra
 - **Rules** (`services/authz.ts`): Pending members can chat and read, but every write service calls `requireActive` and refuses with "Hang on, an admin needs to approve you first. <Admin> can approve you." Members, roles, settings, Toolkits and delete-group-data call `requireAdmin`. Expenses can be changed by whoever added or paid them, anyone with a Share, or an Admin.
 - **Dashboard:** every page and action goes through `lib/session.ts`; nothing trusts a member id from the client. Non-Admins don't see admin controls, and the actions return 403 anyway.
 - **Dev sign-in bypass:** with `NODE_ENV !== "production"` and `DEV_AUTH_EMAIL` set, that email is the signed-in Account (loud warning in the log). For automated browser checks only.
-- **Privacy** (ADR 0006): chat_messages live 30 days; `forget_me` deletes a Member's chat lines, note and memory lines (ledger stays; a removed Member becomes "Former member"); "delete group data" wipes the Group's data and Roomie's memory but keeps the Group, Chat and Members.
+- **Privacy** (ADR 0006, `/privacy` must say what the code does): chat_messages, memory-thread messages, traces and live scores live 30 days; a message the Gate stayed quiet on keeps no text in traces. `forget_me` deletes a Member's chat lines, note, Claim links, memory lines under every name they had (and Roomie's replies naming them), the photos in those lines (not an Expense's receipt), the traces their messages started and their `wa_contacts` row, anonymizes their names in Activity, then makes them removed: "Former member", no `channel_user_id`, no Account (a later message makes them a new Pending Member); the last Admin leaving promotes the longest-standing active Member; ledger rows stay. "Delete group data" wipes the Group's data, memory, traces, scores and upload folders but keeps the Group, Chat and Members.
 ## Splitting (step 5)
 
 - **The model passes intent, never computed cents** (ADR 0007). "50/25/25" is `percents`, "2:2:1" is `shares`, "Dev 30, Sam 15" is `exact` (as said), "Alex paid 60 and I paid 40" is `payers`. The service computes every Share; a split that doesn't add up throws a `SplitError` whose message says what's left or over, and Roomie asks.
@@ -308,7 +319,7 @@ scripts/studio-presets.ts  writes .mastra-presets.json for Studio (run by mastra
 - **LLM:** Neon AI Gateway through Mastra's model router: `model = "neon/<id>"` in `lib/llm.ts`, which reads `NEON_AI_GATEWAY_BASE_URL` + `NEON_AI_GATEWAY_TOKEN`. Use ids from the branch's `/v1/models`. Embeddings go to `{base}/v1/embeddings` through `ModelRouterEmbeddingModel` with an explicit url (`gatewayEmbedder()`).
 - **Jev** is not a chat model: `POST {base}/typesafe/v1/systemone` with typed questions (`gate/jev.ts`). The gateway rate limit (input tokens per minute, account-wide) also covers Jev; on a 429 the Gate falls back to hard triggers.
 - **Env:** `.env` must win over the process environment, but Node's `--env-file` and Next never override. `lib/env.ts` loads it with `dotenv({ override: true })`; import it first in every entry point. `mastra dev` tree-shakes side-effect-only imports, so bundled code must call `loadEnv()` (`lib/llm.ts` and `mastra/index.ts` do). **If you see 401 from the gateway, a system env var (e.g. a stale `NEON_AI_GATEWAY_BASE_URL`) is shadowing `.env`.**
-- **Observability:** traces go to Postgres (`mastra_ai_spans`, visible in Studio) and to the Mastra platform when `MASTRA_PLATFORM_ACCESS_TOKEN` + `MASTRA_PROJECT_ID` are set. API routes call `mastra.observability.flush()` at the end.
+- **Observability:** traces go to Postgres (`mastra_ai_spans`, visible in Studio) and to the Mastra platform when `MASTRA_PLATFORM_ACCESS_TOKEN` + `MASTRA_PROJECT_ID` are set. API routes call `mastra.observability.flush()` at the end. PostgresStore writes a span when it starts and updates it when it ends (`batch-with-updates`), and `spanOutputProcessors` mutate the live span, so a processor can change the stored input on end (`mastra/observability.ts`). The root span's `metadata` carries `groupId` / `memberId`; scorer runs are their own traces pointing back with `metadata.targetTraceId`; `mastra_scorers.resourceId` is the Group. The spans table's trigger sets `createdAt` on insert: retention goes by `startedAt`.
 - **Voice:** no Whisper on the gateway. `lib/voice.ts` sends the audio to OpenRouter (`OPENROUTER_API_KEY`, `STT_MODEL`, an audio-capable chat model) as an `input_audio` chat part and uses the text reply as the transcript. Optional; the Telegram adapter uses it for voice notes when `OPENROUTER_API_KEY` is set (otherwise Roomie says once per Chat that it can't hear them yet).
 - **grammY** (Telegram, `grammy` in `serverExternalPackages`): `new Bot(token, { botInfo })` skips getMe (the webhook builds botInfo from the token's id + `TELEGRAM_BOT_USERNAME`; tests do the same with a fake token). Polling: `bot.start({ allowed_updates, onStart })`; webhook: `webhookCallback(bot, "std/http", { secretToken })`. Outbound calls are captured in tests with `bot.api.config.use(transformer)`; `handleUpdate` + the adapter's `idle()` runs an update to the end. `my_chat_member` (Roomie added/removed) arrives without admin rights; `chat_member` doesn't, so we don't use it. Privacy mode must be off (BotFather `/setprivacy`) to see every group message. Groups upgraded to supergroups change id (`migrate_to_chat_id` -> `groups.moveChat`). Telegram refuses `localhost` URL buttons: the adapter sends those links as text.
 - **Baileys** (WhatsApp, `baileys` pinned at `7.0.0-rc14`, in `serverExternalPackages`; docs/whatsapp.md, ADR 0013): `makeWASocket({ version: fetchLatestBaileysVersion(), auth: { creds, keys: makeCacheableSignalKeyStore(keys) }, markOnlineOnConnect: false, syncFullHistory: false, getMessage, cachedGroupMetadata })`. Don't set `shouldSyncHistoryMessage: () => false`: Baileys warns it loses its initial LID mappings. Only `messages.upsert` type `notify` is live; joins arrive as `group-participants.update` (`add` with us in `participants`, `author`/`authorPn` = the adder) or `groups.upsert` (added at creation); participants are `{ id, phoneNumber?, lid? }`; messages carry `key.participantAlt` / `key.remoteJidAlt` (the other form of the sender's id); `sock.signalRepository.lidMapping.getPNForLID(lid)`. Close codes: 401 `loggedOut` (clear, wait for login), 440 `connectionReplaced` (another process: stop), 515 `restartRequired` (right after pairing: reconnect at once), 408 while showing a QR (nobody scanned: stop). `requestPairingCode(digits)` only after the first `qr` event. Tests drive `createWhatsApp` with a fake socket and an in-memory `AuthRows`. One process per session.
@@ -323,6 +334,8 @@ scripts/studio-presets.ts  writes .mastra-presets.json for Studio (run by mastra
 ```
 npm ci
 cp .env.example .env          # DATABASE_URL, NEON_AI_GATEWAY_BASE_URL/TOKEN, NEON_AUTH_BASE_URL, NEON_AUTH_COOKIE_SECRET
+                              # DATABASE_URL + NEON_AUTH_BASE_URL = the Neon `dev` branch (never production: its URL lives
+                              # only in `fly secrets`). A new dev branch is a copy of prod: npx tsx scripts/scrub-dev.ts first
 npm run db:migrate            # apply drizzle/ (the 0000 baseline wipes pre-step-4 dev data)
 npm run seed                  # demo Group Apt 4B; prints its id, a Claim link for Maya and a Studio requestContext
 npm run seed:demo             # delete and rebuild Apt 4B
@@ -336,7 +349,7 @@ npm run whatsapp              # Roomie on WhatsApp from this terminal (QR here; 
 npm run mastra:dev            # Mastra Studio at localhost:4111, with request-context presets for Apt 4B's Members
 npm run db:generate           # after a schema change: write the next migration
 npm run typecheck && npm test # tsc + unit tests (no .env); CI runs both
-npm run test:tools            # every tool against the dev DB in throwaway Groups (Splitwise, Instacart, recipes on fakes), no LLM
+npm run test:tools            # every tool against the Neon dev branch in throwaway Groups (Splitwise, Instacart, recipes on fakes), no LLM
 npm run evals                 # ~65 chat scenarios through the real Gate + Sonnet; prints a table and the pass rate
                               # (npx tsx scripts/evals.ts --only id,id   or   --baseline to rewrite docs/evals-baseline.md)
 ```
