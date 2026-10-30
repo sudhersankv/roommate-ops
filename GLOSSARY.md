@@ -63,7 +63,7 @@ _Avoid_: OTP, verification code
 ## Behaviour
 
 **Trick**:
-Something Roomie can do in a Group, such as Splitting, Groceries, Chores or Upkeep (Research, Trips, PDFs and Stickers are coming). People **teach** Roomie a Trick ("roomie, learn trips", or the dashboard's Tricks page) and can make it **forget** one; nothing is deleted. In code a Trick is a **Toolkit** (`src/toolkits/`, docs/toolkits.md): user-facing text always says Trick.
+Something Roomie can do in a Group, such as Splitting, Groceries, Chores or Upkeep (Lease stuff, Outings, Cooking, Research, Trips, PDFs and Stickers are coming). People **teach** Roomie a Trick ("roomie, learn trips", or the dashboard's Tricks page) and can make it **forget** one; nothing is deleted. In code a Trick is a **Toolkit** (`src/toolkits/`, docs/toolkits.md): user-facing text always says Trick.
 _Avoid_ (in anything a person reads): Toolkit, capability, module, plugin, feature, enable
 
 **Teach / Forget**:

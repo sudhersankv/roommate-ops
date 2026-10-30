@@ -122,7 +122,7 @@ src/
                         pages }) and Toolkit (+ tools, dashboard { home, settings, mood } lazy refs, onEnable/onDisable)
     define.ts           defineManifest (keeps the id literal), defineToolkit (manifest + server parts)
     manifests.ts        client-safe: MANIFESTS -> ToolkitId / TOOLKIT_IDS, CATALOG (+ coming-soon), manifestOf, findManifest
-    coming-soon.ts      manifest-only stubs: research, pdf, trips, stickers, household-admin
+    coming-soon.ts      manifest-only stubs: household-admin (Lease stuff), outings, cooking, research, trips, pdf, stickers
     presets.ts          purpose -> Toolkits (roommates/family: all four; trip/other: splitting+groceries; friends/work: splitting)
     registry.ts         server: TOOLKITS (BY_ID satisfies Record<ToolkitId, Toolkit>) + toolsFor(gateToolkit, enabled),
                         toolkitById. Wraps every tool so a NotAllowedError comes back as { notAllowed, reason, message },
@@ -346,7 +346,7 @@ scripts/studio-presets.ts  writes .mastra-presets.json for Studio (run by mastra
 - Tools attach buttons by returning `links: [{ text, url }]` (see `cart_checkout` / `dashboardLinks()`); the pipeline collects them from every tool result into `Outgoing.buttons`. Never paste URLs. Buttons need an absolute `APP_URL`. Only for something the person asked to open: routine actions (adds, removes, views, chores done) return none (WhatsApp shows each button as a bare URL line).
 - A new Toolkit = a folder with `manifest.ts` + `server.ts` + tools, one line in `toolkits/manifests.ts` and one in `toolkits/registry.ts` (docs/toolkits.md has the checklist). Its Gate criterion, persona lines, nav tab, Home and Settings sections come from the manifest; never add them to the shell, `gate/jev.ts` or the persona.
 - The Tricks page (`/g/<id>/tricks`, same page as `/toolkits`) is the one place Tricks are taught or forgotten in the UI; Settings only summarizes and links there. In UI text it's "Tricks", not a store or marketplace (Roomie is a groupmate).
-- Dashboard pattern: a page (server) calls `currentMember(groupId)`, reads services through `_components/data.ts` and renders a client screen; writes are server actions in `g/[groupId]/actions.ts` that call a service with the session's Ctx and `revalidatePath`. They return `{ ok, error, status }`, so screens toast errors. Coming-soon Toolkits (Research, PDFs, Trips, Stickers, Household admin) are manifest-only stubs: listed on the Toolkits page and refused kindly.
+- Dashboard pattern: a page (server) calls `currentMember(groupId)`, reads services through `_components/data.ts` and renders a client screen; writes are server actions in `g/[groupId]/actions.ts` that call a service with the session's Ctx and `revalidatePath`. They return `{ ok, error, status }`, so screens toast errors. Coming-soon Toolkits (Lease stuff, Outings, Cooking, Research, Trips, PDFs, Stickers) are manifest-only stubs: listed on the Toolkits page and refused kindly.
 - Schema changes: edit `src/db/schema.ts`, `npm run db:generate`, commit the SQL in `drizzle/`, `npm run db:migrate`. Never `drizzle-kit push`.
 - Roomie's replies are 1 to 3 short lines unless someone asks for more (the archetype can make that 1). The trigger words are "roomie" and the Group's name for its pet (`callsPet`); the @mention always works.
 - Use the glossary's words in code and UI text (Member, Group, Expense, Cart...), and avoid the words it lists under _Avoid_.

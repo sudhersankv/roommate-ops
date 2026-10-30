@@ -86,7 +86,7 @@ export const groceries = defineToolkit(manifest, {
 - [ ] read-only tools added to `READ_ONLY_TOOLS` in the scenarios
 - [ ] glossary words for anything new (GLOSSARY.md)
 
-A coming-soon Toolkit is just a manifest in `src/toolkits/coming-soon.ts`. Building it means moving it into its own folder and adding it to the two lists.
+A coming-soon Toolkit is just a manifest in `src/toolkits/coming-soon.ts` (today, in this order: Lease stuff `household-admin`, Outings, Cooking, Research, Trips, PDFs, Stickers; the landing page and the Tricks page list them in that order, and its accent is in `src/app/_landing/tricks.ts`). Building it means moving it into its own folder and adding it to the two lists.
 
 ## Routine actions carry no links
 
