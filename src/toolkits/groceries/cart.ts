@@ -1,74 +1,115 @@
-// Cart tools: thin wrappers over services/cart. Buttons go out as `links` in the result (never pasted URLs).
+// Cart tools: thin wrappers over services/cart. No prices anywhere here (real money comes from the receipt), and no
+// links on routine actions: the Cart page goes out only when someone asks for it (cart_view link: true), and the
+// Instacart list on checkout.
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { cart } from "@/services";
-import { dollars } from "@/services/types";
+import { addPhotoToCart, photoSummary, readGroceryPhoto } from "@/services/grocery-photos";
+import { enabledToolkits } from "@/services/groups";
 import { expenseSummary } from "../splitting/money";
 import { ctxOf, dashboardLinks, memberIdByName, toCents } from "../util";
 
-/** The View-cart button; omitted when APP_URL is not an absolute URL. */
-const viewCart = (groupId: string) => dashboardLinks("🛒 View cart", `/g/${groupId}/cart`);
+type Item = { name: string; qty: string; shared: boolean; addedByName: string; recipeTitle?: string | null };
+/** What Roomie sees of a Cart item: what, how much, for whom. */
+const said = (i: Item) => ({ name: i.name, qty: i.qty, ...(i.shared ? { shared: true } : { for: i.addedByName }), ...(i.recipeTitle ? { recipe: i.recipeTitle } : {}) });
+
+const itemSchema = z.object({
+  name: z.string().min(1).describe("Item name without the quantity, e.g. 'chips'"),
+  qty: z.string().optional().describe("The quantity exactly as they said it, e.g. '3 bags', '2 cartons', '12', '1 lb'. Omit for 1."),
+});
 
 export const cartTools = {
   cart_add: createTool({
     id: "cart_add",
     description:
-      "Add grocery items to the shared cart, attributed to the sender ('add 3 bags of chips for me' -> one item, name 'chips', qty '3 bags'). shared=true for things the whole group uses (toilet paper, dish soap, 'for the house'). If it's unclear whether it's for them or everyone, ask first. Returns addedTotal (just these items) and cartTotal (the whole open cart). A View-cart button is attached automatically; don't paste URLs.",
+      "Add grocery items to the shared cart, attributed to the sender ('add 3 bags of chips for me' -> one item, name 'chips', qty '3 bags'), or to `for` ('oat milk for Dev'). shared=true for things the whole group uses (toilet paper, dish soap, 'for the house', 'common'). If it's unclear whether it's for them or everyone, ask first. Quantities are stored as said; if the result has `needsClarification`, those items were NOT added: ask that one short question (and say what was added, if anything), then call cart_add again with only those items. No prices: never say a price or total.",
     inputSchema: z.object({
-      items: z
-        .array(
-          z.object({
-            name: z.string().min(1).describe("Item name without the quantity, e.g. 'chips'"),
-            qty: z.string().optional().describe("Free text quantity, e.g. '3 bags', '2', '1 gallon', '2 lb'. Omit for 1."),
-          }),
-        )
-        .min(1),
+      items: z.array(itemSchema).min(1),
       shared: z.boolean().optional().describe("true when it's for the whole house, not one person"),
+      for: z.string().optional().describe("A member's first name when it's for someone else; omit for the sender"),
     }),
     execute: async (input, context) => {
       const ctx = ctxOf(context);
-      const items = await cart.addItems(ctx, input);
+      const forMemberId = input.for && !input.shared ? await memberIdByName(ctx, input.for) : undefined;
+      const { added, needsClarification } = await cart.addAsSaid(ctx, { items: input.items, shared: input.shared, forMemberId });
       const open = await cart.listOpenItems(ctx);
-      const addedTotalCents = cart.cartTotal(items);
-      const cartTotalCents = cart.cartTotal(open);
       return {
-        items,
-        addedTotalCents,
-        addedTotal: dollars(addedTotalCents),
+        added: added.map(said),
         cartItemCount: open.length,
-        cartTotalCents,
-        cartTotal: dollars(cartTotalCents),
-        ...viewCart(ctx.groupId),
+        ...(needsClarification.length ? { needsClarification } : {}),
       };
     },
   }),
   cart_remove: createTool({
     id: "cart_remove",
-    description: "Remove an item from the open cart by name (case-insensitive). Whoever added it or an admin can.",
+    description: "Remove an item from the open cart by name (case-insensitive). Whoever added it or an admin can. `removed: false` means it wasn't in the cart.",
     inputSchema: z.object({ name: z.string().min(1) }),
-    execute: async (input, context) => ({ removed: await cart.removeItem(ctxOf(context), input) }),
+    execute: async (input, context) => {
+      const ctx = ctxOf(context);
+      const removed = await cart.removeItem(ctx, input);
+      return { removed, cartItemCount: (await cart.listOpenItems(ctx)).length };
+    },
   }),
   cart_view: createTool({
     id: "cart_view",
-    description: "Show the open cart grouped by who added each item (recipe items say which recipe), with estimated prices and the estimated total.",
-    inputSchema: z.object({}),
-    execute: async (_input, context) => {
+    description:
+      "The open cart grouped by who it's for ('Shared' = everyone; recipe items say which recipe). No prices. link=true only when they ask where the Cart page is or for a link to it; then the button is attached for you.",
+    inputSchema: z.object({ link: z.boolean().optional().describe("true only when they asked for the Cart page / a link") }),
+    execute: async (input, context) => {
       const ctx = ctxOf(context);
       const groups = await cart.viewCart(ctx);
-      const all = Object.values(groups).flat();
-      const estTotalCents = cart.cartTotal(all);
-      return { groups, itemCount: all.length, estTotalCents, estTotal: dollars(estTotalCents), ...(all.length ? viewCart(ctx.groupId) : {}) };
+      const view = Object.fromEntries(Object.entries(groups).map(([who, items]) => [who, items.map((i) => ({ name: i.name, qty: i.qty, ...(i.recipeTitle ? { recipe: i.recipeTitle } : {}) }))]));
+      const itemCount = Object.values(groups).flat().length;
+      return { groups: view, itemCount, ...(input.link ? dashboardLinks("🛒 The Cart", `/g/${ctx.groupId}/cart`) : {}) };
+    },
+  }),
+  cart_from_photo: createTool({
+    id: "cart_from_photo",
+    description:
+      "A photo of a recipe, a shopping list or a shelf ('[photo: <url>]' in the message) -> the things to buy. confirm=false (the default) only reads it: say the `summary` in one line and ask whether to add them (as shared, or for whom) unless they already said ('all common' = shared). confirm=true adds them (a recipe is saved too and its ingredients go in minus the Pantry and `skip`). If `kind` is 'receipt', relay `say` as it is (or, when `splitting` is true, use expense_from_receipt with the same url).",
+    inputSchema: z.object({
+      photo_url: z.string().min(1).describe("The photo's url from the message"),
+      shared: z.boolean().optional().describe("true when it's for the whole house ('all common', 'for everyone')"),
+      for: z.string().optional().describe("A member's first name when it's for someone else"),
+      confirm: z.boolean().optional().describe("true once they said yes (or explicitly asked to add them)"),
+      skip: z.array(z.string()).optional().describe("Things they say they already have"),
+    }),
+    execute: async (input, context) => {
+      const ctx = ctxOf(context);
+      const photo = await readGroceryPhoto(input.photo_url, ctx.groupId);
+      if (photo.kind === "receipt") {
+        const splitting = (await enabledToolkits(ctx)).includes("splitting");
+        return splitting
+          ? { kind: "receipt", splitting: true, next: "expense_from_receipt" }
+          : { kind: "receipt", splitting: false, say: "That's a receipt. Teach me Splitting and I'll split it." };
+      }
+      if (photo.items.length === 0) return { kind: photo.kind, items: [], say: "I can't find a list or a recipe in that photo." };
+      if (!input.confirm) {
+        const items = photo.items.map((i) => ({ name: i.name, ...(i.qty ? { qty: i.qty } : {}) }));
+        return { kind: photo.kind, ...(photo.title ? { title: photo.title } : {}), items, summary: photoSummary(photo.items), needsConfirmation: true };
+      }
+      const forMemberId = input.for && !input.shared ? await memberIdByName(ctx, input.for) : undefined;
+      const r = await addPhotoToCart(ctx, photo, { shared: input.shared, forMemberId, skip: input.skip });
+      return {
+        kind: r.kind,
+        ...(r.recipe ? { recipe: r.recipe } : {}),
+        added: r.added,
+        addedCount: r.added.length,
+        ...(r.skippedHave.length ? { skippedHave: r.skippedHave } : {}),
+        ...(r.alreadyInCart.length ? { alreadyInCart: r.alreadyInCart } : {}),
+        ...(r.needsClarification.length ? { needsClarification: r.needsClarification } : {}),
+      };
     },
   }),
   cart_checkout: createTool({
     id: "cart_checkout",
     description:
-      "Someone wants to check out / order the cart / get the Instacart list. Makes an Instacart shopping list of the open cart and records the Checkout; the 'Open in Instacart' button is attached for you. Say the item count and estimated total. If `available` is false, relay `message` (buy it yourselves and tell me the total).",
+      "Someone wants to check out / order the cart / get the Instacart list. Makes an Instacart shopping list of the open cart and records the Checkout; the 'Open in Instacart' button is attached for you. Say the item count (no prices: the receipt has those). If `available` is false, relay `message`.",
     inputSchema: z.object({}),
     execute: async (_input, context) => {
       const ctx = ctxOf(context);
       const c = await cart.checkout(ctx);
-      const summary = { checkoutId: c.id, itemCount: c.itemCount, estTotalCents: c.estCents, estTotal: dollars(c.estCents) };
+      const summary = { checkoutId: c.id, itemCount: c.itemCount };
       if (!c.url) return { available: false, message: `${c.unavailable ?? "The Instacart link isn't available yet."} Buy it yourselves and tell me the total.`, ...summary };
       return { available: true, ...summary, links: [{ text: "🛒 Open in Instacart", url: c.url }] };
     },
@@ -76,7 +117,7 @@ export const cartTools = {
   cart_purchased: createTool({
     id: "cart_purchased",
     description:
-      "Someone bought the cart for a total ('I paid 84 for groceries', 'I bought the groceries, $84'), including after a checkout. Use this, not log_expense, for the grocery run. Creates one expense split by who added what (shared items split evenly, scaled from the estimates) and clears the cart. Default payer = sender. Returns `shares`: each person's part as ready-to-say amounts.",
+      "Someone bought the cart for a total ('I paid 84 for groceries', 'I bought the groceries, $84'), including after a checkout. Use this, not log_expense, for the grocery run. Creates one expense split by who added what (each item counts the same; shared items split evenly) and clears the cart. Default payer = sender. Returns `shares`: each person's part as ready-to-say amounts.",
     inputSchema: z.object({
       total: z.number().positive().describe("Dollars, e.g. 84.2"),
       payer: z.string().optional().describe("Who paid, by first name. Omit for the sender."),
@@ -84,7 +125,7 @@ export const cartTools = {
     execute: async ({ total, payer }, context) => {
       const ctx = ctxOf(context);
       const e = await cart.markPurchased(ctx, { totalCents: toCents(total), payerId: payer ? await memberIdByName(ctx, payer) : undefined });
-      return { ...expenseSummary(e), cents: e.cents, payerName: e.payerName, splits: e.splits, ...dashboardLinks("See the expense", `/g/${ctx.groupId}/money/${e.id}`) };
+      return { ...expenseSummary(e), cents: e.cents, payerName: e.payerName, splits: e.splits };
     },
   }),
 };

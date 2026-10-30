@@ -9,7 +9,7 @@
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { addDaysInZone, addDaysToDay, dayInZone, daysBetweenDays, startOfDay } from "@/lib/time";
-import { record } from "./activity";
+import { record, sourceOf } from "./activity";
 import { NotAllowedError, requireActive, requireAdmin } from "./authz";
 import { listMembers } from "./members";
 import { groupTimezone } from "./schedule";
@@ -243,11 +243,11 @@ export async function addChore(
       .set({ everyDays, ...(rotation !== undefined ? { rotation } : {}) })
       .where(eq(chores.id, existing.id))
       .returning();
-    await record(ctx.groupId, ctx.memberId, "chore.changed", `changed ${c.name} to every ${everyDays} day${everyDays === 1 ? "" : "s"}`, { table: "chores", id: c.id });
+    await record(ctx.groupId, ctx.memberId, "chore.changed", `changed ${c.name} to every ${everyDays} day${everyDays === 1 ? "" : "s"}`, { table: "chores", id: c.id }, sourceOf(ctx));
     return { choreId: c.id, name: c.name, everyDays, created: false, rotation: nameOf(c.rotation) };
   }
   const [c] = await db.insert(chores).values({ groupId: ctx.groupId, name, everyDays, rotation: rotation ?? null }).returning();
-  await record(ctx.groupId, ctx.memberId, "chore.added", `put ${name} on the chart`, { table: "chores", id: c.id });
+  await record(ctx.groupId, ctx.memberId, "chore.added", `put ${name} on the chart`, { table: "chores", id: c.id }, sourceOf(ctx));
   return { choreId: c.id, name, everyDays, created: true, rotation: nameOf(c.rotation) };
 }
 
@@ -299,7 +299,7 @@ export async function logChore(
     added = true;
   }
   await db.insert(choreLogs).values({ choreId: chore.id, memberId, ...(input.at ? { doneAt: input.at } : {}) });
-  await record(ctx.groupId, ctx.memberId, "chore.done", memberId === ctx.memberId ? `marked ${chore.name} done` : `marked ${chore.name} done for ${doer.displayName}`, { table: "chores", id: chore.id });
+  await record(ctx.groupId, ctx.memberId, "chore.done", memberId === ctx.memberId ? `marked ${chore.name} done` : `marked ${chore.name} done for ${doer.displayName}`, { table: "chores", id: chore.id }, sourceOf(ctx));
   const status = (await choreStatus(ctx)).find((c) => c.choreId === chore.id)!;
   return { chore: chore.name, choreId: chore.id, doneBy: doer.displayName, streak: Math.max(1, status.streaks[memberId] ?? 1), nextUp: status.whoseTurn, added };
 }
@@ -315,7 +315,7 @@ export async function skipChore(ctx: Ctx, input: { chore?: string; choreId?: str
   }
   await db.insert(choreLogs).values({ choreId: chore.id, memberId: ctx.memberId, skipped: true });
   const after = (await choreStatus(ctx)).find((c) => c.choreId === chore.id)!;
-  await record(ctx.groupId, ctx.memberId, "chore.skipped", `passed their turn on ${chore.name}${after.whoseTurn && after.whoseTurnId !== actor.id ? ` to ${after.whoseTurn}` : ""}`, { table: "chores", id: chore.id });
+  await record(ctx.groupId, ctx.memberId, "chore.skipped", `passed their turn on ${chore.name}${after.whoseTurn && after.whoseTurnId !== actor.id ? ` to ${after.whoseTurn}` : ""}`, { table: "chores", id: chore.id }, sourceOf(ctx));
   return { chore: chore.name, choreId: chore.id, nextUp: after.whoseTurn };
 }
 
@@ -326,7 +326,7 @@ export async function removeChore(ctx: Ctx, input: { choreId?: string; chore?: s
   if (!c) throw await unknownChore(ctx, input.chore ?? "");
   await db.delete(choreLogs).where(inArray(choreLogs.choreId, [c.id]));
   await db.delete(chores).where(and(eq(chores.id, c.id), eq(chores.groupId, ctx.groupId)));
-  await record(ctx.groupId, ctx.memberId, "chore.removed", `took ${c.name} off the chart`, { table: "chores", id: c.id });
+  await record(ctx.groupId, ctx.memberId, "chore.removed", `took ${c.name} off the chart`, { table: "chores", id: c.id }, sourceOf(ctx));
   return { removed: c.name };
 }
 

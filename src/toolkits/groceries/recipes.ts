@@ -1,15 +1,11 @@
 // Recipe and Pantry tools: thin wrappers over services/recipes and services/pantry. A Recipe never touches the Cart
-// unless someone asks (recipe_add_to_cart); the Instacart link goes out as a button.
+// unless someone asks (recipe_add_to_cart). No prices; the only link is the Instacart one, when someone asks for it.
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { pantry, recipes } from "@/services";
-import { cartTotal } from "@/services/cart-split";
 import type { Recipe } from "@/services/recipes";
-import { dollars } from "@/services/types";
 import { InstacartUnavailableError } from "@/integrations/instacart";
-import { ctxOf, dashboardLinks } from "../util";
-
-const cartLink = (groupId: string) => dashboardLinks("🛒 View cart", `/g/${groupId}/cart`);
+import { ctxOf } from "../util";
 
 /** The recipe as chat text: title, servings, need / have and how many steps (the steps are on the dashboard). */
 export function recipeText(r: Pick<Recipe, "title" | "servings" | "cookingTimeMinutes" | "steps">, have: { display_text: string }[], need: { display_text: string }[]): string {
@@ -18,7 +14,7 @@ export function recipeText(r: Pick<Recipe, "title" | "servings" | "cookingTimeMi
     `${r.title} (serves ${r.servings}${time})`,
     need.length ? `Need: ${need.map((i) => i.display_text).join(", ")}` : "Need: nothing, you have it all",
     have.length ? `Have: ${have.map((i) => i.display_text).join(", ")}` : "",
-    `${r.steps.length} steps, all on the Cart page.`,
+    r.steps.length ? `${r.steps.length} steps, on the Cart page.` : "",
   ]
     .filter(Boolean)
     .join("\n");
@@ -48,7 +44,7 @@ export const recipeTools = {
         haveCount: have.length,
         missingCount: need.length,
         askToAdd: need.length ? `Add the ${need.length} missing ingredient${need.length === 1 ? "" : "s"} to the cart?` : null,
-        ...dashboardLinks("🥘 See the recipe", `/g/${ctx.groupId}/cart?recipe=${saved.id}`),
+        steps: saved.steps,
       };
     },
   }),
@@ -64,15 +60,12 @@ export const recipeTools = {
     execute: async (input, context) => {
       const ctx = ctxOf(context);
       const r = await recipes.addRecipeToCart(ctx, input.recipe ?? "", { skip: input.skip, shared: input.shared });
-      const addedCents = cartTotal(r.added);
       return {
         recipe: r.recipe.title,
         added: r.added.map((i) => `${i.name}${i.qty && i.qty !== "1" ? ` (${i.qty})` : ""}`),
         addedCount: r.added.length,
-        addedTotal: dollars(addedCents),
         skippedHave: r.have,
         alreadyInCart: r.alreadyInCart,
-        ...cartLink(ctx.groupId),
       };
     },
   }),

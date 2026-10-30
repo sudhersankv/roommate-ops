@@ -145,27 +145,35 @@ Reply with JSON only, no prose:
 {"readable": true|false, "merchant": string|null, "date": "YYYY-MM-DD"|null, "items": [{"name": string, "price": "12.50"}], "tax": "1.23"|null, "tip": "4.00"|null, "total": "17.73"|null}
 Prices exactly as printed (strings, no currency symbol). One entry per line item (quantity x price lines: use the line total). Leave out subtotal, discounts you can't attribute, and payment lines.`;
 
+/**
+ * One photo + a prompt to the vision model on the gateway (`RECEIPT_MODEL ?? LLM_MODEL`); the model's text answer.
+ * Receipts and the Groceries photo reader (grocery-photos.ts) both go through here. `what` names the photo in errors.
+ */
+export async function askVision(prompt: string, dataUrl: string, opts: { what: string; maxTokens?: number }): Promise<string> {
+  const base = (process.env.NEON_AI_GATEWAY_BASE_URL ?? "").replace(/\/+$/, "");
+  if (!base || !process.env.NEON_AI_GATEWAY_TOKEN) throw new Error(`The AI Gateway isn't configured, so I can't read ${opts.what}s.`);
+  const res = await fetch(`${base}/v1/chat/completions`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${process.env.NEON_AI_GATEWAY_TOKEN}` },
+    body: JSON.stringify({
+      model: process.env.RECEIPT_MODEL ?? process.env.LLM_MODEL ?? "claude-sonnet-5-5",
+      // No temperature: claude-sonnet-5-5 on the gateway rejects the parameter.
+      max_tokens: opts.maxTokens ?? 1500,
+      messages: [{ role: "user", content: [{ type: "text", text: prompt }, { type: "image_url", image_url: { url: dataUrl } }] }],
+    }),
+    signal: AbortSignal.timeout(60_000),
+  });
+  if (!res.ok) {
+    console.warn(`[vision] ${opts.what}: gateway ${res.status}: ${(await res.text().catch(() => "")).slice(0, 300)}`);
+    throw new Error(`Couldn't read the ${opts.what} (gateway ${res.status}).`);
+  }
+  const body = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+  return body.choices?.[0]?.message?.content ?? "";
+}
+
 export const gatewayReceiptReader: ReceiptReader = {
   async read({ dataUrl }) {
-    const base = (process.env.NEON_AI_GATEWAY_BASE_URL ?? "").replace(/\/+$/, "");
-    if (!base || !process.env.NEON_AI_GATEWAY_TOKEN) throw new Error("The AI Gateway isn't configured, so I can't read receipts.");
-    const res = await fetch(`${base}/v1/chat/completions`, {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${process.env.NEON_AI_GATEWAY_TOKEN}` },
-      body: JSON.stringify({
-        model: process.env.RECEIPT_MODEL ?? process.env.LLM_MODEL ?? "claude-sonnet-5-5",
-        // No temperature: claude-sonnet-5-5 on the gateway rejects the parameter.
-        max_tokens: 1500,
-        messages: [{ role: "user", content: [{ type: "text", text: PROMPT }, { type: "image_url", image_url: { url: dataUrl } }] }],
-      }),
-      signal: AbortSignal.timeout(60_000),
-    });
-    if (!res.ok) {
-      console.warn(`[receipts] gateway ${res.status}: ${(await res.text().catch(() => "")).slice(0, 300)}`);
-      throw new Error(`Couldn't read the receipt (gateway ${res.status}).`);
-    }
-    const body = (await res.json()) as { choices?: { message?: { content?: string } }[] };
-    return parseModelJson(body.choices?.[0]?.message?.content ?? "");
+    return parseModelJson(await askVision(PROMPT, dataUrl, { what: "receipt" }));
   },
 };
 
@@ -255,18 +263,53 @@ export async function removeUpload(url: string): Promise<boolean> {
 
 const mimeOf = (p: string) => Object.entries(EXT).find(([, e]) => p.toLowerCase().endsWith(`.${e}`) || (e === "jpg" && p.toLowerCase().endsWith(".jpeg")))?.[0] ?? "image/jpeg";
 
-/** Our own uploads are read from disk (the gateway can't reach localhost); anything else is fetched here. */
-export async function imageDataUrl(url: string): Promise<string> {
-  const local = /\/uploads\/((?:[a-z0-9-]+\/)*[a-z0-9-]+)\/([a-z0-9_-]+\.[a-z]+)$/i.exec(url);
+const UPLOAD_PATH = /\/uploads\/((?:[a-z0-9-]+\/)*[a-z0-9-]+)\/([a-z0-9_-]+\.[a-z]+)$/i;
+
+/** One of our own uploads (`/uploads/...`, or under APP_URL): what the Channels and the dashboard store. */
+export function isOwnUpload(url: string): boolean {
   const base = appUrl();
-  if (local && (url.startsWith("/uploads/") || (base && url.startsWith(base)))) {
+  return UPLOAD_PATH.test(url) && (url.startsWith("/uploads/") || (!!base && url.startsWith(`${base}/uploads/`)));
+}
+
+const folderPart = (s: string) => s.replace(/[^a-z0-9-]/gi, "");
+
+/**
+ * Is this upload one of this Group's? Folders are where saveUpload put them: `g-<groupId>` (the dashboard),
+ * `tg/<chat id>` and `wa/<jid user>` (the Group's Chats). `test` / `evals` count only outside production.
+ */
+export async function uploadBelongsTo(url: string, groupId: string): Promise<boolean> {
+  const m = UPLOAD_PATH.exec(url);
+  if (!m || !isOwnUpload(url)) return false;
+  const [top, rest] = [m[1].split("/")[0], m[1].split("/").slice(1).join("/")];
+  if (!rest && top === `g-${groupId}`) return true;
+  if (!rest && (top === "test" || top === "evals")) return process.env.NODE_ENV !== "production";
+  if (top !== "tg" && top !== "wa") return false;
+  const { db, schema } = await import("@/db");
+  const { eq } = await import("drizzle-orm");
+  const chats = await db.select({ channel: schema.chats.channel, externalId: schema.chats.externalId }).from(schema.chats).where(eq(schema.chats.groupId, groupId));
+  return chats.some((c) => (top === "tg" ? c.channel === "telegram" && folderPart(c.externalId) === rest : c.channel === "whatsapp" && folderPart(c.externalId.split("@")[0]) === rest));
+}
+
+/** Throws the friendly error unless the photo was sent in (or uploaded for) this Group. */
+export async function requireGroupUpload(url: string, groupId: string): Promise<void> {
+  if (!(await uploadBelongsTo(url, groupId))) throw new Error("I can only read photos sent in this group's chat or uploaded on its dashboard.");
+}
+
+/**
+ * Our own uploads are read from disk (the gateway can't reach localhost); with `ownOnly` nothing else is read.
+ * Otherwise an https image is fetched here: no redirects, and the size is checked before the body is read.
+ */
+export async function imageDataUrl(url: string, opts: { ownOnly?: boolean } = {}): Promise<string> {
+  const local = UPLOAD_PATH.exec(url);
+  if (local && isOwnUpload(url)) {
     const bytes = await readFile(path.join(UPLOADS, local[1], local[2]));
     return `data:${mimeOf(local[2])};base64,${bytes.toString("base64")}`;
   }
-  if (!/^https:\/\//i.test(url)) throw new Error("I can only read receipt photos sent in the chat or uploaded on the dashboard.");
-  const res = await fetch(url, { signal: AbortSignal.timeout(20_000) });
+  if (opts.ownOnly || !/^https:\/\//i.test(url)) throw new Error("I can only read photos sent in the chat or uploaded on the dashboard.");
+  const res = await fetch(url, { signal: AbortSignal.timeout(20_000), redirect: "error" });
   const type = res.headers.get("content-type")?.split(";")[0] ?? "";
   if (!res.ok || !type.startsWith("image/")) throw new Error("Couldn't download that photo.");
+  if (Number(res.headers.get("content-length") ?? 0) > MAX_BYTES) throw new Error("That photo is over 8 MB.");
   const bytes = Buffer.from(await res.arrayBuffer());
   if (bytes.length > MAX_BYTES) throw new Error("That photo is over 8 MB.");
   return `data:${type};base64,${bytes.toString("base64")}`;

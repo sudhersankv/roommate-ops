@@ -3,7 +3,7 @@
 import { and, eq } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { addDaysToDay, dayInZone, daysBetweenDays } from "@/lib/time";
-import { record } from "./activity";
+import { recordFor } from "./activity";
 import { requireActive, requireAdmin } from "./authz";
 import { groupTimezone } from "./schedule";
 import type { Ctx, GroupCtx } from "./types";
@@ -97,7 +97,7 @@ export async function addMaintenance(ctx: Ctx, input: { item: string; everyDays:
     return { id: existing.id, item: existing.item, everyDays, created: false };
   }
   const [m] = await db.insert(maintenance).values({ groupId: ctx.groupId, item, everyDays }).returning();
-  await record(ctx.groupId, ctx.memberId, "upkeep.added", `started tracking ${item}`, { table: "maintenance", id: m.id });
+  await recordFor(ctx, "upkeep.added", `started tracking ${item}`, { table: "maintenance", id: m.id });
   return { id: m.id, item, everyDays, created: true };
 }
 
@@ -124,7 +124,7 @@ export async function markDone(ctx: Ctx, input: { item?: string; id?: string }):
     .update(maintenance)
     .set({ lastDone: now })
     .where(and(eq(maintenance.id, match.id), eq(maintenance.groupId, ctx.groupId)));
-  await record(ctx.groupId, ctx.memberId, "upkeep.done", `did ${match.item}`, { table: "maintenance", id: match.id });
+  await recordFor(ctx, "upkeep.done", `did ${match.item}`, { table: "maintenance", id: match.id });
   const tz = await groupTimezone(ctx.groupId);
   return { item: match.item, everyDays: match.everyDays, nextDueDay: upkeepSchedule(now, match.everyDays, tz, now).dueDay };
 }
@@ -134,7 +134,7 @@ export async function removeMaintenance(ctx: Ctx, input: { item?: string; id?: s
   await requireAdmin(ctx);
   const match = await find(ctx, input);
   await db.delete(maintenance).where(and(eq(maintenance.id, match.id), eq(maintenance.groupId, ctx.groupId)));
-  await record(ctx.groupId, ctx.memberId, "upkeep.removed", `stopped tracking ${match.item}`, { table: "maintenance", id: match.id });
+  await recordFor(ctx, "upkeep.removed", `stopped tracking ${match.item}`, { table: "maintenance", id: match.id });
   return { removed: match.item };
 }
 
@@ -158,7 +158,7 @@ export async function addDefaults(ctx: Ctx): Promise<number> {
   const missing = DEFAULT_ITEMS.filter((d) => !have.has(norm(d.item)));
   if (missing.length) {
     await db.insert(maintenance).values(missing.map((d) => ({ groupId: ctx.groupId, ...d })));
-    await record(ctx.groupId, ctx.memberId, "upkeep.added", `started tracking the usual ${missing.length === 5 ? "five" : missing.length}: ${missing.map((d) => d.item.toLowerCase()).join(", ")}`);
+    await recordFor(ctx, "upkeep.added", `started tracking the usual ${missing.length === 5 ? "five" : missing.length}: ${missing.map((d) => d.item.toLowerCase()).join(", ")}`);
   }
   return missing.length;
 }

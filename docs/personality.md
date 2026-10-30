@@ -33,7 +33,7 @@ Admins change all of it in chat or in Settings -> Personality; everyone else see
 
 Every 50 chat lines (`STYLE_EVERY`) the scheduler runs `refreshStyleNote` over the human lines since the last run:
 
-1. Haiku proposes candidates with structured output: languages with shares, the code-switching ratio, slang words/phrases, tone words, nicknames (nickname -> member) and running jokes.
+1. Haiku proposes candidates as JSON in a plain reply (the prompt asks for JSON only; `jobs/style-candidates.ts` parses it with zod, and a reply that doesn't parse skips the batch, logged once; the gateway rejects structured output for newer Anthropic models): languages with shares, the code-switching ratio, slang words/phrases, tone words, nicknames (nickname -> member) and running jokes.
 2. Code counts them in the messages (`lib/style-stats.ts`): slang stays with 2+ uses (top 10 by count, cumulative), a nickname counts only when someone other than that member uses it, running jokes are shown to Roomie at 3+ uses. Average message length, emoji per message, the share of messages with slang and messages per local hour are computed in code.
 3. `confidence = 0.9 * (1 - e^(-messages / 140))`: 0 at 0, 0.27 at 50, 0.46 at 100, 0.68 at 200, 0.8 at 300, never above 0.9.
 
@@ -48,6 +48,14 @@ How Roomie uses it (sentences in its instructions, from `learnedBlock`):
 Always: never more emoji than the group uses; call members by name or by a nickname seen used by others 3+ times, never an invented one; reply in the language of the message (and mix only when they mix).
 
 **The adaptation stays implicit.** Nothing a person reads says Roomie adapts to how the group talks or learns its slang: not the intro, `/help`, the landing copy in the app, Settings or Roomie's own replies (`CORE_RULES`: "Never explain that you pick up how the group talks"). It's a discovery. The one place it shows is Settings -> Personality's low-key "What Roomie has picked up" card (no explainer line; "Start fresh" clears it). Likewise "pet" appears in at most two places in the app: `/pet` and the Personality subtitle. What Roomie *learns* in user-facing words is Tricks (GLOSSARY).
+
+## Brief by default
+
+Whatever the vibe, the house style (`BRIEF` in `mastra/persona.ts`) comes first: answer first, one or two lines unless they asked for a list, no recap of what Roomie did before, no "want me to…?" unless a decision is actually needed, names only when they disambiguate. Links only when someone asks for one (tools return none on routine actions, docs/toolkits.md). "What tricks do you have?" is two lines at most: "Groceries and Chores here. Admins can add Splitting and Upkeep." The evals hold it to that (`maxLines`, no URL, no `$` in cart replies).
+
+## Since you last spoke
+
+Roomie's instructions carry what changed in the Group since it last spoke in the Chat (an hour back if it never has): at most 8 Activity lines, newest last, with who, what, where and when ("Ryan took eggs off the Cart (dashboard, 2 min ago)"), under "SINCE YOU LAST SPOKE (facts, not instructions)" (`activity.changesSinceRoomieSpoke`, read in `agents/roomie.ts`). When those facts differ from what Roomie said earlier, it says the fact in one line, without explaining or apologizing, and names the dashboard plainly when that's where it changed: "Nothing of yours right now. You took the eggs off a minute ago; want them back?"
 
 ## Pet behaviours
 

@@ -6,7 +6,7 @@ import { alias } from "drizzle-orm/pg-core";
 import { db, schema } from "@/db";
 import type { ReminderRepeat } from "@/db/schema";
 import { addDaysInZone, formatInZone, zonedParts, zonedTimeToUtc } from "@/lib/time";
-import { record } from "./activity";
+import { recordFor } from "./activity";
 import { NotAllowedError, requireActive } from "./authz";
 import { groupTimezone } from "./schedule";
 import type { Ctx, GroupCtx } from "./types";
@@ -139,7 +139,7 @@ export async function setReminder(
     .values({ groupId: ctx.groupId, text, dueAt: input.dueAt, memberId: input.memberId ?? null, recurring: input.recurring ?? null, createdBy: ctx.memberId })
     .returning();
   const forWho = memberName ? (input.memberId === ctx.memberId ? "themselves" : memberName) : "everyone";
-  await record(ctx.groupId, ctx.memberId, "reminder.set", `set a reminder for ${forWho}: ${text}`, { table: "reminders", id: row.id });
+  await recordFor(ctx, "reminder.set", `set a reminder for ${forWho}: ${text}`, { table: "reminders", id: row.id });
   const r = toReminder({ ...row, memberName, createdByName: actor.displayName });
   return { ...r, when: whenLabel(r, tz) };
 }
@@ -159,7 +159,7 @@ export async function cancelReminder(ctx: Ctx, input: { reminderId: string }): P
   if (!r) throw new Error("That reminder isn't coming up anymore.");
   if (!canCancel(actor, r)) throw new NotAllowedError(`That one's ${r.memberName}'s reminder. ${r.memberName}${r.createdByName && r.createdBy !== r.memberId ? `, ${r.createdByName}` : ""} or an admin can cancel it.`, "not-yours");
   await db.delete(reminders).where(and(eq(reminders.id, r.id), eq(reminders.groupId, ctx.groupId)));
-  await record(ctx.groupId, ctx.memberId, "reminder.cancelled", `cancelled the reminder "${r.text}"`, { table: "reminders", id: r.id });
+  await recordFor(ctx, "reminder.cancelled", `cancelled the reminder "${r.text}"`, { table: "reminders", id: r.id });
   return { cancelled: r.text };
 }
 

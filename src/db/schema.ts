@@ -165,6 +165,8 @@ export const activity = pgTable(
     summary: text("summary").notNull(),
     refTable: text("ref_table"),
     refId: text("ref_id"),
+    /** Where it happened: "chat" | "dashboard"; null for Roomie's own work and rows from before migration 0010. */
+    source: text("source", { enum: ["chat", "dashboard"] }),
     createdAt: createdAt(),
   },
   (t) => [index("activity_group_created_at").on(t.groupId, t.createdAt)],

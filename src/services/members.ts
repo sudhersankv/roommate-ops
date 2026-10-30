@@ -3,7 +3,7 @@ import { and, asc, eq, inArray, ne, or, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import type { ChannelName, MemberNote, PaymentApp } from "@/db/schema";
 import { anonymize } from "@/lib/forget-text";
-import { record } from "./activity";
+import { record, recordFor } from "./activity";
 import { NotAllowedError, requireAdmin } from "./authz";
 import type { Ctx, GroupCtx } from "./types";
 
@@ -113,7 +113,7 @@ export async function approveMember(ctx: Ctx, input: { memberId: string }): Prom
     .set({ status: "active", approvedBy: ctx.memberId, approvedAt: new Date() })
     .where(eq(members.id, m.id))
     .returning();
-  await record(ctx.groupId, ctx.memberId, "member.approved", `approved ${m.displayName}`, { table: "members", id: m.id });
+  await recordFor(ctx, "member.approved", `approved ${m.displayName}`, { table: "members", id: m.id });
   return updated;
 }
 
@@ -123,7 +123,7 @@ export async function declineMember(ctx: Ctx, input: { memberId: string }): Prom
   const m = await target(ctx, input.memberId);
   if (m.status !== "pending") throw new Error(`${m.displayName} isn't waiting for approval.`);
   const [updated] = await db.update(members).set({ status: "removed" }).where(eq(members.id, m.id)).returning();
-  await record(ctx.groupId, ctx.memberId, "member.declined", `declined ${m.displayName}`, { table: "members", id: m.id });
+  await recordFor(ctx, "member.declined", `declined ${m.displayName}`, { table: "members", id: m.id });
   return updated;
 }
 
@@ -134,7 +134,7 @@ export async function promoteMember(ctx: Ctx, input: { memberId: string }): Prom
   if (m.status !== "active") throw new NotAllowedError(`Approve ${m.displayName} before making them an admin.`, "pending");
   if (m.role === "admin") throw new Error(`${m.displayName} is already an admin.`);
   const [updated] = await db.update(members).set({ role: "admin" }).where(eq(members.id, m.id)).returning();
-  await record(ctx.groupId, ctx.memberId, "member.promoted", `made ${m.displayName} an admin`, { table: "members", id: m.id });
+  await recordFor(ctx, "member.promoted", `made ${m.displayName} an admin`, { table: "members", id: m.id });
   return updated;
 }
 

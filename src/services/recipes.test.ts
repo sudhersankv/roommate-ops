@@ -3,7 +3,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { formatAmount, INSTACART_UNITS, measurementOrEach, normalizeUnit, parseAmount, toInstacartMeasurement } from "../lib/units";
-import { estimateMeasured, CATALOG, DEFAULT_UNIT_CENTS } from "../lib/prices";
 import { covers, haveNeed, recipeKey, scaleIngredients } from "./recipe-math";
 import { parseRecipeJson, RecipeFormatError, recipePrompt, SAMPLE_RECIPE_JSON, writeRecipe, type RecipeRequest, type RecipeWriter } from "./recipes";
 
@@ -55,14 +54,6 @@ test("formatAmount: what the Cart shows", () => {
   assert.equal(formatAmount(1.5, "tablespoon"), "1 1/2 tbsp");
   assert.equal(formatAmount(2, "packet"), "2 packets");
   assert.equal(formatAmount(1, "bunch"), "1 bunch");
-});
-
-test("estimateMeasured: countable recipe units count a few store items; weights and big counts are one item", () => {
-  assert.equal(estimateMeasured("limes", 4, "each"), 4 * CATALOG.limes);
-  assert.equal(estimateMeasured("taco seasoning", 2, "packet"), 2 * CATALOG["taco seasoning"]);
-  assert.equal(estimateMeasured("corn tortillas", 20, "each"), CATALOG["corn tortillas"], "20 tortillas is one pack");
-  assert.equal(estimateMeasured("ground turkey", 2, "pound"), CATALOG["ground turkey"]);
-  assert.equal(estimateMeasured("saffron", 1, "teaspoon"), DEFAULT_UNIT_CENTS);
 });
 
 /* ---------- the model's JSON ---------- */

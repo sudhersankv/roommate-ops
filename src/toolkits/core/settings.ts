@@ -6,7 +6,7 @@ import { WEEKDAY_NAMES } from "@/lib/time";
 import { groups, personality, schedule, toolkits as toolkitsSvc } from "@/services";
 import { learnedLine } from "@/onboarding";
 import { CATALOG, CORE_MANIFEST, TOOLKIT_IDS } from "../manifests";
-import { ctxOf, dashboardLinks } from "../util";
+import { ctxOf } from "../util";
 
 const listNames = (n: string[]) => (n.length <= 1 ? n.join("") : `${n.slice(0, -1).join(", ")} and ${n[n.length - 1]}`);
 
@@ -112,7 +112,6 @@ export const settingsTools = {
         comingSoon,
         always: CORE_MANIFEST.summary,
         whoCanTeach: "Admins teach Roomie a Trick: in the chat ('roomie, learn chores', 'roomie, forget chores') or on the dashboard's Tricks page.",
-        ...dashboardLinks("Browse Tricks", `/g/${ctx.groupId}/tricks`),
       };
     },
   }),

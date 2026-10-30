@@ -5,11 +5,10 @@ import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { db, schema } from "@/db";
 import type { RecipeIngredient } from "@/db/schema";
-import { estimateMeasured } from "@/lib/prices";
 import { formatAmount, INSTACART_UNITS, measurementOrEach, roundQuantity, toInstacartMeasurement } from "@/lib/units";
 import { dashboardUrl } from "@/lib/urls";
 import { instacartClient } from "@/integrations/instacart";
-import { record } from "./activity";
+import { record, sourceOf } from "./activity";
 import { requireActive } from "./authz";
 import { listMembers } from "./members";
 import { getPantry } from "./pantry";
@@ -274,7 +273,7 @@ export async function saveRecipe(ctx: Ctx, input: RecipeDraft & { plannedFor?: s
     .insert(recipes)
     .values({ groupId: ctx.groupId, ...d, source: input.source ?? "roomie", createdBy: ctx.memberId, plannedFor })
     .returning();
-  await record(ctx.groupId, ctx.memberId, "recipe.added", `saved the recipe ${d.title}`, { table: "recipes", id: row.id });
+  await record(ctx.groupId, ctx.memberId, "recipe.added", `saved the recipe ${d.title}`, { table: "recipes", id: row.id }, sourceOf(ctx));
   return toRecipe(row, await namesFor(ctx.groupId));
 }
 
@@ -312,7 +311,7 @@ export async function recipeShoppingList(ctx: GroupCtx, recipe: Recipe, skip: st
 
 export type AddRecipeResult = {
   recipe: Recipe;
-  added: { id: string; name: string; qty: string; estCents: number }[];
+  added: { id: string; name: string; qty: string }[];
   /** In the Pantry or said to skip ("we have onions"). */
   have: string[];
   /** Already open in the Cart (from this Recipe, or a shared item with that name). */
@@ -321,10 +320,15 @@ export type AddRecipeResult = {
 
 /**
  * Put a Recipe's missing ingredients in the Cart: not the Pantry's, not the ones in `skip`, not what's already
- * there. Items are shared (split evenly) unless `shared: false`, carry recipe_id and price from the catalog.
+ * there. Items are shared (split evenly) unless `shared: false` and carry recipe_id; no prices.
  */
-export async function addRecipeToCart(ctx: Ctx, recipeId: string, opts: { skip?: string[]; shared?: boolean } = {}): Promise<AddRecipeResult> {
+export async function addRecipeToCart(ctx: Ctx, recipeId: string, opts: { skip?: string[]; shared?: boolean; forMemberId?: string } = {}): Promise<AddRecipeResult> {
   await requireActive(ctx);
+  const addedBy = opts.forMemberId ?? ctx.memberId;
+  if (opts.forMemberId) {
+    const [m] = await db.select({ id: members.id }).from(members).where(and(eq(members.id, opts.forMemberId), eq(members.groupId, ctx.groupId)));
+    if (!m) throw new Error("That person isn't in this group.");
+  }
   const recipe = await getRecipe(ctx, recipeId);
   const skip = (opts.skip ?? []).map((s) => s.trim()).filter(Boolean);
   const { have, need } = await recipeShoppingList(ctx, recipe, skip);
@@ -335,7 +339,7 @@ export async function addRecipeToCart(ctx: Ctx, recipeId: string, opts: { skip?:
   const inCart = (name: string) => open.some((o) => (o.recipeId === recipe.id || o.shared) && (coveredBy(name, [o.name]) || coveredBy(o.name, [name])));
   const toAdd = need.filter((i) => !inCart(i.name));
   const alreadyInCart = need.filter((i) => inCart(i.name)).map((i) => i.name);
-  const shared = opts.shared ?? true;
+  const shared = opts.forMemberId ? false : (opts.shared ?? true);
   const rows = toAdd.length
     ? await db
         .insert(cartItems)
@@ -347,16 +351,16 @@ export async function addRecipeToCart(ctx: Ctx, recipeId: string, opts: { skip?:
             qty: formatAmount(i.quantity, i.unit),
             quantity: String(roundQuantity(i.quantity)),
             unit: i.unit,
-            addedBy: ctx.memberId,
+            addedBy,
             shared: i.shared === false ? false : shared,
-            estCents: estimateMeasured(i.name, i.quantity, i.unit),
+            estCents: null,
             recipeId: recipe.id,
           })),
         )
         .returning()
     : [];
-  if (rows.length) await record(ctx.groupId, ctx.memberId, "cart.recipe", `added ${rows.length} ingredient${rows.length === 1 ? "" : "s"} for ${recipe.title} to the Cart`, { table: "recipes", id: recipe.id });
-  return { recipe, added: rows.map((r) => ({ id: r.id, name: r.name, qty: r.qty, estCents: r.estCents ?? 0 })), have: have.map((i) => i.name), alreadyInCart };
+  if (rows.length) await record(ctx.groupId, ctx.memberId, "cart.recipe", `put ${rows.length} ingredient${rows.length === 1 ? "" : "s"} for ${recipe.title} on the Cart${addedBy !== ctx.memberId ? ` for ${(await namesFor(ctx.groupId)).get(addedBy) ?? "someone"}` : ""}`, { table: "recipes", id: recipe.id }, sourceOf(ctx));
+  return { recipe, added: rows.map((r) => ({ id: r.id, name: r.name, qty: r.qty })), have: have.map((i) => i.name), alreadyInCart };
 }
 
 /**

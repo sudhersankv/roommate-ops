@@ -4,7 +4,7 @@ import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import type { ExpenseCategory, ExpenseSource, Recurrence, SplitMethod } from "@/db/enums";
 import { localDay } from "@/lib/dates";
-import { record } from "./activity";
+import { recordFor } from "./activity";
 import { canChangeExpense, NotAllowedError, requireActive } from "./authz";
 import { guessCategory, isCategory } from "./categories";
 import { listMembers } from "./members";
@@ -290,7 +290,7 @@ export async function logExpense(ctx: Ctx, input: ExpenseInput): Promise<Expense
   const b = await build(ctx, input);
   const source = input.source ?? (ctx.source === "ui" ? "ui" : "chat");
   const id = (await insertExpenseRows(ctx.groupId, ctx.memberId, { ...b, source }))!;
-  await record(ctx.groupId, ctx.memberId, "expense.added", `added ${b.description}, ${dollars(b.cents)}${howSplit(b, b.nameOf)}`, { table: "expenses", id });
+  await recordFor(ctx, "expense.added", `added ${b.description}, ${dollars(b.cents)}${howSplit(b, b.nameOf)}`, { table: "expenses", id });
   await enqueueSplitwisePush(ctx.groupId, id, "upsert");
   return (await getExpense(ctx, id))!;
 }
@@ -385,7 +385,7 @@ export async function updateExpense(ctx: Ctx, input: ExpensePatch): Promise<Expe
     await writeShares(tx, row.id, b);
   });
   const what = totalChanged ? `changed ${b.description}: ${dollars(before.cents)} -> ${dollars(cents)}` : `changed ${b.description}`;
-  await record(ctx.groupId, ctx.memberId, "expense.changed", what, { table: "expenses", id: row.id });
+  await recordFor(ctx, "expense.changed", what, { table: "expenses", id: row.id });
   await enqueueSplitwisePush(ctx.groupId, row.id, "upsert");
   return (await getExpense(ctx, row.id))!;
 }
@@ -394,7 +394,7 @@ export async function updateExpense(ctx: Ctx, input: ExpensePatch): Promise<Expe
 export async function deleteExpense(ctx: Ctx, input: { expenseId: string }): Promise<{ id: string; description: string; cents: number }> {
   const e = await changeable(ctx, input.expenseId);
   await db.update(expenses).set({ deletedAt: new Date() }).where(eq(expenses.id, e.id));
-  await record(ctx.groupId, ctx.memberId, "expense.deleted", `deleted ${e.description}, ${dollars(e.cents)}`, { table: "expenses", id: e.id });
+  await recordFor(ctx, "expense.deleted", `deleted ${e.description}, ${dollars(e.cents)}`, { table: "expenses", id: e.id });
   await enqueueSplitwisePush(ctx.groupId, e.id, "delete");
   return { id: e.id, description: e.description, cents: e.cents };
 }
@@ -402,7 +402,7 @@ export async function deleteExpense(ctx: Ctx, input: { expenseId: string }): Pro
 export async function restoreExpense(ctx: Ctx, input: { expenseId: string }): Promise<{ id: string; description: string; cents: number }> {
   const e = await changeable(ctx, input.expenseId, { deleted: true });
   await db.update(expenses).set({ deletedAt: null }).where(eq(expenses.id, e.id));
-  await record(ctx.groupId, ctx.memberId, "expense.restored", `restored ${e.description}, ${dollars(e.cents)}`, { table: "expenses", id: e.id });
+  await recordFor(ctx, "expense.restored", `restored ${e.description}, ${dollars(e.cents)}`, { table: "expenses", id: e.id });
   await enqueueSplitwisePush(ctx.groupId, e.id, "upsert");
   return { id: e.id, description: e.description, cents: e.cents };
 }
@@ -531,7 +531,7 @@ export async function settleUp(ctx: Ctx, input: { fromId?: string; toId: string;
   if (!byId.has(input.toId)) throw new Error("The person being paid isn't an active member of this group.");
   const [s] = await db.insert(settlements).values({ groupId: ctx.groupId, fromId, toId: input.toId, cents: input.cents }).returning();
   const summary = fromId === ctx.memberId ? `paid ${byId.get(input.toId)} ${dollars(input.cents)}` : `recorded ${byId.get(fromId)} paying ${byId.get(input.toId)} ${dollars(input.cents)}`;
-  await record(ctx.groupId, ctx.memberId, "settlement.added", summary, { table: "settlements", id: s.id });
+  await recordFor(ctx, "settlement.added", summary, { table: "settlements", id: s.id });
   return { id: s.id, fromId, toId: input.toId, cents: input.cents };
 }
 
