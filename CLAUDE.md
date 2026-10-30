@@ -37,9 +37,12 @@ src/
     types.ts            Ctx { groupId, memberId, source }, GroupCtx { groupId }, dollars()
     authz.ts            NotAllowedError, requireActive / requireAdmin (load the Member from the DB), canChangeExpense
     groups.ts           settings (validateSettings, defaultToolkitsFor = the purpose preset), listToolkits (no row =
-                        defaultOn), delete group data; Onboarding's preset runs the Toolkits' onEnable hooks
-    toolkits.ts         setToolkit (Admins; by id or name; coming soon / unmet requires refused; hooks once per change;
-                        a dashboard switch-on posts ONE line in the Chat, 10 min cooldown), catalogFor, checkRequirements
+                        defaultOn), delete group data; Onboarding's preset runs the Toolkits' onEnable hooks (the
+                        starter chores and Pantry are theirs, Onboarding names no Toolkit)
+    toolkits.ts         setToolkit (Admins; by id or name; coming soon / unmet requires refused, and a Toolkit another
+                        enabled one requires can't go off; hooks once per change; a dashboard switch-on posts ONE line
+                        in the Chat, 10 min cooldown), catalogFor, checkRequirements, enabledToolkitEntries (the
+                        enabled server entries in post order, lazy), byPostOrder
     members.ts          list (active / active+pending), approve, decline, promote, payment handles, forgetMe, Member
                         facts (rememberAboutMe, knownAbout: your own or an Admin, peopleFacts for the instructions),
                         rekeyChannelUser (WhatsApp LID -> phone JID), fillPlaceholderName
@@ -55,7 +58,8 @@ src/
                         splitPercent, splitShares, checkPayers, apportion (largest remainder), computeShares
     money.ts            Expenses (logExpense/updateExpense take intent: method + splitAmong|splits|percents|shares,
                         payers, category, note, occurredOn, recurring), delete/restore, Balances (from expense_payers),
-                        getSettlePlan (simplified or pairwiseDebts per groups.simplify_debts), settleUp, debtBetween
+                        getSettlePlan (simplified or pairwiseDebts per groups.simplify_debts), settleUp, debtBetween,
+                        expenseSummary (ready-to-say), settleReportParts (Money's report section)
     categories.ts       guessCategory (fallback when nobody picked one)   recurring.ts  latestOccurrence + runRecurring
     receipts.ts         photo -> parsed receipt (vision on the gateway, sums recomputed), receiptSplits, saveUpload,
                         askVision (the one vision call), imageDataUrl
@@ -65,22 +69,28 @@ src/
     outbox.ts           outbox_jobs: enqueue, due, done/failed with backoff (ADR 0009)
     cart.ts             Cart items (recipe_id, quantity + unit next to the free-text qty, no prices), addAsSaid (ambiguous
                         quantities -> needsClarification), removal (adder or Admin), checkout (snapshot -> Instacart
-                        shopping list -> cart_checkouts), markPurchased (exact Expense); every change is an Activity row
+                        shopping list -> cart_checkouts), markPurchased (exact Expense), cartReportParts; every change
+                        is an Activity row
     cart-split.ts       pure: computeCartSplits (one share per item), canRemoveItem (the "I paid" drawer previews with it)
     recipes.ts          draftRecipe / writeRecipe (Sonnet, strict JSON, one retry), save/list/get, addRecipeToCart,
                         recipeLink (cached by recipeKey), upcomingRecipes
     recipe-math.ts      pure: Pantry matching (covers, haveNeed), scaleIngredients, recipeKey
     pantry.ts           group_toolkits.settings.pantry for groceries: getPantry, updatePantry (any active Member)
     chores.ts           the chart: Rotation (turnFor), passes (skipChore), local due days (choreSchedule), streaks per
-                        Member (streaksFor), add (any active Member) / remove (Admin), hallOfShame + chartLine, addStarterChores (Onboarding)
+                        Member (streaksFor), add (any active Member) / remove (Admin), hallOfShame + chartLine, addStarterChores
     upkeep.ts           upkeep items in local days (upkeepSchedule: due soon = 7 days), markDone, remove (Admin),
                         DEFAULT_ITEMS / addDefaults ("the usual five")
+    house.ts            the House Trick as one thing: houseBundleLine (the chores nudge, choresNudgeText), houseReportParts
+                        (choresReportParts + upkeepReportParts), startHouse (its onEnable: starter chores + the usual five, once)
     reminders.ts        one-off / daily / weekly / monthly (nextOccurrence keeps the wall-clock across DST), whole Group
                         or one Member (private), reminderLine ("(set by Maya)"), visibleTo / canCancel, claim before send
-    report.ts           groupReport + formatGroupReport (one message, sections of enabled Toolkits; casual = sentences),
-                        choresNudgeText
-    schedule.ts         groupTimezone, the nudge hour and report day/hour (getSchedule / updateSchedule, Admin), the
-                        pure windows, claimPost / releasePost on scheduled_posts
+    report.ts           groupReport (the enabled Toolkits' report() parts in post order + core's Reminders line, naming no
+                        Toolkit) + composeReport / formatGroupReport (one message; casual = sentences), dueWord, joinNames
+    bundle.ts           the morning Bundle (ADR 0017): groupBundle = the enabled Toolkits' bundle() lines in post order,
+                        composeBundle (pure; no lines = no post)
+    schedule.ts         groupTimezone, the nudge hour (on House's group_toolkits row) and report day/hour (getSchedule /
+                        updateSchedule, Admin), the pure windows (bundleWindow, weeklyReportWindow), claimPost /
+                        releasePost on scheduled_posts
     personality.ts      groups.personality: getPersonality, updatePersonality (Admin), saveLearned (style job), resetLearned
                         (Admin), groupMood (worried / sleepy / happy / calm), allSquare
     pet.ts              say-once pet moments on pet_moments (MomentStore): dayGreeting, claimWins
@@ -124,14 +134,19 @@ src/
                         index.ts
     scorers/            relevancy (built-in) + brevity-tone (custom), Haiku judge, 10% of live replies
     evals/scenarios.ts  the fixed scenario set for `npm run evals`
-  toolkits/             docs/toolkits.md: how to add one
+  toolkits/             docs/toolkits.md: how to add one. coupling.test.ts: no Toolkit id literal outside its folder, the
+                        lists below, the landing's Trick files and tests
     types.ts            the contract: ToolkitManifest (summary, longDescription, icon, category, tags, defaultOn,
-                        requires, worksWith, status, gate { criterion, examples }, persona, abilities, dashboard { nav,
-                        pages }) and Toolkit (+ tools, dashboard { home, settings, mood } lazy refs, onEnable/onDisable)
+                        requires, worksWith, status, gate { criterion, examples }, persona, abilities, adminOnly, postOrder,
+                        dashboard { nav, pages }) and Toolkit (+ tools, dashboard { home, settings, mood } lazy refs,
+                        onEnable/onDisable, bundle(ctx, now) = its line in the morning Bundle, report(ctx, now) = its
+                        sections of the weekly report)
     define.ts           defineManifest (keeps the id literal), defineToolkit (manifest + server parts)
     manifests.ts        client-safe: MANIFESTS -> ToolkitId / TOOLKIT_IDS, CATALOG (+ coming-soon), manifestOf, findManifest
+                        (id, name, nav label, stems, then tags: "chores" and "upkeep" find House, "split" / "expenses" Money)
     coming-soon.ts      manifest-only stubs: household-admin (Lease stuff), outings, cooking, research, trips, pdf, stickers
-    presets.ts          purpose -> Toolkits (roommates/family: all four; trip/other: splitting+groceries; friends/work: splitting)
+    presets.ts          purpose -> Toolkits (roommates/family: splitting, groceries, house; trip/other: splitting+groceries;
+                        friends/work: splitting)
     registry.ts         server: TOOLKITS (BY_ID satisfies Record<ToolkitId, Toolkit>) + toolsFor(gateToolkit, enabled),
                         toolkitById. Wraps every tool so a NotAllowedError comes back as { notAllowed, reason, message },
                         and a manifest's adminOnly tools only run when the Admin's own message asks (adminAskGate)
@@ -142,8 +157,9 @@ src/
                         forget_me), people (remember, what_do_you_know_about_me), settings (set_group_settings incl.
                         personality, toggle_toolkit, list_toolkits), dashboard (get_dashboard_link: forEveryone = the Join
                         link line; rotate_join_link, set_join_policy, revoke_seat: adminOnly), reminders, report
-    splitting/ groceries/ chores/ upkeep/   manifest.ts + server.ts + the tools (+ dashboard.tsx: Home/Settings sections;
-                        groceries: cart.ts + recipes.ts)
+    splitting/ groceries/ house/   manifest.ts + server.ts + the tools (+ dashboard.tsx: Home/Settings sections;
+                        groceries: cart.ts + recipes.ts, requires splitting; house: chores.ts + upkeep.ts, the chores and
+                        upkeep Tricks as one, nav "House" at /house). splitting's manifest name is "Money" (id unchanged)
   integrations/         composio.ts (client + cached key health), splitwise.ts (SplitwiseClient: ComposioSplitwise and
                         FakeSplitwise, splitwiseClient(), splitwiseAvailability())
   channels/types.ts     IncomingMessage { channel, chatExternalId, userExternalId, userName, text, imageUrl?, isPrivate?,
@@ -192,8 +208,9 @@ src/
                         slangBudget, usableNicknames, saysName, isPetCommand, moodFrom, greeting / win / preview lines
   lib/style-stats.ts    pure: the Learned style's counts (countPhrase, countNickname, mergeLearned, activeHours)
   lib/pay-links.ts      Venmo / PayPal / Cash App links with the amount (settle_up and the settle drawer)
-  jobs/scheduler.ts     60 s tick: due reminders (deliver for the Group, deliverPrivate for a Member), the daily chores
-                        nudge and the weekly Group Report (claimed in scheduled_posts, once per period); Group style
+  jobs/scheduler.ts     60 s tick: due reminders (deliver for the Group, deliverPrivate for a Member), the morning Bundle
+                        (bundleJob: the enabled Toolkits' bundle() lines at the nudge hour, claimed under the chores
+                        nudge's scheduled_posts kind) and the weekly Group Report (once per period); Group style
                         refresh; recurring Expenses (hourly check); Splitwise outbox; daily retention
   jobs/report-text.ts   groupReportText: the same text for the weekly post and group_report (casual from the style note)
   jobs/retention.ts     daily: chat_messages, trace spans + live scores (mastra_ai_spans, mastra_scorers) and memory-thread
@@ -242,8 +259,10 @@ src/
     auth/callback/      Google sign-in return: verifier -> session cookies -> `next` (or `next?auth_error=<reason>`)
     g/[groupId]/        layout (session + GroupProvider + shell; Pending members see a waiting screen; groupView builds the
                         nav, overflow and owned pages from the enabled manifests once), Home (doorway + Toolkits' Home
-                        sections + narration), money (+ ?tab=, [expenseId]), cart (+ ?recipe=; Recipes and Pantry in
-                        _components/recipes.tsx), chores, members, settings (core + Toolkits' settings sections),
+                        sections + core's Reminders card + narration), money (+ ?tab=, [expenseId]), cart (+ ?recipe=;
+                        Recipes and Pantry in _components/recipes.tsx), house (Chores and Upkeep tabs; /chores redirects
+                        there, ?tab=reminders to /reminders), reminders (core: the Reminders page, also a tile in the More
+                        drawer), members, settings (core + Toolkits' settings sections),
                         toolkits (the Tricks page: search, category chips, Learned / Not yet / Soon cards, detail sheet with
                         Teach Roomie X / Forget X; ?open=<id>; also served at tricks/);
                         actions.ts = every server action; _components/data.ts = services -> screen shapes;
@@ -251,7 +270,7 @@ src/
                         _components/toolkit-off.tsx = the off state of a page whose Toolkits are all off ("Roomie hasn't learned X
                         here yet."); _components/dock.tsx = the dock (Home, up to 3 Trick tabs, Ask Roomie centred, More) and
                         the More drawer (every learned Trick, greyed Teach / Ask an admin slots, inert Soon slots, Teach a
-                        Trick, Members, Settings; aria-current in both); _components/screens/*
+                        Trick, Reminders, Members, Settings; aria-current in both); _components/screens/*
                         settings/splitwise/callback = Composio's return URL (route handler)
     design/             the design-system page (dev only unless SHOW_DESIGN_PAGE=1)
     api/auth/[...path]  Neon Auth proxy; api/chat = Ask Roomie (session Member, 401/403); api/receipts = Scan receipt;
@@ -261,7 +280,8 @@ src/
     admin/beta/         operators: the beta requests, newest first, status new / contacted / onboarded / declined
     admin/groups/       operators: every Group (channel, members, created, last message, runs today), Pause / Resume /
                         Leave chat, a banner while ROOMIE_PAUSED=1; actions log "[admin] <email>: <action> <groupId>"
-drizzle/                generated migrations (0000 baseline drops the pre-step-4 tables)
+drizzle/                generated migrations (0000 baseline drops the pre-step-4 tables; 0012 is hand-written SQL: the
+                        chores + upkeep group_toolkits rows become one house row, idempotent)
 scripts/migrate.ts      npm run db:migrate
 scripts/lib/prod-guard.ts  seed, dev-chat, evals and test:tools refuse the production Neon branch; telegram (polling) and
                         telegram:webhook --delete refuse when getMe says the token is @imroomiebot (prod), --set refuses
@@ -310,7 +330,7 @@ scripts/studio-presets.ts  writes .mastra-presets.json for Studio (run by mastra
 - **Recipe JSON** comes from `RECIPE_MODEL ?? LLM_MODEL` on `/v1/chat/completions` (no `temperature`). zod validates it; units must map to Instacart's list (`lib/units.ts`), else one retry with the error as feedback, then unknown units become `each`. A recipe written for the wrong number of people is scaled in code (countable units round up). `RECIPE_FAKE=1` / `setRecipeWriter()` skip the model.
 - **Pantry** lives in `group_toolkits.settings.pantry` (groceries), names normalized. Matching is word-based with the last word as the thing itself: "oil" covers "olive oil", "rice" doesn't cover "rice vinegar".
 - **No prices** (docs/toolkits.md#groceries): track -> Instacart list -> receipt -> who had what -> confirm -> split. Nothing is estimated; `est_cents` is no longer written (old rows are ignored), and no tool result, persona line or page shows a price or a cart total. Quantities are kept as said; `addAsSaid` returns `needsClarification` for ones that can't be read one way. Routine Groceries tools return no `links` (`cart_view` with `link: true` when someone asks for the page).
-- **Photos**: `cart_from_photo` reads a recipe / list / shelf (`services/grocery-photos.ts`), asks in one line, adds on `confirm` (a recipe is saved too); a receipt with Splitting off gets "That's a receipt. Teach me Splitting and I'll split it.".
+- **Photos**: `cart_from_photo` reads a recipe / list / shelf (`services/grocery-photos.ts`), asks in one line, adds on `confirm` (a recipe is saved too); a receipt comes back as `{ kind: "receipt", next: "expense_from_receipt" }` (Groceries requires Money, so the tool is always there).
 - **Checkout** (`cart_checkout`, "Get Instacart link"): snapshots the open Cart into `cart_checkouts`, builds an Instacart shopping list (structured `quantity`/`unit`, else parsed from `qty`), returns an "Open in Instacart" button. The same open items reuse the last unpaid Checkout. If Instacart can't be reached the Checkout is still saved with a null url and Roomie says the link isn't available yet.
 - **"I paid $84"** is `cart_purchased` (persona: not `log_expense`). `markPurchased` flips the open items (or a Checkout's) to purchased in a transaction, then `logExpense` with `method: "exact"`, `category: "groceries"` and `computeCartSplits` rows (one share per item: personal to the adder, shared evenly; payer-first remainder); the newest unpaid Checkout it covers gets `expense_id` + `paid_at`. The drawer previews with the same function and the active Members in `listMembers` order, so it matches to the cent.
 - **Instacart** (ADR 0004): `InstacartClient` with `ComposioInstacart` (`tools.execute("INSTACART_CREATE_SHOPPING_LIST_PAGE" | "INSTACART_CREATE_RECIPE_PAGE", { userId: "roomie-app", arguments })`, Instacart IDP body shapes, `products_link_url` found at any depth) and `FakeInstacart` (deterministic `https://instacart.example/...`). Instacart is a "no auth" Composio toolkit: no auth config, no connection, only `COMPOSIO_API_KEY`. `INSTACART_FAKE=1` / `setInstacartClient()` pick the fake; dev-chat switches by itself when the key is missing or rejected; failures are `InstacartUnavailableError`, relayed as text. The dashboard button is enabled only for the real client with a healthy key. Recipe links are cached on the Recipe by `recipeKey` (title, servings, ingredients).
@@ -321,10 +341,11 @@ scripts/studio-presets.ts  writes .mastra-presets.json for Studio (run by mastra
 - **Rotation:** `chores.rotation` (member ids in order, null = everyone). With one, the turn is the Member after whoever last did or passed it (inactive ids drop out; an empty result falls back to everyone); without one, whoever did or passed it least recently (never first, ties by name). A pass is a `chore_logs` row with `skipped`: it moves the turn, isn't a done (no streak, the chore stays due). Only whoever's turn it is can pass (`not-yours`). Logging for another active Member is fine; the Activity row says "for Dev".
 - **Due and streaks:** a chore is due on (last done's local day + everyDays), never done = due today; `state` is overdue / due / ok. A Streak counts a Member's own consecutive on-time dones on that chore (on time = no later than the previous done's day + everyDays); a pass or a late done ends it. Upkeep: never done = due today (due soon, not overdue), due soon = within 7 days.
 - **Reminders:** `memberId` null = the whole Group (posted with `deliver`), set = that Member privately (`deliverPrivate`), never both; if Roomie can't DM them yet it goes to the Chat once, addressed to them, with the Start hint. `created_by` gives "(set by Maya)" when set for someone else. Repeats (daily / weekly / monthly, monthly clamped to day 28) keep the local wall-clock and skip missed occurrences. The scheduler claims a reminder (sets `sent_at`) before sending and releases it on failure. Lists show only what the viewer may see (`visibleTo`); cancel = the target, the setter, anyone for a whole-group one, or an Admin.
-- **Posts Roomie makes on its own (ADR 0001):** the chores nudge at `group_toolkits["chores"].settings.nudgeHour` (default 9, null = off), only when something is due or late; the weekly Group Report at `group_toolkits["core"].settings.report = { weekday, hour }` (default Sunday 18). Both are claimed in `scheduled_posts (group, kind, local period)` before sending, so at most one per day / week across restarts and processes; a failed send gives the claim back. Upkeep has no post of its own: it's a line in the report. The window is the whole hour; a scheduler that was off for it skips that day rather than posting late.
-- **The Group Report** is one message of at most ~12 lines (`reportParts`): Settle plan, chores this week (counts, the best streak, what's up now, the chart), upkeep due soon, the Cart's size, the next week's whole-group reminders. Sections of switched-off Toolkits are left out. Emoji-led lines by default; when the Group style note's tone is casual (`isCasualStyle`) the same sentences run together without the list look. `group_report` returns the same text (`groupReportText`) and Roomie posts it verbatim.
-- **Onboarding copy:** the intro is three lines and no feature list (who Roomie is, "tell me what this group is for ... and I'll learn the right Tricks", the Admin); when setup finishes `set_group_settings` returns `learned` (`learnedLine`: "Learned Splitting and Groceries. Say "roomie, learn chores" any time.", or "You didn't say what this group is for, so I kept the roommates set: ..."), and `say` (that line + the Join link line), which Roomie posts as it is.
-- **Onboarding** for roommates and families adds the three starter chores (no Rotation, so new people join in) and the usual five upkeep items, once, and only for Toolkits that are on. Family now also gets Upkeep.
+- **Posts Roomie makes on its own (ADR 0001, ADR 0017):** the morning Bundle at `group_toolkits["house"].settings.nudgeHour` (default 9, null = off): each enabled Toolkit's `bundle()` line in post order, nothing when none has anything to say (today that's House's chores line, only when something is due or late; the other lines are the core-slots issue); the weekly Group Report at `group_toolkits["core"].settings.report = { weekday, hour }` (default Sunday 18). Both are claimed in `scheduled_posts (group, kind, local period)` before sending (the Bundle under the chores nudge's kind), so at most one per day / week across restarts and processes; a failed send gives the claim back. Upkeep has no post of its own: it's a line in the report. The window is the whole hour; a scheduler that was off for it skips that day rather than posting late.
+- **The Group Report** is one message of at most ~12 lines: each enabled Toolkit's `report()` parts in post order (Money: the Settle plan; House: chores this week, the best streak, what's up now, the chart, upkeep due soon; Groceries: the Cart's size), then core's next-week whole-group reminders. Core names no Toolkit. Emoji-led lines by default; when the Group style note's tone is casual (`isCasualStyle`) the same sentences run together without the list look. `group_report` returns the same text (`groupReportText`) and Roomie posts it verbatim.
+- **Onboarding copy:** the intro is three lines and no feature list (who Roomie is, "tell me what this group is for ... and I'll learn the right Tricks", the Admin); when setup finishes `set_group_settings` returns `learned` (`learnedLine`: "Learned Money and Groceries. Say "roomie, learn house" any time.", or "You didn't say what this group is for, so I kept the roommates set: ..."), and `say` (that line + the Join link line), which Roomie posts as it is.
+- **House's `onEnable`** (teaching it, and Onboarding presets that include it) adds the three starter chores (no Rotation, so new people join in; only on an empty chart) and the usual five upkeep items (only the missing ones), so twice adds nothing. Onboarding itself names no Toolkit.
+- **Groceries requires Money:** "I paid 84" ends in an Expense, so teaching Groceries with Money off is refused ("it needs Money first") and forgetting Money while Groceries is on is refused ("Groceries needs Money, so I'm keeping it"); `cart_from_photo` no longer checks and a receipt always points at `expense_from_receipt`.
 - **First contact** (`channels/text.ts`, shared by both adapters): `/help` (group or DM) is at most 8 lines naming the Group's Tricks (`helpText`), `/start` in a DM is one line and never a link (on WhatsApp nobody needs either; they work when typed, and other text starting with "/" goes through as text there), on Telegram other slash commands are ignored, a failure while Roomie was addressed gets one friendly line (`OOPS`) and the stack goes to the log. `npm run telegram` prints a `[roomie]` line per message (gate, tools, time, trace id) and per reply.
 
 ## Personality (the group pet)
@@ -358,7 +379,7 @@ scripts/studio-presets.ts  writes .mastra-presets.json for Studio (run by mastra
 - Tools resolve names to ids with `memberIdByName()` and throw a helpful error on unknown names (the model then asks). Money tools return amounts as ready-to-say strings ("$22.50", `expenseSummary`), so the model never formats cents.
 - Tools get the Group and sender from `ctxOf(context)` (the RequestContext), never from closures.
 - Tools attach buttons by returning `links: [{ text, url }]` (see `cart_checkout` / `dashboardLinks()`); the pipeline collects them from every tool result into `Outgoing.buttons`. Never paste URLs. Buttons need an absolute `APP_URL`. Only for something the person asked to open: routine actions (adds, removes, views, chores done) return none (WhatsApp shows each button as a bare URL line).
-- A new Toolkit = a folder with `manifest.ts` + `server.ts` + tools, one line in `toolkits/manifests.ts` and one in `toolkits/registry.ts` (docs/toolkits.md has the checklist). Its Gate criterion, persona lines, nav tab, Home and Settings sections come from the manifest; never add them to the shell, `gate/jev.ts` or the persona.
+- A new Toolkit = a folder with `manifest.ts` + `server.ts` + tools, one line in `toolkits/manifests.ts` and one in `toolkits/registry.ts` (docs/toolkits.md has the checklist). Its Gate criterion, persona lines, nav tab, Home and Settings sections, its Bundle line and report sections come from the manifest and its server entry; never add them to the shell, `gate/jev.ts`, the persona, the scheduler or `services/report.ts`. `toolkits/coupling.test.ts` fails when a Toolkit id is written outside its folder and the listed files.
 - The Tricks page (`/g/<id>/tricks`, same page as `/toolkits`) is the one place Tricks are taught or forgotten in the UI; Settings only summarizes and links there. In UI text it's "Tricks", not a store or marketplace (Roomie is a groupmate).
 - Dashboard pattern: a page (server) calls `currentMember(groupId)`, reads services through `_components/data.ts` and renders a client screen; writes are server actions in `g/[groupId]/actions.ts` that call a service with the session's Ctx and `revalidatePath`. They return `{ ok, error, status }`, so screens toast errors. Coming-soon Toolkits (Lease stuff, Outings, Cooking, Research, Trips, PDFs, Stickers) are manifest-only stubs: listed on the Toolkits page and refused kindly.
 - Schema changes: edit `src/db/schema.ts`, `npm run db:generate`, commit the SQL in `drizzle/`, `npm run db:migrate`. Never `drizzle-kit push`.

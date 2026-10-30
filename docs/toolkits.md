@@ -41,6 +41,7 @@ Business logic still goes in `src/services/` (CLAUDE.md, "The one rule"). Tables
 | `gate` | `{ criterion, examples }`: `criterion` is the Jev `toolkit` choice text (which messages belong here); `examples[0]` is what Roomie suggests when it's taught ("Learned Groceries. Try: ..."), and the first two are its `/help` line |
 | `persona` | lines in the TRICKS block of Roomie's composed persona (`mastra/persona.ts`, the `/* TOOLKIT_PERSONA */` slot) while it's on. Put the Toolkit's tool-routing rules here, not in `persona.ts` `CORE_RULES` |
 | `abilities` | plain words per tool id for the sheet's "What it can do" (tools without one show their description) |
+| `postOrder` | where its lines sit in Roomie's own posts, the morning Bundle and the weekly report (ADR 0017: money 10, the landlord 20, the house 30, groceries 40). Default: nav order, then last |
 | `dashboard.nav` | `{ label, href: (groupId) => path, icon, order }`: a dock tab. The dock is Home + the first 3 learned by `order` + More (Ask Roomie in the middle); two Toolkits pointing at the same path share one dock tab. The More drawer lists every learned one (each its own tile), a greyed slot for each one not learned yet (Teach / Ask an admin) and each coming-soon one (inert, "Soon") |
 | `dashboard.pages` | route prefixes under `/g/<id>/` it owns (`["cart"]`). While every owner is off, the page shows "Roomie hasn't learned X here yet." with Teach Roomie X / Ask an admin |
 
@@ -57,12 +58,16 @@ export const groceries = defineToolkit(manifest, {
   },
   onEnable: (ctx) => seedPantry(ctx), // off -> on, and for the Onboarding preset. Must be idempotent
   onDisable: async (ctx) => {},
+  bundle: (ctx, now) => restockLine(ctx, now),                                // optional: its line in the morning Bundle, or null
+  report: async (ctx) => cartReportParts((await listOpenItems(ctx)).length), // optional: its sections of the weekly report
 });
 ```
 
 - Dashboard sections are lazy imports so the agent runtime (tsx, evals, Mastra) never loads React. They are async server components taking `{ ctx: { session, isAdmin, base } }`; read through `app/g/[groupId]/_components/data.ts` and render a client piece. Settings sections decide for themselves what non-Admins see (return `null` for nothing).
 - Home and Settings render sections in nav `order` (Home: `homeOrder` first, so it reads standing, today, then the rest), only for enabled Toolkits. Home's doorway mood is the Group's (`services/personality.groupMood`); a Toolkit's `mood` is the fallback.
-- Hooks get `{ groupId, memberId | null }`. They run once per real change (`services/toolkits.setToolkit`) and for every Toolkit in the Onboarding preset (`groups.updateGroupSettings`).
+- Hooks get `{ groupId, memberId | null }`. They run once per real change (`services/toolkits.setToolkit`) and for every Toolkit in the Onboarding preset (`groups.updateGroupSettings`). Whatever a Group should start with (House's starter chores, the Pantry) is the hook's job: Onboarding names no Toolkit.
+- **Bundle and report** (ADR 0017): `bundle(ctx, now)` returns one line for Roomie's morning post or `null` when there's nothing to say; `report(ctx, now)` returns `{ icon, text }` parts for the weekly Group Report. Both are thin calls into the Toolkit's own service (`services/house.ts`, `services/money.settleReportParts`, `services/cart.cartReportParts`). `services/bundle.ts` and `services/report.ts` compose the enabled Toolkits' contributions in `postOrder` (`services/toolkits.enabledToolkitEntries`) and never name a Toolkit; the scheduler posts the Bundle at the Group's nudge hour (`group_toolkits["house"].settings.nudgeHour` today) and the report on its day, each claimed once per period in `scheduled_posts`. No lines, no post.
+- **Stay in your folder.** `src/toolkits/coupling.test.ts` fails when a Toolkit id appears as a literal outside its own folder, `manifests.ts`, `presets.ts`, `registry.ts`, `coming-soon.ts`, the landing's `demos.ts` / `tricks.ts`, `db/enums.ts`, the two services that keep a Trick's settings on its `group_toolkits` row (`pantry.ts`, `schedule.ts`), docs and tests. A manifest's `requires` is the one sanctioned way to name another Toolkit. Add to that allowlist only on purpose.
 
 ## What you get for free
 
@@ -70,17 +75,18 @@ export const groceries = defineToolkit(manifest, {
 - **Gate:** its `gate.criterion` is offered to Jev only while it's on (`gate/jev.ts questionsFor`).
 - **Chat:** `toggle_toolkit` finds it by id or name and checks `requires`; `list_toolkits` describes it.
 - **Chat copy:** its line in `/help` (`channels/text.ts`) and in the setup's "Learned ..." line (`onboarding.ts learnedLine`).
-- **Dashboard:** the card and sheet on the Tricks page, the dock tab and More drawer tile, Home and Settings sections, the off state of its pages, and one line from Roomie in the Chat when an Admin teaches it from the dashboard (10 minute cooldown).
+- **Dashboard:** the card and sheet on the Tricks page, the dock tab and More drawer tile, Home and Settings sections, the off state of its pages, and one line from Roomie in the Chat when an Admin teaches it from the dashboard (10 minute cooldown). The Group's own pages (Reminders, Members, Settings) are the dock's, not a manifest's.
+- **Roomie's own posts:** its `bundle()` line in the morning Bundle and its `report()` sections in the weekly report, in `postOrder`.
 - **Presets:** add it to `src/toolkits/presets.ts` if a Group purpose should get it at Onboarding.
 
 ## Checklist
 
-- [ ] `src/toolkits/<id>/manifest.ts` with every field above that applies; `status` and `defaultOn` deliberate
+- [ ] `src/toolkits/<id>/manifest.ts` with every field above that applies; `status` and `defaultOn` deliberate; `requires` for any Toolkit it leans on (Groceries needs Money)
 - [ ] tools in the folder, each calling a service; tool keys equal tool ids
-- [ ] `server.ts` with tools, any dashboard sections, idempotent hooks
+- [ ] `server.ts` with tools, any dashboard sections, idempotent hooks, and `bundle` / `report` if it has something to say on its own (with a `postOrder`)
 - [ ] a line in `manifests.ts` (`MANIFESTS`) and `registry.ts` (`BY_ID`)
 - [ ] presets updated if a purpose should include it
-- [ ] `npm run typecheck`, `npm test` (`registry.test.ts` checks the manifest is complete, abilities name real tools, nav hrefs and pages are well formed)
+- [ ] `npm run typecheck`, `npm test` (`registry.test.ts` checks the manifest is complete, abilities name real tools, nav hrefs and pages are well formed; `coupling.test.ts` that its id stayed in its folder)
 - [ ] `npm run test:tools`: every new tool exercised (the coverage test fails otherwise)
 - [ ] record a few Jev answers with the new criterion and add them to `gate.test.ts`; add eval scenarios in `src/mastra/evals/scenarios.ts`
 - [ ] read-only tools added to `READ_ONLY_TOOLS` in the scenarios
@@ -94,8 +100,8 @@ Tools return `links` only for something the person asked to open: the Instacart 
 
 ## Groceries
 
-The flow is **track -> Instacart list -> receipt -> who had what -> confirm -> split**. Groceries itself has **no prices**: nothing is estimated, `cart_items.est_cents` is no longer written (the column stays for old rows and is ignored), and no tool result, persona line, Cart page or Recipe shows a price or a cart total. Real money arrives later: "I paid 84" (`cart_purchased`, one Expense split by who added what, one share per item, shared items evenly) or a receipt photo through Splitting (`expense_from_receipt`, item by item at the printed prices).
+The flow is **track -> Instacart list -> receipt -> who had what -> confirm -> split**. Groceries itself has **no prices**: nothing is estimated, `cart_items.est_cents` is no longer written (the column stays for old rows and is ignored), and no tool result, persona line, Cart page or Recipe shows a price or a cart total. Real money arrives later: "I paid 84" (`cart_purchased`, one Expense split by who added what, one share per item, shared items evenly) or a receipt photo through Money (`expense_from_receipt`, item by item at the printed prices). Groceries therefore `requires` Money: it can't be taught with Money off, and Money can't be forgotten while Groceries is on.
 
 - **Quantities** are free text, kept as said ("2 cartons", "12", "1 lb"); `lib/units.parseAmount` fills the structured quantity + unit for Instacart. `cart.addAsSaid` holds back what can't be read one way (`clarifyQuantities`: "eggs, 12, 18" -> `needsClarification: ["eggs: 12 and 18 what? cartons or eggs?"]`) and adds the rest; Roomie asks that one question.
-- **Photos**: `cart_from_photo({ photo_url, shared?, for?, confirm?, skip? })` reads a recipe, a shopping list or a shelf with the vision model (only our own uploads, never a typed URL; `services/grocery-photos.ts`, the same `askVision` call as receipts; `setPhotoReader()` in tests, `RECEIPT_FAKE=1` in evals picks a fake by the photo's bytes). Without `confirm` it returns `{ kind, items: [{ name, qty }], summary, needsConfirmation }` and Roomie asks in one line ("5 items: eggs (12), milk, …. Add them as shared?"); with `confirm` it adds them (`addPhotoToCart`: a recipe is saved as a Recipe and goes in like one, minus the Pantry and `skip`). A receipt photo says so: with Splitting off, "That's a receipt. Teach me Splitting and I'll split it."; with it on, Roomie uses `expense_from_receipt`.
+- **Photos**: `cart_from_photo({ photo_url, shared?, for?, confirm?, skip? })` reads a recipe, a shopping list or a shelf with the vision model (only our own uploads, never a typed URL; `services/grocery-photos.ts`, the same `askVision` call as receipts; `setPhotoReader()` in tests, `RECEIPT_FAKE=1` in evals picks a fake by the photo's bytes). Without `confirm` it returns `{ kind, items: [{ name, qty }], summary, needsConfirmation }` and Roomie asks in one line ("5 items: eggs (12), milk, …. Add them as shared?"); with `confirm` it adds them (`addPhotoToCart`: a recipe is saved as a Recipe and goes in like one, minus the Pantry and `skip`). A receipt photo comes back as `{ kind: "receipt", next: "expense_from_receipt" }` and Roomie uses Money's tool (always there, since Groceries requires Money).
 - **Awareness**: every Cart, Recipe and Pantry change writes an Activity row with its source (chat or dashboard), so Roomie's SINCE YOU LAST SPOKE facts say "Ryan took eggs off the Cart (dashboard, 2 min ago)".
