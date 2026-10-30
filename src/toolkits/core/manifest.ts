@@ -22,7 +22,8 @@ export const core = defineManifest({
     decline_member: { action: String.raw`\b(?:decline|reject|deny|refuse|not approve|don'?t approve)`, target: "name", ask: `Decline {target}? Say "roomie, yes decline {target}".` },
     promote_member: { action: String.raw`\b(?:promote|admin)`, target: "name", ask: `Make {target} an admin? Say "roomie, yes promote {target}".` },
     rotate_join_link: {
-      action: String.raw`\b(?:rotate|reset|regenerate|renew|replace)\b|\bnew\b[^.?!]*\blink\b`,
+      // An instruction, not a question: "rotate the join link" passes, "should I rotate it?" / "what's the new link?" ask.
+      action: String.raw`(?<!\b(?:what|whats|how|why|when|which|where|who|does|do|did|should|can|could|would|will|is|are)\b.*)(?:\b(?:rotate|reset|regenerate|renew|replace)\b|\bnew\b[^.?!]*\blink\b)`,
       ask: `Make a new Join link? The old one stops working. Say "roomie, yes rotate the join link".`,
     },
     set_join_policy: {

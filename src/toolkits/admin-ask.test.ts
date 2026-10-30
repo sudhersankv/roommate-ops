@@ -34,6 +34,10 @@ describe("the Join link's admin tools (ADR 0014)", () => {
     assert.equal(ok("rotate_join_link", {}, "roomie hi"), false);
     assert.equal(ok("rotate_join_link", {}, "roomie what's the join link?"), false);
     assert.equal(ok("rotate_join_link", {}, "roomie don't rotate the join link"), false);
+    assert.equal(ok("rotate_join_link", {}, "roomie should I rotate the join link?"), false, "a question isn't the ask");
+    assert.equal(ok("rotate_join_link", {}, "roomie what's the new link?"), false);
+    assert.equal(ok("rotate_join_link", {}, "roomie what does reset do"), false);
+    assert.equal(ok("rotate_join_link", {}, "yes rotate the join link", true), true, "the confirmation passes");
   });
   test("join policy and revoking a seat", () => {
     assert.equal(ok("set_join_policy", { policy: "approve_all" }, "roomie I want to approve every join"), true);

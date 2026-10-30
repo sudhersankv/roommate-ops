@@ -239,7 +239,7 @@ function MemberRow({ member: m, onMove }: { member: MemberView; onMove: () => vo
       const res = await revokeSeat(group.id, m.id)
       setRevoking(false)
       if (!res.ok) return void toast.add({ title: "Couldn't disconnect", description: res.error, type: "error" })
-      toast.add({ title: `Disconnected ${m.name}'s seat`, description: "It's open again on the Join link." })
+      toast.add({ title: `Disconnected ${m.name}'s seat`, description: "It's open again on the Join link. That Google account waits here for an Admin." })
     })
   const admin = isAdmin && m.id !== me.id
   return (
@@ -287,7 +287,7 @@ function MemberRow({ member: m, onMove }: { member: MemberView; onMove: () => vo
               <AlertDialogHeader>
                 <AlertDialogTitle>Disconnect {m.name}&apos;s seat?</AlertDialogTitle>
                 <AlertDialogDescription>
-                  {signedInAs(m)} won&apos;t see {group.name}&apos;s dashboard anymore. {m.name} stays in the group, and the seat is open again on the Join link.
+                  {signedInAs(m)} won&apos;t see {group.name}&apos;s dashboard anymore and waits on this page for an Admin. {m.name} stays in the group, and the seat is open again on the Join link.
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>

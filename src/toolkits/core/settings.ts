@@ -63,8 +63,18 @@ export const settingsTools = {
         const learned = learnedLine(toolkits, { defaulted: !group.purpose && !input.toolkits });
         const say = `${learned}\n${joins.joinLine(await joins.joinLink(ctx.groupId))}`;
         const inDm = (context?.requestContext as { get(k: string): unknown } | undefined)?.get("isPrivate") === true;
-        if (inDm) await joins.postInChat(ctx.groupId, say).catch((e) => console.warn("[set_group_settings] couldn't post the setup line in the group", e));
-        setup = { learned, say, ...(inDm ? { postedInGroup: true } : {}) };
+        const posted = inDm
+          ? await joins.postInChat(ctx.groupId, say).then(
+              () => true,
+              (e) => (console.warn("[set_group_settings] couldn't post the setup line in the group", e), false),
+            )
+          : undefined;
+        setup = {
+          learned,
+          say,
+          ...(posted === true ? { postedInGroup: true } : {}),
+          ...(posted === false ? { postedInGroup: false, tellThem: "It didn't reach the group chat: ask them to post the Join link line there (it's in `say`)." } : {}),
+        };
       }
       return {
         ...setup,

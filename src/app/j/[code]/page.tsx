@@ -23,5 +23,5 @@ export default async function JoinPage({ params }: { params: Promise<{ code: str
   const picker = await joins.pickerFor(code, account.id)
   if (!picker) notFound()
   if (picker.mine && picker.mine.status !== "removed") redirect(`/g/${picker.group.id}`)
-  return <SeatPicker code={code} group={picker.group} seats={picker.seats} declined={!!picker.mine} email={account.email} />
+  return <SeatPicker code={code} group={picker.group} seats={picker.seats} adminsOpen={picker.adminsOpen} declined={!!picker.mine} email={account.email} />
 }

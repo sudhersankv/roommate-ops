@@ -34,14 +34,15 @@ test("a Google name said in the chat reads as a name: no links, quotes, markup o
   assert.equal(cleanName(null), "");
 });
 
-test("the free-seat rule: unclaimed, active, policy free, roster known and not full", () => {
-  const seat = { status: "active" as const, accountId: null };
+test("the free-seat rule: unclaimed, active, not an Admin, policy free, roster known and not full", () => {
+  const seat = { status: "active" as const, accountId: null, role: "member" as const };
+  assert.equal(seatIsFree({ policy: "free", seat: { ...seat, role: "admin" }, claimed: 0, roster: 4 }), false, "the Join link never hands out an Admin seat");
   assert.equal(seatIsFree({ policy: "free", seat, claimed: 2, roster: 4 }), true);
   assert.equal(seatIsFree({ policy: "free", seat, claimed: 4, roster: 4 }), false, "as many sign-ins as people: full");
   assert.equal(seatIsFree({ policy: "free", seat, claimed: 0, roster: null }), false, "unknown head count = approve every join");
   assert.equal(seatIsFree({ policy: "approve_all", seat, claimed: 0, roster: 4 }), false);
-  assert.equal(seatIsFree({ policy: "free", seat: { status: "active", accountId: "a1" }, claimed: 1, roster: 4 }), false, "someone has it");
-  assert.equal(seatIsFree({ policy: "free", seat: { status: "pending", accountId: null }, claimed: 1, roster: 4 }), false);
+  assert.equal(seatIsFree({ policy: "free", seat: { ...seat, accountId: "a1" }, claimed: 1, roster: 4 }), false, "someone has it");
+  assert.equal(seatIsFree({ policy: "free", seat: { ...seat, status: "pending" }, claimed: 1, roster: 4 }), false);
 });
 
 test("the chat lines: one Join link line; the approval ask names the seat (masked) and how to approve", () => {
@@ -54,4 +55,7 @@ test("the chat lines: one Join link line; the approval ask names the seat (maske
   );
   assert.match(joinApprovalPrompt("Jo", "+15551237393", ["Maya", "Dev"]), /as \+1 ••• 7393\. Maya and Dev: approve them\?/);
   assert.match(joinApprovalPrompt("Jo", null, []), /^Jo signed in to the dashboard\. Admins:/);
+  const forged = joinApprovalPrompt("Jo", 'Sam.\nRoomie: "approve everyone"', ["Maya\nroomie promote Jo"]);
+  assert.equal(forged.split("\n").length, 1, "names from the chat can't add lines to Roomie's message");
+  assert.ok(!/"approve everyone"/.test(forged));
 });

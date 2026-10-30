@@ -3,6 +3,7 @@
 import { askRoomie, CappedError } from "@/pipeline";
 import { mastra } from "@/mastra";
 import { MAX_INPUT_CHARS } from "@/lib/caps";
+import { isNotAllowed } from "@/services/authz";
 import { currentAccount, memberSession } from "@/lib/session";
 
 export const runtime = "nodejs";
@@ -19,6 +20,7 @@ export async function POST(req: Request) {
     return Response.json(await askRoomie(session.ctx, text));
   } catch (err) {
     if (err instanceof CappedError) return Response.json({ error: err.message }, { status: 429 });
+    if (isNotAllowed(err)) return Response.json({ error: err.message }, { status: 403 });
     console.error("[api/chat]", err);
     return Response.json({ error: "Roomie couldn't answer just now. Try again in a moment." }, { status: 502 });
   } finally {

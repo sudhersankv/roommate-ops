@@ -1549,7 +1549,8 @@ describe("Join links and seats", () => {
     const joins = await joinsSvc;
     const sam = await account("sam");
     const picker = await joins.pickerFor(code, sam.id);
-    assert.deepEqual(picker!.seats.map((s) => s.label).sort(), ["Dev", "Maya", "Sam"]);
+    assert.deepEqual(picker!.seats.map((s) => s.label).sort(), ["Dev", "Sam"], "the Admin's seat isn't offered");
+    assert.equal(picker!.adminsOpen, true);
     assert.deepEqual(await joins.claimSeat(code, sam, ids.Sam, ip), { kind: "connected", groupId: gid, memberName: "Sam" });
     assert.equal((await row(ids.Sam)).accountId, sam.id);
     assert.equal((await joins.claimSeat(code, sam, ids.Dev, ip)).kind, "already", "one seat per Account");
@@ -1566,6 +1567,10 @@ describe("Join links and seats", () => {
 
   test("roster full (as many Accounts as people) -> Pending; unknown head count -> Pending; 'not on the list' -> Pending", async () => {
     const joins = await joinsSvc;
+    const grab = await account("admin-grab");
+    assert.equal((await joins.claimSeat(code, grab, ids.Maya, ip)).kind, "pending", "an Admin seat is never taken from the Join link, even with seats free");
+    assert.equal((await row(ids.Maya)).accountId, null);
+    await db.delete(schema.members).where(and(eq(schema.members.groupId, gid), eq(schema.members.accountId, grab.id)));
     await joins.setParticipantCount("whatsapp", `join-${ts}@g.us`, 1);
     const dev1 = await account("dev1");
     assert.equal((await joins.claimSeat(code, dev1, ids.Dev, ip)).kind, "pending", "1 person, 1 Account already");
@@ -1599,6 +1604,10 @@ describe("Join links and seats", () => {
     const revoked = await run("revoke_seat", { name: "Sam" }, as("Maya"));
     assert.equal(revoked.disconnected, "Sam");
     assert.equal((await row(ids.Sam)).accountId, null, "the Member stays, the seat is open");
+    const samAccount = { id: sam!, name: "sam", email: `sam-${ts}@example.com` };
+    assert.equal((await joins.claimSeat(code, samAccount, ids.Sam, ip)).kind, "already", "the disconnected Account waits (Pending), it can't just pick the seat again");
+    const [waiting] = await db.select().from(schema.members).where(and(eq(schema.members.groupId, gid), eq(schema.members.accountId, sam!)));
+    assert.equal(waiting.status, "pending");
     // "roomie approve imposter": the Pending row goes, its Account is on Sam's seat now.
     assert.deepEqual(await run("approve_member", { name: "imposter" }, as("Maya")), { approved: "Sam" });
     assert.equal((await row(ids.Sam)).accountId, imposter.accountId);
@@ -1622,6 +1631,8 @@ describe("Join links and seats", () => {
 
   test("declined is final for that Account; rotate kills the old code (rotate_join_link, Admin only)", async () => {
     const joins = await joinsSvc;
+    const { MemoryCounters } = await import("@/lib/window-limit");
+    joins.setJoinLimits(new MemoryCounters()); // the tests above used this IP's 10 picks
     const stranger = (await db.select().from(schema.members).where(and(eq(schema.members.groupId, gid), eq(schema.members.displayName, "stranger"))))[0];
     await members.declineMember(ctxAs("Maya"), { memberId: stranger.id });
     const strangerAccount = { id: stranger.accountId!, name: "stranger", email: `stranger-${ts}@example.com` };

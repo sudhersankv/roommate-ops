@@ -5,7 +5,7 @@
 // every join", a Chat whose size is unknown) makes the person a Pending Member an Admin approves.
 // The pure helpers (newJoinCode, isJoinCode, seatLabel, maskNumber, joinLine, seatIsFree) are tested in joins.test.ts.
 import { randomBytes } from "node:crypto";
-import { and, asc, eq, isNotNull, isNull, ne, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, isNull, ne, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { JOIN_POLICIES, type JoinPolicy } from "@/db/schema";
 import { linkFor } from "@/lib/urls";
@@ -50,10 +50,12 @@ export const seatLabel = (displayName: string) => (PHONE_NAME.test(displayName.t
 export const joinLine = (url: string) => `Everyone: your dashboard is at ${url}. Sign in with Google and pick your name.`;
 
 /**
- * The free-seat rule: an unclaimed active seat, the Group's policy is "free", the Chat's size is known and fewer
- * Accounts are connected than there are people. Everything else waits for an Admin.
+ * The free-seat rule: an unclaimed active Member (not an Admin) seat, the Group's policy is "free", the Chat's size is
+ * known and fewer Accounts are connected than there are people. Everything else waits for an Admin.
  */
-export function seatIsFree(input: { policy: JoinPolicy; seat: Pick<Member, "status" | "accountId">; claimed: number; roster: number | null }): boolean {
+export function seatIsFree(input: { policy: JoinPolicy; seat: Pick<Member, "status" | "accountId" | "role">; claimed: number; roster: number | null }): boolean {
+  // An Admin seat is never free: the Join link must not hand out Admin powers (Admins use their Claim link).
+  if (input.seat.role === "admin") return false;
   return input.policy === "free" && input.seat.status === "active" && !input.seat.accountId && input.roster !== null && input.claimed < input.roster;
 }
 
@@ -163,26 +165,35 @@ export async function rosterSize(groupId: string): Promise<number | null> {
     await setParticipantCount(chat.channel, chat.externalId, asked);
     return asked;
   }
-  return chat.participantCount;
+  // An old count may be too high (people left since): unknown, so the pick waits for an Admin.
+  return null;
 }
 
 /* ---------- the seat picker ---------- */
 
 export type Seat = { id: string; label: string };
 
-/** Signed in and holding a Join link: the Group, and the seats still open (active Members with no Account). */
-export async function pickerFor(code: string, accountId: string): Promise<{ group: { id: string; name: string }; seats: Seat[]; mine: { memberId: string; status: Member["status"] } | null } | null> {
+/**
+ * Signed in and holding a Join link: the Group, and the seats still open (active Members with no Account). Admin seats
+ * are never offered: an Admin connects with their own Claim link (the setup DM, "roomie, send me the dashboard"), so a
+ * Join link can't hand anyone Admin powers. `adminsOpen` says some Admin isn't connected yet.
+ */
+export async function pickerFor(
+  code: string,
+  accountId: string,
+): Promise<{ group: { id: string; name: string }; seats: Seat[]; adminsOpen: boolean; mine: { memberId: string; status: Member["status"] } | null } | null> {
   const g = await groupByCode(code);
   if (!g) return null;
   const [mine] = await db.select().from(members).where(and(eq(members.groupId, g.id), eq(members.accountId, accountId)));
   const open = await db
-    .select({ id: members.id, displayName: members.displayName })
+    .select({ id: members.id, displayName: members.displayName, role: members.role })
     .from(members)
     .where(and(eq(members.groupId, g.id), eq(members.status, "active"), isNull(members.accountId)))
     .orderBy(asc(members.joinedAt), asc(members.displayName));
   return {
     group: { id: g.id, name: g.name },
-    seats: open.map((m) => ({ id: m.id, label: seatLabel(m.displayName) })),
+    seats: open.filter((m) => m.role !== "admin").map((m) => ({ id: m.id, label: seatLabel(m.displayName) })),
+    adminsOpen: open.some((m) => m.role === "admin"),
     mine: mine ? { memberId: mine.id, status: mine.status } : null,
   };
 }
@@ -305,8 +316,11 @@ export async function claimSeat(code: string, account: { id: string; name: strin
 
 /** The approval ask in the Chat for a Join link sign-in. */
 export function joinApprovalPrompt(name: string, seatName: string | null, adminNames: string[]): string {
-  const who = adminNames.length ? (adminNames.length === 1 ? adminNames[0] : `${adminNames.slice(0, -1).join(", ")} and ${adminNames.at(-1)}`) : "Admins";
-  const as = seatName ? ` as ${seatLabel(seatName)}` : "";
+  // Every name here came from someone else (Google, WhatsApp, Telegram): cleaned so it reads as a name in Roomie's line.
+  const admins = adminNames.map((n) => (PHONE_NAME.test(n.trim()) ? maskNumber(n) : cleanName(n))).filter(Boolean);
+  const who = admins.length ? (admins.length === 1 ? admins[0] : `${admins.slice(0, -1).join(", ")} and ${admins.at(-1)}`) : "Admins";
+  const seat = seatName ? (PHONE_NAME.test(seatName.trim()) ? maskNumber(seatName) : cleanName(seatName)) : "";
+  const as = seat ? ` as ${seat}` : "";
   return `${name} signed in to the dashboard${as}. ${who}: approve them? Say "roomie approve ${name}" or use the Members page.`;
 }
 
@@ -368,49 +382,76 @@ async function seatOf(ctx: GroupCtx, memberId: string): Promise<Member> {
   return m;
 }
 
-/** Admin: disconnect a seat's Account (the Member stays, the seat is open again). Not your own. */
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+/**
+ * Seat changes take the Group row lock first (as claimSeat does), then the Member rows, so a pick, an approval, a
+ * revoke and a reassign on the same seats run one after another and each sees the others' result.
+ */
+export async function lockSeats(tx: Tx, groupId: string, ids: string[]): Promise<Map<string, Member>> {
+  await tx.select({ id: groups.id }).from(groups).where(eq(groups.id, groupId)).for("update");
+  const rows = await tx
+    .select()
+    .from(members)
+    .where(and(eq(members.groupId, groupId), inArray(members.id, ids)))
+    .for("update");
+  return new Map(rows.map((r) => [r.id, r]));
+}
+
+/**
+ * Admin: disconnect a seat's Account. The Member stays and the seat is open again; the Account goes back to waiting
+ * (a Pending sign-in an Admin approves, places or declines), so it can't simply pick the same seat again.
+ * Not your own.
+ */
 export async function revokeSeat(ctx: Ctx, input: { memberId: string }): Promise<Member> {
   await requireAdmin(ctx);
-  const m = await seatOf(ctx, input.memberId);
-  if (m.id === ctx.memberId) throw new Error("You can't disconnect yourself. Another Admin can.");
-  if (!m.accountId) throw new Error(`Nobody is connected as ${m.displayName}.`);
-  if (m.status === "pending") throw new Error(`${m.displayName} is waiting for approval: decline them instead.`);
-  const [updated] = await db.update(members).set({ accountId: null }).where(eq(members.id, m.id)).returning();
-  await recordFor(ctx, "member.revoked", `disconnected the Google account on ${m.displayName}'s seat`, { table: "members", id: m.id });
+  const before = await seatOf(ctx, input.memberId);
+  if (before.id === ctx.memberId) throw new Error("You can't disconnect yourself. Another Admin can.");
+  const [account] = before.accountId ? await db.select().from(accounts).where(eq(accounts.id, before.accountId)) : [];
+  const waitingName = account ? await pendingName(ctx.groupId, account) : null;
+  const updated = await db.transaction(async (tx) => {
+    const m = (await lockSeats(tx, ctx.groupId, [before.id])).get(before.id);
+    if (!m || m.status === "removed") throw new Error("That person isn't in this group.");
+    if (!m.accountId) throw new Error(`Nobody is connected as ${m.displayName}.`);
+    if (m.status === "pending") throw new Error(`${m.displayName} is waiting for approval: decline them instead.`);
+    const [row] = await tx.update(members).set({ accountId: null }).where(eq(members.id, m.id)).returning();
+    if (m.accountId === account?.id && waitingName) await tx.insert(members).values({ groupId: ctx.groupId, displayName: waitingName, accountId: m.accountId, status: "pending" });
+    return row;
+  });
+  await recordFor(ctx, "member.revoked", `disconnected the Google account on ${updated.displayName}'s seat`, { table: "members", id: updated.id });
   return updated;
 }
 
 /**
  * Admin: move the Account on `fromMemberId` to the open seat `toMemberId`. A Pending Join link sign-in moved onto a
- * seat is approved by that (its placeholder row goes); an active seat it leaves stays, open.
+ * seat is approved by that (its placeholder row goes); an active seat it leaves stays, open. Both rows are locked and
+ * checked again inside the move, so a revoke or a pick in between wins instead of being overwritten.
  */
 export async function reassignSeat(ctx: Ctx, input: { fromMemberId: string; toMemberId: string }): Promise<Member> {
   await requireAdmin(ctx);
-  const from = await seatOf(ctx, input.fromMemberId);
-  const to = await seatOf(ctx, input.toMemberId);
-  if (from.id === to.id) throw new Error("That's the same seat.");
-  if (!from.accountId) throw new Error(`Nobody is connected as ${from.displayName}.`);
-  if (to.status !== "active") throw new Error(`${to.displayName} isn't approved yet.`);
-  if (to.accountId) throw new Error(`Someone is already connected as ${to.displayName}. Disconnect them first.`);
-  if (from.id === ctx.memberId) throw new Error("You can't move your own seat. Another Admin can.");
-  const accountId = from.accountId;
-  const placeholder = from.status === "pending" && !from.channelUserId;
-  const [moved] = await db.transaction(async (tx) => {
+  await seatOf(ctx, input.fromMemberId);
+  await seatOf(ctx, input.toMemberId);
+  if (input.fromMemberId === input.toMemberId) throw new Error("That's the same seat.");
+  if (input.fromMemberId === ctx.memberId) throw new Error("You can't move your own seat. Another Admin can.");
+  const { from, moved } = await db.transaction(async (tx) => {
+    const locked = await lockSeats(tx, ctx.groupId, [input.fromMemberId, input.toMemberId]);
+    const from = locked.get(input.fromMemberId);
+    const to = locked.get(input.toMemberId);
+    if (!from || from.status === "removed" || !to || to.status === "removed") throw new Error("That person isn't in this group.");
+    if (!from.accountId) throw new Error(`Nobody is connected as ${from.displayName}.`);
+    if (to.status !== "active") throw new Error(`${to.displayName} isn't approved yet.`);
+    if (to.accountId) throw new Error(`Someone is already connected as ${to.displayName}. Disconnect them first.`);
+    const placeholder = from.status === "pending" && !from.channelUserId;
     await tx
       .update(members)
       .set(placeholder ? { accountId: null, status: "removed", wantsSeatId: null } : { accountId: null })
       .where(eq(members.id, from.id));
-    return tx.update(members).set({ accountId }).where(eq(members.id, to.id)).returning();
+    const [moved] = await tx.update(members).set({ accountId: from.accountId }).where(and(eq(members.id, to.id), isNull(members.accountId))).returning();
+    if (!moved) throw new Error(`Someone just connected as ${to.displayName}.`);
+    return { from, moved };
   });
-  await recordFor(ctx, "member.reassigned", `moved ${from.displayName}'s Google account to ${to.displayName}'s seat`, { table: "members", id: to.id });
+  await recordFor(ctx, "member.reassigned", `moved ${from.displayName}'s Google account to ${moved.displayName}'s seat`, { table: "members", id: moved.id });
   return moved;
-}
-
-/** Admin: the Join link card (Members page) and its state. */
-export async function joinState(ctx: GroupCtx): Promise<{ url: string; policy: JoinPolicy; rotatedAt: Date | null }> {
-  const url = await joinLink(ctx.groupId);
-  const [g] = await db.select({ policy: groups.joinPolicy, rotatedAt: groups.joinCodeRotatedAt }).from(groups).where(eq(groups.id, ctx.groupId));
-  return { url, policy: g?.policy ?? "free", rotatedAt: g?.rotatedAt ?? null };
 }
 
 /** Accounts' Groups with the Channel and the seat's name (/app lists them). */

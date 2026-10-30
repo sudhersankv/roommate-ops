@@ -78,6 +78,7 @@ export async function groupView(s: GroupSession): Promise<GroupView> {
       joined: localDay(m.joinedAt, tz),
       handles: m.handles,
       hasAccount: !!m.accountId,
+      inChat: !!m.channelUserId,
       seat: {
         state: seat?.state ?? (m.status === "pending" ? "pending" : m.accountId ? "connected" : "open"),
         accountName: seat?.account?.name ?? null,
@@ -112,10 +113,17 @@ export async function groupView(s: GroupSession): Promise<GroupView> {
           joined: localDay(s.member.joinedAt, tz),
           handles: {},
           hasAccount: true,
+          inChat: !!s.member.channelUserId,
           seat: { state: "connected", accountName: s.account.name, accountImage: s.account.image, accountEmail: s.account.email, wantsSeat: null },
         },
     groups: s.groups,
-    members: people.map(view),
+    // A Pending Member (now anyone holding the Join link) sees only who can let them in: the active Admins' names and
+    // their own row. No handles, no Google names or avatars of others in the payload.
+    members: active
+      ? people.map(view)
+      : people
+          .filter((m) => m.id === s.member.id || (m.role === "admin" && m.status === "active"))
+          .map((m) => (m.id === s.member.id ? view(m) : { ...view(m), handles: {}, hasAccount: false, seat: { state: "open" as const, accountName: null, accountImage: null, accountEmail: null, wantsSeat: null } })),
     toolkits: on,
     toolkitNames: MANIFESTS.filter((m) => on[m.id]).map((m) => m.name),
     ...shellView(s.group.id, on),

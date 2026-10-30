@@ -18,10 +18,13 @@ const NOT_LISTED = "none"
 // Kept in step with services/joins.ts PENDING_LINE (a client file can't import the service).
 const PENDING_LINE = "An Admin needs to approve you; I'll let you know in the chat."
 
-type Props = { code: string; group: { id: string; name: string }; seats: { id: string; label: string }[]; declined: boolean; email: string }
+type Props = { code: string; group: { id: string; name: string }; seats: { id: string; label: string }[]; adminsOpen: boolean; declined: boolean; email: string }
 
-/** "Which one are you?": the open seats as one list of choices, then a button that says who you'll be. */
-export function SeatPicker({ code, group, seats, declined, email }: Props) {
+/**
+ * "Which one are you?": the open seats as one list of choices, then a button that says who you'll be. Admin seats
+ * aren't offered (they connect with their own link), and say so when one is still open.
+ */
+export function SeatPicker({ code, group, seats, adminsOpen, declined, email }: Props) {
   const [state, action, pending] = useActionState<PickState, FormData>(pickSeat, { status: "idle" })
   const [picked, setPicked] = useState<string | null>(null)
   const pickedLabel = picked === NOT_LISTED ? null : seats.find((s) => s.id === picked)?.label
@@ -76,6 +79,7 @@ export function SeatPicker({ code, group, seats, declined, email }: Props) {
               </Field>
             </FieldLabel>
           </RadioGroup>
+          {adminsOpen ? <FieldDescription>Admin? Use the link Roomie sent you privately, or say “roomie, send me the dashboard” in the chat.</FieldDescription> : null}
         </FieldSet>
         {state.status === "error" ? (
           <Alert variant="destructive" aria-live="polite">

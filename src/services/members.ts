@@ -1,5 +1,5 @@
 // Members: who is in a Group, approvals (Pending -> active), roles, payment handles and "forget me".
-import { and, asc, eq, inArray, ne, or, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import type { ChannelName, MemberNote, PaymentApp } from "@/db/schema";
 import { anonymize } from "@/lib/forget-text";
@@ -112,16 +112,25 @@ export async function approveMember(ctx: Ctx, input: { memberId: string }): Prom
   await requireAdmin(ctx);
   const m = await target(ctx, input.memberId);
   if (m.status === "active") throw new Error(`${m.displayName} is already approved.`);
-  const seat = m.wantsSeatId && m.accountId ? await getMember(ctx, m.wantsSeatId) : undefined;
-  if (seat && seat.status === "active" && !seat.accountId) {
-    const accountId = m.accountId;
-    const [moved] = await db.transaction(async (tx) => {
-      await tx.update(members).set({ status: "removed", accountId: null, wantsSeatId: null }).where(eq(members.id, m.id));
-      return tx.update(members).set({ accountId }).where(eq(members.id, seat.id)).returning();
+  if (m.wantsSeatId && m.accountId) {
+    // Locked and checked again inside the move (services/joins.ts lockSeats): a pick that just took the seat wins, and
+    // the approval falls back to a Member of their own.
+    const { lockSeats } = await import("./joins");
+    const moved = await db.transaction(async (tx) => {
+      const locked = await lockSeats(tx, ctx.groupId, [m.id, m.wantsSeatId!]);
+      const now = locked.get(m.id);
+      const seat = locked.get(m.wantsSeatId!);
+      if (!now || now.status !== "pending" || !now.accountId || !seat || seat.status !== "active" || seat.accountId) return null;
+      await tx.update(members).set({ status: "removed", accountId: null, wantsSeatId: null }).where(eq(members.id, now.id));
+      const [row] = await tx.update(members).set({ accountId: now.accountId }).where(and(eq(members.id, seat.id), isNull(members.accountId))).returning();
+      if (!row) throw new Error(`Someone just connected as ${seat.displayName}. Approve again to add ${m.displayName} as their own Member.`);
+      return row;
     });
-    await recordFor(ctx, "member.approved", `approved ${m.displayName} as ${seat.displayName}`, { table: "members", id: seat.id });
-    await toldInChat(ctx, `${m.displayName} is in: connected to the dashboard as ${seat.displayName}.`);
-    return moved;
+    if (moved) {
+      await recordFor(ctx, "member.approved", `approved ${m.displayName} as ${moved.displayName}`, { table: "members", id: moved.id });
+      await toldInChat(ctx, `${m.displayName} is in: connected to the dashboard as ${moved.displayName}.`);
+      return moved;
+    }
   }
   const [updated] = await db
     .update(members)

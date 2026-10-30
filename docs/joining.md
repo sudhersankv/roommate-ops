@@ -48,15 +48,22 @@ and a used Claim link says "sign in with the same account, or open your group's 
 ## Seats
 
 A Seat is a Member as the picker sees them. The picker lists **active Members with no Account** by name; WhatsApp
-Members still named by their number show as `+1 ••• 7393`. One Account has one Seat per Group.
+Members still named by their number show as `+1 ••• 7393`. One Account has one Seat per Group. **Admin seats are never
+on the picker** and a pick of one (a forged request) is Pending: a Join link can't hand out Admin powers; Admins connect
+with their own Claim link (the setup DM, "roomie, send me the dashboard"), and the picker says so while one is open.
+
+A Pending sign-in sees only the "Waiting for an Admin" screen: the page payload carries the Admins' names and their own
+row (no one else's handles, Google names or avatars), and Ask Roomie refuses until they're approved.
 
 | State | Members page | Admin can |
 |---|---|---|
-| connected | "On the dashboard as <Google name>" (+ avatar; the email for Admins only) | **Disconnect** (revoke: the Member stays, the seat is open again), **Move to another seat** (reassign) |
+| connected | "On the dashboard as <Google name>" (+ avatar; the email for Admins only) | **Disconnect** (revoke: the Member stays, the seat is open again, and that Account goes back to waiting as a Pending sign-in, so it can't just pick the seat again), **Move to another seat** (reassign) |
 | open | "Not on the dashboard yet." | (people pick it from the Join link) |
 | pending sign-in | "Signed in with the Join link as … and says they're Sam." | Approve, Decline (final for that Account), **Pick their seat** (reassign = approve onto that seat) |
 
-You can't revoke or move your own seat; another Admin can. Every change is an Activity row.
+You can't revoke or move your own seat; another Admin can. Picks, approvals, revokes and moves lock the Group row and
+the seats involved, and check again inside the change, so a racing pick is never overwritten. Every change is an
+Activity row.
 
 ## Policies
 
@@ -74,8 +81,8 @@ Settings → Joining (Admins), or in chat `set_join_policy`:
   list members (ADR 0010), so people show on the picker once Roomie has heard them speak (or saw them join).
 - **dev**: the Group's active Members.
 
-A count older than 6 hours is refreshed from the Channel when the picker is used (when this process holds that Channel).
-Unknown = every pick waits for an Admin.
+A count older than 6 hours is refreshed from the Channel when a pick is made (when this process holds that Channel);
+if it can't be refreshed it counts as unknown. Unknown = every pick waits for an Admin.
 
 ## Rotating
 

@@ -17,6 +17,7 @@ import { chatFor, enabledToolkits, getGroup } from "@/services/groups";
 import { getMember, listGroupMembers, memberByChannelUser, type Member } from "@/services/members";
 import { humanMessagesSince, lastRoomieReplyAt, logMessage, recentChatter } from "@/services/chatlog";
 import type { Ctx } from "@/services/types";
+import { NotAllowedError } from "@/services/authz";
 import { mastra } from "@/mastra";
 import type { RoomieContext } from "@/mastra/context";
 import { inFollowUpWindow, isHardTrigger, parseSilent, runGate, type Chattiness, type GateRun } from "@/mastra/gate";
@@ -147,6 +148,9 @@ export async function respondToIncoming(msg: IncomingMessage): Promise<PipelineR
 export async function askRoomie(ctx: Ctx, text: string): Promise<Outgoing> {
   const me = await getMember(ctx, ctx.memberId);
   if (!me) throw new Error("Not a member of this group.");
+  // A Pending sign-in from the Join link isn't in the chat: it can't read the Group through Roomie before an Admin
+  // approves it (a Pending Member of the chat already reads the chat, so they still may).
+  if (me.status !== "active" && !me.channelUserId) throw new NotAllowedError("An Admin needs to approve you before Roomie can help here.", "pending");
   const { out, capped } = await respond({ groupId: ctx.groupId, member: me, text, source: "ui", channel: "dashboard" });
   if (capped) throw new CappedError();
   return out ?? { text: ACK };

@@ -19,6 +19,8 @@ export type MemberView = {
   joined: string
   handles: Partial<Record<PaymentApp, string>>
   hasAccount: boolean
+  /** Roomie knows them in the chat (a Channel id); false for a Join link sign-in that isn't a seat yet. */
+  inChat: boolean
   /** Their dashboard seat (ADR 0014): who's connected to it (Google name, avatar; the email for Admins only), or open,
    * or a Pending Join link sign-in and the seat it asked for. */
   seat: { state: "connected" | "open" | "pending"; accountName: string | null; accountImage: string | null; accountEmail: string | null; wantsSeat: string | null }
