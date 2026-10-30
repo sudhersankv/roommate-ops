@@ -271,16 +271,28 @@ The Group's own email address, one per Group, provisioned when Lease Inbox is ta
 _Avoid_: Mailbox, email account
 
 **Landlord**:
-Whoever the Group rents from, as the set of email addresses and domains Roomie trusts: learned from forwarded mail and the intro email, or confirmed by an Admin. Only the Landlord's mail reaches the chat.
-_Avoid_: Property manager (fine in copy, not as the term), sender
+Whoever the Group rents from, as the set of email addresses and domains Roomie trusts, not one person: learned from a Forward by a known Member or from the intro email, or confirmed by an Admin. A whole domain is trusted except public mail domains (gmail.com, outlook.com…), where only the exact address is. Only the Landlord's mail reaches the chat.
+_Avoid_: Property manager (fine in copy, not as the term), sender, trusted sender (in user-facing text: say "the landlord")
+
+**Forward**:
+An email a Member forwards to the Inbox from their own mailbox. Roomie reads it as coming from the original sender (parsed from the quoted headers), and learns the Landlord from it only when the forwarder is a known Member (their sign-in email matches). A forward from anyone else is a New sender.
+_Avoid_: Relay, bounce
+
+**New sender**:
+An address the Inbox hasn't seen and doesn't trust. Filed, never posted to the chat; the Admin is asked once, privately, whether it's the building.
+_Avoid_: Unknown contact, spam (it may well be the landlord)
 
 **Notice**:
 An email from the Landlord with a date in it: an inspection, a water shut-off, a maintenance window. Gets one line in the chat, a Reminder the evening before, and is filed. Within 72 hours it is urgent.
 _Avoid_: Announcement, alert
 
 **Work order**:
-A maintenance request the Group made through Roomie ("the sink's leaking, tell them"): what, who reported it, the email thread, and a status (sent, acknowledged, scheduled, done) read from the Landlord's replies.
-_Avoid_: Ticket, maintenance request (as the term), issue
+A maintenance request the Group made through Roomie ("the sink's leaking, tell them"): what, who reported it, the email thread, and its Work order status.
+_Avoid_: Ticket, maintenance request, repair request (as the term), issue
+
+**Work order status**:
+Where a Work order is, read from the Landlord's replies: **sent** (Roomie emailed it), **acknowledged** (they answered), **scheduled** (with the date they gave), **done**. Only forward moves; a reply that fits nothing leaves it where it was.
+_Avoid_: State, stage, ticket status
 
 **Simple email**:
 One Roomie sends at once on a Member's word: a reply in a thread the Landlord started, or a new maintenance request, with no dollar amount, no date the Member didn't say and no lease or legal term. Anything else is **complex** and gets a question or two first (ADR 0016).
