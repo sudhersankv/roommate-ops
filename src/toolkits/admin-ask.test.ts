@@ -21,8 +21,27 @@ describe("which tools are admin-only (from the manifests, not a list in code)", 
     assert.deepEqual(new Set(adminOnlyTools()), new Set([
       "approve_member", "decline_member", "promote_member", "toggle_toolkit", "set_group_settings",
       "set_simplify_debts", "splitwise_connect", "splitwise_import", "splitwise_export", "splitwise_mirror",
-      "chore_remove", "upkeep_remove",
+      "chore_remove", "upkeep_remove", "rotate_join_link", "set_join_policy", "revoke_seat",
     ]));
+  });
+});
+
+describe("the Join link's admin tools (ADR 0014)", () => {
+  test("rotate: the Admin's own words ask for a new link; a hello or a question doesn't", () => {
+    assert.equal(ok("rotate_join_link", {}, "roomie rotate the join link"), true);
+    assert.equal(ok("rotate_join_link", {}, "roomie we need a new dashboard link, the old one leaked"), true);
+    assert.equal(ok("rotate_join_link", {}, "roomie reset the link"), true);
+    assert.equal(ok("rotate_join_link", {}, "roomie hi"), false);
+    assert.equal(ok("rotate_join_link", {}, "roomie what's the join link?"), false);
+    assert.equal(ok("rotate_join_link", {}, "roomie don't rotate the join link"), false);
+  });
+  test("join policy and revoking a seat", () => {
+    assert.equal(ok("set_join_policy", { policy: "approve_all" }, "roomie I want to approve every join"), true);
+    assert.equal(ok("set_join_policy", { policy: "free" }, "roomie let people pick their own name"), true);
+    assert.equal(ok("set_join_policy", { policy: "free" }, "roomie hi"), false);
+    assert.equal(ok("revoke_seat", { name: "Sam" }, "roomie that's not Sam on the dashboard, disconnect Sam"), true);
+    assert.equal(ok("revoke_seat", { name: "Sam" }, "roomie disconnect Dev"), false, "someone else");
+    assert.equal(ok("revoke_seat", { name: "Sam" }, "roomie kick Sam off the dashboard"), true);
   });
 });
 

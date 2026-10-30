@@ -3,7 +3,7 @@ import { z } from "zod";
 import { GROUP_PURPOSES } from "@/db/schema";
 import { ARCHETYPE_IDS, MAX_QUIRKS } from "@/lib/personality";
 import { WEEKDAY_NAMES } from "@/lib/time";
-import { groups, personality, schedule, toolkits as toolkitsSvc } from "@/services";
+import { groups, joins, personality, schedule, toolkits as toolkitsSvc } from "@/services";
 import { learnedLine } from "@/onboarding";
 import { CATALOG, CORE_MANIFEST, TOOLKIT_IDS } from "../manifests";
 import { ctxOf } from "../util";
@@ -18,7 +18,7 @@ export const settingsTools = {
   set_group_settings: createTool({
     id: "set_group_settings",
     description:
-      "Admin only: change the group's settings, including the Onboarding answers ('roommates, USD, Chicago, hype'). Only pass what changed. The first purpose picks the Tricks you learn unless you pass toolkits; roommates and family also get three starter chores and the usual upkeep items. When setup finishes the result has `learned`: one ready-to-say line naming the Tricks you learned. Also the daily chores nudge hour and the weekly report's day and hour. personality: your vibe (base), the name the group calls you, and up to 3 quirks (the full list).",
+      "Admin only: change the group's settings, including the Onboarding answers ('roommates, USD, Chicago, hype'). Only pass what changed. The first purpose picks the Tricks you learn unless you pass toolkits; roommates and family also get three starter chores and the usual upkeep items. When setup finishes the result has `say`: two ready lines (the Tricks you learned, then the group's Join link for everyone's dashboard); post `say` exactly as it is, the link included, nothing else about links. With postedInGroup (they answered in a DM) it's already in the group chat: say it here too. Also the daily chores nudge hour and the weekly report's day and hour. personality: your vibe (base), the name the group calls you, and up to 3 quirks (the full list).",
     inputSchema: z.object({
       name: z.string().optional().describe("The group's name (not yours: yours is personality.name)"),
       purpose: z.enum(GROUP_PURPOSES).optional(),
@@ -56,8 +56,18 @@ export const settingsTools = {
       const group = res?.group ?? before!;
       const toolkits = res?.toolkits ?? (await groups.enabledToolkits(ctx));
       const finishedSetup = !before?.onboardedAt && !!group.onboardedAt;
+      let setup = {};
+      if (finishedSetup) {
+        // The setup's last word (ADR 0014): the Tricks learned and the Group's Join link, one line each. Answered in a
+        // DM, it goes to the group chat too, since that's where everyone needs the link.
+        const learned = learnedLine(toolkits, { defaulted: !group.purpose && !input.toolkits });
+        const say = `${learned}\n${joins.joinLine(await joins.joinLink(ctx.groupId))}`;
+        const inDm = (context?.requestContext as { get(k: string): unknown } | undefined)?.get("isPrivate") === true;
+        if (inDm) await joins.postInChat(ctx.groupId, say).catch((e) => console.warn("[set_group_settings] couldn't post the setup line in the group", e));
+        setup = { learned, say, ...(inDm ? { postedInGroup: true } : {}) };
+      }
       return {
-        ...(finishedSetup ? { learned: learnedLine(toolkits, { defaulted: !group.purpose && !input.toolkits }) } : {}),
+        ...setup,
         name: group.name,
         purpose: group.purpose,
         currency: group.currency,

@@ -1494,6 +1494,177 @@ describe("WhatsApp: LID -> phone JID, placeholder names, the session and contact
   });
 });
 
+// ---------- Joining (ADR 0014): the Join link, seats and the Admin's approval, in a throwaway WhatsApp Group ----------
+
+describe("Join links and seats", () => {
+  const ts = Date.now();
+  const claimsSvc = import("@/services/claims");
+  const joinsSvc = import("@/services/joins");
+  let gid: string;
+  let ids: Record<"Maya" | "Dev" | "Sam", string>;
+  let code: string;
+  let setupDm: { text: string; buttons?: { url: string }[] } | null;
+  const accountIds: string[] = [];
+  const as = (name: "Maya" | "Dev" | "Sam", extra: [string, unknown][] = []) =>
+    new RequestContext<unknown>([["groupId", gid], ["memberId", ids[name]], ["memberName", name], ["role", name === "Maya" ? "admin" : "member"], ["status", "active"], ["source", "chat"], ...extra]);
+  const ctxAs = (name: "Maya" | "Dev" | "Sam", source: "chat" | "ui" = "ui"): Ctx => ({ groupId: gid, memberId: ids[name], source });
+  const account = async (who: string) => {
+    const a = await (await claimsSvc).upsertAccount({ id: `test-join-${ts}-${who}`, email: `${who}-${ts}@example.com`, name: who });
+    accountIds.push(a.authUserId);
+    return a;
+  };
+  const row = async (memberId: string) => (await db.select().from(schema.members).where(eq(schema.members.id, memberId)))[0];
+  const ip = { ip: `10.0.0.${ts % 250}` };
+
+  before(async () => {
+    const { MemoryCounters } = await import("@/lib/window-limit");
+    (await joinsSvc).setJoinLimits(new MemoryCounters());
+    const people = ["Maya", "Dev", "Sam"].map((name, i) => ({ userExternalId: `1555${String(ts).slice(-6)}${i}@s.whatsapp.net`, name }));
+    const joined = await onGroupJoined({ channel: "whatsapp", externalId: `join-${ts}@g.us`, title: `Join test ${ts}` }, people, people[0], { participantCount: 3 });
+    gid = joined.group.id;
+    ids = Object.fromEntries(joined.members.map((m) => [m.displayName, m.id])) as typeof ids;
+    code = joined.group.joinCode!;
+    setupDm = joined.setupDm;
+  });
+
+  after(async () => {
+    (await joinsSvc).setJoinLimits(null);
+    if (gid) await deleteGroup(gid);
+    for (const id of accountIds) await db.delete(schema.accounts).where(eq(schema.accounts.authUserId, id));
+  });
+
+  test("a new Group has a Join code, its head count, and the Admin's setup DM (their Claim link as a button)", async () => {
+    const joins = await joinsSvc;
+    assert.ok(joins.isJoinCode(code), code);
+    assert.equal(await joins.ensureJoinCode(gid), code, "stable until rotated");
+    assert.equal(await joins.rosterSize(gid), 3);
+    assert.match(setupDm!.text, /You added me to Join test \d+, so you're its admin/);
+    assert.match(setupDm!.text, /Answer the setup here or in the group: what's the group for, currency, city, vibe\./);
+    assert.match(setupDm!.buttons![0].url, /\/claim\//);
+    const tokens = await db.select().from(schema.claimTokens).where(eq(schema.claimTokens.memberId, ids.Maya));
+    assert.equal(tokens.length, 1);
+  });
+
+  test("free: an unclaimed seat connects at once; the same Account again is 'already'; a claimed seat -> Pending wanting it", async () => {
+    const joins = await joinsSvc;
+    const sam = await account("sam");
+    const picker = await joins.pickerFor(code, sam.id);
+    assert.deepEqual(picker!.seats.map((s) => s.label).sort(), ["Dev", "Maya", "Sam"]);
+    assert.deepEqual(await joins.claimSeat(code, sam, ids.Sam, ip), { kind: "connected", groupId: gid, memberName: "Sam" });
+    assert.equal((await row(ids.Sam)).accountId, sam.id);
+    assert.equal((await joins.claimSeat(code, sam, ids.Dev, ip)).kind, "already", "one seat per Account");
+    assert.ok(!(await joins.pickerFor(code, sam.id))!.seats.some((s) => s.id === ids.Sam), "a claimed seat isn't offered");
+    const imposter = await account("imposter");
+    const r = await joins.claimSeat(code, imposter, ids.Sam, ip);
+    assert.equal(r.kind, "pending");
+    const [pending] = await db.select().from(schema.members).where(and(eq(schema.members.groupId, gid), eq(schema.members.accountId, imposter.id)));
+    assert.deepEqual([pending.status, pending.wantsSeatId, pending.displayName], ["pending", ids.Sam, "imposter"]);
+    assert.equal((await row(ids.Sam)).accountId, sam.id, "Sam keeps his seat");
+    const asked = (await chatlog.roomieLines(gid, 20)).map((l) => l.text);
+    assert.ok(asked.some((t) => /^imposter signed in to the dashboard as Sam\. Maya: approve them\?/.test(t)), asked.join(" | "));
+  });
+
+  test("roster full (as many Accounts as people) -> Pending; unknown head count -> Pending; 'not on the list' -> Pending", async () => {
+    const joins = await joinsSvc;
+    await joins.setParticipantCount("whatsapp", `join-${ts}@g.us`, 1);
+    const dev1 = await account("dev1");
+    assert.equal((await joins.claimSeat(code, dev1, ids.Dev, ip)).kind, "pending", "1 person, 1 Account already");
+    assert.equal((await row(ids.Dev)).accountId, null);
+    await joins.setParticipantCount("whatsapp", `join-${ts}@g.us`, null);
+    const maya = await account("maya-unknown");
+    assert.equal((await joins.claimSeat(code, maya, ids.Maya, ip)).kind, "pending", "can't count: approve every join");
+    await joins.setParticipantCount("whatsapp", `join-${ts}@g.us`, 3);
+    const stranger = await account("stranger");
+    const r = await joins.claimSeat(code, stranger, null, ip);
+    assert.deepEqual([r.kind, r.memberName], ["pending", "stranger"]);
+  });
+
+  test("approve_all: every pick waits; only an Admin sets the policy (service and set_join_policy)", async () => {
+    const joins = await joinsSvc;
+    await assert.rejects(joins.setJoinPolicy(ctxAs("Dev"), { policy: "approve_all" }), /Only an admin/);
+    assert.equal((await run("set_join_policy", { policy: "approve_all" }, as("Dev"))).reason, "admin-only");
+    assert.deepEqual(await run("set_join_policy", { policy: "approve_all" }, as("Maya")), { policy: "approve_all", now: "An Admin approves every join" });
+    const dev2 = await account("dev2");
+    assert.equal((await joins.claimSeat(code, dev2, ids.Dev, ip)).kind, "pending");
+    await joins.setJoinPolicy(ctxAs("Maya"), { policy: "free" });
+  });
+
+  test("approve moves a Pending sign-in onto the seat it asked for; revoke and reassign are Admin-only", async () => {
+    const joins = await joinsSvc;
+    const imposter = (await db.select().from(schema.members).where(and(eq(schema.members.groupId, gid), eq(schema.members.displayName, "imposter"))))[0];
+    const sam = (await row(ids.Sam)).accountId;
+    await assert.rejects(joins.revokeSeat(ctxAs("Dev"), { memberId: ids.Sam }), /Only an admin/);
+    await assert.rejects(joins.revokeSeat(ctxAs("Maya"), { memberId: ids.Maya }), /yourself|Nobody/);
+    assert.equal((await run("revoke_seat", { name: "Sam" }, as("Dev"))).reason, "admin-only");
+    const revoked = await run("revoke_seat", { name: "Sam" }, as("Maya"));
+    assert.equal(revoked.disconnected, "Sam");
+    assert.equal((await row(ids.Sam)).accountId, null, "the Member stays, the seat is open");
+    // "roomie approve imposter": the Pending row goes, its Account is on Sam's seat now.
+    assert.deepEqual(await run("approve_member", { name: "imposter" }, as("Maya")), { approved: "Sam" });
+    assert.equal((await row(ids.Sam)).accountId, imposter.accountId);
+    assert.equal((await row(imposter.id)).status, "removed");
+    // Reassign: the Account on Sam's seat moves to Dev's; Sam's seat is open again.
+    await assert.rejects(joins.reassignSeat(ctxAs("Dev"), { fromMemberId: ids.Sam, toMemberId: ids.Dev }), /Only an admin/);
+    await joins.reassignSeat(ctxAs("Maya"), { fromMemberId: ids.Sam, toMemberId: ids.Dev });
+    assert.equal((await row(ids.Dev)).accountId, imposter.accountId);
+    assert.equal((await row(ids.Sam)).accountId, null);
+    // A Pending sign-in can be moved straight onto an open seat (that approves it).
+    const dev1 = (await db.select().from(schema.members).where(and(eq(schema.members.groupId, gid), eq(schema.members.displayName, "dev1"))))[0];
+    await joins.reassignSeat(ctxAs("Maya"), { fromMemberId: dev1.id, toMemberId: ids.Sam });
+    assert.equal((await row(ids.Sam)).accountId, dev1.accountId);
+    assert.equal((await row(dev1.id)).status, "removed");
+    await assert.rejects(joins.reassignSeat(ctxAs("Maya"), { fromMemberId: ids.Sam, toMemberId: ids.Dev }), /already connected/);
+    assert.ok(sam, "Sam had been connected before the revoke");
+    const states = await joins.seatStates({ groupId: gid });
+    assert.equal(states.get(ids.Sam)?.state, "connected");
+    assert.equal(states.get(ids.Maya)?.state, "open");
+  });
+
+  test("declined is final for that Account; rotate kills the old code (rotate_join_link, Admin only)", async () => {
+    const joins = await joinsSvc;
+    const stranger = (await db.select().from(schema.members).where(and(eq(schema.members.groupId, gid), eq(schema.members.displayName, "stranger"))))[0];
+    await members.declineMember(ctxAs("Maya"), { memberId: stranger.id });
+    const strangerAccount = { id: stranger.accountId!, name: "stranger", email: `stranger-${ts}@example.com` };
+    await assert.rejects(joins.claimSeat(code, strangerAccount, ids.Maya, ip), (e: unknown) => e instanceof joins.JoinError && e.code === "declined");
+    assert.equal((await run("rotate_join_link", {}, as("Dev"))).reason, "admin-only");
+    const rotated = await run("rotate_join_link", {}, as("Maya"));
+    assert.match(rotated.say, /^New Join link: .*\/j\/[a-z2-7]{10}\. The old one doesn't work anymore\.$/);
+    assert.equal(await joins.groupByCode(code), undefined, "the old code opens nothing");
+    await assert.rejects(joins.claimSeat(code, strangerAccount, ids.Maya, ip), (e: unknown) => e instanceof joins.JoinError && e.code === "missing");
+    code = (await joins.ensureJoinCode(gid))!;
+    assert.ok((await joins.groupByCode(code))?.id === gid);
+  });
+
+  test("get_dashboard_link for everyone: the Join link line, never a Claim link", async () => {
+    const r = await run("get_dashboard_link", { forEveryone: true }, as("Dev"));
+    assert.equal(r.kind, "join");
+    assert.match(r.say, new RegExp(`^Everyone: your dashboard is at .*/j/${code}\\. Sign in with Google and pick your name\\.$`));
+    assert.ok(!/claim/.test(JSON.stringify(r)));
+    assert.equal(r.links, undefined);
+  });
+
+  test("setup answered in a DM: the learned line and the Join link go to the group chat too", async () => {
+    const s = await run("set_group_settings", { purpose: "friends", currency: "USD" }, as("Maya", [["isPrivate", true]]));
+    assert.equal(s.postedInGroup, true);
+    assert.match(s.say, /^Learned Splitting\. Say "roomie, learn groceries" any time\.\nEveryone: your dashboard is at .*\/j\//);
+    const lines = (await chatlog.roomieLines(gid, 20)).map((l) => l.text);
+    assert.ok(lines.includes(s.say), "posted (and logged) in the group");
+  });
+
+  test("rate limit: 10 picks an hour per IP, then refused", async () => {
+    const joins = await joinsSvc;
+    const { MemoryCounters } = await import("@/lib/window-limit");
+    joins.setJoinLimits(new MemoryCounters());
+    const bogus = { id: "00000000-0000-4000-8000-000000000000", name: "x", email: "x@example.com" };
+    const fakeSeat = "00000000-0000-4000-8000-000000000001";
+    for (let i = 0; i < 10; i++) await assert.rejects(joins.claimSeat(code, { ...bogus, id: `00000000-0000-4000-8000-0000000000${10 + i}` }, fakeSeat, { ip: "203.0.113.9" }), (e: unknown) => e instanceof joins.JoinError && e.code === "seat");
+    await assert.rejects(joins.claimSeat(code, bogus, fakeSeat, { ip: "203.0.113.9" }), (e: unknown) => e instanceof joins.JoinError && e.code === "rate_limited");
+    joins.setJoinLimits(new MemoryCounters());
+    for (let i = 0; i < 10; i++) await assert.rejects(joins.claimSeat(code, bogus, fakeSeat, { ip: `198.51.100.${i}` }), (e: unknown) => e instanceof joins.JoinError && e.code === "seat");
+    await assert.rejects(joins.claimSeat(code, bogus, fakeSeat, { ip: "198.51.100.99" }), (e: unknown) => e instanceof joins.JoinError && e.code === "rate_limited", "per Account too");
+  });
+});
+
 describe("coverage", () => {
   test("every tool in the registry was exercised", () => {
     const all = Object.keys(tools).sort();
