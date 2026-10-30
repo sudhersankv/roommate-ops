@@ -4,10 +4,10 @@
 // Member, and revalidates the Group's pages. Permission refusals come back as { ok: false, status: 403 }.
 import { revalidatePath } from "next/cache"
 
-import type { PaymentApp } from "@/db/schema"
+import type { JoinPolicy, PaymentApp } from "@/db/schema"
 import { InstacartUnavailableError } from "@/integrations/instacart"
 import { memberSession } from "@/lib/session"
-import { cart, chores, groups, isNotAllowed, members, money, pantry, recipes, reminders, schedule, splitwise, toolkits, upkeep, type Ctx } from "@/services"
+import { cart, chores, groups, isNotAllowed, joins, members, money, pantry, recipes, reminders, schedule, splitwise, toolkits, upkeep, type Ctx } from "@/services"
 import type { SettingsPatch } from "@/services/groups"
 import type { ToolkitId } from "@/toolkits/types"
 import type { ActionResult } from "./_components/group-context"
@@ -178,6 +178,24 @@ export async function decideMember(groupId: string, memberId: string, decision: 
     const fn = decision === "approve" ? members.approveMember : decision === "decline" ? members.declineMember : members.promoteMember
     return (await fn(ctx, { memberId })).displayName
   })
+}
+
+/* ---------- Joining (ADR 0014; services/joins.ts checks the Admin) ---------- */
+
+export async function rotateJoinLink(groupId: string) {
+  return act(groupId, async (ctx) => (await joins.rotateJoinCode(ctx)).url)
+}
+
+export async function setJoinPolicy(groupId: string, policy: JoinPolicy) {
+  return act(groupId, (ctx) => joins.setJoinPolicy(ctx, { policy }))
+}
+
+export async function revokeSeat(groupId: string, memberId: string) {
+  return act(groupId, async (ctx) => (await joins.revokeSeat(ctx, { memberId })).displayName)
+}
+
+export async function reassignSeat(groupId: string, fromMemberId: string, toMemberId: string) {
+  return act(groupId, async (ctx) => (await joins.reassignSeat(ctx, { fromMemberId, toMemberId })).displayName)
 }
 
 export async function setPaymentHandles(groupId: string, handles: Partial<Record<PaymentApp, string>>) {

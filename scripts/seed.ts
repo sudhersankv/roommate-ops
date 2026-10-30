@@ -11,7 +11,7 @@ import { devUserId } from "../src/channels/dev";
 import { addDays, localDay } from "../src/lib/dates";
 import { zonedParts, zonedTimeToUtc } from "../src/lib/time";
 import { guessCategory } from "../src/services/categories";
-import { claims, groups, money, chores as choresSvc, pantry as pantrySvc, recipes as recipesSvc, upkeep as upkeepSvc } from "../src/services";
+import { claims, groups, joins, money, chores as choresSvc, pantry as pantrySvc, recipes as recipesSvc, upkeep as upkeepSvc } from "../src/services";
 import { dollars } from "../src/services/types";
 import { presetFor } from "../src/toolkits/presets";
 import { PRESETS_FILE, writeStudioPresets } from "./lib/presets";
@@ -32,6 +32,7 @@ async function printAccess(groupId: string) {
   const studio = maya ? { groupId, memberId: maya.id, memberName: "Maya", role: "admin", status: "active", source: "chat" } : null;
   console.log(`\nGroup "${NAME}": ${groupId}`);
   if (link) console.log(`Claim link for Maya (single use, 24 h): ${link.url}`);
+  console.log(`Join link (anyone signs in and picks a name): ${await joins.joinLink(groupId)}`);
   console.log(`Studio (npm run mastra:dev): presets in ${PRESETS_FILE}. requestContext:\n${JSON.stringify(studio)}`);
 }
 

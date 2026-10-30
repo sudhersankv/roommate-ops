@@ -40,7 +40,10 @@ export default async function ClaimPage({
           {failed && <SignInFailed reason={failed} />}
           <p className="type-body text-center">If that was you on another device, just sign in with the same Google account and your group is right there.</p>
           <GoogleButton returnTo={`/claim/${token}`} />
-          <p className="type-caption text-center text-muted-foreground">Not you? In the group chat, say “roomie, send me the dashboard” for your own link.</p>
+          <p className="type-caption text-center text-muted-foreground">
+            Or open your group&apos;s Join link (Roomie posted it in the chat), sign in and pick your name. Not you? In the group chat, say “roomie, send me the
+            dashboard” for your own link.
+          </p>
         </SignInScreen>
       )
     }

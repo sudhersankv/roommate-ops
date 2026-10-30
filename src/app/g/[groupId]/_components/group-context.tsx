@@ -19,6 +19,9 @@ export type MemberView = {
   joined: string
   handles: Partial<Record<PaymentApp, string>>
   hasAccount: boolean
+  /** Their dashboard seat (ADR 0014): who's connected to it (Google name, avatar; the email for Admins only), or open,
+   * or a Pending Join link sign-in and the seat it asked for. */
+  seat: { state: "connected" | "open" | "pending"; accountName: string | null; accountImage: string | null; accountEmail: string | null; wantsSeat: string | null }
 }
 
 /** A tab or menu entry contributed by a Toolkit's manifest (`dashboard.nav`). The icon is rendered on the server. */
@@ -31,7 +34,19 @@ export type TrickSlotView = { id: string; name: string; icon: ReactNode }
 export type OwnedPageView = { prefix: string; owners: { id: string; name: string; summary: string; enabled: boolean; icon: ReactNode }[] }
 
 export type GroupView = {
-  group: { id: string; name: string; currency: string; timezone: string; chattiness: "quiet" | "normal" | "chatty"; purpose: string | null; simplifyDebts: boolean; onboarded: boolean }
+  group: {
+    id: string
+    name: string
+    currency: string
+    timezone: string
+    chattiness: "quiet" | "normal" | "chatty"
+    purpose: string | null
+    simplifyDebts: boolean
+    onboarded: boolean
+    joinPolicy: "free" | "approve_all"
+  }
+  /** The Group's Join link (active Members only). */
+  joinUrl: string | null
   me: MemberView
   groups: { id: string; name: string }[]
   members: MemberView[]

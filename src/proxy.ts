@@ -13,7 +13,8 @@ import { CALLBACK_PATH, SIGNIN_PATH, VERIFIER_PARAM, signInPath, withoutParam } 
 //  2. Google sign-in returns to /auth/callback, which exchanges the session verifier (lib/auth/oauth-return.ts). A
 //     return that lands on a page instead (a sign-in started before /auth/callback existed, or any other
 //     callbackURL) is bounced there too. The SDK's middleware can't do it for /signin (it never exchanges on its own
-//     loginUrl) and must not run on /, /claim or /admin (signed-out visitors see those), so it only guards /g.
+//     loginUrl) and must not run on /, /claim, /j (Join links: the page sends signed-out visitors to /signin itself) or
+//     /admin (signed-out visitors see those), so it only guards /g.
 // /api/auth, /auth/callback and static assets are never matched.
 const neonAuth = auth.middleware({ loginUrl: SIGNIN_PATH })
 
@@ -29,7 +30,7 @@ export default async function proxy(request: NextRequest) {
     res.headers.set("x-roomie-proxy", "oauth-return")
     return res
   }
-  if (pathname === SIGNIN_PATH || pathname.startsWith("/claim/") || /^\/admin(\/|$)/.test(pathname)) {
+  if (pathname === SIGNIN_PATH || pathname.startsWith("/claim/") || pathname.startsWith("/j/") || /^\/admin(\/|$)/.test(pathname)) {
     const pass = NextResponse.next()
     pass.headers.set("x-roomie-proxy", "pass")
     return pass
@@ -53,5 +54,5 @@ export default async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/", "/app", "/signin", "/g/:path*", "/admin/:path*", "/claim/:path*"],
+  matcher: ["/", "/app", "/signin", "/g/:path*", "/admin/:path*", "/claim/:path*", "/j/:path*"],
 }
