@@ -4,7 +4,7 @@ import Link from "next/link"
 import { usePathname, useSearchParams } from "next/navigation"
 import { useEffect, useState, type ReactNode } from "react"
 import { cn } from "cn"
-import { House, LayoutGrid, Plus, Settings, Users } from "lucide-react"
+import { Bell, House, LayoutGrid, Plus, Settings, Users } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Drawer, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle } from "@/components/ui/drawer"
@@ -51,6 +51,7 @@ export function Dock() {
   const active = useActiveHref(base, [
     { href: base, exact: true },
     ...drawer.learned.map((n) => ({ href: n.href })),
+    { href: `${base}/reminders` },
     { href: `${base}/members` },
     { href: `${base}/settings` },
     { href: tricks },
@@ -134,7 +135,8 @@ function DockLink({ href, label, icon, active }: { href: string; label: string; 
 
 /**
  * Everything the dock has no room for: every learned Trick, a greyed slot for each one not learned yet (Teach, or
- * Ask an admin) and each coming-soon one (inert, "Soon"), Teach a Trick, then Members and Settings.
+ * Ask an admin) and each coming-soon one (inert, "Soon"), Teach a Trick, then the Group's own pages: Reminders
+ * (core, no Trick owns them), Members and Settings.
  */
 function MoreDrawer({ open, onOpenChange, active }: { open: boolean; onOpenChange: (open: boolean) => void; active: string | null }) {
   const { base, group, isAdmin, drawer } = useGroup()
@@ -188,6 +190,7 @@ function MoreDrawer({ open, onOpenChange, active }: { open: boolean; onOpenChang
               Group
             </h3>
             <ul className="grid grid-cols-3 gap-2 min-[420px]:grid-cols-4">
+              <Tile href={`${base}/reminders`} icon={<Bell />} label="Reminders" active={active === `${base}/reminders`} onNavigate={close} />
               <Tile href={`${base}/members`} icon={<Users />} label="Members" active={active === `${base}/members`} onNavigate={close} />
               <Tile href={`${base}/settings`} icon={<Settings />} label="Settings" active={active === `${base}/settings`} onNavigate={close} />
             </ul>

@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { Fragment, useEffect, useState, useTransition, type ReactNode } from "react"
-import { ChevronRightIcon, ShoppingCart, WrenchIcon } from "lucide-react"
+import { BellIcon, ChevronRightIcon, ShoppingCart, WrenchIcon } from "lucide-react"
 
 import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { Button } from "@/components/ui/button"
@@ -21,11 +21,11 @@ import { markChoreDone } from "../../actions"
 import { useGroup } from "../group-context"
 import { SettleDrawer } from "../settle-drawer"
 import { TopBar } from "../shell"
-import type { CartItemView, ChoreView, NarrationView, Transfer, UpkeepView } from "../types"
+import type { CartItemView, ChoreView, NarrationView, ReminderView, Transfer, UpkeepView } from "../types"
 
 /**
  * Home: Roomie in the doorway with the Group's mood, then each enabled Toolkit's Home section (children, in nav
- * order, from their manifests: standing, today, ...), then what Roomie said lately.
+ * order, from their manifests: standing, today, ...), core's Reminders, then what Roomie said lately.
  */
 export function HomeScreen({
   mood,
@@ -129,7 +129,7 @@ function HomeCard({ id, title, children }: { id: string; title: string; children
   )
 }
 
-/** Chores' Home section: your chores due today, with Mark done. */
+/** House's Home section: your chores due today, with Mark done. */
 export function ChoresToday({ chores }: { chores: ChoreView[] }) {
   const { group, me, name, dates, cheer } = useGroup()
   const [pending, start] = useTransition()
@@ -181,14 +181,14 @@ export function ChoresToday({ chores }: { chores: ChoreView[] }) {
   )
 }
 
-/** Upkeep's Home section: the next upkeep item that's due or overdue (nothing when the house is fine). */
+/** House's Home section, part two: the next upkeep item that's due or overdue (nothing when the house is fine). */
 export function UpkeepToday({ upkeep }: { upkeep: UpkeepView[] }) {
   const { base, dates } = useGroup()
   const house = upkeep.find((u) => u.status !== "ok")
   if (!house) return null
   return (
     <HomeCard id="upkeep-title" title="House care">
-      <Item render={<Link href={`${base}/chores?tab=upkeep`} />} className="py-3">
+      <Item render={<Link href={`${base}/house?tab=upkeep`} />} className="py-3">
         <ItemMedia variant="icon" className="size-8 justify-center">
           <WrenchIcon aria-hidden />
         </ItemMedia>
@@ -200,6 +200,35 @@ export function UpkeepToday({ upkeep }: { upkeep: UpkeepView[] }) {
           <ChevronRightIcon className="size-4 text-muted-foreground" aria-hidden />
         </ItemActions>
       </Item>
+    </HomeCard>
+  )
+}
+
+/** Core's Home card: the next Reminders you may see (nothing when there are none); the Reminders page has them all. */
+export function RemindersToday({ reminders }: { reminders: ReminderView[] }) {
+  const { base, me, name } = useGroup()
+  if (reminders.length === 0) return null
+  return (
+    <HomeCard id="reminders-title" title="Coming up">
+      {reminders.slice(0, 3).map((r, i) => (
+        <Fragment key={r.id}>
+          {i > 0 ? <Separator className="mx-4 data-horizontal:w-auto" /> : null}
+          <Item render={<Link href={`${base}/reminders`} />} className="py-3">
+            <ItemMedia variant="icon" className="size-8 justify-center">
+              <BellIcon aria-hidden />
+            </ItemMedia>
+            <ItemContent>
+              <ItemTitle>{r.text}</ItemTitle>
+              <ItemDescription>
+                {r.when}. {r.for ? (r.for === me.id ? "Just for you" : `For ${name(r.for)}`) : "For everyone"}.
+              </ItemDescription>
+            </ItemContent>
+            <ItemActions>
+              <ChevronRightIcon className="size-4 text-muted-foreground" aria-hidden />
+            </ItemActions>
+          </Item>
+        </Fragment>
+      ))}
     </HomeCard>
   )
 }

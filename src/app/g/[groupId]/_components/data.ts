@@ -24,9 +24,9 @@ export const NAV_TABS = 3
 
 /**
  * The shell from the manifests. The dock: the learned Tricks' nav entries sorted by `order` (one per page, the
- * first owner wins), at most NAV_TABS. The More drawer: every learned Trick (its own tab, so Upkeep is reachable
- * even next to Chores), then the ones not learned yet and the coming-soon ones as greyed slots. And every owned
- * page with its owners' on/off state.
+ * first owner wins), at most NAV_TABS. The More drawer: every learned Trick (its own tab), then the ones not learned
+ * yet and the coming-soon ones as greyed slots. And every owned page with its owners' on/off state. The Group's own
+ * pages (Reminders, Members, Settings) are the dock's, not a manifest's.
  */
 function shellView(groupId: string, on: Record<string, boolean>): Pick<GroupView, "nav" | "drawer" | "ownedPages"> {
   const icon = (name: IconName) => createElement(ToolkitIcon, { name })
@@ -166,7 +166,7 @@ export async function marketplaceView(s: GroupSession): Promise<ToolkitCardView[
   })
 }
 
-/** Cached per request: Home's doorway mood and Splitting's Home section both read it. */
+/** Cached per request: Home's doorway mood and Money's Home section both read it. */
 export const balancesView = cache(async (s: GroupSession) => {
   const [balances, plan] = await Promise.all([money.getBalances(s.ctx), money.getSettlePlan(s.ctx)])
   return {
@@ -228,17 +228,18 @@ export async function expensesView(s: GroupSession): Promise<ExpenseView[]> {
   return (await money.listExpenses(s.ctx, 100)).map((e) => expenseView(s, e))
 }
 
+/** Where an Activity row's table lives on the dashboard (its owning Trick's page, or the Group's own). */
 const refHref = (base: string, table: string | null, id: string | null) =>
   table === "expenses" && id
     ? `${base}/money/${id}`
     : table === "members"
       ? `${base}/members`
       : table === "chores"
-        ? `${base}/chores`
+        ? `${base}/house`
         : table === "maintenance"
-          ? `${base}/chores?tab=upkeep`
+          ? `${base}/house?tab=upkeep`
           : table === "reminders"
-            ? `${base}/chores?tab=reminders`
+            ? `${base}/reminders`
             : undefined
 
 export async function activityView(s: GroupSession): Promise<ActivityView[]> {
@@ -308,7 +309,7 @@ export async function nextRecipeView(s: GroupSession): Promise<{ title: string; 
 const every = (days: number) =>
   days === 1 ? "Every day" : days === 7 ? "Every week" : days === 14 ? "Every 2 weeks" : days % 30 === 0 ? (days === 30 ? "Every month" : `Every ${days / 30} months`) : days === 365 ? "Every year" : `Every ${days} days`
 
-/** Cached per request: the Chores and Upkeep Home sections both read it. */
+/** Cached per request: House's Home section and page both read it. */
 export const choresView = cache(async (s: GroupSession): Promise<{ chores: ChoreView[]; upkeep: UpkeepView[] }> => {
   const tz = s.group.timezone
   const [status, items] = await Promise.all([chores.choreStatus(s.ctx), upkeep.listMaintenance(s.ctx)])
