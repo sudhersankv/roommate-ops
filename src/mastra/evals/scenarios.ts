@@ -362,6 +362,8 @@ export const SCENARIOS: Scenario[] = [
     },
     turn: { text: "roomie split this", photo: true },
     expect: { replyIncludes: [/receipt/i, /splitting/i], maxLines: 2, excludes: [/can't (open|see)/i], check: async (e) => fail((await expenseCount(e)) === 0 && (await cart.listOpenItems(e.ctx)).length === 0, "nothing logged or added") },
+    // "split this" already says what it is: "I haven't learned Splitting here ... say 'roomie, learn splitting'" is right too.
+    alt: { replyIncludes: [/splitting/i], noTools: "actions", maxLines: 2, excludes: [/can't (open|see)/i], check: async (e) => fail((await expenseCount(e)) === 0, "nothing logged") },
   },
   {
     id: "checkout-link",
