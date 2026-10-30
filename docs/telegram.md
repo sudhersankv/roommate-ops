@@ -61,7 +61,11 @@ If handling a message fails, the log gets `[roomie] couldn't handle a message fr
    - A photo of a receipt with the caption `roomie split this receipt` — reads it and shows the breakdown.
    - `send me the dashboard` — Roomie DMs you a single-use Claim link. If you never pressed Start, Roomie says so in the group and sends nothing there.
    - Add a new person to the group later: Roomie welcomes them and asks the Admin to approve (`roomie approve <name>`).
-   - A voice note: transcribed when `OPENROUTER_API_KEY` is set; otherwise Roomie says once that it can't hear voice notes yet.
+   - A voice note replying to Roomie: transcribed when `OPENROUTER_API_KEY` is set; otherwise Roomie says once that it can't hear voice notes yet.
+
+**Photos and voice notes only when Roomie is addressed.** A photo is downloaded only when its caption addresses Roomie ("roomie ...", @mention, the group's name for it), it replies to Roomie, or it arrives in the follow-up window (3 minutes / 3 messages after Roomie spoke). A voice note is transcribed only when it replies to Roomie, @mentions it, arrives in the follow-up window, or comes from the Admin while setup is open. Anything else is never downloaded or sent to the transcriber; the chat log just says "(photo)" (with its caption, which still counts as text) or "(voice note)". A voice note on its own is not a reason to answer.
+
+**Limits.** One person can add Roomie to at most 3 new groups a day (after that Roomie says so and leaves). Per group, Roomie runs the model at most 30 times per 10 minutes and 200 a day, and 60 a day per person; past that it says "I'm taking a breather; back tomorrow." once and goes quiet until the next UTC day. Messages are cut to 2,000 characters. `ROOMIE_PAUSED=1` stops everything (the webhook still answers 200, so nothing is replayed later); one group is paused or left from `/admin/groups`.
 
 ## Who is a Member (ADR 0010)
 
