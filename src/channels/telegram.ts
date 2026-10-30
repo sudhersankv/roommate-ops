@@ -26,7 +26,14 @@ export const TELEGRAM_UPDATES = ["message", "my_chat_member"] as const;
 
 export type TelegramDeps = {
   handleIncoming(msg: IncomingMessage): Promise<Outgoing | null>;
-  onGroupJoined(chat: ChatRef, participants: ChannelUser[], addedBy: ChannelUser, opts: { dmHandle?: string }): Promise<{ intro: Outgoing | null }>;
+  /** `setupDm`: the Admin's private setup message (ADR 0014); tried at once, else sent when they press Start. */
+  onGroupJoined(chat: ChatRef, participants: ChannelUser[], addedBy: ChannelUser, opts: { dmHandle?: string; participantCount?: number | null }): Promise<{ intro: Outgoing | null; setupDm?: Outgoing | null }>;
+  /** /start in a DM: the setup DM when this person is the Admin of a Group still waiting for its setup, else null. */
+  setupDmFor?(userExternalId: string): Promise<Outgoing | null>;
+  /** The Chat's head count changed (people besides Roomie; null = unknown). Join link seats use it. */
+  setParticipantCount?(chatExternalId: string, count: number | null): Promise<void>;
+  /** The Group's Join link for /help ("dashboard: <link>"); undefined when there's none. */
+  dashboardIn?(chatExternalId: string): Promise<string | undefined>;
   onParticipantJoined(groupId: string, user: ChannelUser): Promise<{ announce: Outgoing | null }>;
   groupIdOfChat(chatExternalId: string): Promise<string | undefined>;
   /** External ids of the Chats where this person is a Member (where their DMs belong). */
@@ -164,6 +171,15 @@ export class TelegramChannel implements Channel {
     }
   }
 
+  /** People in the Chat besides Roomie (Telegram counts bots too; Roomie is one). */
+  async participantCount(chatExternalId: string): Promise<number | null> {
+    try {
+      return Math.max(0, (await this.api.getChatMemberCount(chatExternalId)) - 1);
+    } catch {
+      return null;
+    }
+  }
+
   /** Post the intro `ms` from now, or right before anything else Roomie says in that Chat. */
   introLater(chatExternalId: string, out: Outgoing, ms: number) {
     let resolve!: () => void;
@@ -285,9 +301,27 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
       .then((list) => list.map((a) => a.user).filter((u) => !u.is_bot))
       .catch(() => [] as User[]);
     const title = "title" in chat ? chat.title : undefined;
-    const res = await deps.onGroupJoined({ channel: "telegram", externalId, title }, [adder, ...alsoAdded, ...admins].map(person), person(adder), { dmHandle: me.username });
+    const participantCount = await channel.participantCount(externalId);
+    const res = await deps.onGroupJoined({ channel: "telegram", externalId, title }, [adder, ...alsoAdded, ...admins].map(person), person(adder), { dmHandle: me.username, participantCount });
     if (res.intro) channel.introLater(externalId, res.intro, joinDelayMs);
+    // The Admin's setup DM: only reaches someone who pressed Start for Roomie before; otherwise /start sends it.
+    if (res.setupDm) {
+      await channel.sendPrivate(String(adder.id), res.setupDm).catch((err) => {
+        if (err instanceof CantMessagePrivatelyError) console.log(`[telegram] setup DM for ${adder.id} waits for /start`);
+        else console.error("[telegram] setup DM failed", err);
+      });
+    }
   }
+
+  /** Someone joined or left: the Chat's head count for the Join link's free seats. */
+  async function recount(chatId: string) {
+    if (!deps.setParticipantCount) return;
+    const n = await channel.participantCount(chatId);
+    await deps.setParticipantCount(chatId, n).catch((err) => console.error(`[telegram] couldn't store the head count of ${chatId}`, err));
+  }
+
+  const helpFor = async (chatId: string) =>
+    helpText(await deps.tricksIn?.(chatId).catch(() => undefined), { dashboard: await deps.dashboardIn?.(chatId).catch(() => undefined) });
 
   // A failed lookup counts as paused: /help and /start can wait, a paused Group shouldn't hear from Roomie.
   const paused = (chatId: string) =>
@@ -360,7 +394,7 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
     const chatId = String(m.chat.id);
     if (commandOf(m.text, me.username) === "help") {
       if (await paused(chatId)) return;
-      return channel.sendToChat(chatId, { text: helpText(await deps.tricksIn?.(chatId).catch(() => undefined)) });
+      return channel.sendToChat(chatId, { text: await helpFor(chatId) });
     }
     const content = await readContent(me, m, from, chatId, chatId);
     if (!content) return;
@@ -375,8 +409,15 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
     const command = commandOf(m.text, me.username);
     const chats = await deps.chatsOfUser(userId);
     if ((command === "help" || command === "start") && chats.length === 1 && (await paused(chats[0]))) return;
-    if (command === "help") return channel.sendPrivate(userId, { text: helpText(chats.length === 1 ? await deps.tricksIn?.(chats[0]).catch(() => undefined) : undefined) });
-    if (command === "start") return channel.sendPrivate(userId, { text: startReply(from.first_name, chats.length) });
+    if (command === "help") return channel.sendPrivate(userId, { text: chats.length === 1 ? await helpFor(chats[0]) : helpText() });
+    if (command === "start") {
+      // The Admin who added Roomie pressed Start: now the setup DM can go out (ADR 0014).
+      const setup = await deps.setupDmFor?.(userId).catch((err) => {
+        console.error(`[telegram] setup DM lookup for ${userId} failed`, err);
+        return null;
+      });
+      return channel.sendPrivate(userId, setup ?? { text: startReply(from.first_name, chats.length) });
+    }
     if (chats.length !== 1) return channel.sendPrivate(userId, { text: chats.length ? MANY_GROUPS : NO_GROUP });
     const content = await readContent(me, m, from, userId, chats[0], true);
     if (!content) return;
@@ -414,6 +455,15 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
         const res = await deps.onParticipantJoined(groupId, person(u));
         if (res.announce) await channel.sendToChat(chatId, res.announce);
       }
+      await recount(chatId);
+    });
+  });
+
+  bot.on("message:left_chat_member", (ctx) => {
+    const chatId = String(ctx.message.chat.id);
+    if (ctx.message.left_chat_member.id === ctx.me.id) return;
+    queue.push(chatId, async () => {
+      if (await deps.groupIdOfChat(chatId)) await recount(chatId);
     });
   });
 

@@ -11,7 +11,7 @@
 import "@/lib/env";
 import { RequestContext } from "@mastra/core/request-context";
 import { SpanType, type AnySpan } from "@mastra/core/observability";
-import { deliver } from "@/channels";
+import { deliver, deliverPrivate } from "@/channels";
 import type { Button, IncomingMessage, Outgoing } from "@/channels/types";
 import { chatFor, enabledToolkits, getGroup } from "@/services/groups";
 import { getMember, listGroupMembers, memberByChannelUser, type Member } from "@/services/members";
@@ -100,6 +100,8 @@ export async function resolveIncoming(msg: IncomingMessage): Promise<{ groupId: 
   if (!known) {
     const joined = await onGroupJoined({ channel: msg.channel, externalId: msg.chatExternalId, title: msg.chatTitle }, [sender], sender);
     if (joined.intro) await deliver(joined.group.id, joined.intro);
+    // The Admin's setup DM; a Channel that can't DM them yet (Telegram before Start) sends it from /start instead.
+    if (joined.setupDm) await deliverPrivate(joined.members[0].id, joined.setupDm).catch((e) => console.log(`[pipeline] setup DM not sent now (${e instanceof Error ? e.message : e})`));
     return { groupId: joined.group.id, member: joined.members[0] };
   }
   const groupId = known.group.id;
@@ -297,6 +299,7 @@ export async function respond(input: RespondInput): Promise<PipelineResult> {
     ...(gate.mayStaySilent ? { mayStaySilent: true } : {}),
     ...(petted ? { pet: "petted" as const } : greeting ? { pet: "greet" as const } : {}),
     latest: text,
+    ...(input.isPrivate ? { isPrivate: true } : {}),
   };
   const requestContext = new RequestContext<RoomieContext>(Object.entries(ctx) as [keyof RoomieContext, never][]);
 

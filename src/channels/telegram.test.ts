@@ -81,7 +81,9 @@ function harness(opts: { deps?: Partial<TelegramDeps>; joinDelayMs?: number; fai
             { status: "creator", user: DEV, is_anonymous: false },
             { status: "administrator", user: OTHER_BOT },
           ]
-        : method === "getFile"
+        : method === "getChatMemberCount"
+          ? 5
+          : method === "getFile"
           ? { file_id: "f", file_unique_id: "u", file_path: "voice/file_1.oga" }
           : method === "sendMessage"
             ? { message_id: messageId++, date: 0, chat: { id: (payload as { chat_id: number }).chat_id, type: "supergroup" } }
@@ -112,7 +114,7 @@ describe("group join", () => {
       { userExternalId: "11", name: "Maya Lee" },
       { userExternalId: "13", name: "Dev" },
     ]);
-    assert.deepEqual(opts, { dmHandle: "roomie_test_bot" });
+    assert.deepEqual(opts, { dmHandle: "roomie_test_bot", participantCount: 4 }, "Telegram's member count, minus Roomie");
     const [intro] = h.sent();
     assert.equal(intro.payload.text, "intro");
     assert.equal(intro.payload.chat_id, "-1001");
@@ -150,6 +152,35 @@ describe("group join", () => {
     assert.equal(h.seen.participants.length, 0);
     assert.equal(h.seen.joined.length, 1);
     assert.deepEqual((h.seen.joined[0][1] as { name: string }[]).map((p) => p.name), ["Maya Lee", "Sam", "Dev"]);
+  });
+
+  test("the Admin's setup DM: tried at once; refused (never pressed Start) it waits, the intro still goes out", async () => {
+    const dm = { text: "Hi Maya 👋 setup", buttons: [{ text: "Open dashboard", url: "https://roomie.example/claim/abc" }] };
+    const h = harness({ deps: { onGroupJoined: async () => ({ intro: { text: "intro" }, setupDm: dm }) }, failSend: { error_code: 403, description: "Forbidden: bot can't initiate conversation with a user" } });
+    await h.feed({
+      my_chat_member: { chat: GROUP, from: MAYA, date: 0, old_chat_member: { status: "left", user: BOT_USER }, new_chat_member: { status: "member", user: BOT_USER } },
+    } as never);
+    const tries = h.sent().map((c) => c.payload.chat_id);
+    assert.ok(tries.includes("11"), "the DM to Maya was tried");
+    assert.ok(tries.includes("-1001"), "the intro was still sent");
+    const ok = harness({ deps: { onGroupJoined: async () => ({ intro: { text: "intro" }, setupDm: dm }) } });
+    await ok.feed({
+      my_chat_member: { chat: GROUP, from: MAYA, date: 0, old_chat_member: { status: "left", user: BOT_USER }, new_chat_member: { status: "member", user: BOT_USER } },
+    } as never);
+    const toMaya = ok.sent().find((c) => c.payload.chat_id === "11");
+    assert.equal(toMaya?.payload.text, "Hi Maya 👋 setup", "she pressed Start for Roomie before: it arrives now");
+    assert.ok(JSON.stringify(toMaya?.payload.reply_markup).includes("https://roomie.example/claim/abc"), "the Claim link is a button in the DM");
+  });
+
+  test("people joining or leaving refresh the Chat's head count", async () => {
+    const counts: [string, number | null][] = [];
+    const h = harness({ deps: { setParticipantCount: async (id, n) => void counts.push([id, n]) } });
+    await h.feed(message(MAYA, { new_chat_members: [SAM] }));
+    await h.feed(message(MAYA, { left_chat_member: SAM }));
+    assert.deepEqual(counts, [
+      ["-1001", 4],
+      ["-1001", 4],
+    ]);
   });
 
   test("a group upgraded to a supergroup moves the Chat", async () => {
@@ -367,6 +398,26 @@ describe("private messages", () => {
     await stranger.feed(message(SAM, { text: "/start" }, PRIVATE));
     assert.equal(String(stranger.sent()[0].payload.text), `Hey Sam 👋 I'm Roomie. Add me to a group chat, tell me what it's for, and I'll learn the right Tricks.`);
     assert.equal(h.seen.incoming.length + stranger.seen.incoming.length, 0);
+  });
+
+  test("/start from the Admin of a Group still waiting for setup: the setup DM (with their Claim link button) instead", async () => {
+    const asked: string[] = [];
+    const dm = { text: "Hi Maya 👋 You added me to Apt 4B, so you're its admin.\nAnswer the setup here or in the group: what's the group for, currency, city, vibe.", buttons: [{ text: "Open dashboard", url: "https://roomie.example/claim/abc" }] };
+    const h = harness({ deps: { setupDmFor: async (id) => (asked.push(id), id === "11" ? dm : null) } });
+    await h.feed(message(MAYA, { text: "/start" }, { id: 11, type: "private", first_name: "Maya" }));
+    assert.deepEqual(asked, ["11"]);
+    assert.match(String(h.sent()[0].payload.text), /Answer the setup here or in the group/);
+    assert.ok(JSON.stringify(h.sent()[0].payload.reply_markup).includes("/claim/abc"));
+    await h.feed(message(SAM, { text: "/start" }, PRIVATE));
+    assert.match(String(h.sent().at(-1)!.payload.text), /^Hey Sam 👋 Now I can DM you/, "anyone else: the usual line");
+  });
+
+  test("/help in a Group with a Join link: 'Dashboard: <link>' on the Always line, still 8 lines at most", async () => {
+    const h = harness({ deps: { tricksIn: async () => ["splitting", "groceries", "chores", "upkeep"], dashboardIn: async () => "https://roomie.example/j/abcdefghij" } });
+    await h.feed(message(MAYA, { text: "/help" }));
+    const text = String(h.sent()[0].payload.text);
+    assert.match(text, /Dashboard: https:\/\/roomie\.example\/j\/abcdefghij/);
+    assert.ok(text.split("\n").length <= 8);
   });
 
   test("/help in a DM: what Roomie does, even before the person is in a group", async () => {

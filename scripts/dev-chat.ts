@@ -87,6 +87,7 @@ async function run(line: string) {
       console.log(`(Group ${res.group.id} created; ${res.members.map((m) => `${m.displayName} ${m.role}/${m.status}`).join(", ")})`);
       // A real adapter waits 1-3 minutes before this first message (ADR 0001).
       if (res.intro) show({ to: "chat", chatExternalId: chatId, msg: res.intro });
+      if (res.setupDm) show({ to: "private", userExternalId: res.members[0].channelUserId ?? adder, msg: res.setupDm });
       return;
     }
     case "add": {

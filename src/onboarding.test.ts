@@ -1,7 +1,7 @@
 // Onboarding copy and defaults, no DB. Run: npx tsx --test src/onboarding.test.ts
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { approvalPrompt, introMessage, learnedLine, rosterStillOpen } from "./onboarding";
+import { approvalPrompt, introMessage, learnedLine, rosterStillOpen, setupDmText } from "./onboarding";
 import { defaultToolkitsFor, validateSettings } from "./services/groups";
 
 const BANNED = /toolkit|capabilit|module|plugin|enable|feature|\bpet\b|slang|how you (all )?talk|adapt/i;
@@ -30,6 +30,21 @@ test("intro on Telegram: the press-Start nudge rides on the admin line, still th
   assert.match(text, /Maya's my admin\. Tap @roomie_house_bot and press Start/);
   assert.equal(text.split("\n").length, 3);
   assert.ok(!/https?:\/\//.test(text));
+});
+
+test("intro on Telegram: Start is for the setup DM and the dashboard link", () => {
+  assert.match(introMessage("Maya", { dmHandle: "roomie_house_bot" }), /press Start, so I can DM you the setup and your dashboard link\.$/);
+});
+
+test("the Admin's setup DM (ADR 0014): who they are to the group, then the setup question, answerable right there", () => {
+  const text = setupDmText("Maya Lee", "Apt 4B");
+  const lines = text.split("\n");
+  assert.equal(lines.length, 2);
+  assert.equal(lines[0], "Hi Maya 👋 You added me to Apt 4B, so you're its admin. Your own dashboard link is below (just for you, it works once).");
+  assert.equal(lines[1], "Answer the setup here or in the group: what's the group for, currency, city, vibe.");
+  assert.ok(!/https?:\/\//.test(text), "the Claim link rides as a button, never in the text");
+  assert.ok(!BANNED.test(text));
+  assert.match(setupDmText("+15551110001", "Apt 4B"), /^Hi 👋 You added me/, "never reads a number out as a name");
 });
 
 test("the setup line names the Tricks Roomie learned and what to say next", () => {

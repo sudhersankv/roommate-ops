@@ -7,7 +7,7 @@
 //   - everyone already in the Chat when Roomie joins: active (they were in the group before Roomie). Telegram can't
 //     list them, so there a first-time sender within 24 hours of Roomie joining counts as already there
 //   - anyone who joins later, or speaks without Roomie having seen them join: Pending until an Admin approves
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq, isNull } from "drizzle-orm";
 import { db, schema } from "@/db";
 import type { ChannelName } from "@/db/schema";
 import { channelFor } from "@/channels";
@@ -15,6 +15,8 @@ import { ROSTER_GRACE_MS, type ChannelUser, type Outgoing } from "@/channels/typ
 import { caps, TOO_MANY_GROUPS } from "@/lib/caps";
 import { record } from "@/services/activity";
 import { logMessage } from "@/services/chatlog";
+import { issueDashboardLink } from "@/services/claims";
+import { newJoinCode } from "@/services/joins";
 import { chatFor, initToolkits, type Chat, type Group } from "@/services/groups";
 import { addMember, admins, memberByChannelUser, type Member } from "@/services/members";
 import { ARCHETYPE_IDS, DEFAULT_PET_NAME } from "@/lib/personality";
@@ -43,8 +45,52 @@ export function introMessage(adderName: string, opts: { dmHandle?: string; petNa
   return [
     `Hey all, I'm ${name} 🦖 a small dino who lives in your group chat and learns Tricks.`,
     `Tell me what this group is for (roommates, a trip, friends, family, work…) and I'll learn the right Tricks. Currency, city and a vibe (${ARCHETYPE_IDS.join(" / ")}) are welcome too.`,
-    `${admin}${opts.dmHandle ? ` Tap @${opts.dmHandle} and press Start, so I can DM you your dashboard link later.` : ""}`,
+    `${admin}${opts.dmHandle ? ` Tap @${opts.dmHandle} and press Start, so I can DM you the setup and your dashboard link.` : ""}`,
   ].join("\n");
+}
+
+/**
+ * The Admin's setup DM (ADR 0014), sent when Roomie joins (WhatsApp) or when they press Start (Telegram): their own
+ * dashboard link rides along as a button (a Claim link: private, ADR 0003), and the setup question can be answered
+ * right there.
+ */
+export function setupDmText(adminName: string, groupName: string): string {
+  const first = isPlaceholderName(adminName) ? "" : ` ${adminName.trim().split(/\s+/)[0]}`;
+  return [
+    `Hi${first} 👋 You added me to ${groupName}, so you're its admin. Your own dashboard link is below (just for you, it works once).`,
+    `Answer the setup here or in the group: what's the group for, currency, city, vibe.`,
+  ].join("\n");
+}
+
+/** The setup DM for an Admin of a Group that hasn't finished setup: the text and their Claim link as a button. */
+export async function setupDm(group: Pick<Group, "id" | "name">, admin: Pick<Member, "id" | "displayName">): Promise<Outgoing> {
+  const link = await issueDashboardLink({ groupId: group.id, memberId: admin.id, source: "chat" });
+  return { text: setupDmText(admin.displayName, group.name), buttons: [{ text: "Open dashboard", url: link.url }] };
+}
+
+/**
+ * Telegram's /start (a bot can't message first): if this person is the Admin of a Group still waiting for its setup
+ * (the newest one), the setup DM; otherwise null and /start says its usual line.
+ */
+export async function setupDmFor(channel: ChannelName, userExternalId: string): Promise<Outgoing | null> {
+  const [row] = await db
+    .select({ group: schema.groups, member: schema.members })
+    .from(schema.members)
+    .innerJoin(schema.chats, eq(schema.chats.groupId, schema.members.groupId))
+    .innerJoin(schema.groups, eq(schema.groups.id, schema.members.groupId))
+    .where(
+      and(
+        eq(schema.chats.channel, channel),
+        eq(schema.members.channelUserId, userExternalId),
+        eq(schema.members.role, "admin"),
+        eq(schema.members.status, "active"),
+        isNull(schema.groups.onboardedAt),
+        isNull(schema.groups.pausedAt),
+      ),
+    )
+    .orderBy(desc(schema.groups.createdAt))
+    .limit(1);
+  return row ? setupDm(row.group, row.member) : null;
 }
 
 /**
@@ -68,7 +114,9 @@ export function approvalPrompt(newName: string, adminNames: string[]): string {
 
 /* ---------- flows ---------- */
 
-export type JoinResult = { group: Group; members: Member[]; intro: Outgoing | null; created: boolean };
+/** `setupDm`: the private message for the Admin (members[0]); the adapter sends it at once (WhatsApp) or tries and
+ * leaves it for /start when the Channel can't DM them yet (Telegram). */
+export type JoinResult = { group: Group; members: Member[]; intro: Outgoing | null; setupDm: Outgoing | null; created: boolean };
 
 /** Roomie said no to a new Chat (too many new Groups from this person today) and left it. Nothing was created. */
 export class JoinRefusedError extends Error {
@@ -96,12 +144,12 @@ export async function onGroupJoined(
   chat: ChatRef,
   participants: ChannelUser[],
   addedBy: ChannelUser,
-  opts: { dmHandle?: string; newGroupAllowed?: (channel: string, userExternalId: string) => Promise<boolean> } = {},
+  opts: { dmHandle?: string; participantCount?: number | null; newGroupAllowed?: (channel: string, userExternalId: string) => Promise<boolean> } = {},
 ): Promise<JoinResult> {
   const known = await chatFor(chat.channel, chat.externalId);
   if (known) {
     const rows = await db.select().from(schema.members).where(eq(schema.members.groupId, known.group.id));
-    return { group: known.group, members: rows, intro: null, created: false };
+    return { group: known.group, members: rows, intro: null, setupDm: null, created: false };
   }
   if (chat.channel !== "dev") {
     const allowed = opts.newGroupAllowed ?? (async (ch: string, id: string) => (await caps()).newGroup(ch, id));
@@ -114,9 +162,16 @@ export async function onGroupJoined(
 
   const [group] = await db
     .insert(schema.groups)
-    .values({ name: chat.title?.trim() || `${addedBy.name}'s group` })
+    .values({ name: chat.title?.trim() || `${addedBy.name}'s group`, joinCode: newJoinCode() })
     .returning();
-  await db.insert(schema.chats).values({ groupId: group.id, channel: chat.channel, externalId: chat.externalId, title: chat.title ?? null });
+  const count = opts.participantCount;
+  await db.insert(schema.chats).values({
+    groupId: group.id,
+    channel: chat.channel,
+    externalId: chat.externalId,
+    title: chat.title ?? null,
+    ...(typeof count === "number" && count >= 0 ? { participantCount: count, participantCountAt: new Date() } : {}),
+  });
 
   const admin = await addMember(group.id, { displayName: addedBy.name, channelUserId: addedBy.userExternalId, role: "admin", status: "active" });
   const others: Member[] = [];
@@ -132,7 +187,11 @@ export async function onGroupJoined(
 
   const intro = { text: introMessage(admin.displayName, { dmHandle: opts.dmHandle }) };
   await logMessage(group.id, null, intro.text); // opens the follow-up window for the answers
-  return { group: withCreator, members: [admin, ...others], intro, created: true };
+  const dm = await setupDm(withCreator, admin).catch((e) => {
+    console.warn(`[onboarding] couldn't make the setup DM for ${group.id}`, e);
+    return null;
+  });
+  return { group: withCreator, members: [admin, ...others], intro, setupDm: dm, created: true };
 }
 
 export type ParticipantResult = { member: Member; announce: Outgoing | null; created: boolean };
