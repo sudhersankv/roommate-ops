@@ -103,18 +103,53 @@ async function target(ctx: Ctx, memberId: string): Promise<Member> {
   return m;
 }
 
-/** Admin: Pending -> active. */
+/**
+ * Admin: Pending -> active. A Join link sign-in that asked for a seat (wantsSeatId, services/joins.ts) is approved by
+ * moving its Account onto that seat, when the seat is still open; its placeholder row goes. Returns the Member who is
+ * active now.
+ */
 export async function approveMember(ctx: Ctx, input: { memberId: string }): Promise<Member> {
   await requireAdmin(ctx);
   const m = await target(ctx, input.memberId);
   if (m.status === "active") throw new Error(`${m.displayName} is already approved.`);
+  const seat = m.wantsSeatId && m.accountId ? await getMember(ctx, m.wantsSeatId) : undefined;
+  if (seat && seat.status === "active" && !seat.accountId) {
+    const accountId = m.accountId;
+    const [moved] = await db.transaction(async (tx) => {
+      await tx.update(members).set({ status: "removed", accountId: null, wantsSeatId: null }).where(eq(members.id, m.id));
+      return tx.update(members).set({ accountId }).where(eq(members.id, seat.id)).returning();
+    });
+    await recordFor(ctx, "member.approved", `approved ${m.displayName} as ${seat.displayName}`, { table: "members", id: seat.id });
+    await toldInChat(ctx, `${m.displayName} is in: connected to the dashboard as ${seat.displayName}.`);
+    return moved;
+  }
   const [updated] = await db
     .update(members)
-    .set({ status: "active", approvedBy: ctx.memberId, approvedAt: new Date() })
+    .set({ status: "active", approvedBy: ctx.memberId, approvedAt: new Date(), wantsSeatId: null })
     .where(eq(members.id, m.id))
     .returning();
   await recordFor(ctx, "member.approved", `approved ${m.displayName}`, { table: "members", id: m.id });
+  if (!m.channelUserId && m.accountId) await toldInChat(ctx, `${m.displayName} is in: connected to the dashboard.`);
   return updated;
+}
+
+/**
+ * A Join link sign-in was told "I'll let you know in the chat": an approval made on the dashboard says so there. In
+ * the chat Roomie's own reply already does.
+ */
+async function toldInChat(ctx: Ctx, text: string) {
+  if (ctx.source !== "ui") return;
+  try {
+    const [g] = await db.select({ pausedAt: schema.groups.pausedAt }).from(schema.groups).where(eq(schema.groups.id, ctx.groupId));
+    const [chat] = await db.select({ id: schema.chats.id }).from(schema.chats).where(eq(schema.chats.groupId, ctx.groupId));
+    if (!chat || g?.pausedAt) return;
+    const { deliver } = await import("@/channels");
+    const { logMessage } = await import("./chatlog");
+    await deliver(ctx.groupId, { text });
+    await logMessage(ctx.groupId, null, text);
+  } catch (e) {
+    console.warn("[members] couldn't say the approval in the chat", e);
+  }
 }
 
 /** Admin: a Pending member is turned away. They stay in the Chat; Roomie won't act for them. */

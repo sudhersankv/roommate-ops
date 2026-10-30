@@ -11,6 +11,8 @@ const createdAt = () => timestamp("created_at", { withTimezone: true }).notNull(
 export { GROUP_PURPOSES, type GroupPurpose } from "./enums";
 export const CHATTINESS_LEVELS = ["quiet", "normal", "chatty"] as const;
 export const CHANNELS = ["whatsapp", "telegram", "dev"] as const;
+export const JOIN_POLICIES = ["free", "approve_all"] as const;
+export type JoinPolicy = (typeof JOIN_POLICIES)[number];
 export type ChannelName = (typeof CHANNELS)[number];
 
 /* ---------- core ---------- */
@@ -35,6 +37,12 @@ export const groups = pgTable("groups", {
   personality: jsonb("personality").$type<Record<string, unknown>>().notNull().default({}),
   // An operator paused Roomie here (/admin/groups): messages are still logged, Roomie says nothing and posts nothing.
   pausedAt: timestamp("paused_at", { withTimezone: true }),
+  // The Join link's code (APP_URL/j/<code>, ADR 0014): random base32, set at creation or on first read
+  // (services/joins.ts ensureJoinCode), replaced by an Admin's Rotate (the old one stops working).
+  joinCode: text("join_code").unique(),
+  joinCodeRotatedAt: timestamp("join_code_rotated_at", { withTimezone: true }),
+  // "free": a pick connects at once while the Group has free seats; "approve_all": every pick waits for an Admin.
+  joinPolicy: text("join_policy", { enum: JOIN_POLICIES }).notNull().default("free"),
   createdAt: createdAt(),
 });
 
@@ -62,6 +70,10 @@ export const chats = pgTable(
     channel: text("channel", { enum: CHANNELS }).notNull().default("whatsapp"),
     externalId: text("external_id").notNull(),
     title: text("title"),
+    // People in the Chat besides Roomie, as the Channel last counted them (WhatsApp participants, Telegram's member
+    // count). Null = unknown: every Join link pick then waits for an Admin (ADR 0014).
+    participantCount: integer("participant_count"),
+    participantCountAt: timestamp("participant_count_at", { withTimezone: true }),
     createdAt: createdAt(),
   },
   (t) => [uniqueIndex("chats_channel_external_id").on(t.channel, t.externalId), uniqueIndex("chats_group_id").on(t.groupId)],
@@ -92,6 +104,9 @@ export const members = pgTable(
     approvedAt: timestamp("approved_at", { withTimezone: true }),
     // Last time a Claim link went out to this Member (ADR 0001: on demand, spaced apart).
     linkIssuedAt: timestamp("link_issued_at", { withTimezone: true }),
+    // A Pending Member made by a Join link pick of a seat that wasn't free: the seat they said is theirs. Approving
+    // them moves their Account onto it (services/members.ts approveMember). No FK: informational.
+    wantsSeatId: uuid("wants_seat_id"),
   },
   (t) => [
     uniqueIndex("members_group_channel_user").on(t.groupId, t.channelUserId),
