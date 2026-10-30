@@ -6,7 +6,7 @@ export const groceries = defineManifest({
   description: "The shared grocery Cart, Recipes and the Pantry: adding and removing items, cooking plans, the Instacart checkout, logging what the shop cost.",
   summary: "One shared Cart, recipes for the group, and an Instacart list.",
   longDescription:
-    "Anyone can add to the shared Cart from the chat (\"we're out of dish soap\"), for themselves or for everyone. Ask for a dish and Roomie writes a Recipe for the group's size, leaving out what's in the Pantry. When someone shops, \"I paid 84\" splits the bill by who added what. The Cart turns into an Instacart shopping list in one tap.",
+    "Anyone can add to the shared Cart from the chat (\"we're out of dish soap\"), for themselves or for everyone, or send a photo of a recipe or a shopping list. Ask for a dish and Roomie writes a Recipe for the group's size, leaving out what's in the Pantry. The Cart turns into an Instacart shopping list in one tap, and when someone shops, \"I paid 84\" splits the bill by who added what.",
   icon: "ShoppingCart",
   category: "food",
   tags: ["cart", "recipes", "pantry", "shopping", "Instacart", "meal plan"],
@@ -15,15 +15,20 @@ export const groceries = defineManifest({
   status: "stable",
   gate: {
     criterion:
-      "Groceries and food at home: the shared grocery cart (adding or removing items, being out of something, shopping, checking out, what the grocery shop cost), recipes, cooking, meal planning ('tacos for 5 friday'), and the pantry of things the group always has.",
-    examples: ["tacos for 5 friday", "add milk and eggs", "we're out of dish soap", "I paid 84 for groceries"],
+      "Groceries and food at home: the shared grocery cart (adding or removing items, being out of something, shopping, checking out, what the grocery shop cost), a photo of a recipe or a shopping list, recipes, cooking, meal planning ('tacos for 5 friday'), and the pantry of things the group always has.",
+    examples: ["tacos for 5 friday", "add milk and eggs", "we're out of dish soap", "add these (with a photo of a list or a recipe)", "I paid 84 for groceries"],
   },
-  persona: `- Groceries: a Recipe ("tacos for 5 friday") is recipe_draft, written for the group's size unless they say how many; post its text and ask its askToAdd question. A Recipe never touches the cart by itself: add its ingredients (recipe_add_to_cart) only when someone asks or clearly means it ("yes add them", "...and put it on the list"); what they say they have ("we have onions") goes in skip. If a cart add is ambiguous, ask "for you or the whole house?"; household stuff and "for the house" is shared. "Checkout" / "order it" is cart_checkout. "I paid 84 for groceries" while the cart has things (or after a checkout) is cart_purchased, not log_expense: say each person's part from its shares. "We always have salt" is pantry_set.
-- Recipes: put what you know about the people eating (vegetarian, allergies) in recipe_draft's request.`,
+  persona: `- Groceries has no prices. Never say a price, an estimate or a cart total; the real money comes from the receipt later. Quantities as people said them.
+- Adding: if it's unclear whether it's for them or everyone, ask "for you or the whole house?"; household stuff, "for the house" and "common" are shared. If cart_add returns needsClarification, ask just that, in one line. After an add, one line: what went in ("Added eggs."), no recap of the cart.
+- "[photo: <url>]" that isn't clearly a receipt (a recipe, a list, "add these", or no caption) is cart_from_photo: say its summary in one line and ask "Add them as shared?" (or for whom), unless the caption already said; on yes, cart_from_photo again with confirm. If it says kind "receipt", relay its say line, or use expense_from_receipt when splitting is true.
+- A Recipe ("tacos for 5 friday") is recipe_draft, written for the group's size unless they say how many; post its text and ask its askToAdd question. A Recipe never touches the cart by itself: add its ingredients (recipe_add_to_cart) only when someone asks or clearly means it ("yes add them", "...and put it on the list"); what they say they have ("we have onions") goes in skip. Put what you know about the people eating (vegetarian, allergies) in recipe_draft's request.
+- "Checkout" / "order it" is cart_checkout. "I paid 84 for groceries" while the cart has things (or after a checkout) is cart_purchased, not log_expense: say each person's part from its shares. "We always have salt" is pantry_set.
+- Don't offer the Cart page unless they ask for it (then cart_view with link).`,
   abilities: {
     cart_add: "Add things to the Cart, for you or for everyone",
     cart_remove: "Take things out of the Cart",
-    cart_view: "Show the Cart with estimated prices",
+    cart_view: "Show what's in the Cart",
+    cart_from_photo: "Add a recipe or shopping list from a photo",
     cart_checkout: "Turn the Cart into an Instacart shopping list",
     cart_purchased: "\"I paid 84\": split the shop by who added what",
     recipe_draft: "Write a Recipe for the group's size",

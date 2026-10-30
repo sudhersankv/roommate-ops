@@ -24,7 +24,7 @@ import { choresNudgeJob, sendDueReminders, weeklyReportJob } from "@/jobs/schedu
 import { addDaysInZone, addDaysToDay, dayInZone, nextWeekday, zonedParts, zonedTimeToUtc } from "@/lib/time";
 import { onGroupJoined, onParticipantJoined } from "@/onboarding";
 import { deleteGroup, groupsWithChat } from "@/services/groups";
-import { cart, chatlog, chores, members, money, personality as personalitySvc, receipts, recipes, recurring, splitwise, toolkits as toolkitsSvc } from "@/services";
+import { activity, cart, chatlog, chores, members, money, personality as personalitySvc, receipts, recipes, recurring, splitwise, toolkits as toolkitsSvc } from "@/services";
 import { composioHealth } from "@/integrations/composio";
 import { FakeSplitwise, setSplitwiseClient } from "@/integrations/splitwise";
 import { ComposioInstacart, FakeInstacart, setInstacartClient } from "@/integrations/instacart";
@@ -640,80 +640,80 @@ describe("Roomie tools against the dev DB", () => {
     await run("chore_remove", { chore: "mop" });
   });
 
-  // ---------- cart (estimates from lib/prices; Instacart checkout is not wired yet) ----------
+  // ---------- cart (no prices; links only when asked; every change is an Activity row with its source) ----------
 
   type Link = { text: string; url: string };
-  type CartAdd = { items: CartItem[]; addedTotalCents: number; addedTotal: string; cartItemCount: number; cartTotalCents: number; cartTotal: string; links?: Link[] };
-  type CartView = { groups: Record<string, CartItem[]>; itemCount: number; estTotalCents: number; estTotal: string; links?: Link[] };
+  type Said = { name: string; qty: string; shared?: boolean; for?: string };
+  type CartAdd = { added: Said[]; cartItemCount: number; needsClarification?: string[]; links?: Link[] };
+  type CartView = { groups: Record<string, { name: string; qty: string; recipe?: string }[]>; itemCount: number; links?: Link[] };
   const appUrl = (process.env.APP_URL ?? "").trim().replace(/\/+$/, "");
+  const noPrice = (r: unknown) => assert.ok(!/\$\d|estCents|estTotal|cartTotal/.test(JSON.stringify(r)), `no prices in ${JSON.stringify(r)}`);
+  const lastActivity = async () => (await db.select().from(schema.activity).where(eq(schema.activity.groupId, groupId)).orderBy(desc(schema.activity.createdAt)).limit(1))[0];
 
-  test("cart_add: '3 bags of chips for me' + a shared item; estimates from the catalog; View-cart link attached", async () => {
+  test("cart_add: '3 bags of chips for me' + a shared item; stored as said, no prices, no links; Activity says where", async () => {
     const added: CartAdd = await run("cart_add", { items: [{ name: "chips", qty: "3 bags" }] });
-    assert.equal(added.items.length, 1);
-    assert.equal(added.items[0].name, "chips");
-    assert.equal(added.items[0].qty, "3 bags");
-    assert.equal(added.items[0].addedByName, "Sudhersan");
-    assert.equal(added.items[0].estCents, 3 * 449, "3 x catalog price of chips");
-    assert.equal(added.addedTotalCents, 3 * 449, "total of the items just added");
-    assert.equal(added.addedTotal, "$13.47");
-    assert.equal(added.cartTotalCents, 3 * 449, "first add into an empty cart: cart total = added total");
+    assert.deepEqual(added.added, [{ name: "chips", qty: "3 bags", for: "Sudhersan" }]);
     assert.equal(added.cartItemCount, 1);
-    if (/^https?:\/\//i.test(appUrl)) {
-      assert.deepEqual(
-        added.links?.map((b) => b.url),
-        [`${appUrl}/g/${groupId}/cart`],
-        "only the View cart link",
-      );
-      assert.ok(/view cart/i.test(added.links![0].text));
-    } else {
-      assert.equal(added.links, undefined, "no APP_URL -> no links");
-    }
+    assert.equal(added.links, undefined, "no View-cart link on a routine add");
+    noPrice(added);
+    const a = await lastActivity();
+    assert.deepEqual([a.kind, a.summary, a.source, a.actorMemberId], ["cart.added", "put chips on the Cart", "chat", member.Sudhersan]);
 
     const second: CartAdd = await run("cart_add", { items: [{ name: "dish soap" }], shared: true });
-    assert.equal(second.addedTotalCents, 349, "addedTotal is only the new item");
-    assert.equal(second.cartTotalCents, 1347 + 349, "cartTotal is the whole open cart");
+    assert.deepEqual(second.added, [{ name: "dish soap", qty: "1", shared: true }]);
     assert.equal(second.cartItemCount, 2);
+    assert.equal((await lastActivity()).summary, "put dish soap on the Cart for everyone");
     const rows = await db.select().from(schema.cartItems).where(eq(schema.cartItems.groupId, groupId));
     assert.equal(rows.length, 2);
     const chips = rows.find((r) => r.name === "chips");
-    assert.equal(chips?.qty, "3 bags");
-    assert.equal(chips?.addedBy, member.Sudhersan);
-    assert.equal(chips?.shared, false);
-    assert.equal(chips?.status, "open");
-    assert.equal(chips?.estCents, 1347);
+    assert.deepEqual([chips?.qty, chips?.addedBy, chips?.shared, chips?.status, chips?.estCents], ["3 bags", member.Sudhersan, false, "open", null]);
     const soap = rows.find((r) => r.name === "dish soap");
-    assert.equal(soap?.shared, true);
-    assert.equal(soap?.qty, "1");
-    assert.equal(soap?.estCents, 349);
+    assert.deepEqual([soap?.shared, soap?.qty, soap?.estCents], [true, "1", null]);
   });
 
-  test("cart_view groups open items by who added them, with the estimated total", async () => {
+  test("cart_add: an ambiguous quantity is held back with one question; 'for Ryan' attributes to Ryan", async () => {
+    const r: CartAdd = await run("cart_add", { items: [{ name: "bread" }, { name: "eggs", qty: "12, 18" }], for: "Ryan" });
+    assert.deepEqual(r.added, [{ name: "bread", qty: "1", for: "Ryan" }]);
+    assert.deepEqual(r.needsClarification, ["eggs: 12 and 18 what? cartons or eggs?"]);
+    assert.equal((await lastActivity()).summary, "put bread on the Cart for Ryan");
+    assert.equal(await run("cart_remove", { name: "bread" }).then((x) => x.removed), true);
+    assert.equal((await lastActivity()).summary, "took bread (Ryan's) off the Cart");
+  });
+
+  test("cart_view groups open items by who added them; no prices; the Cart page only when asked", async () => {
     const view: CartView = await run("cart_view", {});
     const all = Object.values(view.groups).flat();
     assert.deepEqual(all.map((i) => i.name).sort(), ["chips", "dish soap"]);
     assert.ok(Object.keys(view.groups).some((k) => /sudhersan/i.test(k)), "a group for the sender");
-    assert.ok(Object.keys(view.groups).some((k) => /shared/i.test(k)), "a Shared group");
     assert.equal(view.groups.Shared?.[0]?.name, "dish soap");
     assert.equal(view.itemCount, 2);
-    assert.equal(view.estTotalCents, 1347 + 349);
-    assert.equal(view.estTotal, "$16.96");
+    assert.equal(view.links, undefined);
+    noPrice(view);
+    const asked: CartView = await run("cart_view", { link: true });
+    if (/^https?:\/\//i.test(appUrl)) assert.deepEqual(asked.links?.map((b) => b.url), [`${appUrl}/g/${groupId}/cart`]);
   });
 
-  test("cart_remove by name", async () => {
+  test("cart_remove by name; the dashboard's remove is recorded as the dashboard", async () => {
     await run("cart_add", { items: [{ name: "oat milk", qty: "2" }] });
-    assert.deepEqual(await run("cart_remove", { name: "Oat Milk" }), { removed: true });
-    assert.deepEqual(await run("cart_remove", { name: "caviar" }), { removed: false });
+    assert.deepEqual(await run("cart_remove", { name: "Oat Milk" }), { removed: true, cartItemCount: 2 });
+    assert.deepEqual(await run("cart_remove", { name: "caviar" }), { removed: false, cartItemCount: 2 });
     const open = await db.select().from(schema.cartItems).where(eq(schema.cartItems.groupId, groupId));
     assert.deepEqual(open.filter((r) => r.status === "open").map((r) => r.name).sort(), ["chips", "dish soap"]);
+    const [eggs] = await cart.addItems({ ...ctx, source: "ui" }, { items: [{ name: "Eggs" }] });
+    assert.equal(await cart.removeItemById({ ...ctx, source: "ui" }, { id: eggs.id }), true);
+    const a = await lastActivity();
+    assert.deepEqual([a.kind, a.summary, a.source], ["cart.removed", "took eggs off the Cart", "dashboard"]);
+    const changes = await activity.recentChanges(groupId, new Date(Date.now() - 60_000));
+    assert.equal(changes.at(-1), "Sudhersan took eggs off the Cart (dashboard, just now)");
+    assert.ok(changes.length <= activity.MAX_CHANGES);
   });
 
   test("cart_checkout: an Instacart shopping list of the open cart (fake), recorded as a Checkout; same cart reuses it", async () => {
     const calls = instacart.calls.length;
-    const r: { available: boolean; checkoutId: string; itemCount: number; estTotalCents: number; estTotal: string; links: Link[] } = await run("cart_checkout", {});
+    const r: { available: boolean; checkoutId: string; itemCount: number; links: Link[] } = await run("cart_checkout", {});
     assert.equal(r.available, true);
     assert.equal(r.itemCount, 2);
-    assert.equal(r.estTotalCents, 1347 + 349);
-    assert.equal(r.estTotal, "$16.96");
+    noPrice(r);
     assert.equal(r.links.length, 1);
     assert.match(r.links[0].url, /^https:\/\/instacart\.example\/lists\//);
     assert.match(r.links[0].text, /instacart/i);
@@ -766,15 +766,13 @@ describe("Roomie tools against the dev DB", () => {
     assert.equal(splits.reduce((s, r) => s + r.cents, 0), 3000);
     assert.equal(splits.length, 3, "chips -> Sudhersan, dish soap -> everyone");
     const cents = Object.fromEntries(splits.map((s) => [s.memberId, s.cents]));
-    // weights: Sudhersan 1347 + 349/3, Ryan 349/3, Alex 349/3 (of 1696), scaled to 3000.
-    assert.ok(cents[member.Sudhersan] >= 2588 && cents[member.Sudhersan] <= 2590, `Sudhersan got ${cents[member.Sudhersan]}`);
-    assert.ok(Math.abs(cents[member.Ryan] - cents[member.Alex]) <= 1, "shared item split evenly");
-    assert.ok(cents[member.Ryan] >= 205 && cents[member.Ryan] <= 206);
+    // One share per item: chips -> Sudhersan, dish soap a third each: Sudhersan 4/6, Ryan 1/6, Alex 1/6 of 3000.
+    assert.deepEqual([cents[member.Sudhersan], cents[member.Ryan], cents[member.Alex]], [2000, 500, 500]);
     const items = await db.select().from(schema.cartItems).where(eq(schema.cartItems.groupId, groupId));
     assert.ok(items.filter((r) => r.name !== "oat milk").every((r) => r.status === "purchased"), "cart items marked purchased");
     const view: CartView = await run("cart_view", {});
     assert.deepEqual(view.groups, {});
-    assert.equal(view.estTotalCents, 0);
+    assert.equal((await lastActivity()).kind, "cart.purchased");
     assert.equal(row.splitMethod, "exact");
     assert.equal(row.category, "groceries");
     const [paid] = await db.select().from(schema.cartCheckouts).where(eq(schema.cartCheckouts.groupId, groupId)).orderBy(desc(schema.cartCheckouts.createdAt)).limit(1);
@@ -843,7 +841,9 @@ describe("Roomie tools against the dev DB", () => {
     assert.match(r.text, /^Tacos for 5 \(serves 5, 30 min\)/);
     assert.match(r.text, /Need: 20 corn tortillas, 2 lb ground turkey/);
     assert.match(r.text, /Have: 1 tbsp oil, 1 tsp salt/);
-    assert.match(r.text, /5 steps, all on the Cart page/);
+    assert.match(r.text, /5 steps, on the Cart page/);
+    assert.equal(r.links, undefined, "no link on a routine recipe");
+    noPrice(r);
     assert.equal((await cart.listOpenItems(ctx)).length, openBefore, "a Recipe never touches the Cart by itself");
     const [row] = await db.select().from(schema.recipes).where(eq(schema.recipes.id, tacosId));
     assert.equal(row.createdBy, member.Sudhersan);
@@ -860,11 +860,11 @@ describe("Roomie tools against the dev DB", () => {
     assert.equal(rows.length, 8);
     assert.ok(rows.every((x) => x.shared && x.status === "open" && x.addedBy === member.Sudhersan));
     const turkey = rows.find((x) => x.name === "Ground turkey")!;
-    assert.deepEqual([turkey.qty, Number(turkey.quantity), turkey.unit, turkey.estCents], ["2 lb", 2, "pound", 699]);
-    assert.equal(rows.find((x) => x.name === "Limes")?.estCents, 4 * 79);
-    assert.equal(rows.find((x) => x.name === "Corn tortillas")?.estCents, 349, "20 tortillas is one pack");
+    assert.deepEqual([turkey.qty, Number(turkey.quantity), turkey.unit, turkey.estCents], ["2 lb", 2, "pound", null]);
+    noPrice(r);
+    assert.equal(r.links, undefined);
     const view: CartView = await run("cart_view", {});
-    assert.ok(view.groups.Shared.every((i) => i.recipeTitle === "Tacos for 5"));
+    assert.ok(view.groups.Shared.every((i) => i.recipe === "Tacos for 5"));
     const again = await run("recipe_add_to_cart", { recipe: "the tacos", skip: ["onions"] });
     assert.equal(again.addedCount, 0);
     assert.equal(again.alreadyInCart.length, 8);
@@ -895,13 +895,13 @@ describe("Roomie tools against the dev DB", () => {
     const refused = await run("cart_remove", { name: "ground turkey" }, ryanRc());
     assert.equal(refused.notAllowed, true);
     assert.match(refused.message, /Only Sudhersan .* or an admin/);
-    assert.deepEqual(await run("cart_remove", { name: "kombucha" }, ryanRc()), { removed: true });
+    assert.equal((await run("cart_remove", { name: "kombucha" }, ryanRc())).removed, true);
     await run("cart_add", { items: [{ name: "kombucha" }] }, ryanRc());
     const [k] = await db.select().from(schema.cartItems).where(and(eq(schema.cartItems.groupId, groupId), eq(schema.cartItems.name, "kombucha"), eq(schema.cartItems.status, "open")));
     assert.equal(await cart.removeItemById(ctx, { id: k.id }), true, "the Admin removes Ryan's");
   });
 
-  test("cart_purchased after a checkout: exact Shares from the estimates, recipe items shared, personal to the adder", async () => {
+  test("cart_purchased after a checkout: exact Shares by item, recipe items shared, personal to the adder", async () => {
     await run("cart_add", { items: [{ name: "greek yogurt" }] }, ryanRc());
     const checkout = await run("cart_checkout", {});
     assert.equal(checkout.itemCount, 9);
@@ -920,6 +920,35 @@ describe("Roomie tools against the dev DB", () => {
     const [c] = await db.select().from(schema.cartCheckouts).where(eq(schema.cartCheckouts.id, checkout.checkoutId));
     assert.equal(c.expenseId, r.id);
     assert.equal((await cart.listOpenItems(ctx)).length, 0);
+  });
+
+  test("cart_from_photo: a list photo is read (fake vision), summarized, added as shared only on confirm; a receipt says Splitting", async () => {
+    const photos = await import("@/services/grocery-photos");
+    const list = await receipts.saveUpload("test", Buffer.from("a shopping list"), "image/jpeg");
+    const bill = await receipts.saveUpload("test", Buffer.from("a receipt"), "image/jpeg");
+    photos.setPhotoReader({ read: async ({ dataUrl }) => (Buffer.from(dataUrl.split(",")[1], "base64").toString().includes("receipt") ? JSON.stringify({ kind: "receipt" }) : photos.SAMPLE_LIST_JSON) });
+    try {
+      const read = await run("cart_from_photo", { photo_url: list.path, shared: true });
+      assert.equal(read.needsConfirmation, true);
+      assert.equal(read.kind, "list");
+      assert.equal(read.summary, "5 items: eggs (12), milk (1 gallon), bread, bananas (6), rice (2 lb)");
+      assert.equal((await cart.listOpenItems(ctx)).length, 0, "reading adds nothing");
+      noPrice(read);
+      const done = await run("cart_from_photo", { photo_url: list.path, shared: true, confirm: true, skip: ["rice"] });
+      assert.deepEqual(done.added, ["eggs", "milk", "bread", "bananas"]);
+      const open = await cart.listOpenItems(ctx);
+      assert.ok(open.length === 4 && open.every((i) => i.shared && i.estCents === null));
+      assert.equal(open.find((i) => i.name === "eggs")?.qty, "12");
+      assert.equal((await lastActivity()).summary, "put eggs, milk, bread and 1 more on the Cart for everyone");
+      const r = await run("cart_from_photo", { photo_url: bill.path });
+      assert.deepEqual([r.kind, r.splitting, r.next], ["receipt", true, "expense_from_receipt"]);
+      for (const i of open) await cart.removeItemById(ctx, { id: i.id });
+    } finally {
+      photos.setPhotoReader(null);
+      photos.clearPhotoCache();
+      await rm(list.file, { force: true });
+      await rm(bill.file, { force: true });
+    }
   });
 
   // ---------- identity: Pending members, Admins, settings, Claim links, forget me ----------

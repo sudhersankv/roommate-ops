@@ -145,27 +145,35 @@ Reply with JSON only, no prose:
 {"readable": true|false, "merchant": string|null, "date": "YYYY-MM-DD"|null, "items": [{"name": string, "price": "12.50"}], "tax": "1.23"|null, "tip": "4.00"|null, "total": "17.73"|null}
 Prices exactly as printed (strings, no currency symbol). One entry per line item (quantity x price lines: use the line total). Leave out subtotal, discounts you can't attribute, and payment lines.`;
 
+/**
+ * One photo + a prompt to the vision model on the gateway (`RECEIPT_MODEL ?? LLM_MODEL`); the model's text answer.
+ * Receipts and the Groceries photo reader (grocery-photos.ts) both go through here. `what` names the photo in errors.
+ */
+export async function askVision(prompt: string, dataUrl: string, opts: { what: string; maxTokens?: number }): Promise<string> {
+  const base = (process.env.NEON_AI_GATEWAY_BASE_URL ?? "").replace(/\/+$/, "");
+  if (!base || !process.env.NEON_AI_GATEWAY_TOKEN) throw new Error(`The AI Gateway isn't configured, so I can't read ${opts.what}s.`);
+  const res = await fetch(`${base}/v1/chat/completions`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${process.env.NEON_AI_GATEWAY_TOKEN}` },
+    body: JSON.stringify({
+      model: process.env.RECEIPT_MODEL ?? process.env.LLM_MODEL ?? "claude-sonnet-5-5",
+      // No temperature: claude-sonnet-5-5 on the gateway rejects the parameter.
+      max_tokens: opts.maxTokens ?? 1500,
+      messages: [{ role: "user", content: [{ type: "text", text: prompt }, { type: "image_url", image_url: { url: dataUrl } }] }],
+    }),
+    signal: AbortSignal.timeout(60_000),
+  });
+  if (!res.ok) {
+    console.warn(`[vision] ${opts.what}: gateway ${res.status}: ${(await res.text().catch(() => "")).slice(0, 300)}`);
+    throw new Error(`Couldn't read the ${opts.what} (gateway ${res.status}).`);
+  }
+  const body = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+  return body.choices?.[0]?.message?.content ?? "";
+}
+
 export const gatewayReceiptReader: ReceiptReader = {
   async read({ dataUrl }) {
-    const base = (process.env.NEON_AI_GATEWAY_BASE_URL ?? "").replace(/\/+$/, "");
-    if (!base || !process.env.NEON_AI_GATEWAY_TOKEN) throw new Error("The AI Gateway isn't configured, so I can't read receipts.");
-    const res = await fetch(`${base}/v1/chat/completions`, {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${process.env.NEON_AI_GATEWAY_TOKEN}` },
-      body: JSON.stringify({
-        model: process.env.RECEIPT_MODEL ?? process.env.LLM_MODEL ?? "claude-sonnet-5-5",
-        // No temperature: claude-sonnet-5-5 on the gateway rejects the parameter.
-        max_tokens: 1500,
-        messages: [{ role: "user", content: [{ type: "text", text: PROMPT }, { type: "image_url", image_url: { url: dataUrl } }] }],
-      }),
-      signal: AbortSignal.timeout(60_000),
-    });
-    if (!res.ok) {
-      console.warn(`[receipts] gateway ${res.status}: ${(await res.text().catch(() => "")).slice(0, 300)}`);
-      throw new Error(`Couldn't read the receipt (gateway ${res.status}).`);
-    }
-    const body = (await res.json()) as { choices?: { message?: { content?: string } }[] };
-    return parseModelJson(body.choices?.[0]?.message?.content ?? "");
+    return parseModelJson(await askVision(PROMPT, dataUrl, { what: "receipt" }));
   },
 };
 
@@ -238,7 +246,7 @@ export async function imageDataUrl(url: string): Promise<string> {
     const bytes = await readFile(path.join(UPLOADS, local[1], local[2]));
     return `data:${mimeOf(local[2])};base64,${bytes.toString("base64")}`;
   }
-  if (!/^https:\/\//i.test(url)) throw new Error("I can only read receipt photos sent in the chat or uploaded on the dashboard.");
+  if (!/^https:\/\//i.test(url)) throw new Error("I can only read photos sent in the chat or uploaded on the dashboard.");
   const res = await fetch(url, { signal: AbortSignal.timeout(20_000) });
   const type = res.headers.get("content-type")?.split(";")[0] ?? "";
   if (!res.ok || !type.startsWith("image/")) throw new Error("Couldn't download that photo.");

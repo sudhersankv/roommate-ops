@@ -70,7 +70,7 @@ export const DEMOS: Demo[] = [
       { who: "Theo", text: "roomie add hot cheetos", time: "4:02 PM" },
       { who: "Roomie", text: "Added. Cart's at 7 things, 3 of them hot cheetos 👀", time: "4:02 PM" },
       { who: "Nina", text: "roomie i'm ordering tonight, send the list", time: "5:48 PM", me: true },
-      { who: "Roomie", text: "7 things, about $50 🛒 I left the cheetos in. you're welcome 😈", time: "5:48 PM", button: "Open in Instacart" },
+      { who: "Roomie", text: "7 things on the list 🛒 I left the cheetos in. you're welcome 😈", time: "5:48 PM", button: "Open in Instacart" },
     ],
   },
   {

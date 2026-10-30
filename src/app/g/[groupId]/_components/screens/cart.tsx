@@ -13,7 +13,7 @@ import { Spinner } from "@/components/ui/spinner"
 import { Switch } from "@/components/ui/switch"
 import { toast } from "@/components/ui/toast"
 import { Amount, useFormatMoney } from "@/components/app/money-bits"
-import { centsToInput, currencySymbol, parseMoney } from "@/lib/money"
+import { currencySymbol, parseMoney } from "@/lib/money"
 import { computeCartSplits } from "@/services/cart-split"
 import { addCartItem, checkoutCart, purchaseCart, removeCartItem } from "../../actions"
 import { useGroup } from "../group-context"
@@ -30,7 +30,6 @@ export function CartScreen({ view, openRecipeId }: { view: CartPageView; openRec
   const [paying, setPaying] = useState(false)
   const [pending, start] = useTransition()
   const [linking, startLink] = useTransition()
-  const total = items.reduce((a, c) => a + c.estCents, 0)
 
   const add = () => {
     const clean = name.trim()
@@ -58,13 +57,7 @@ export function CartScreen({ view, openRecipeId }: { view: CartPageView; openRec
       <TopBar title="Cart" />
       <PageHeader title="Cart">
         <p className="type-body text-muted-foreground">
-          {items.length ? (
-            <>
-              About <Amount cents={total} className="font-semibold text-foreground" /> for {items.length} {items.length === 1 ? "thing" : "things"}.
-            </>
-          ) : (
-            "Nothing to buy right now."
-          )}
+          {items.length ? `${items.length} ${items.length === 1 ? "thing" : "things"} to buy.` : "Nothing to buy right now."}
         </p>
       </PageHeader>
 
@@ -179,7 +172,6 @@ function CartItems({ items }: { items: CartItemView[] }) {
             <ItemDescription>{c.shared ? `Added by ${who(c.addedBy)}` : `For ${who(c.addedBy)}`}</ItemDescription>
           </ItemContent>
           <ItemActions className="gap-1">
-            <Amount cents={c.estCents} className="type-body text-muted-foreground" />
             {c.canRemove ? (
               <Button variant="ghost" size="icon-sm" aria-label={`Remove ${c.name}`} disabled={pending} onClick={() => remove(c)}>
                 <XIcon />
@@ -207,8 +199,7 @@ function PaidForm({ items, splitMemberIds, onDone }: { items: CartItemView[]; sp
   const { group, me, name, cheer } = useGroup()
   const money = useFormatMoney()
   const [pending, start] = useTransition()
-  const est = items.reduce((a, c) => a + c.estCents, 0)
-  const [amount, setAmount] = useState(centsToInput(est))
+  const [amount, setAmount] = useState("")
   const paid = parseMoney(amount)
   const shares = paid && paid > 0 ? computeCartSplits(items, splitMemberIds, paid, me.id) : []
 
@@ -226,18 +217,18 @@ function PaidForm({ items, splitMemberIds, onDone }: { items: CartItemView[]; sp
     <>
       <DrawerHeader>
         <DrawerTitle className="type-heading">You paid for the Cart</DrawerTitle>
-        <DrawerDescription>Roomie splits the receipt by who wanted what, scaled from the estimates to what you paid.</DrawerDescription>
+        <DrawerDescription>Roomie splits what you paid by who wanted what: your own things are yours, shared things are split evenly.</DrawerDescription>
       </DrawerHeader>
       <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto p-4">
-        <Field data-invalid={paid === null || paid <= 0 ? true : undefined}>
+        <Field data-invalid={amount.trim() && (paid === null || paid <= 0) ? true : undefined}>
           <FieldLabel htmlFor="paid">Receipt total</FieldLabel>
           <InputGroup className="h-14">
             <InputGroupAddon>
               <InputGroupText className="type-heading">{currencySymbol(group.currency)}</InputGroupText>
             </InputGroupAddon>
-            <InputGroupInput id="paid" inputMode="decimal" className="type-title money" value={amount} onChange={(e) => setAmount(e.target.value)} aria-invalid={paid === null || paid <= 0 ? true : undefined} />
+            <InputGroupInput id="paid" inputMode="decimal" placeholder="0.00" className="type-title money" value={amount} onChange={(e) => setAmount(e.target.value)} aria-invalid={amount.trim() && (paid === null || paid <= 0) ? true : undefined} />
           </InputGroup>
-          <FieldDescription>The estimate was {money(est)}.</FieldDescription>
+          <FieldDescription>What the receipt says, tax included.</FieldDescription>
         </Field>
         <ItemGroup className="gap-0 rounded-3xl border py-1">
           {splitMemberIds.map((id) => {
