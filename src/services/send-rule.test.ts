@@ -24,6 +24,9 @@ describe("sendRule: simple mail sends at once", () => {
     const c = ctx({ intent: "maintenance", memberText: "roomie the sink's leaking, tell them" });
     assert.deepEqual(sendRule(draft("Hi, the kitchen sink in Apt 4B is leaking under the cabinet. Could someone take a look?"), c), { ok: true });
   });
+  test("the intro email", () => {
+    assert.deepEqual(sendRule(draft("Hi, this is the shared address for the residents of Apt 4B."), ctx({ intent: "intro", memberText: "send it" })), { ok: true });
+  });
   test("a known address on the landlord's domain, any sender there", () => {
     assert.deepEqual(sendRule(draft("Thanks!", { to: "Priya <priya.s@brookfieldresidential.com>" }), ctx()), { ok: true });
   });

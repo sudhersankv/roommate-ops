@@ -4,8 +4,11 @@
 // asking for something else within the hour. Each refusal is the question Roomie asks, in one message.
 import { addressOf, domainOf } from "@/lib/forwarded";
 
-/** reply = in a thread the landlord started; maintenance = a new repair request; other = anything else new. */
-export type SendIntent = "reply" | "maintenance" | "other";
+/**
+ * reply = in a thread the landlord started; maintenance = a new repair request; intro = the one-time intro email (fixed
+ * text, offered by Roomie and asked for by a Member); other = anything else new.
+ */
+export type SendIntent = "reply" | "maintenance" | "intro" | "other";
 
 export type SendDraft = { to: string; body: string };
 

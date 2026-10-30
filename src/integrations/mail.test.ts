@@ -38,6 +38,16 @@ describe("FakeMail", () => {
     assert.equal(mail.sent[0].subject, "Re: Annual inspection, Nov 3");
   });
 
+  test("a follow-up on a message we sent replies in its thread to whoever we sent it to", async () => {
+    const mail = new FakeMail();
+    const { inboxId } = await mail.createInbox(GROUP, "apt-4b-k2x9");
+    const first = await mail.send(inboxId, { to: "leasing@brookfieldresidential.com", subject: "Repair request: the leaking kitchen sink", text: "Hi," });
+    const again = await mail.reply(inboxId, first.messageId, { text: "Any news?", to: "leasing@brookfieldresidential.com" });
+    assert.equal(again.threadId, first.threadId);
+    assert.equal(mail.sent[1].to, "leasing@brookfieldresidential.com");
+    assert.equal(mail.sent[1].inReplyTo, first.messageId);
+  });
+
   test("getMessage returns an inbound message with its attachments; fetchAttachment returns the bytes", async () => {
     const mail = new FakeMail();
     const { inboxId } = await mail.createInbox(GROUP, "apt-4b-k2x9");

@@ -21,6 +21,7 @@ export type MailMessage = {
 };
 
 export type OutgoingMail = { to: string; subject: string; text: string; headers?: Record<string, string> };
+export type ReplyMail = { text: string; to?: string; headers?: Record<string, string> };
 export type SentRef = { messageId: string; threadId: string };
 export type AttachmentLink = { downloadUrl: string; textUrl: string | null; expiresAt: Date };
 
@@ -29,8 +30,8 @@ export interface MailClient {
   /** Idempotent per Group: asking again for the same Group returns the inbox it already has. */
   createInbox(groupId: string, username: string): Promise<{ inboxId: string; address: string }>;
   send(inboxId: string, mail: OutgoingMail): Promise<SentRef>;
-  /** In the thread of `messageId`, to its sender. */
-  reply(inboxId: string, messageId: string, mail: { text: string; headers?: Record<string, string> }): Promise<SentRef>;
+  /** In the thread of `messageId`, to its sender (or `to`: a follow-up on a message we sent). */
+  reply(inboxId: string, messageId: string, mail: ReplyMail): Promise<SentRef>;
   getMessage(inboxId: string, messageId: string): Promise<MailMessage>;
   /** Where to fetch one attachment (the url expires). */
   getAttachment(inboxId: string, messageId: string, attachmentId: string): Promise<AttachmentLink>;
@@ -80,9 +81,9 @@ export class AgentMailClient implements MailClient {
     return { messageId: r.messageId, threadId: r.threadId };
   }
 
-  async reply(inboxId: string, messageId: string, mail: { text: string; headers?: Record<string, string> }) {
+  async reply(inboxId: string, messageId: string, mail: ReplyMail) {
     const r = await this.call("reply", () =>
-      this.sdk.inboxes.messages.reply(inboxId, messageId, { text: mail.text, headers: mail.headers }, { idempotencyKey: idem(mail.headers) }),
+      this.sdk.inboxes.messages.reply(inboxId, messageId, { text: mail.text, to: mail.to, headers: mail.headers }, { idempotencyKey: idem(mail.headers) }),
     );
     return { messageId: r.messageId, threadId: r.threadId };
   }
@@ -159,17 +160,33 @@ export class FakeMail implements MailClient {
   }
 
   async send(inboxId: string, mail: OutgoingMail) {
-    const ref = { messageId: this.messageId(), threadId: this.threadId() };
-    this.sent.push({ ...mail, inboxId, ...ref, inReplyTo: null });
-    return ref;
+    return this.record({ ...mail, inboxId, messageId: this.messageId(), threadId: this.threadId(), inReplyTo: null });
   }
 
-  async reply(inboxId: string, messageId: string, mail: { text: string; headers?: Record<string, string> }) {
+  async reply(inboxId: string, messageId: string, mail: ReplyMail) {
     const original = await this.getMessage(inboxId, messageId);
     const subject = /^re:/i.test(original.subject) ? original.subject : `Re: ${original.subject}`;
-    const ref = { messageId: this.messageId(), threadId: original.threadId };
-    this.sent.push({ to: original.from, subject, text: mail.text, headers: mail.headers, inboxId, ...ref, inReplyTo: messageId });
-    return ref;
+    const to = mail.to ?? original.from;
+    return this.record({ to, subject, text: mail.text, headers: mail.headers, inboxId, messageId: this.messageId(), threadId: original.threadId, inReplyTo: messageId });
+  }
+
+  /** A sent email is in `sent` and, like on AgentMail, a message of its inbox (so it can be replied to). */
+  private record(m: SentMail): SentRef {
+    this.sent.push(m);
+    this.messages.set(`${m.inboxId}/${m.messageId}`, {
+      inboxId: m.inboxId,
+      messageId: m.messageId,
+      threadId: m.threadId,
+      from: m.inboxId,
+      to: [m.to],
+      subject: m.subject,
+      text: m.text,
+      html: null,
+      receivedAt: new Date(),
+      attachments: [],
+      labels: ["sent"],
+    });
+    return { messageId: m.messageId, threadId: m.threadId };
   }
 
   /** A test pushes mail into an inbox; returns it as getMessage would. */
