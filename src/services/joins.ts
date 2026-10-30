@@ -296,11 +296,13 @@ export async function claimSeat(code: string, account: { id: string; name: strin
         return { kind: "connected" as const, groupId: g.id, memberName: seat.displayName, memberId: seat.id, seatName: seat.displayName };
       }
     }
+    // An Admin seat is never asked for (approval never moves anyone onto one): it waits as "not on the list".
+    const wanted = seat && seat.role !== "admin" ? seat : undefined;
     const [row] = await tx
       .insert(members)
-      .values({ groupId: g.id, displayName: await pendingName(g.id, account), accountId: account.id, status: "pending", wantsSeatId: seat?.id ?? null })
+      .values({ groupId: g.id, displayName: await pendingName(g.id, account), accountId: account.id, status: "pending", wantsSeatId: wanted?.id ?? null })
       .returning();
-    return { kind: "pending" as const, groupId: g.id, memberName: row.displayName, memberId: row.id, seatName: seat?.displayName ?? null };
+    return { kind: "pending" as const, groupId: g.id, memberName: row.displayName, memberId: row.id, seatName: wanted?.displayName ?? null };
   });
 
   if (result.kind === "connected") {
@@ -407,15 +409,15 @@ export async function revokeSeat(ctx: Ctx, input: { memberId: string }): Promise
   await requireAdmin(ctx);
   const before = await seatOf(ctx, input.memberId);
   if (before.id === ctx.memberId) throw new Error("You can't disconnect yourself. Another Admin can.");
-  const [account] = before.accountId ? await db.select().from(accounts).where(eq(accounts.id, before.accountId)) : [];
-  const waitingName = account ? await pendingName(ctx.groupId, account) : null;
   const updated = await db.transaction(async (tx) => {
     const m = (await lockSeats(tx, ctx.groupId, [before.id])).get(before.id);
     if (!m || m.status === "removed") throw new Error("That person isn't in this group.");
     if (!m.accountId) throw new Error(`Nobody is connected as ${m.displayName}.`);
     if (m.status === "pending") throw new Error(`${m.displayName} is waiting for approval: decline them instead.`);
+    // Whoever is on the seat now (read under the lock), not whoever was there when the Admin clicked.
+    const [account] = await tx.select().from(accounts).where(eq(accounts.id, m.accountId));
     const [row] = await tx.update(members).set({ accountId: null }).where(eq(members.id, m.id)).returning();
-    if (m.accountId === account?.id && waitingName) await tx.insert(members).values({ groupId: ctx.groupId, displayName: waitingName, accountId: m.accountId, status: "pending" });
+    await tx.insert(members).values({ groupId: ctx.groupId, displayName: await pendingName(ctx.groupId, account ?? { name: null, email: "someone" }), accountId: m.accountId, status: "pending" });
     return row;
   });
   await recordFor(ctx, "member.revoked", `disconnected the Google account on ${updated.displayName}'s seat`, { table: "members", id: updated.id });

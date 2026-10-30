@@ -1570,6 +1570,12 @@ describe("Join links and seats", () => {
     const grab = await account("admin-grab");
     assert.equal((await joins.claimSeat(code, grab, ids.Maya, ip)).kind, "pending", "an Admin seat is never taken from the Join link, even with seats free");
     assert.equal((await row(ids.Maya)).accountId, null);
+    const [grabbed] = await db.select().from(schema.members).where(and(eq(schema.members.groupId, gid), eq(schema.members.accountId, grab.id)));
+    assert.equal(grabbed.wantsSeatId, null, "it doesn't even ask for the Admin seat");
+    const approved = await members.approveMember(ctxAs("Maya", "chat"), { memberId: grabbed.id });
+    assert.equal(approved.id, grabbed.id, "approved as a Member of their own, never onto the Admin seat");
+    assert.equal((await row(ids.Maya)).accountId, null);
+    await assert.rejects(members.approveMember(ctxAs("Maya", "chat"), { memberId: grabbed.id }), /already approved/);
     await db.delete(schema.members).where(and(eq(schema.members.groupId, gid), eq(schema.members.accountId, grab.id)));
     await joins.setParticipantCount("whatsapp", `join-${ts}@g.us`, 1);
     const dev1 = await account("dev1");

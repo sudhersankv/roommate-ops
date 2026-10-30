@@ -112,34 +112,36 @@ export async function approveMember(ctx: Ctx, input: { memberId: string }): Prom
   await requireAdmin(ctx);
   const m = await target(ctx, input.memberId);
   if (m.status === "active") throw new Error(`${m.displayName} is already approved.`);
-  if (m.wantsSeatId && m.accountId) {
-    // Locked and checked again inside the move (services/joins.ts lockSeats): a pick that just took the seat wins, and
-    // the approval falls back to a Member of their own.
-    const { lockSeats } = await import("./joins");
-    const moved = await db.transaction(async (tx) => {
-      const locked = await lockSeats(tx, ctx.groupId, [m.id, m.wantsSeatId!]);
-      const now = locked.get(m.id);
-      const seat = locked.get(m.wantsSeatId!);
-      if (!now || now.status !== "pending" || !now.accountId || !seat || seat.status !== "active" || seat.accountId) return null;
+  // One transaction under the Group and seat locks (services/joins.ts lockSeats), the request re-read inside it: two
+  // Admins approving (or one declining) at once can't both act, and a pick that just took the seat wins.
+  const { lockSeats } = await import("./joins");
+  const result = await db.transaction(async (tx) => {
+    const locked = await lockSeats(tx, ctx.groupId, m.wantsSeatId ? [m.id, m.wantsSeatId] : [m.id]);
+    const now = locked.get(m.id);
+    if (!now || now.status !== "pending") throw new Error(`${m.displayName} isn't waiting for approval anymore.`);
+    const seat = now.wantsSeatId ? locked.get(now.wantsSeatId) : undefined;
+    // Never onto an Admin seat: approving a Join link sign-in doesn't hand out Admin powers.
+    if (now.accountId && seat && seat.status === "active" && !seat.accountId && seat.role !== "admin") {
       await tx.update(members).set({ status: "removed", accountId: null, wantsSeatId: null }).where(eq(members.id, now.id));
       const [row] = await tx.update(members).set({ accountId: now.accountId }).where(and(eq(members.id, seat.id), isNull(members.accountId))).returning();
       if (!row) throw new Error(`Someone just connected as ${seat.displayName}. Approve again to add ${m.displayName} as their own Member.`);
-      return row;
-    });
-    if (moved) {
-      await recordFor(ctx, "member.approved", `approved ${m.displayName} as ${moved.displayName}`, { table: "members", id: moved.id });
-      await toldInChat(ctx, `${m.displayName} is in: connected to the dashboard as ${moved.displayName}.`);
-      return moved;
+      return { row, moved: true };
     }
+    const [row] = await tx
+      .update(members)
+      .set({ status: "active", approvedBy: ctx.memberId, approvedAt: new Date(), wantsSeatId: null })
+      .where(and(eq(members.id, now.id), eq(members.status, "pending")))
+      .returning();
+    return { row, moved: false };
+  });
+  if (result.moved) {
+    await recordFor(ctx, "member.approved", `approved ${m.displayName} as ${result.row.displayName}`, { table: "members", id: result.row.id });
+    await toldInChat(ctx, `${m.displayName} is in: connected to the dashboard as ${result.row.displayName}.`);
+    return result.row;
   }
-  const [updated] = await db
-    .update(members)
-    .set({ status: "active", approvedBy: ctx.memberId, approvedAt: new Date(), wantsSeatId: null })
-    .where(eq(members.id, m.id))
-    .returning();
   await recordFor(ctx, "member.approved", `approved ${m.displayName}`, { table: "members", id: m.id });
   if (!m.channelUserId && m.accountId) await toldInChat(ctx, `${m.displayName} is in: connected to the dashboard.`);
-  return updated;
+  return result.row;
 }
 
 /**
@@ -166,7 +168,9 @@ export async function declineMember(ctx: Ctx, input: { memberId: string }): Prom
   await requireAdmin(ctx);
   const m = await target(ctx, input.memberId);
   if (m.status !== "pending") throw new Error(`${m.displayName} isn't waiting for approval.`);
-  const [updated] = await db.update(members).set({ status: "removed" }).where(eq(members.id, m.id)).returning();
+  // Only while still Pending: an approval that just went through isn't undone.
+  const [updated] = await db.update(members).set({ status: "removed" }).where(and(eq(members.id, m.id), eq(members.status, "pending"))).returning();
+  if (!updated) throw new Error(`${m.displayName} isn't waiting for approval anymore.`);
   await recordFor(ctx, "member.declined", `declined ${m.displayName}`, { table: "members", id: m.id });
   return updated;
 }
