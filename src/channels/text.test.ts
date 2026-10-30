@@ -25,7 +25,7 @@ test("/help with every Trick learned: at most 8 lines, no 'learn' suggestion for
   assert.ok(text.split("\n").length <= 8);
   assert.match(text, /Tricks I know here: Money, Groceries and House\./);
   assert.ok(!/roomie, learn/.test(text));
-  assert.match(text, /Drop one any time: "roomie, forget house"\. Lease stuff and more are on the way\./);
+  assert.match(text, /Drop one any time: "roomie, forget house"\. Lease Inbox and more are on the way\./);
 });
 
 test("/help with nothing learned, and without a group (a DM): still short and in Tricks words", () => {

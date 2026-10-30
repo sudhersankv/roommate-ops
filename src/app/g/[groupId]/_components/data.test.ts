@@ -14,7 +14,7 @@ describe("shellView", () => {
     assert.ok(v.nav.length <= NAV_TABS);
     assert.deepEqual(v.drawer.learned.map((n) => n.label), ["Money", "Cart", "House"]);
     assert.deepEqual(v.drawer.notYet, []);
-    assert.ok(v.drawer.soon.some((s) => s.name === "Lease stuff"));
+    assert.ok(v.drawer.soon.some((s) => s.name === "Lease Inbox"));
     // Reminders aren't a Trick's: the drawer's Group section has them (dock.tsx), so no manifest owns a reminders page.
     assert.ok(!v.ownedPages.some((p) => p.prefix === "reminders"));
   });

@@ -10,7 +10,6 @@ const ACCENT: Record<string, string> = {
   money: "#86efa0",
   groceries: "#ffb547",
   house: "#7cc7ff",
-  "household-admin": "#fcd34d",
   "lease-inbox": "#fcd34d",
   research: "#5eead4",
   trips: "#ff8a5c",

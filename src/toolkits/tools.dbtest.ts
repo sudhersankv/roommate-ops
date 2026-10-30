@@ -1152,11 +1152,11 @@ describe("Roomie tools against the dev DB", () => {
     assert.equal(off.enabled, false);
     assert.ok(!off.toolkits.includes("groceries"));
     assert.equal((await run("toggle_toolkit", { toolkit: "groceries", enabled: true }, alex)).reason, "admin-only", "members are refused kindly");
-    const soon = await run("toggle_toolkit", { toolkit: "research", enabled: true });
+    const soon = await run("toggle_toolkit", { toolkit: "trips", enabled: true });
     assert.equal(soon.notAvailable, true);
     assert.equal(soon.reason, "coming-soon");
-    assert.match(soon.message, /can't learn Research yet/);
-    for (const name of ["Lease stuff", "outings", "cooking"]) {
+    assert.match(soon.message, /can't learn Trips yet/);
+    for (const name of ["Lease Inbox", "outings", "cooking", "landlord"]) {
       const r = await run("toggle_toolkit", { toolkit: name, enabled: true });
       assert.equal(r.reason, "coming-soon", `${name} is coming soon`);
       assert.match(r.message, /it's on the list/);
@@ -1168,8 +1168,8 @@ describe("Roomie tools against the dev DB", () => {
     const list = await run("list_toolkits", {}, alex);
     assert.ok(list.known.some((t: { name: string; try?: string[] }) => t.name === "Money" && t.try?.length));
     assert.ok(list.couldLearn.some((t: { name: string }) => t.name === "Groceries"));
-    assert.ok(list.comingSoon.includes("Research") && list.comingSoon.includes("Stickers"));
-    assert.ok(["Lease stuff", "Outings", "Cooking"].every((n) => list.comingSoon.includes(n)));
+    assert.ok(list.comingSoon.includes("Guests") && list.comingSoon.includes("Stickers"));
+    assert.ok(["Lease Inbox", "Outings", "Cooking", "Move-out"].every((n) => list.comingSoon.includes(n)));
     assert.ok(!list.known.concat(list.couldLearn).some((t: { name: string }) => t.name === "Core"), "core isn't a Trick");
     assert.match(list.say, /^Tricks I know here: .*Money.*\. Could learn: .*Groceries.*\. Coming soon: /);
     assert.doesNotMatch(JSON.stringify(list), /Splitting/, "the Trick is called Money");
@@ -1222,17 +1222,15 @@ describe("Roomie tools against the dev DB", () => {
     }
   });
 
-  test("set_group_settings personality (Admin): vibe, name, quirks; bad ones explained; others refused", async () => {
-    const alex = contextFor(member.Alex, "Alex", "member", "active");
-    assert.equal((await run("set_group_settings", { personality: { base: "hype" } }, alex)).reason, "admin-only");
-    const s = await run("set_group_settings", { personality: { base: "gremlin", name: "Dino", quirks: ["obsessed with the plant"] } });
-    assert.deepEqual(s.personality, { vibe: "gremlin", yourName: "Dino", quirks: ["obsessed with the plant"] });
+  test("set_group_settings has no personality (ADR 0020): one voice, whatever a Group stored", async () => {
+    const s = await run("set_group_settings", { chattiness: "normal" });
+    assert.equal("personality" in s, false);
+    // A Group that set a vibe before still reads as chill, called Roomie.
+    await personalitySvc.updatePersonality(ctx, { base: "gremlin", name: "Dino", quirks: ["obsessed with the plant"] });
     const p = await personalitySvc.getPersonality({ groupId });
-    assert.equal(p.base, "gremlin");
-    assert.equal(p.name, "Dino");
-    await assert.rejects(run("set_group_settings", { personality: { name: "the" } }), /too common/);
-    await assert.rejects(run("set_group_settings", { personality: { base: "pirate" as never } }), /rejected input|Vibe/);
-    await personalitySvc.updatePersonality(ctx, { base: "chill", name: "Roomie", quirks: [] });
+    assert.equal(p.base, "chill");
+    assert.equal(p.name, "Roomie");
+    assert.deepEqual(p.quirks, []);
   });
 
   test("the Learned style: the job counts what the model proposes, resets on an Admin's word; pet moments are claimed once", async () => {
@@ -1257,7 +1255,7 @@ describe("Roomie tools against the dev DB", () => {
     assert.ok(learned.confidence > 0 && learned.confidence < 0.1);
     const alex = contextFor(member.Alex, "Alex", "member", "active");
     await assert.rejects(personalitySvc.resetLearned({ groupId, memberId: member.Alex }), /Only an admin/);
-    assert.equal((await run("set_group_settings", { personality: { base: "mom" } }, alex)).reason, "admin-only");
+    assert.equal((await run("set_group_settings", { chattiness: "chatty" }, alex)).reason, "admin-only");
     assert.equal((await personalitySvc.resetLearned(ctx)).learned.messagesSeen, 0);
 
     const { dbMoments } = await import("@/services/pet");
@@ -1620,7 +1618,7 @@ describe("Join links and seats", () => {
     assert.equal(await joins.ensureJoinCode(gid), code, "stable until rotated");
     assert.equal(await joins.rosterSize(gid), 3);
     assert.match(setupDm!.text, /You added me to Join test \d+, so you're its admin/);
-    assert.match(setupDm!.text, /Answer the setup here or in the group: what's the group for, currency, city, vibe\./);
+    assert.match(setupDm!.text, /Answer the setup here or in the group: what's the group for, currency, city\./);
     assert.match(setupDm!.buttons![0].url, /\/claim\//);
     const tokens = await db.select().from(schema.claimTokens).where(eq(schema.claimTokens.memberId, ids.Maya));
     assert.equal(tokens.length, 1);

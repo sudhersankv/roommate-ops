@@ -828,14 +828,14 @@ export const SCENARIOS: Scenario[] = [
     expect: { tools: ["list_toolkits"], noTools: "actions", replyIncludes: [/money|split/i, /groceries/i], maxLines: 2, excludes: [...TOOLKIT_WORDS, /https?:\/\//, /coming (soon|later)|research|stickers/i] },
   },
   {
-    id: "learn-research-not-yet",
+    id: "learn-outings-not-yet",
     area: "core",
-    turn: { text: "roomie learn research" },
+    turn: { text: "roomie learn outings" },
     expect: {
       noTools: ["set_group_settings"],
       replyIncludes: [/not (ready|yet|there)|on the list|coming soon|can't learn/i],
       excludes: TOOLKIT_WORDS,
-      check: async (e) => fail(!(await toolkits.catalogFor(e.ctx)).some((t) => t.manifest.id === "research" && t.enabled), "research stays off"),
+      check: async (e) => fail(!(await toolkits.catalogFor(e.ctx)).some((t) => t.manifest.id === "outings" && t.enabled), "outings stays off"),
     },
   },
   {

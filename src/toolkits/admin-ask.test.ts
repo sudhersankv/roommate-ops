@@ -137,14 +137,12 @@ describe("checkAdminAsk", () => {
   test("settings: every field the call changes needs its own words (the Onboarding answer sets only what it says)", () => {
     assert.equal(ok("set_group_settings", { purpose: "roommates", currency: "USD", timezone: "America/Chicago" }, "roommates, USD, Chicago"), true);
     assert.equal(ok("set_group_settings", { purpose: "roommates", currency: "USD", toolkits: ["house"] }, "roommates, USD"), false, "Tricks nobody asked for");
-    assert.equal(ok("set_group_settings", { purpose: "roommates", personality: { base: "gremlin" } }, "roommates, USD"), false, "a vibe nobody asked for");
-    assert.equal(ok("set_group_settings", { purpose: "roommates", personality: { base: "hype" } }, "roommates, USD, Chicago, hype"), true);
+    assert.equal(ok("set_group_settings", { purpose: "roommates", currency: "USD" }, "roommates, USD, Chicago, hype"), true, "extra words change nothing");
     assert.equal(ok("set_group_settings", { timezone: "Europe/London" }, "we're in london"), true, "the value is enough for a time zone");
     assert.equal(ok("set_group_settings", { currency: "JPY" }, "roomie use JPY"), true);
     assert.equal(ok("set_group_settings", { chattiness: "quiet" }, "roomie be quieter please"), true);
-    assert.equal(ok("set_group_settings", { personality: { name: "Dino" } }, "roomie we'll call you Dino"), true);
     assert.equal(ok("set_group_settings", { toolkits: [] }, "roomie hi"), false);
-    assert.equal(ok("set_group_settings", { personality: { name: "roomie" }, toolkits: ["house"] }, "roomie hi"), false, "'roomie' is never evidence");
+    assert.equal(ok("set_group_settings", { name: "roomie", toolkits: ["house"] }, "roomie hi"), false, "'roomie' is never evidence");
     assert.equal(ok("set_group_settings", { currency: "EUR", reportHour: 9 }, "roomie how was the trip"), false, "an everyday word changes nothing");
     assert.equal(ok("set_group_settings", { reportDay: "monday", reportHour: 9 }, "roomie move the report to monday 9am"), true);
   });
@@ -174,7 +172,7 @@ describe("checkAdminAsk", () => {
 
   test("namesTarget splits values into words", () => {
     assert.equal(namesTarget("we're in chicago", ["America/Chicago"]), true);
-    assert.equal(namesTarget("hi", ["household-admin"]), false);
+    assert.equal(namesTarget("hi", ["lease-inbox"]), false);
   });
 });
 

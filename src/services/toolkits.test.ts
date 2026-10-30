@@ -20,7 +20,7 @@ describe("checkRequirements", () => {
   });
 
   test("integrations: missing is red and blocking, with the hint; present is green", () => {
-    const research = manifestOf("research")!;
+    const research = { ...manifestOf("outings")!, requires: { integrations: ["composio" as const] } };
     const missing = checkRequirements(research, facts({ integrations: { composio: { ok: false, hint: "COMPOSIO_API_KEY isn't set on the server." } } }));
     assert.deepEqual(missing, [{ label: "Needs a Composio key", ok: false, detail: "COMPOSIO_API_KEY isn't set on the server.", blocking: true }]);
     assert.equal(unmet(missing).length, 1);
@@ -34,7 +34,7 @@ describe("checkRequirements", () => {
   });
 
   test("env requirements read the env checker", () => {
-    const m = { ...manifestOf("research")!, requires: { env: ["SOME_KEY"] } };
+    const m = { ...manifestOf("outings")!, requires: { env: ["SOME_KEY"] } };
     assert.equal(checkRequirements(m, facts({ hasEnv: (n) => n === "SOME_KEY" }))[0].ok, true);
     assert.equal(checkRequirements(m, facts())[0].label, "Needs SOME_KEY on the server");
   });

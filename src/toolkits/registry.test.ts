@@ -55,7 +55,7 @@ describe("the manifest contract", () => {
       assert.equal(m.status, "coming-soon");
       assert.ok(!TOOLKITS.some((t) => (t.id as string) === m.id), `${m.id} is a stub`);
     }
-    assert.deepEqual(COMING_SOON.map((m) => m.id), ["household-admin", "outings", "cooking", "research", "trips", "pdf", "stickers"]);
+    assert.deepEqual(COMING_SOON.map((m) => m.id), ["lease-inbox", "outings", "cooking", "trips", "stickers", "guests", "move-out"]);
   });
 
   test("every catalog entry is complete", () => {
@@ -102,9 +102,9 @@ describe("the manifest contract", () => {
     assert.equal(findManifest("upkeep")?.id, "house");
     // Money answers to its id, its name and the words for what it does.
     for (const word of ["splitting", "split", "Money", "money", "expenses"]) assert.equal(findManifest(word)?.id, "splitting", word);
-    assert.equal(findManifest("pdfs")?.id, "pdf");
-    assert.equal(findManifest("household admin")?.id, "household-admin");
-    assert.equal(findManifest("lease stuff")?.id, "household-admin");
+    assert.equal(findManifest("lease inbox")?.id, "lease-inbox");
+    assert.equal(findManifest("the landlord")?.id, "lease-inbox");
+    assert.equal(findManifest("move out")?.id, "move-out");
     assert.equal(findManifest("outings")?.id, "outings");
     assert.equal(findManifest("cooking")?.id, "cooking");
     assert.equal(findManifest("spaceships"), undefined);

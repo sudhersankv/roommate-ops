@@ -14,7 +14,7 @@ export const core = defineManifest({
   status: "stable",
   gate: {
     criterion:
-      "Reminders at a time or date, and the group itself: members and approvals, settings (including Roomie's name, vibe and quirks), what Roomie can do and which Tricks it knows, teaching Roomie a Trick or making it learn or forget one ('roomie learn trips', 'roomie forget groceries', 'turn on chores'), lasting facts about a member ('remember I'm vegetarian', 'what do you know about me'), the dashboard link (for me, or for everyone: the group's Join link, rotating it, who may join, disconnecting someone's dashboard seat), the weekly report.",
+      "Reminders at a time or date, and the group itself: members and approvals, settings, what Roomie can do and which Tricks it knows, teaching Roomie a Trick or making it learn or forget one ('roomie learn trips', 'roomie forget groceries', 'turn on chores'), lasting facts about a member ('remember I'm vegetarian', 'what do you know about me'), the dashboard link (for me, or for everyone: the group's Join link, rotating it, who may join, disconnecting someone's dashboard seat), the weekly report.",
     examples: ["remind everyone trash goes out tuesday 8pm", "what can you do?", "learn house", "approve Priya", "send me the dashboard", "send us the dashboard"],
   },
   adminOnly: {
@@ -41,7 +41,7 @@ export const core = defineManifest({
       ask: `Learn or forget {target}? Say "roomie, yes learn {target}" or "roomie, yes forget {target}".`,
     },
     // Every field the call changes needs its own words: "roommates, USD, Chicago" sets purpose, currency and time zone,
-    // never Tricks or the personality.
+    // never Tricks.
     set_group_settings: {
       action: String.raw`\bsettings?\b`,
       fields: {
@@ -55,7 +55,6 @@ export const core = defineManifest({
         choresNudgeHour: { words: String.raw`\b(?:nudge\w*|chores? (?:reminder|ping)s?)\b` },
         reportDay: { words: String.raw`\breports?\b` },
         reportHour: { words: String.raw`\breports?\b` },
-        personality: { words: String.raw`\b(?:vibe|personality|quirks?|call (?:you|yourself)|your name|name you|hype|chill|deadpan|mom|gremlin|butler)\b` },
       },
       ask: `Change the group's settings ({target})? Say "roomie, yes change the settings".`,
     },
