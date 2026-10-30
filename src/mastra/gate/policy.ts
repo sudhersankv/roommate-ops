@@ -2,7 +2,8 @@
 // unit-tested in gate.test.ts with recorded Jev answers. gate/index.ts feeds it facts.
 //
 // Order:
-//   1. Hard trigger (voice note, reply to Roomie, @mention, the word "roomie", the dashboard): always speak.
+//   1. Hard trigger (reply to Roomie, @mention, the word "roomie", the dashboard): always speak. A voice note is
+//      not one by itself: it's transcribed only when addressed (or in the follow-up window), and then counts like text.
 //   2. Jev unavailable (error or > 2.5 s): hard triggers only, so stay quiet. Roomie never goes silent on a direct
 //      call and never spams on an outage.
 //   3. p(act) clears the Group's Chattiness threshold: act.
@@ -49,7 +50,9 @@ export type GateFacts = {
 export type GateDecision = {
   speak: boolean;
   decision: "act" | "clarify" | "maybe" | "ignore";
-  reason: "hard-trigger" | "jev-unavailable" | "jev-act" | "jev-clarify" | "follow-up" | "jev-ignore";
+  /** "paused" / "capped" / "media" never come from decideGate: the pipeline stopped before the Gate (lib/caps.ts,
+   * /admin/groups, a photo or voice note nobody addressed to Roomie). */
+  reason: "hard-trigger" | "jev-unavailable" | "jev-act" | "jev-clarify" | "follow-up" | "jev-ignore" | "paused" | "capped" | "media";
   unprompted: boolean;
   mayStaySilent: boolean;
   toolkit?: GateToolkit;
@@ -81,6 +84,15 @@ export const saysRoomie = (text: string) => TRIGGER_WORD.test(text);
 /** "roomie" always works; so does the name the Group gave its pet ("Dino, add milk"). */
 export const callsPet = (text: string, petName?: string) => saysRoomie(text) || (!!petName && saysName(text, petName));
 
+/**
+ * The message-level hard triggers: anything that isn't a group Chat line (a DM, the dashboard), /pet, a reply to
+ * Roomie, an @mention, "roomie" or the pet's name. A voice note isn't one by itself (audit H2): one replying to Roomie
+ * still is, through isReplyToRoomie, and so is a transcript that says "roomie".
+ */
+export function isHardTrigger(m: { groupChat: boolean; petted?: boolean; isReplyToRoomie?: boolean; mentionsRoomie?: boolean; isVoice?: boolean; text: string; petName?: string }): boolean {
+  return !m.groupChat || !!m.petted || !!m.isReplyToRoomie || !!m.mentionsRoomie || callsPet(m.text, m.petName);
+}
+
 export const FOLLOW_UP_WINDOW_MS = 180_000;
 export const FOLLOW_UP_MAX = 4;
 
@@ -110,6 +122,36 @@ export function inFollowUpWindow({
   const age = now.getTime() - lastRoomieAt.getTime();
   if (age < 0 || age > windowMs) return false;
   return humanSinceRoomie < maxFollowUps;
+}
+
+/* ---------- photos and voice notes (audit H2) ---------- */
+
+export type MediaFacts = {
+  kind: "photo" | "voice";
+  /** A DM to Roomie: always addressed. */
+  isPrivate?: boolean;
+  mentionsRoomie?: boolean;
+  isReplyToRoomie?: boolean;
+  /** The caption (photos; voice notes have none). */
+  caption?: string;
+  /** The Group's name for its pet, if any. */
+  petName?: string;
+  /** The follow-up window is open (counting this message). */
+  inWindow?: boolean;
+  /** Setup is waiting on this sender (an Admin, while Onboarding is open): their messages are for Roomie. */
+  setupPending?: boolean;
+};
+
+/**
+ * Whether Roomie downloads a photo or transcribes a voice note at all. A photo: when its caption or reply addresses
+ * Roomie (@mention, reply, "roomie" or the pet's name), or in the follow-up window. A voice note: when it replies to
+ * Roomie or @mentions it, in the follow-up window, or when setup is waiting on this Admin. Anything else is logged as
+ * "(photo)" / "(voice note)" and goes no further: nothing is stored and nothing goes to the transcriber.
+ */
+export function mediaWanted(f: MediaFacts): boolean {
+  if (f.isPrivate || f.mentionsRoomie || f.isReplyToRoomie || f.inWindow) return true;
+  if (f.kind === "photo") return !!f.caption && callsPet(f.caption, f.petName);
+  return !!f.setupPending;
 }
 
 /* ---------- the [silent] last resort ---------- */

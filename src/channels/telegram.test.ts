@@ -188,37 +188,149 @@ describe("incoming messages", () => {
     assert.equal(h.sent().length, 0);
   });
 
-  test("photo -> largest size stored, imageUrl + caption passed on", async () => {
+  const PHOTO = [
+    { file_id: "small", file_unique_id: "s1", width: 90, height: 90 },
+    { file_id: "big", file_unique_id: "b1", width: 1280, height: 1280 },
+  ];
+  const VOICE = { voice: { file_id: "v", file_unique_id: "v1", duration: 3, mime_type: "audio/ogg" } };
+  const toRoomie = { reply_to_message: { message_id: 1, date: 0, chat: GROUP, from: BOT_USER, text: "what's this for?" } };
+
+  test("photo addressed to Roomie -> largest size stored, imageUrl + caption passed on", async () => {
     const h = harness();
-    await h.feed(
-      message(SAM, {
-        caption: "split this",
-        photo: [
-          { file_id: "small", file_unique_id: "s1", width: 90, height: 90 },
-          { file_id: "big", file_unique_id: "b1", width: 1280, height: 1280 },
-        ],
-      }),
-    );
+    await h.feed(message(SAM, { caption: "roomie split this", photo: PHOTO }));
     assert.deepEqual(h.seen.saved, ["b1"]);
     assert.equal(h.calls.find((c) => c.method === "getFile")?.payload.file_id, "big");
     assert.equal(h.seen.incoming[0].imageUrl, "/uploads/tg/-1001/b1.jpg");
-    assert.equal(h.seen.incoming[0].text, "split this");
+    assert.equal(h.seen.incoming[0].text, "roomie split this");
   });
 
-  test("voice without a transcriber: says so once per Chat, passes nothing on", async () => {
+  test("a photo nobody addressed to Roomie is never fetched: the caption goes on as text, marked skipped", async () => {
+    const asked: unknown[] = [];
+    const h = harness({
+      deps: {
+        mediaWanted: async (q) => {
+          asked.push(q);
+          return false;
+        },
+      },
+    });
+    await h.feed(message(SAM, { caption: "look at this sunset", photo: PHOTO }));
+    await h.feed(message(SAM, { photo: PHOTO }));
+    assert.deepEqual(h.seen.saved, []);
+    assert.equal(h.calls.filter((c) => c.method === "getFile").length, 0, "nothing downloaded");
+    assert.deepEqual(
+      h.seen.incoming.map((m) => [m.text, m.skippedMedia, m.imageUrl]),
+      [
+        ["look at this sunset", "photo", undefined],
+        ["", "photo", undefined],
+      ],
+    );
+    assert.deepEqual(asked[0], { channel: "telegram", chatExternalId: "-1001", userExternalId: "12", kind: "photo", caption: "look at this sunset", isPrivate: false, mentionsRoomie: false, isReplyToRoomie: false });
+  });
+
+  test("with the pipeline wired in, its answer wins even for an addressed photo (a paused Group fetches nothing)", async () => {
+    const h = harness({ deps: { mediaWanted: async () => false } });
+    await h.feed(message(SAM, { caption: "roomie split this", photo: PHOTO }));
+    assert.deepEqual(h.seen.saved, []);
+    assert.equal(h.seen.incoming[0].skippedMedia, "photo");
+  });
+
+  test("a photo in the follow-up window (the pipeline says so) is fetched; a reply to Roomie or @mention always is", async () => {
+    const h = harness({ deps: { mediaWanted: async () => true } });
+    await h.feed(message(SAM, { photo: PHOTO }));
+    assert.equal(h.seen.incoming[0].imageUrl, "/uploads/tg/-1001/b1.jpg");
+    const r = harness();
+    await r.feed(message(SAM, { photo: PHOTO, ...toRoomie }));
+    await r.feed(message(SAM, { photo: PHOTO, caption: "@roomie_test_bot this one" }));
+    assert.equal(r.seen.saved.length, 2);
+  });
+
+  test("voice nobody addressed: never downloaded or transcribed, passed on as a skipped voice note", async () => {
+    let transcribed = 0;
+    const h = harness({ deps: { transcribe: async () => `t${++transcribed}` } });
+    await h.feed(message(SAM, VOICE));
+    assert.equal(transcribed, 0);
+    assert.equal(h.calls.filter((c) => c.method === "getFile").length, 0);
+    assert.deepEqual(h.seen.incoming.map((m) => [m.text, m.skippedMedia, m.isVoice]), [["", "voice", undefined]], "the pipeline logs it as (voice note)");
+  });
+
+  test("voice without a transcriber, replying to Roomie: says so once per Chat, passes nothing on", async () => {
     const h = harness();
-    const voice = { voice: { file_id: "v", file_unique_id: "v1", duration: 3, mime_type: "audio/ogg" } };
-    await h.feed(message(SAM, voice));
-    await h.feed(message(SAM, voice));
+    await h.feed(message(SAM, { ...VOICE, ...toRoomie }));
+    await h.feed(message(SAM, { ...VOICE, ...toRoomie }));
     assert.equal(h.seen.incoming.length, 0);
     assert.deepEqual(h.sent().map((c) => c.payload.text), ["I can't hear voice notes yet, mind typing that?"]);
   });
 
-  test("voice with a transcriber: the transcript goes through as a voice note", async () => {
+  test("voice replying to Roomie, or in the window / setup (the pipeline says so): the transcript goes through", async () => {
     const h = harness({ deps: { transcribe: async (_a, o) => `transcript of ${o.mime}` } });
-    await h.feed(message(SAM, { voice: { file_id: "v", file_unique_id: "v1", duration: 3, mime_type: "audio/ogg" } }));
+    await h.feed(message(SAM, { ...VOICE, ...toRoomie }));
     assert.equal(h.seen.incoming[0].text, "transcript of audio/ogg");
     assert.equal(h.seen.incoming[0].isVoice, true);
+    assert.equal(h.seen.incoming[0].isReplyToRoomie, true, "still addressed, so the Gate hears it");
+    const w = harness({ deps: { transcribe: async () => "roommates, USD, Chicago", mediaWanted: async (q) => q.kind === "voice" } });
+    await w.feed(message(MAYA, VOICE));
+    assert.equal(w.seen.incoming[0].text, "roommates, USD, Chicago");
+  });
+});
+
+describe("the kill switch", () => {
+  test("ROOMIE_PAUSED=1: no message reaches the pipeline, no join is onboarded, nothing is sent", async () => {
+    const h = harness();
+    const log = console.log;
+    process.env.ROOMIE_PAUSED = "1";
+    console.log = () => {};
+    try {
+      await h.feed(message(MAYA, { text: "roomie hi" }));
+      await h.feed({
+        my_chat_member: { chat: GROUP, from: MAYA, date: 0, old_chat_member: { status: "left", user: BOT_USER }, new_chat_member: { status: "member", user: BOT_USER } },
+      } as never);
+    } finally {
+      delete process.env.ROOMIE_PAUSED;
+      console.log = log;
+    }
+    assert.equal(h.seen.incoming.length, 0);
+    assert.equal(h.seen.joined.length, 0);
+    assert.equal(h.sent().length, 0);
+  });
+});
+
+describe("a paused Group", () => {
+  test("/help in its Chat, and /help or /start from its Member in a DM, get nothing", async () => {
+    const h = harness({ deps: { chatPaused: async () => true } });
+    await h.feed(message(MAYA, { text: "/help" }));
+    await h.feed(message(SAM, { text: "/help" }, { id: 12, type: "private", first_name: "Sam" }));
+    await h.feed(message(SAM, { text: "/start" }, { id: 12, type: "private", first_name: "Sam" }));
+    assert.equal(h.sent().length, 0);
+  });
+
+  test("a failed pause check counts as paused for /help", async () => {
+    const h = harness({
+      deps: {
+        chatPaused: async () => {
+          throw new Error("db down");
+        },
+      },
+    });
+    const err = console.error;
+    console.error = () => {};
+    try {
+      await h.feed(message(MAYA, { text: "/help" }));
+    } finally {
+      console.error = err;
+    }
+    assert.equal(h.sent().length, 0);
+  });
+});
+
+describe("leaving", () => {
+  test("leaveChat calls leaveChat and drops a waiting intro", async () => {
+    const h = harness();
+    h.tg.channel.introLater("-1001", { text: "intro" }, 60_000);
+    await h.tg.channel.leaveChat("-1001");
+    await h.tg.idle();
+    assert.equal(h.calls.find((c) => c.method === "leaveChat")?.payload.chat_id, "-1001");
+    assert.equal(h.sent().length, 0);
   });
 });
 

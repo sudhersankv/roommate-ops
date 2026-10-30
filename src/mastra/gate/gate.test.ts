@@ -9,6 +9,8 @@ import {
   FOLLOW_UP_MAX,
   FOLLOW_UP_WINDOW_MS,
   inFollowUpWindow,
+  isHardTrigger,
+  mediaWanted,
   parseSilent,
   saysRoomie,
   THRESHOLDS,
@@ -334,6 +336,47 @@ describe("inFollowUpWindow", () => {
   test("windowMs and maxFollowUps are tunable", () => {
     assert.equal(inFollowUpWindow({ lastRoomieAt: ago(9 * min), humanSinceRoomie: 1, now, windowMs: 10 * min }), true);
     assert.equal(inFollowUpWindow({ lastRoomieAt: ago(5_000), humanSinceRoomie: 2, now, maxFollowUps: 2 }), false);
+  });
+});
+
+describe("hard triggers (audit H2: a voice note is not one by itself)", () => {
+  const chat = (o: Partial<Parameters<typeof isHardTrigger>[0]>) => isHardTrigger({ groupChat: true, text: "", ...o });
+
+  test("a voice note in the group isn't a hard trigger; replying to Roomie with one, or saying roomie in it, is", () => {
+    assert.equal(chat({ isVoice: true, text: "did anyone see my keys" }), false);
+    assert.equal(chat({ isVoice: true, isReplyToRoomie: true, text: "yes, split it" }), true);
+    assert.equal(chat({ isVoice: true, mentionsRoomie: true, text: "hi" }), true);
+    assert.equal(chat({ isVoice: true, text: "roomie add milk" }), true);
+  });
+
+  test("DMs and the dashboard, /pet, @mention, reply, the word roomie or the pet's name", () => {
+    assert.equal(isHardTrigger({ groupChat: false, text: "anything" }), true);
+    assert.equal(chat({ petted: true }), true);
+    assert.equal(chat({ text: "dino add milk", petName: "Dino" }), true);
+    assert.equal(chat({ text: "lol same" }), false);
+  });
+});
+
+describe("mediaWanted (photos and voice notes are only fetched when Roomie is talked to)", () => {
+  test("photos: an addressed caption, a reply, an @mention, the window, a DM", () => {
+    assert.equal(mediaWanted({ kind: "photo", caption: "roomie split this" }), true);
+    assert.equal(mediaWanted({ kind: "photo", caption: "Dino split this", petName: "Dino" }), true);
+    assert.equal(mediaWanted({ kind: "photo", isReplyToRoomie: true }), true);
+    assert.equal(mediaWanted({ kind: "photo", mentionsRoomie: true }), true);
+    assert.equal(mediaWanted({ kind: "photo", inWindow: true }), true);
+    assert.equal(mediaWanted({ kind: "photo", isPrivate: true }), true);
+    assert.equal(mediaWanted({ kind: "photo", caption: "sunset" }), false);
+    assert.equal(mediaWanted({ kind: "photo" }), false);
+    assert.equal(mediaWanted({ kind: "photo", setupPending: true }), false, "setup answers are words, not pictures");
+  });
+
+  test("voice: a reply to Roomie, an @mention, the window, setup waiting on this Admin, a DM; nothing else", () => {
+    assert.equal(mediaWanted({ kind: "voice" }), false);
+    assert.equal(mediaWanted({ kind: "voice", isReplyToRoomie: true }), true);
+    assert.equal(mediaWanted({ kind: "voice", mentionsRoomie: true }), true);
+    assert.equal(mediaWanted({ kind: "voice", inWindow: true }), true);
+    assert.equal(mediaWanted({ kind: "voice", setupPending: true }), true);
+    assert.equal(mediaWanted({ kind: "voice", isPrivate: true }), true);
   });
 });
 

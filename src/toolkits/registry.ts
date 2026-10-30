@@ -9,7 +9,8 @@ import { groceries } from "./groceries/server";
 import { chores } from "./chores/server";
 import { upkeep } from "./upkeep/server";
 import { TOOLKIT_IDS, type ToolkitId } from "./manifests";
-import type { AnyTool, Toolkit } from "./types";
+import { checkAdminAsk, CONFIRM_TTL_MS } from "./admin-ask";
+import type { AdminAsk, AnyTool, Toolkit } from "./types";
 
 export { core };
 
@@ -23,15 +24,72 @@ export const toolkitById = (id: string): Toolkit | undefined => (id === "core" ?
 
 const RELAYED = Symbol("relaysNotAllowed");
 
+type ContextReader = { get(key: string): unknown };
+
+/** Roomie asked an Admin to confirm a tool call: "<groupId>:<memberId>:<toolId>" -> the call it asked about, until when. */
+type Pending = { call: string; until: number };
+const confirming = (): Map<string, Pending> => {
+  const g = globalThis as { __roomieAdminConfirms?: Map<string, Pending> };
+  return (g.__roomieAdminConfirms ??= new Map());
+};
+
+/** The call, the same however the model spells or orders it ("Eve" / "eve"), so "yes" confirms only that call. */
+export function callKey(input: unknown): string {
+  const norm = (v: unknown): unknown =>
+    typeof v === "string"
+      ? v.trim().toLowerCase()
+      : Array.isArray(v)
+        ? v.map(norm)
+        : v && typeof v === "object"
+          ? Object.fromEntries(Object.entries(v).filter(([, x]) => x !== undefined).sort(([a], [b]) => a.localeCompare(b)).map(([k, x]) => [k, norm(x)]))
+          : v;
+  return JSON.stringify(norm(input) ?? null);
+}
+
+/** Dev only (test:tools, Studio): ROOMIE_ADMIN_ASK_OFF=1 lets admin-only tools run without a message to check. Never in production. */
+const askCheckOff = () => process.env.ROOMIE_ADMIN_ASK_OFF === "1" && process.env.NODE_ENV !== "production";
+
+const NO_MESSAGE = "Admin-only changes need the admin's own message in the chat or on the dashboard's Ask Roomie.";
+
+/**
+ * The admin-only gate (audit H6, admin-ask.ts): an Admin's call runs only when their own current message (`latest` in
+ * the RequestContext) asks for it; otherwise { refused: "confirm", ask } and Roomie asks. A confirmation counts only for
+ * the same call (tool and input). No `latest` (Studio, a script) is refused, unless ROOMIE_ADMIN_ASK_OFF=1 outside
+ * production. Non-Admins go straight to the service, which refuses them.
+ */
+export function adminAskGate(toolId: string, spec: AdminAsk, input: unknown, context: unknown, now = Date.now()): { refused: "confirm"; ask: string; say: string } | null {
+  const rc = (context as { requestContext?: ContextReader } | undefined)?.requestContext;
+  if (rc?.get("role") !== "admin") return null;
+  const latest = rc.get("latest");
+  if (typeof latest !== "string") return askCheckOff() ? null : { refused: "confirm", ask: NO_MESSAGE, say: "Nothing was changed. Say this as it is." };
+  const key = `${rc.get("groupId")}:${rc.get("memberId")}:${toolId}`;
+  const call = callKey(input);
+  const pending = confirming();
+  const asked = pending.get(key);
+  const res = checkAdminAsk(spec, input, latest, !!asked && asked.until > now && asked.call === call);
+  if (res.ok) {
+    pending.delete(key);
+    return null;
+  }
+  pending.set(key, { call, until: now + CONFIRM_TTL_MS });
+  if (pending.size > 5_000) for (const [k, p] of pending) if (p.until <= now) pending.delete(k);
+  return { refused: "confirm", ask: res.ask, say: "Nothing was changed. Ask exactly this question and do nothing else until they answer." };
+}
+
 /**
  * Permission refusals (Pending member, not an Admin, not your Expense) come back as a plain result instead of a tool
- * error, so the model reads the message and relays it ("Hang on, an admin needs to approve you first...").
+ * error, so the model reads the message and relays it ("Hang on, an admin needs to approve you first..."). Admin-only
+ * tools (the manifests' adminOnly) also need the Admin's own message to ask for them.
  */
-function relayNotAllowed(tool: AnyTool): AnyTool {
+function relayNotAllowed(tool: AnyTool, toolId: string, adminAsk?: AdminAsk): AnyTool {
   const run = tool.execute;
   const marked = tool as AnyTool & { [RELAYED]?: true };
   if (!run || marked[RELAYED]) return tool;
   tool.execute = async (input, context) => {
+    if (adminAsk) {
+      const refused = adminAskGate(toolId, adminAsk, input, context);
+      if (refused) return refused;
+    }
     try {
       return await run(input, context);
     } catch (e) {
@@ -43,7 +101,10 @@ function relayNotAllowed(tool: AnyTool): AnyTool {
   return tool;
 }
 
-for (const tk of [core, ...TOOLKITS]) for (const t of Object.values(tk.tools)) relayNotAllowed(t);
+for (const tk of [core, ...TOOLKITS]) for (const [id, t] of Object.entries(tk.tools)) relayNotAllowed(t, id, tk.adminOnly?.[id]);
+
+/** Tool ids the manifests mark admin-only (tests, docs). */
+export const adminOnlyTools = () => [core, ...TOOLKITS].flatMap((tk) => Object.keys(tk.adminOnly ?? {}));
 
 /**
  * Tools for one request. `toolkit` from the Gate narrows to that Toolkit (plus core); unset or "none" gives every

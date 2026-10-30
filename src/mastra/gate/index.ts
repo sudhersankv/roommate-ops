@@ -18,16 +18,20 @@ export async function runGate(input: {
   chattiness: Chattiness;
   /** The Group's enabled Toolkits: Jev's toolkit choice is only among these (+ core, none). */
   toolkits?: readonly ToolkitId[];
+  /** The Group used up its Jev calls for the day (lib/caps.ts): no call, hard triggers only. */
+  skipJev?: boolean;
 }): Promise<GateRun> {
   const started = Date.now();
   let jev: JevAnswers | null = null;
   let jevError: string | undefined;
-  try {
-    jev = (await askJev(jevState(input), JEV_TIMEOUT_MS, input.toolkits)).answers;
-  } catch (e) {
-    jevError = e instanceof Error ? e.message : String(e);
-    console.warn(`[gate] Jev unavailable, hard triggers only: ${jevError.slice(0, 160)}`);
-  }
+  if (input.skipJev) jevError = "jev daily cap reached";
+  else
+    try {
+      jev = (await askJev(jevState(input), JEV_TIMEOUT_MS, input.toolkits)).answers;
+    } catch (e) {
+      jevError = e instanceof Error ? e.message : String(e);
+      console.warn(`[gate] Jev unavailable, hard triggers only: ${jevError.slice(0, 160)}`);
+    }
   const decision = decideGate({ hardTrigger: input.hardTrigger, inWindow: input.inWindow, jev, chattiness: input.chattiness });
   return { ...decision, jev, jevMs: Date.now() - started, ...(jevError ? { jevError } : {}) };
 }

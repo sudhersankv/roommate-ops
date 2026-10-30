@@ -34,6 +34,9 @@ import { allTools } from "./registry";
 import { expenseSummary } from "./splitting/money";
 import { assertNotProdDb } from "../../scripts/lib/prod-guard";
 
+// The tools are called directly here, with no chat message for the admin-only check to read (toolkits/admin-ask.ts).
+process.env.ROOMIE_ADMIN_ASK_OFF = "1";
+
 type Tools = ReturnType<typeof allTools>;
 type ToolId = keyof Tools;
 type ToolInput<K extends ToolId> = Parameters<NonNullable<Tools[K]["execute"]>>[0];

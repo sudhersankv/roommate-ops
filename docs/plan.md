@@ -161,6 +161,13 @@ Each step gets its own branch and PR, and you test locally before it's merged. S
 ### Landing reframe: Tricks, any group, /help (`feat/landing-tricks`)
 - [x] `/` reframed as an AI that joins any group chat and learns **Tricks** (the user-facing word for Toolkits): new headline, one hero chat with a reacting dino, Trick-labelled demos (+ a trip group), the Tricks strip from the catalog with coming-soon votes (`trick_votes`, migration 0008), a vibe strip, "What's your group?" from `PRESETS`, a share row, ember accents and CSS motion with reduced-motion fallbacks. `/help` with a 14-question FAQ ([docs/landing.md](./landing.md)).
 
+### Audit fixes: abuse limits (`fix/audit-abuse`, [audit](./audit-public-beta.md) B3, H1, H2, H3, H4, H6)
+- [x] Caps on agent runs (60/day per Member, 30 per 10 min and 200/day per Group), Jev (2,000/day per Group), new Groups (3/day per adder) and input (2,000 characters), counted in `rate_counters` (migration 0009); the breather line once a day; 429 on the dashboard's Ask.
+- [x] `ROOMIE_PAUSED=1` and per-Group pause (`groups.paused_at`) with `/admin/groups` (pause, resume, leave chat).
+- [x] Photos and voice notes only when Roomie is addressed (or in the follow-up window / setup); a voice note is no hard trigger.
+- [x] `wa_contacts` only for Members (+ `scripts/wa-contacts-prune.ts`), the WhatsApp adder allowlist, admin-only tools that need the Admin's own ask (manifest `adminOnly`).
+- **Done when:** the DB-backed checks (`npx tsx --test src/abuse.dbtest.ts`) pass on the dev branch, the prune has run on prod, and a paused test Group stays quiet on Fly.
+
 ## Parked (v2 / v3)
 
 - **v2:** Research (web search), PDF generation (itineraries, receipts, summaries), and Trip planning, which builds on Research, PDF and Splitting.
@@ -172,6 +179,7 @@ Each step gets its own branch and PR, and you test locally before it's merged. S
 
 - [ ] Create the Telegram bot with BotFather (privacy off, join groups on) and put `TELEGRAM_BOT_TOKEN` + `TELEGRAM_BOT_USERNAME` in `.env` ([docs/telegram.md](./telegram.md)).
 - [ ] Roomie's WhatsApp number: a real prepaid eSIM or SIM you **keep** (for example Tello, about $5/month). Not Google Voice and not a rented SMS-verification number. Use the WhatsApp Business app, turn on two-step verification, warm it up for a few days, and open it at least weekly. Then link it on Fly ([docs/whatsapp.md](./whatsapp.md)): `fly secrets set WHATSAPP_ENABLED=1 ROOMIE_OPERATOR_EMAILS=<you>`, deploy, scan the QR at `/admin/whatsapp`.
+- [ ] After `fix/audit-abuse` deploys: `npx tsx scripts/wa-contacts-prune.ts --yes` against prod (audit H3), set `WHATSAPP_ALLOWED_ADDERS` (or mark testers Onboarded on `/admin/beta`), and on Roomie's phone WhatsApp → Privacy → Groups → "My contacts".
 - [ ] Mastra platform: `MASTRA_PLATFORM_ACCESS_TOKEN` and `MASTRA_PROJECT_ID` in `.env`.
 - [ ] Composio: a valid `COMPOSIO_API_KEY` in `.env` (the current one is rejected with 401). Then connect Splitwise once from Settings and put the logged `COMPOSIO_SPLITWISE_AUTH_CONFIG_ID` in `.env`, and press "Get Instacart link" on the Cart page once to confirm Instacart works with no Instacart key.
 - [ ] `@neondatabase/auth` 0.7.0-beta (the newest) pins `better-auth` 1.7.6, inside GHSA-r4xp-prcw-77qf (OAuth Proxy sign-in as another user, critical) and a drizzle-adapter rate-limit advisory; fixed in 1.7.14. Roomie doesn't run the OAuth Proxy plugin itself (sign-in is Neon's hosted Better Auth behind `auth.handler()`), so the exposure is Neon's side. Upgrade as soon as Neon ships a release on a fixed better-auth (`npm view @neondatabase/auth versions`); its nested zod is already forced to the patched 4.6.7 by `overrides` in package.json (audit H7).
@@ -197,5 +205,7 @@ ALLOW_PROD_BOT=1                 lets npm run telegram / telegram:webhook poll o
 TELEGRAM_BOT_TOKEN, TELEGRAM_BOT_USERNAME, TELEGRAM_WEBHOOK_SECRET   Telegram (docs/telegram.md)
 WHATSAPP_ENABLED=1               this process holds the WhatsApp socket (docs/whatsapp.md); WA_LOG = Baileys' log level
 ROOMIE_OPERATOR_EMAILS           who may open /admin/whatsapp (comma-separated)
+WHATSAPP_ALLOWED_ADDERS          who may add Roomie to a WhatsApp group (digits, comma-separated; unset + no onboarded beta request = anyone)
+ROOMIE_PAUSED=1                  the kill switch: Roomie answers, posts and joins nothing
 JOIN_DELAY_MS, REPLY_DELAY_MS    pacing: intro delay after joining, pause before replies
 ```

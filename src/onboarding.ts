@@ -10,7 +10,9 @@
 import { and, eq } from "drizzle-orm";
 import { db, schema } from "@/db";
 import type { ChannelName } from "@/db/schema";
+import { channelFor } from "@/channels";
 import { ROSTER_GRACE_MS, type ChannelUser, type Outgoing } from "@/channels/types";
+import { caps, TOO_MANY_GROUPS } from "@/lib/caps";
 import { record } from "@/services/activity";
 import { logMessage } from "@/services/chatlog";
 import { chatFor, initToolkits, type Chat, type Group } from "@/services/groups";
@@ -68,21 +70,46 @@ export function approvalPrompt(newName: string, adminNames: string[]): string {
 
 export type JoinResult = { group: Group; members: Member[]; intro: Outgoing | null; created: boolean };
 
+/** Roomie said no to a new Chat (too many new Groups from this person today) and left it. Nothing was created. */
+export class JoinRefusedError extends Error {
+  name = "JoinRefusedError";
+}
+
+/** Say one line in the Chat, then leave it (through the registered Channel; logged when there's none). */
+export async function sayAndLeave(chat: Pick<ChatRef, "channel" | "externalId">, text: string): Promise<void> {
+  const channel = channelFor(chat.channel);
+  if (!channel) {
+    console.log(`[onboarding] no ${chat.channel} channel connected; would say "${text}" and leave ${chat.externalId}`);
+    return;
+  }
+  await channel.sendToChat(chat.externalId, { text }).catch((e) => console.warn(`[onboarding] couldn't say goodbye in ${chat.externalId}`, e));
+  await channel.leaveChat(chat.externalId).catch((e) => console.warn(`[onboarding] couldn't leave ${chat.externalId}`, e));
+}
+
 /**
  * Roomie was added to a Chat by `addedBy`, with `participants` already in it. Creates the Group, its Chat and
  * Members, switches every Toolkit on until the Group says what it's for, and returns the intro to post. Calling it
- * again for a known Chat changes nothing and returns `intro: null`.
+ * again for a known Chat changes nothing and returns `intro: null`. A person who already added Roomie to 3 new Groups
+ * today (lib/caps.ts) gets one line, Roomie leaves, and this throws JoinRefusedError. The dev Channel isn't capped.
  */
 export async function onGroupJoined(
   chat: ChatRef,
   participants: ChannelUser[],
   addedBy: ChannelUser,
-  opts: { dmHandle?: string } = {},
+  opts: { dmHandle?: string; newGroupAllowed?: (channel: string, userExternalId: string) => Promise<boolean> } = {},
 ): Promise<JoinResult> {
   const known = await chatFor(chat.channel, chat.externalId);
   if (known) {
     const rows = await db.select().from(schema.members).where(eq(schema.members.groupId, known.group.id));
     return { group: known.group, members: rows, intro: null, created: false };
+  }
+  if (chat.channel !== "dev") {
+    const allowed = opts.newGroupAllowed ?? (async (ch: string, id: string) => (await caps()).newGroup(ch, id));
+    if (!(await allowed(chat.channel, addedBy.userExternalId))) {
+      console.log(`[caps] ${chat.channel} user ${addedBy.userExternalId} added Roomie to too many new groups today; leaving ${chat.externalId}`);
+      await sayAndLeave(chat, TOO_MANY_GROUPS);
+      throw new JoinRefusedError(TOO_MANY_GROUPS);
+    }
   }
 
   const [group] = await db
@@ -103,7 +130,7 @@ export async function onGroupJoined(
   await initToolkits(group.id);
   await record(group.id, null, "group.created", `joined the chat. ${admin.displayName} is the first admin`, { table: "groups", id: group.id });
 
-  const intro = { text: introMessage(admin.displayName, opts) };
+  const intro = { text: introMessage(admin.displayName, { dmHandle: opts.dmHandle }) };
   await logMessage(group.id, null, intro.text); // opens the follow-up window for the answers
   return { group: withCreator, members: [admin, ...others], intro, created: true };
 }

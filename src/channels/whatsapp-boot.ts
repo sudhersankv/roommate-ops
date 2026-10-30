@@ -23,7 +23,7 @@ const clip = (s: string, n = 90) => {
 };
 
 export async function whatsappDeps(): Promise<WhatsAppDeps> {
-  const [{ respondToIncoming }, onboarding, groups, members, { saveUpload }, voice, { pgContacts }] = await Promise.all([
+  const [{ respondToIncoming, mediaWantedFor }, onboarding, groups, members, { saveUpload }, voice, { pgContacts }, { whatsappAdmission }, kill] = await Promise.all([
     import("@/pipeline"),
     import("@/onboarding"),
     import("@/services/groups"),
@@ -31,6 +31,8 @@ export async function whatsappDeps(): Promise<WhatsAppDeps> {
     import("@/services/receipts"),
     import("@/lib/voice"),
     import("./whatsapp-store"),
+    import("@/services/whatsapp-access"),
+    import("@/lib/kill-switch"),
   ]);
   return {
     // One "[roomie]" line per message (what the Gate decided, the tools, the time) and one per reply, for bug reports.
@@ -39,20 +41,31 @@ export async function whatsappDeps(): Promise<WhatsAppDeps> {
       const r = await respondToIncoming(msg);
       const tools = r.toolCalls.filter((t) => t !== "updateWorkingMemory");
       const gate = `${r.gate.decision}/${r.gate.reason}${r.gate.toolkit ? `/${r.gate.toolkit}` : ""}`;
-      console.log(`[roomie] ${msg.isPrivate ? "dm" : "chat"} ${msg.chatExternalId} ${msg.userName}: ${clip(msg.text)} | gate ${gate}${tools.length ? ` | tools ${tools.join(",")}` : ""} | ${((Date.now() - started) / 1000).toFixed(1)}s${r.traceId ? ` | trace ${r.traceId}` : ""}`);
+      console.log(`[roomie] ${msg.isPrivate ? "dm" : "chat"} ${msg.chatExternalId} ${msg.userName}: ${clip(msg.text)} | gate ${gate}${tools.length ? ` | tools ${tools.join(",")}` : ""}${r.capped ? ` | capped ${r.capped}` : ""} | ${((Date.now() - started) / 1000).toFixed(1)}s${r.traceId ? ` | trace ${r.traceId}` : ""}`);
       console.log(`[roomie]   ${r.out ? `-> ${clip(r.out.text, 140)}${r.out.buttons?.length ? ` [${r.out.buttons.length} link${r.out.buttons.length === 1 ? "" : "s"}]` : ""}` : "(stays quiet)"}`);
       return r.out;
     },
     onGroupJoined: async (chat, participants, addedBy, opts) => {
-      const res = await onboarding.onGroupJoined(chat, participants, addedBy, opts);
-      console.log(`[roomie] joined ${clip(chat.title ?? "")} (${chat.externalId}), added by ${addedBy.name}; ${res.created ? `new Group ${res.group.id} with ${res.members.length} Members, intro queued` : "already known"}`);
-      return res;
+      if (kill.roomiePaused()) {
+        kill.logPaused(`joining ${chat.externalId}`);
+        return { intro: null };
+      }
+      try {
+        const res = await onboarding.onGroupJoined(chat, participants, addedBy, opts);
+        console.log(`[roomie] joined ${clip(chat.title ?? "")} (${chat.externalId}), added by ${addedBy.name}; ${res.created ? `new Group ${res.group.id} with ${res.members.length} Members, intro queued` : "already known"}`);
+        return res;
+      } catch (e) {
+        if (e instanceof onboarding.JoinRefusedError) return { intro: null, refused: true };
+        throw e;
+      }
     },
     onParticipantJoined: async (groupId, user) => {
       const res = await onboarding.onParticipantJoined(groupId, user);
       console.log(`[roomie] ${user.name} joined group ${groupId}: ${res.member.status}${res.announce ? ", asked the Admins to approve" : ""}`);
-      return res;
+      // Paused (everywhere, or this Group): the Pending Member is still recorded, the approval ask isn't posted.
+      return kill.roomiePaused() || (await groups.getGroup(groupId))?.pausedAt ? { ...res, announce: null } : res;
     },
+    chatPaused: async (jid) => !!(await groups.chatFor("whatsapp", jid))?.group.pausedAt,
     groupIdOfChat: async (jid) => (await groups.chatFor("whatsapp", jid))?.group.id,
     chatsOfUser: async (userId) => (await groups.chatsOfChannelUser("whatsapp", userId)).map((c) => c.externalId),
     tricksIn: async (jid) => {
@@ -71,6 +84,8 @@ export async function whatsappDeps(): Promise<WhatsAppDeps> {
       return saved.url || saved.path;
     },
     ...(process.env.OPENROUTER_API_KEY ? { transcribe: voice.transcribe } : {}),
+    mediaWanted: mediaWantedFor,
+    admission: whatsappAdmission,
   };
 }
 

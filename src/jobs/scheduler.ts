@@ -4,6 +4,7 @@
 // (jobs/style-note.ts, posts nothing), recurring Expenses, Splitwise mirror pushes and the daily chat retention sweep.
 // Posts Roomie makes on its own are claimed in scheduled_posts first, so each goes out once per day / week even across
 // restarts (ADR 0001: at most one chores nudge per Group per day, nothing when nothing is due). The tick never rejects.
+// ROOMIE_PAUSED=1 skips the whole tick; a paused Group (groups.paused_at) gets no reminders or posts until resumed.
 import { deliver, deliverPrivate } from "@/channels";
 import { CantMessagePrivatelyError } from "@/channels/types";
 import { groupsWithChat } from "@/services/groups";
@@ -13,6 +14,9 @@ import { choresNudgeText } from "@/services/report";
 import { choresNudgeWindow, claimPost, getSchedule, releasePost, weeklyReportWindow, type PostKind } from "@/services/schedule";
 import { runRecurring } from "@/services/recurring";
 import { runSplitwiseOutbox } from "@/services/splitwise";
+import { pausedGroupIds } from "@/services/operator-groups";
+import { logPaused, roomiePaused } from "@/lib/kill-switch";
+import { pruneRateCounters } from "@/lib/rate-counters";
 import { groupReportText } from "./report-text";
 import { runRetention } from "./retention";
 import { refreshStyleNote } from "./style-note";
@@ -56,11 +60,12 @@ export async function deliverReminder(r: Reminder): Promise<"chat" | "private"> 
   }
 }
 
-export async function sendDueReminders(now: Date, groupId?: string): Promise<number> {
+export async function sendDueReminders(now: Date, groupId?: string, paused: ReadonlySet<string> = new Set()): Promise<number> {
   const s = state();
   let due: Reminder[];
   try {
-    due = await dueReminders(now, groupId);
+    // A paused Group's reminders wait (unclaimed) until it's resumed.
+    due = (await dueReminders(now, groupId)).filter((r) => !paused.has(r.groupId));
   } catch (e) {
     console.error("scheduler: dueReminders failed", e);
     return 0;
@@ -129,7 +134,7 @@ export async function weeklyReportJob(g: GroupRow, now: Date): Promise<string | 
   return (await postOnce(g, "report.weekly", w.period, text)) ? text : null;
 }
 
-async function runGroupJobs(now: Date) {
+async function runGroupJobs(now: Date, paused: ReadonlySet<string>) {
   let all: GroupRow[];
   try {
     all = await groupsWithChat();
@@ -138,6 +143,7 @@ async function runGroupJobs(now: Date) {
     return;
   }
   for (const g of all) {
+    if (paused.has(g.id)) continue; // an operator paused it (/admin/groups): no posts of its own
     try {
       await weeklyReportJob(g, now);
     } catch (e) {
@@ -166,6 +172,11 @@ async function dailyRetention(now: Date) {
     await runRetention(now);
   } catch (e) {
     console.error("scheduler: retention failed", e);
+  }
+  try {
+    await pruneRateCounters(now);
+  } catch (e) {
+    console.error("scheduler: rate counter prune failed", e);
   }
 }
 
@@ -197,9 +208,20 @@ async function splitwiseOutbox(now: Date) {
 
 /** One scheduler pass. Never rejects. */
 export async function tick(now = new Date()): Promise<void> {
+  if (roomiePaused()) {
+    logPaused("the scheduler tick");
+    return;
+  }
   try {
-    await sendDueReminders(now);
-    await runGroupJobs(now);
+    // Fail closed: when we can't tell which Groups are paused, nothing goes out to any Group this tick.
+    const paused = await pausedGroupIds().catch((e) => {
+      console.error("scheduler: pausedGroupIds failed; skipping reminders and group posts this tick", e);
+      return null;
+    });
+    if (paused) {
+      await sendDueReminders(now, undefined, paused);
+      await runGroupJobs(now, paused);
+    }
     await recurringExpenses(now);
     await splitwiseOutbox(now);
     await dailyRetention(now);

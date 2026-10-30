@@ -63,6 +63,10 @@ class FakeSocket implements WaSocket {
     if (!m) throw new Error("no such group");
     return m;
   }
+  left: string[] = [];
+  async groupLeave(jid: string) {
+    this.left.push(jid);
+  }
   async requestPairingCode(phone: string) {
     this.pairingFor.push(phone);
     return "ABCD1234";
@@ -284,23 +288,62 @@ describe("incoming messages", () => {
     assert.equal(h.seen.incoming[0].text, "roomie split this");
   });
 
-  test("voice note -> transcript with isVoice; without a transcriber, one 'can't hear' line per Chat", async () => {
+  const toRoomie = { participant: ROOMIE_PN, stanzaId: "r1" };
+
+  test("voice note replying to Roomie -> transcript with isVoice; without a transcriber, one 'can't hear' line per Chat", async () => {
     const h = harness();
     h.markKnown();
     await h.open();
-    await h.feed([msg({ message: { audioMessage: { ptt: true, mimetype: "audio/ogg; codecs=opus" } } })]);
+    await h.feed([msg({ message: { audioMessage: { ptt: true, mimetype: "audio/ogg; codecs=opus", contextInfo: toRoomie } } })]);
     assert.equal(h.seen.transcribed, 1);
     assert.equal(h.seen.incoming[0].isVoice, true);
+    assert.equal(h.seen.incoming[0].isReplyToRoomie, true, "still addressed, so the Gate hears it");
     assert.equal(h.seen.incoming[0].text, "remind me to pay rent");
 
     const deaf = harness({ transcribe: false });
     deaf.markKnown();
     await deaf.open();
-    const voice = () => msg({ message: { audioMessage: { ptt: true } } });
+    const voice = () => msg({ message: { audioMessage: { ptt: true, contextInfo: toRoomie } } });
     await deaf.feed([voice()]);
     await deaf.feed([voice()]);
     assert.deepEqual(deaf.sock().sent.map((s) => s.text), [NO_VOICE]);
     assert.equal(deaf.seen.incoming.length, 0);
+  });
+
+  test("a voice note or photo nobody addressed is never downloaded, stored or transcribed", async () => {
+    const asked: unknown[] = [];
+    const h = harness({
+      deps: {
+        mediaWanted: async (q) => {
+          asked.push(q);
+          return false;
+        },
+      },
+    });
+    h.markKnown();
+    await h.open();
+    await h.feed([msg({ message: { audioMessage: { ptt: true } } })]);
+    await h.feed([msg({ key: { id: "PHOTO2" }, message: { imageMessage: { caption: "sunset", mimetype: "image/jpeg" } } })]);
+    assert.equal(h.seen.transcribed, 0);
+    assert.deepEqual(h.seen.images, []);
+    assert.deepEqual(
+      h.seen.incoming.map((m) => [m.text, m.skippedMedia, m.isVoice, m.imageUrl]),
+      [
+        ["", "voice", undefined, undefined],
+        ["sunset", "photo", undefined, undefined],
+      ],
+    );
+    assert.deepEqual(asked[0], { channel: "whatsapp", chatExternalId: GROUP, userExternalId: MAYA.pn, kind: "voice", caption: "", isPrivate: false, mentionsRoomie: false, isReplyToRoomie: false });
+  });
+
+  test("in the follow-up window or during setup (the pipeline says so), media is handled", async () => {
+    const h = harness({ deps: { mediaWanted: async () => true } });
+    h.markKnown();
+    await h.open();
+    await h.feed([msg({ message: { audioMessage: { ptt: true } } })]);
+    await h.feed([msg({ key: { id: "PHOTO3" }, message: { imageMessage: { mimetype: "image/jpeg" } } })]);
+    assert.equal(h.seen.transcribed, 1);
+    assert.deepEqual(h.seen.images, ["PHOTO3"]);
   });
 
   test("ignored: our own, history ('append'), status broadcasts, replays from before the connect, duplicates", async () => {
@@ -489,6 +532,223 @@ describe("groups", () => {
     h.sock().emit("groups.update", [{ id: GROUP, subject: "Apt 4C" }]);
     await h.settle();
     assert.deepEqual(h.seen.renamed, [[GROUP, "Apt 4C"]]);
+  });
+
+  test("added by someone the beta allowlist doesn't know: one line, Roomie leaves, no Group and nothing stored", async () => {
+    const asked: string[] = [];
+    const h = harness({
+      deps: {
+        admission: async (u) => {
+          asked.push(u.userExternalId);
+          return { ok: false, say: "I'm in a small beta right now: ask for access at https://roomie.example/#whatsapp-beta" };
+        },
+      },
+    });
+    await h.open();
+    h.sock().emit("group-participants.update", { id: GROUP, author: MAYA.lid, authorPn: MAYA.pn, action: "add", participants: [{ id: ROOMIE_LID, phoneNumber: ROOMIE_PN }] });
+    await h.settle();
+    assert.deepEqual(asked, [MAYA.pn]);
+    assert.equal(h.seen.joined.length, 0, "no Group");
+    assert.deepEqual(h.seen.saved, [], "no roster stored");
+    assert.deepEqual(h.seen.rekeyed, []);
+    assert.deepEqual(h.sock().sent.map((s) => s.text), ["I'm in a small beta right now: ask for access at https://roomie.example/#whatsapp-beta"]);
+    assert.deepEqual(h.sock().left, [GROUP]);
+    await h.feed([msg()]);
+    assert.equal(h.seen.incoming.length, 0, "messages from a refused group go nowhere");
+    assert.equal(h.sock().sent.length, 1, "and the line isn't repeated");
+  });
+
+  test("joined while offline: the first sender isn't taken as the adder; the allowlist checks the group's creator", async () => {
+    const asked: string[] = [];
+    const h = harness({
+      meta: groupMeta([{ id: MAYA.lid, phoneNumber: MAYA.pn, admin: "admin" }, { id: SAM.lid, phoneNumber: SAM.pn, admin: "superadmin" }, { id: ROOMIE_LID, phoneNumber: ROOMIE_PN }], { owner: SAM.pn }),
+      deps: {
+        admission: async (u) => {
+          asked.push(u.userExternalId);
+          return u.userExternalId === MAYA.pn ? { ok: true } : { ok: false, say: "beta only" };
+        },
+      },
+    });
+    await h.open();
+    await h.feed([msg()]); // Maya (allowlisted) speaks first; Sam created the group
+    assert.deepEqual(asked, [SAM.pn]);
+    assert.equal(h.seen.joined.length, 0);
+    assert.equal(h.seen.incoming.length, 0);
+    assert.deepEqual(h.sock().left, [GROUP]);
+  });
+
+  test("joined while offline with an allowlist on and no creator or superadmin to go by: refused", async () => {
+    const h = harness({
+      meta: groupMeta([{ id: MAYA.lid, phoneNumber: MAYA.pn }, { id: ROOMIE_LID, phoneNumber: ROOMIE_PN }]),
+      deps: { admission: async (u) => (u.userExternalId === MAYA.pn ? { ok: true } : { ok: false, say: "beta only" }) },
+    });
+    await h.open();
+    await h.feed([msg()]);
+    assert.equal(h.seen.joined.length, 0, "never admitted because of who spoke first");
+  });
+
+  test("a refusal lasts an hour, and a new 'added Roomie' event is judged afresh", async () => {
+    let allowSam = false;
+    const asked: string[] = [];
+    const h = harness({
+      deps: {
+        admission: async (u) => {
+          asked.push(u.userExternalId);
+          return allowSam && u.userExternalId === SAM.pn ? { ok: true } : { ok: false, say: "beta only" };
+        },
+      },
+    });
+    await h.open();
+    const add = (author: { lid: string; pn: string }) =>
+      h.sock().emit("group-participants.update", { id: GROUP, author: author.lid, authorPn: author.pn, action: "add", participants: [{ id: ROOMIE_LID, phoneNumber: ROOMIE_PN }] });
+    add(MAYA);
+    await h.settle();
+    await h.feed([msg()]);
+    assert.deepEqual(asked, [MAYA.pn], "inside the hour, messages don't re-check");
+    allowSam = true;
+    add(SAM);
+    await h.settle();
+    assert.equal(h.seen.joined.length, 1, "Sam (allowed) added Roomie back: it joins");
+  });
+
+  test("a refused group is looked at again after an hour", async () => {
+    const asked: string[] = [];
+    const h = harness({
+      deps: {
+        admission: async (u) => {
+          asked.push(u.userExternalId);
+          return { ok: false, say: "beta only" };
+        },
+      },
+    });
+    await h.open();
+    h.sock().emit("group-participants.update", { id: GROUP, author: MAYA.lid, authorPn: MAYA.pn, action: "add", participants: [{ id: ROOMIE_LID, phoneNumber: ROOMIE_PN }] });
+    await h.settle();
+    h.advance(61 * 60 * 1000);
+    await h.feed([msg({ ts: NOW + 61 * 60 * 1000 })]);
+    assert.equal(asked.length, 2);
+  });
+
+  test("an allowed adder: the roster's pairs are stored (they're Members now)", async () => {
+    const h = harness({ deps: { admission: async () => ({ ok: true }) } });
+    await h.open();
+    h.sock().emit("group-participants.update", { id: GROUP, author: MAYA.lid, authorPn: MAYA.pn, action: "add", participants: [{ id: ROOMIE_LID, phoneNumber: ROOMIE_PN }] });
+    await h.settle();
+    assert.equal(h.seen.joined.length, 1);
+    assert.deepEqual(
+      h.seen.saved.map((c) => c.lid),
+      [MAYA.lid, SAM.lid],
+      "pairs for the Members (Dev's number is hidden: no pair)",
+    );
+  });
+
+  test("Onboarding said no (too many new Groups today): nothing stored, the group is left alone afterwards", async () => {
+    const h = harness({ deps: { onGroupJoined: async () => ({ intro: null, refused: true }) } });
+    await h.open();
+    h.sock().emit("group-participants.update", { id: GROUP, author: MAYA.lid, authorPn: MAYA.pn, action: "add", participants: [{ id: ROOMIE_LID, phoneNumber: ROOMIE_PN }] });
+    await h.settle();
+    assert.deepEqual(h.seen.saved, []);
+    await h.feed([msg()]);
+    assert.equal(h.seen.incoming.length, 0);
+  });
+
+  test("LID mappings Baileys learns are kept in memory only; a Member's pair is stored when they speak", async () => {
+    const h = harness();
+    h.markKnown();
+    await h.open();
+    h.sock().emit("lid-mapping.update", { lid: SAM.lid, pn: SAM.pn });
+    h.sock().emit("lid-mapping.update", { lid: "880000000000077@lid", pn: "15551110077@s.whatsapp.net" });
+    await h.settle();
+    assert.equal(h.seen.saved.length, 0, "strangers' numbers aren't stored");
+    await h.wa.channel.sendPrivate(SAM.lid, { text: "hi" });
+    assert.equal(h.sock().sent.at(-1)?.jid, SAM.pn, "but the pair still works in memory");
+    await h.feed([msg({ key: { participant: SAM.lid, participantAlt: undefined }, pushName: "Sam" })]);
+    assert.equal(h.seen.saved.map((c) => c.lid)[0], SAM.lid);
+    assert.deepEqual(h.seen.rekeyed, [[SAM.lid, SAM.pn]]);
+  });
+
+  test("a DM from a Member stored under their LID, whose number shows up now: moved to the phone JID, and answered", async () => {
+    let moved = false;
+    const rekeyed: string[][] = [];
+    const h = harness({
+      deps: {
+        chatsOfUser: async (id) => (id === SAM.lid && !moved) || (id === SAM.pn && moved) ? [GROUP] : [],
+        rekeyUser: async (lid, pn) => {
+          rekeyed.push([lid, pn]);
+          moved = true;
+        },
+      },
+    });
+    await h.open();
+    await h.feed([msg({ key: { remoteJid: SAM.lid, remoteJidAlt: SAM.pn, participant: undefined, participantAlt: undefined }, pushName: "Sam", message: { conversation: "send me the dashboard" } })]);
+    assert.deepEqual(rekeyed, [[SAM.lid, SAM.pn]]);
+    assert.equal(h.seen.incoming[0]?.userExternalId, SAM.pn);
+    assert.equal(h.seen.incoming[0]?.isPrivate, true);
+  });
+
+  test("the same, when the move doesn't happen: carried on as the LID, still answered", async () => {
+    const h = harness({ deps: { chatsOfUser: async (id) => (id === SAM.lid ? [GROUP] : []) } });
+    await h.open();
+    await h.feed([msg({ key: { remoteJid: SAM.lid, remoteJidAlt: SAM.pn, participant: undefined, participantAlt: undefined }, pushName: "Sam", message: { conversation: "hi" } })]);
+    assert.equal(h.seen.incoming[0]?.userExternalId, SAM.lid);
+  });
+
+  test("a Member stored under their LID who later speaks with only their phone JID still moves (no second Member)", async () => {
+    const h = harness();
+    h.markKnown();
+    await h.open();
+    h.sock().emit("lid-mapping.update", { lid: SAM.lid, pn: SAM.pn });
+    await h.settle();
+    await h.feed([msg({ key: { participant: SAM.pn, participantAlt: undefined }, pushName: "Sam" })]);
+    assert.deepEqual(h.seen.rekeyed, [[SAM.lid, SAM.pn]]);
+  });
+
+  test("/help in a paused Group's chat gets nothing", async () => {
+    const h = harness({ deps: { chatPaused: async () => true } });
+    h.markKnown();
+    await h.open();
+    await h.feed([msg({ message: { conversation: "/help" } })]);
+    assert.deepEqual(h.sock().sent, []);
+  });
+
+  test("a DM from someone in no Group stores nothing", async () => {
+    const h = harness({ deps: { chatsOfUser: async () => [] } });
+    await h.open();
+    await h.feed([msg({ key: { remoteJid: SAM.lid, remoteJidAlt: SAM.pn, participant: undefined, participantAlt: undefined }, pushName: "Sam", message: { conversation: "hi" } })]);
+    assert.deepEqual(h.seen.saved, []);
+    assert.deepEqual(h.seen.names, []);
+  });
+
+  test("ROOMIE_PAUSED=1: messages and joins are ignored (not even a read receipt)", async () => {
+    const h = harness();
+    h.markKnown();
+    await h.open();
+    const log = console.log;
+    process.env.ROOMIE_PAUSED = "1";
+    console.log = () => {};
+    try {
+      await h.feed([msg()]);
+      h.reset();
+      h.sock().emit("groups.upsert", [groupMeta([{ id: SAM.pn, admin: "superadmin" }, { id: ROOMIE_PN }], { author: SAM.pn })]);
+      await h.settle();
+    } finally {
+      delete process.env.ROOMIE_PAUSED;
+      console.log = log;
+    }
+    assert.equal(h.seen.incoming.length, 0);
+    assert.equal(h.seen.joined.length, 0);
+    assert.deepEqual(h.sock().read, []);
+    assert.deepEqual(h.sock().sent, []);
+  });
+
+  test("leaveChat leaves the group and drops a waiting intro", async () => {
+    const h = harness();
+    await h.open();
+    h.wa.channel.introLater(GROUP, { text: "intro" }, 60_000);
+    await h.wa.channel.leaveChat(GROUP);
+    await h.wa.idle();
+    assert.deepEqual(h.sock().left, [GROUP]);
+    assert.deepEqual(h.sock().sent, []);
   });
 });
 
