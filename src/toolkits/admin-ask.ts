@@ -64,7 +64,8 @@ function affirmedMatch(clause: string, source: string): RegExpExecArray | null {
   }
   for (let m = re.exec(clause); m; m = re.exec(clause)) {
     if (m[0] === "") return NEG.test(clause) ? null : m;
-    if (!NEG.test(clause.slice(0, m.index))) return m;
+    // Nothing negated before it, nor inside it past its first word ("let Priya not in").
+    if (!NEG.test(clause.slice(0, m.index)) && !NEG.test(m[0].replace(/^\S+\s*/u, ""))) return m;
   }
   return null;
 }
@@ -97,6 +98,19 @@ function changedFields(input: unknown): [string, unknown][] {
 const fieldAsked = (field: AdminField | undefined, value: unknown, text: string) =>
   !!field && (matches(text, field.words) || (!!field.byValue && clausesOf(text).some((c) => !NEG.test(c) && namesTarget(c, leaves(value)))));
 
+/** A clause with a negation names the field ("not the currency", "don't touch the report"): it's excluded. */
+const fieldExcluded = (field: AdminField | undefined, value: unknown, text: string) =>
+  !!field &&
+  clausesOf(text).some((c) => {
+    if (!NEG.test(c)) return false;
+    try {
+      if (new RegExp(field.words, "iu").test(c)) return true;
+    } catch {
+      /* a bad pattern names nothing */
+    }
+    return namesTarget(c, leaves(value));
+  });
+
 /**
  * Whether `latest` (the Admin's own words in this message) asks for this tool call. `confirming`: Roomie asked about
  * this very call in the last 10 minutes, so "yes" plus the action or the target is enough.
@@ -105,6 +119,8 @@ export function checkAdminAsk(spec: AdminAsk, input: unknown, latest: string, co
   const yes = confirming && YES.test(latest);
   if (spec.fields) {
     const changed = changedFields(input);
+    const excluded = changed.filter(([k, v]) => fieldExcluded(spec.fields![k], v, latest));
+    if (excluded.length) return { ok: false, ask: spec.ask.replaceAll("{target}", excluded.map(([k]) => k).join(", ")) };
     const unasked = changed.filter(([k, v]) => !fieldAsked(spec.fields![k], v, latest));
     const asked = changed.length ? !unasked.length : namesAction(latest, spec);
     if (asked) return { ok: true };

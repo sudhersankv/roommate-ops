@@ -86,6 +86,14 @@ describe("checkAdminAsk", () => {
     assert.equal(ok("set_group_settings", { currency: "EUR", reportHour: 9 }, "yes currency", true), false);
     assert.equal(ok("set_group_settings", { currency: "EUR", reportHour: 9 }, "yes, currency and the report", true), true);
     assert.equal(ok("set_group_settings", { currency: "EUR", reportHour: 9 }, "roomie, yes change the settings", true), true);
+    assert.equal(ok("set_group_settings", { currency: "EUR", reportHour: 9 }, "yes, change the settings, not the currency", true), false, "an excluded field");
+    assert.equal(ok("set_group_settings", { currency: "EUR", reportHour: 9 }, "yes change the settings but don't touch the report", true), false);
+  });
+
+  test("a negation inside the action's own words: 'let Priya not in' admits nobody", () => {
+    assert.equal(ok("approve_member", { name: "Priya" }, "roomie let Priya not in"), false);
+    assert.equal(ok("approve_member", { name: "Priya" }, "roomie let Priya in"), true);
+    assert.equal(ok("decline_member", { name: "Priya" }, "roomie do not approve priya"), true, "decline's own words still start at the negation");
   });
 
   test("approve / decline", () => {

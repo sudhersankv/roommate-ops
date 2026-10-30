@@ -64,5 +64,10 @@ export async function countsFor(keys: string[], windowStart: Date): Promise<Map<
     .from(schema.rateCounters)
     .where(and(inArray(schema.rateCounters.key, keys), eq(schema.rateCounters.windowStart, windowStart)));
   for (const r of rows) out.set(r.key, r.count);
+  // Plus what this process counted in memory during an outage, as the caps themselves do.
+  for (const k of keys) {
+    const extra = await fallback.count(k, windowStart);
+    if (extra) out.set(k, (out.get(k) ?? 0) + extra);
+  }
   return out;
 }
