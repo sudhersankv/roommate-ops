@@ -2,7 +2,7 @@
 // printed); every number after that is computed here (ADR 0007). The printed total is never trusted on its own:
 // items + tax + tip is recomputed and a mismatch is flagged so Roomie asks before logging.
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { appUrl } from "@/lib/urls";
@@ -210,6 +210,7 @@ const currentReader = () => reader ?? (process.env.RECEIPT_FAKE === "1" ? fakeRe
 
 const UPLOADS = path.join(process.cwd(), "public", "uploads");
 const MAX_BYTES = 8 * 1024 * 1024;
+const safeFolder = (folder: string) => folder.split("/").map((s) => s.replace(/[^a-z0-9-]/gi, "")).filter(Boolean).join("/");
 const EXT: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif", "image/heic": "heic" };
 
 /**
@@ -219,13 +220,37 @@ const EXT: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "
 export async function saveUpload(folder: string, bytes: Buffer, mime: string, baseName?: string): Promise<{ file: string; path: string; url: string }> {
   if (!EXT[mime]) throw new Error("That isn't a photo I can read (JPEG, PNG, WebP or GIF).");
   if (bytes.length > MAX_BYTES) throw new Error("That photo is over 8 MB.");
-  const safe = folder.split("/").map((s) => s.replace(/[^a-z0-9-]/gi, "")).filter(Boolean).join("/");
+  const safe = safeFolder(folder);
   const name = `${baseName?.replace(/[^a-z0-9_-]/gi, "") || randomUUID()}.${EXT[mime]}`;
   await mkdir(path.join(UPLOADS, safe), { recursive: true });
   const file = path.join(UPLOADS, safe, name);
   await writeFile(file, bytes);
   const rel = `/uploads/${safe}/${name}`;
   return { file, path: rel, url: `${appUrl()}${rel}` };
+}
+
+/** The upload folder saveUpload uses for a Group's dashboard scans and its Chat's photos (adapters: tg/<chat>, wa/<jid user>). */
+export function uploadFoldersFor(groupId: string, chat?: { channel: string; externalId: string } | null): string[] {
+  const out = [`g-${groupId}`];
+  if (chat?.channel === "telegram") out.push(`tg/${chat.externalId}`);
+  if (chat?.channel === "whatsapp") out.push(`wa/${chat.externalId.split("@")[0]}`);
+  return out;
+}
+
+/** Deletes a whole upload folder (delete group data). Missing is fine. */
+export async function removeUploadFolder(folder: string): Promise<void> {
+  const safe = safeFolder(folder);
+  if (!safe) return;
+  await rm(path.join(UPLOADS, safe), { recursive: true, force: true });
+}
+
+/** Deletes one of our own uploads by its URL or /uploads path (forget me). Anything else is ignored. Returns whether it was ours. */
+export async function removeUpload(url: string): Promise<boolean> {
+  const local = /\/uploads\/((?:[a-z0-9-]+\/)*[a-z0-9-]+)\/([a-z0-9_-]+\.[a-z]+)$/i.exec(url);
+  const base = appUrl();
+  if (!local || !(url.startsWith("/uploads/") || (base && url.startsWith(base)))) return false;
+  await rm(path.join(UPLOADS, safeFolder(local[1]), local[2]), { force: true });
+  return true;
 }
 
 const mimeOf = (p: string) => Object.entries(EXT).find(([, e]) => p.toLowerCase().endsWith(`.${e}`) || (e === "jpg" && p.toLowerCase().endsWith(".jpeg")))?.[0] ?? "image/jpeg";

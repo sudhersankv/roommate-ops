@@ -3,11 +3,20 @@
 import "../src/lib/env";
 import { TOKEN_MISSING, telegramBot, telegramToken } from "../src/channels/telegram-boot";
 import { TELEGRAM_UPDATES } from "../src/channels/telegram";
+import { Api } from "grammy";
+import { isProdBot, PROD_BOT_USERNAME, prodBotAllowed, refuseProdBot } from "./lib/prod-guard";
 
-if (!telegramToken()) {
+const token = telegramToken();
+if (!token) {
   console.error(TOKEN_MISSING);
   process.exit(1);
 }
+const prodBot = await isProdBot(new Api(token)).catch((err) => {
+  const msg = err instanceof Error ? err.message : String(err);
+  console.error(/401|Unauthorized/i.test(msg) ? "Telegram rejected TELEGRAM_BOT_TOKEN (401); check it with BotFather (docs/telegram.md)." : `[telegram] ${msg}`);
+  process.exit(1);
+});
+if (prodBot && !prodBotAllowed()) refuseProdBot(`TELEGRAM_BOT_TOKEN is @${PROD_BOT_USERNAME}, the production bot, and polling deletes its webhook.`);
 
 const { db } = await import("../src/db");
 const { mastra } = await import("../src/mastra");

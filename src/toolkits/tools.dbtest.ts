@@ -1,4 +1,4 @@
-// Integration tests for every Roomie tool against the real dev DB (no LLM involved).
+// Integration tests for every Roomie tool against the Neon dev branch (no LLM involved; refuses the production branch).
 // Run: npm run test:tools   (tsx --test src/toolkits/tools.dbtest.ts; src/lib/env loads .env)
 // Not named *.test.ts on purpose: `npm test` runs without .env and must not pick this up.
 //
@@ -28,9 +28,11 @@ import { cart, chatlog, chores, members, money, personality as personalitySvc, r
 import { composioHealth } from "@/integrations/composio";
 import { FakeSplitwise, setSplitwiseClient } from "@/integrations/splitwise";
 import { ComposioInstacart, FakeInstacart, setInstacartClient } from "@/integrations/instacart";
-import { rm } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
+import { runRetention } from "@/jobs/retention";
 import { allTools } from "./registry";
 import { expenseSummary } from "./splitting/money";
+import { assertNotProdDb } from "../../scripts/lib/prod-guard";
 
 type Tools = ReturnType<typeof allTools>;
 type ToolId = keyof Tools;
@@ -75,6 +77,7 @@ const count = async (table: GroupTable) =>
 
 describe("Roomie tools against the dev DB", () => {
   before(async () => {
+    await assertNotProdDb(db, "test:tools");
     const people = NAMES.map((name) => ({ userExternalId: devUserId(`test-${name}-${Date.now()}`), name }));
     const joined = await onGroupJoined({ channel: "dev", externalId: `test-${Date.now()}`, title: `Test Group ${Date.now()}` }, people, people[0]);
     groupId = joined.group.id;
@@ -89,7 +92,19 @@ describe("Roomie tools against the dev DB", () => {
   after(async () => {
     try {
       if (!groupId) return;
+      // What lives outside the app's tables goes with the Group too: its traces, scores and uploaded photos.
+      const at = new Date().toISOString();
+      const trace = `t-group-${groupId}`;
+      await db.execute(sql`insert into mastra_ai_spans ("traceId", "spanId", name, "spanType", "isEvent", "startedAt", "createdAt", "createdAtZ", metadata) values (${trace}, 'root', 'roomie message', 'generic', false, ${at}, ${at}, ${at}, ${JSON.stringify({ groupId })}::jsonb)`);
+      await db.execute(sql`insert into mastra_ai_spans ("traceId", "spanId", name, "spanType", "isEvent", "startedAt", "createdAt", "createdAtZ") values (${trace}, 'child', 'model', 'generic', false, ${at}, ${at}, ${at})`);
+      await db.execute(
+        sql`insert into mastra_scorers (id, "scorerId", "runId", scorer, score, input, output, source, "createdAt", "updatedAt", "resourceId") values (${`s-group-${groupId}`}, 'x', 'r', '{}'::jsonb, 1, '{}'::jsonb, '{}'::jsonb, 'LIVE', ${at}, ${at}, ${groupId})`,
+      );
+      const scan = await receipts.saveUpload(`g-${groupId}`, Buffer.from("a scan"), "image/jpeg");
       await deleteGroup(groupId);
+      assert.equal((await db.execute(sql`select 1 from mastra_ai_spans where "traceId" = ${trace}`)).rows.length, 0, "the Group's traces");
+      assert.equal((await db.execute(sql`select 1 from mastra_scorers where id = ${`s-group-${groupId}`}`)).rows.length, 0, "the Group's scores");
+      await assert.rejects(readFile(scan.file), "the Group's uploads");
       // Verify nothing is left behind.
       const tables: [string, GroupTable][] = [
         ["expenses", schema.expenses],
@@ -1138,23 +1153,118 @@ describe("Roomie tools against the dev DB", () => {
     assert.ok((await members.peopleFacts({ groupId })).some((l) => l.startsWith("Alex: ") && /vegetarian/.test(l)), "in the instructions' people block");
   });
 
-  test("set_payment_handle and forget_me: chat lines and the note go, the ledger stays", async () => {
+  test("set_payment_handle and forget_me: chat lines, note, memory under any name, photos, traces, contact and identity go; the ledger stays", async () => {
     const alex = contextFor(member.Alex, "Alex", "member", "active");
     const h = await run("set_payment_handle", { app: "venmo", handle: "@alex-p" }, alex);
     assert.deepEqual(h.handles, { venmo: "@alex-p" });
+    const ts = Date.now();
+    // Alex as a WhatsApp Member: first called by their number, WhatsApp knows them as "Alexander P".
+    const jid = `1555${String(ts).slice(-7)}@s.whatsapp.net`;
+    const lid = `${ts}@lid`;
+    const number = `+${jid.split("@")[0]}`;
+    await db.update(schema.members).set({ channelUserId: jid }).where(eq(schema.members.id, member.Alex));
+    await db.insert(schema.waContacts).values({ lid, pn: jid, name: "Alexander P" });
     await db.insert(schema.chatMessages).values([
       { groupId, memberId: member.Alex, text: "hi" },
       { groupId, memberId: member.Alex, text: "remember me?" },
     ]);
+    await db.insert(schema.activity).values({ groupId, actorMemberId: member.Alex, kind: "test.forget", summary: `Alex added rent for ${number}` });
+    const photo = await receipts.saveUpload("test", Buffer.from("a photo"), "image/jpeg", `forget-${ts}`);
+
+    // Roomie's memory thread, written the way Mastra stores it.
+    const thread = `group-${groupId}`;
+    const now = new Date().toISOString();
+    await db.execute(sql`insert into mastra_threads (id, "resourceId", title, "createdAt", "updatedAt") values (${thread}, ${groupId}, '', ${now}, ${now}) on conflict do nothing`);
+    const say = (id: string, role: "user" | "assistant", text: string) =>
+      db.execute(
+        sql`insert into mastra_messages (id, thread_id, "resourceId", role, type, content, "createdAt", "createdAtZ") values (${id}, ${thread}, ${groupId}, ${role}, 'v2', ${JSON.stringify({ format: 2, parts: [{ type: "text", text }], content: text })}, ${now}, ${now})`,
+      );
+    const mid = (n: number) => `forget-${ts}-${n}`;
+    await say(mid(1), "user", "[Alex] hi");
+    await say(mid(2), "user", `[${number}] remember me?`);
+    await say(mid(3), "user", `[Alexander P] [photo: ${photo.path}] look`);
+    await say(mid(4), "user", "[Ryan] hi");
+    await say(mid(5), "assistant", "Alex owes Ryan $5.00");
+    await say(mid(6), "assistant", "Ryan is all square.");
+
+    // Traces: Alex's message (root + child), a scorer run that scored it, its score; and Ryan's trace, which stays.
+    const span = (traceId: string, spanId: string, metadata: Record<string, unknown>, input: unknown = null) =>
+      db.execute(
+        sql`insert into mastra_ai_spans ("traceId", "spanId", name, "spanType", "isEvent", "startedAt", "createdAt", "createdAtZ", metadata, input) values (${traceId}, ${spanId}, 'roomie message', 'generic', false, ${now}, ${now}, ${now}, ${JSON.stringify(metadata)}::jsonb, ${JSON.stringify(input)}::jsonb)`,
+      );
+    const t1 = `t-forget-${ts}-alex`;
+    const t2 = `t-forget-${ts}-ryan`;
+    const t3 = `t-forget-${ts}-ryan-quoting-alex`;
+    await span(t1, "root", { groupId, memberId: member.Alex });
+    await span(t1, "child", {});
+    await span(`${t1}-scorer`, "run", { targetTraceId: t1 });
+    await span(`${t1}-scorer`, "judge", {}, { prompt: "[Alex] hi" });
+    await span(t2, "root", { groupId, memberId: member.Ryan }, { text: "[Ryan] hi" });
+    await span(t3, "root", { groupId, memberId: member.Ryan }, { text: "[Ryan] roomie what did alex say" });
+    await span(t3, "agent", {}, { context: `Recent group chat:\n[${number}] remember me?` });
+    const [reminder] = await db.insert(schema.reminders).values({ groupId, text: "call mom", dueAt: new Date(Date.now() + 86_400_000), memberId: member.Alex, createdBy: member.Alex }).returning();
+    await db.execute(
+      sql`insert into mastra_scorers (id, "scorerId", "runId", scorer, score, input, output, source, "createdAt", "updatedAt", "traceId") values (${`s-${ts}`}, 'brevity-tone', 'r', '{}'::jsonb, 1, '{}'::jsonb, '{}'::jsonb, 'LIVE', ${now}, ${now}, ${t1})`,
+    );
+
     const splitsBefore = await db.select().from(schema.expenseSplits).where(eq(schema.expenseSplits.memberId, member.Alex));
-    const r = await run("forget_me", {}, alex);
-    assert.equal(r.chatLines, 2);
-    assert.equal(r.keptLedger, true);
-    const lines = await db.select().from(schema.chatMessages).where(and(eq(schema.chatMessages.groupId, groupId), eq(schema.chatMessages.memberId, member.Alex)));
-    assert.equal(lines.length, 0);
-    assert.equal((await db.select().from(schema.memberNotes).where(eq(schema.memberNotes.memberId, member.Alex))).length, 0);
-    const splitsAfter = await db.select().from(schema.expenseSplits).where(eq(schema.expenseSplits.memberId, member.Alex));
-    assert.equal(splitsAfter.length, splitsBefore.length, "Shares are kept so Balances still add up");
+    try {
+      const r = await run("forget_me", {}, alex);
+      assert.equal(r.chatLines, 2);
+      assert.equal(r.keptLedger, true);
+      assert.equal(r.memoryMessages, 4, "Alex's 3 lines under 3 names + Roomie's reply naming Alex");
+      const lines = await db.select().from(schema.chatMessages).where(and(eq(schema.chatMessages.groupId, groupId), eq(schema.chatMessages.memberId, member.Alex)));
+      assert.equal(lines.length, 0);
+      assert.equal((await db.select().from(schema.memberNotes).where(eq(schema.memberNotes.memberId, member.Alex))).length, 0);
+      const splitsAfter = await db.select().from(schema.expenseSplits).where(eq(schema.expenseSplits.memberId, member.Alex));
+      assert.equal(splitsAfter.length, splitsBefore.length, "Shares are kept so Balances still add up");
+
+      const [me] = await db.select().from(schema.members).where(eq(schema.members.id, member.Alex));
+      assert.deepEqual([me.displayName, me.channelUserId, me.accountId, me.status], ["Former member", null, null, "removed"]);
+      const left = (await db.execute(sql`select id from mastra_messages where thread_id = ${thread} and id like ${`forget-${ts}-%`} order by id`)).rows.map((x) => (x as { id: string }).id);
+      assert.deepEqual(left, [mid(4), mid(6)], "Ryan's line with the same text and the reply that doesn't name Alex stay");
+      await assert.rejects(readFile(photo.file), "the photo in a forgotten line is deleted");
+      const spans = (await db.execute(sql`select "traceId" from mastra_ai_spans where "traceId" like ${`t-forget-${ts}%`}`)).rows.map((x) => (x as { traceId: string }).traceId);
+      assert.deepEqual(spans, [t2], "Alex's trace, its whole scorer run and Ryan's trace quoting Alex's line are gone; Ryan's own stays");
+      assert.equal((await db.select().from(schema.reminders).where(eq(schema.reminders.id, reminder.id))).length, 0, "reminders set for them");
+      assert.equal((await db.execute(sql`select 1 from mastra_scorers where id = ${`s-${ts}`}`)).rows.length, 0);
+      assert.equal((await db.select().from(schema.waContacts).where(eq(schema.waContacts.lid, lid))).length, 0, "the WhatsApp contact row behind their id");
+      const [act] = await db.select().from(schema.activity).where(and(eq(schema.activity.groupId, groupId), eq(schema.activity.kind, "test.forget")));
+      assert.equal(act.summary, "Former member added rent for Former member");
+
+      const again = await members.forgetMe({ groupId, memberId: member.Alex, source: "chat" });
+      assert.deepEqual(again, { chatLines: 0, memoryMessages: 0 }, "safe to run twice");
+    } finally {
+      await db.execute(sql`delete from mastra_ai_spans where "traceId" like ${`t-forget-${ts}%`}`);
+      await db.execute(sql`delete from mastra_scorers where id = ${`s-${ts}`}`);
+      await db.delete(schema.waContacts).where(eq(schema.waContacts.lid, lid));
+    }
+  });
+
+  test("retention: traces, scores and memory messages older than 30 days go; newer ones stay", async () => {
+    const ts = Date.now();
+    const old = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString();
+    const recent = new Date().toISOString();
+    const thread = `retention-${ts}`;
+    for (const [id, at] of [["old", old], ["new", recent]] as const) {
+      await db.execute(sql`insert into mastra_ai_spans ("traceId", "spanId", name, "spanType", "isEvent", "startedAt", "createdAt", "createdAtZ") values (${`t-ret-${ts}-${id}`}, 's', 'roomie message', 'generic', false, ${at}, ${at}, ${at})`);
+      await db.execute(
+        sql`insert into mastra_scorers (id, "scorerId", "runId", scorer, score, input, output, source, "createdAt", "updatedAt") values (${`s-ret-${ts}-${id}`}, 'x', 'r', '{}'::jsonb, 1, '{}'::jsonb, '{}'::jsonb, 'LIVE', ${at}, ${at})`,
+      );
+      await db.execute(sql`insert into mastra_messages (id, thread_id, role, type, content, "createdAt", "createdAtZ") values (${`m-ret-${ts}-${id}`}, ${thread}, 'user', 'v2', '{"format":2,"parts":[]}', ${at}, ${at})`);
+    }
+    try {
+      const counts = await runRetention();
+      assert.ok(counts.spans >= 1 && counts.scores >= 1 && counts.memoryMessages >= 1, JSON.stringify(counts));
+      const ids = async (table: string, col: string) => (await db.execute(sql.raw(`select "${col}" as id from ${table} where "${col}" like '%-ret-${ts}-%' order by 1`))).rows.map((x) => (x as { id: string }).id);
+      assert.deepEqual(await ids("mastra_ai_spans", "traceId"), [`t-ret-${ts}-new`]);
+      assert.deepEqual(await ids("mastra_scorers", "id"), [`s-ret-${ts}-new`]);
+      assert.deepEqual(await ids("mastra_messages", "id"), [`m-ret-${ts}-new`]);
+    } finally {
+      await db.execute(sql`delete from mastra_ai_spans where "traceId" like ${`t-ret-${ts}-%`}`);
+      await db.execute(sql`delete from mastra_scorers where id like ${`s-ret-${ts}-%`}`);
+      await db.execute(sql`delete from mastra_messages where id like ${`m-ret-${ts}-%`}`);
+    }
   });
 
 });
