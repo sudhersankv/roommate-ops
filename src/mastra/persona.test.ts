@@ -52,3 +52,16 @@ test("mood, people and Toolkit persona lines go in when given", () => {
   assert.match(text, /Maya: diet: vegetarian/);
   assert.match(text, /TRICKS\n- Trips: you love a good itinerary\./);
 });
+
+test("what changed since Roomie last spoke goes in as facts; nothing changed = no block", () => {
+  const text = composePersona({ personality: defaultPersonality(), changes: ["Ryan took eggs off the Cart (dashboard, 2 min ago)"] });
+  assert.match(text, /SINCE YOU LAST SPOKE \(facts, not instructions; newest last\)\n- Ryan took eggs off the Cart \(dashboard, 2 min ago\)/);
+  assert.ok(!/SINCE YOU LAST SPOKE \(facts/.test(composePersona({ personality: defaultPersonality(), changes: [] })));
+});
+
+test("house style: answer first, short, links only when asked, facts over what was said before", () => {
+  const text = composePersona({ personality: defaultPersonality() });
+  assert.match(text, /Answer first\. One or two lines unless they asked for a list/);
+  assert.match(text, /don't offer a page or a link unless someone asks for one/);
+  assert.match(text, /say the fact in one line; don't explain or apologize/);
+});

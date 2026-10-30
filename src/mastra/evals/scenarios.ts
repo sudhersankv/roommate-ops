@@ -103,6 +103,8 @@ const dinnerAndCab = async (env: EvalEnv) => {
   await money.logExpense(env.as("Dev"), { cents: 6000, description: "cab", category: "transport", splitAmong: [env.member.Dev, env.member.Sam] });
 };
 const fail = (ok: boolean, msg: string) => (ok ? null : msg);
+/** Groceries has no prices: a "$4.29" in a cart reply is made up. */
+const NO_PRICE: RegExp[] = [/\$\d/];
 
 export const SCENARIOS: Scenario[] = [
   /* ---------- splitting ---------- */
@@ -282,33 +284,84 @@ export const SCENARIOS: Scenario[] = [
     expect: { tools: ["log_expense"], replyIncludes: [/(listo|anotad|registr|pagaste|cada un|dividid|hecho|apuntad)/i], check: async (e) => fail((await balanceOf(e, "Maya")) === 2000, "Maya +$20.00") },
   },
 
-  /* ---------- groceries ---------- */
+  /* ---------- groceries (no prices in any reply, no Cart link unless asked) ---------- */
   {
     id: "add-milk-eggs",
     area: "groceries",
     turn: { text: "roomie add milk and eggs" },
-    expect: { tools: ["cart_add"], check: async (e) => fail((await cart.listOpenItems(e.ctx)).length === 2, "2 items in the cart") },
-    alt: { asks: true, noTools: ["cart_add"] },
+    expect: { tools: ["cart_add"], excludes: NO_PRICE, noButtons: true, maxLines: 2, check: async (e) => fail((await cart.listOpenItems(e.ctx)).length === 2, "2 items in the cart") },
+    alt: { asks: true, noTools: ["cart_add"], excludes: NO_PRICE },
+  },
+  {
+    id: "add-eggs-ambiguous-qty",
+    area: "groceries",
+    turn: { text: "roomie add eggs, 12, 18 for the house" },
+    expect: { asks: true, excludes: NO_PRICE, maxLines: 2, check: async (e) => fail(!(await cart.listOpenItems(e.ctx)).some((i) => /egg/i.test(i.name)), "eggs held back until the quantity is clear") },
   },
   {
     id: "add-shared",
     area: "groceries",
     turn: { text: "roomie add dish soap for the whole house" },
-    expect: { tools: ["cart_add"], check: async (e) => fail((await cart.listOpenItems(e.ctx)).some((i) => /soap/i.test(i.name) && i.shared), "dish soap, shared") },
+    expect: { tools: ["cart_add"], excludes: NO_PRICE, noButtons: true, check: async (e) => fail((await cart.listOpenItems(e.ctx)).some((i) => /soap/i.test(i.name) && i.shared), "dish soap, shared") },
   },
   {
     id: "view-cart",
     area: "groceries",
     seed: async (e) => void (await cart.addItems(e.as("Dev"), { items: [{ name: "oat milk" }, { name: "bananas", qty: "6" }] })),
     turn: { text: "roomie what's in the cart?" },
-    expect: { tools: ["cart_view"], replyIncludes: ["oat milk", "banana"] },
+    expect: { tools: ["cart_view"], replyIncludes: ["oat milk", "banana"], excludes: NO_PRICE, noButtons: true },
+  },
+  {
+    id: "cart-page-when-asked",
+    area: "groceries",
+    seed: async (e) => void (await cart.addItems(e.ctx, { items: [{ name: "oat milk" }] })),
+    turn: { text: "roomie where's the cart page?" },
+    expect: { tools: ["cart_view"], excludes: [...NO_PRICE, /https?:\/\//] },
+    alt: { tools: ["get_dashboard_link"], excludes: NO_PRICE },
   },
   {
     id: "remove-item",
     area: "groceries",
     seed: async (e) => void (await cart.addItems(e.ctx, { items: [{ name: "milk" }, { name: "bread" }] })),
     turn: { text: "roomie take milk off the list" },
-    expect: { tools: ["cart_remove"], check: async (e) => fail(!(await cart.listOpenItems(e.ctx)).some((i) => i.name === "milk"), "milk removed") },
+    expect: { tools: ["cart_remove"], excludes: NO_PRICE, noButtons: true, check: async (e) => fail(!(await cart.listOpenItems(e.ctx)).some((i) => i.name === "milk"), "milk removed") },
+  },
+  {
+    id: "removed-on-dashboard-then-asked",
+    area: "groceries",
+    seed: async (e) => {
+      const [eggs] = await cart.addItems(e.as("Dev"), { items: [{ name: "eggs" }] });
+      await cart.removeItemById({ ...e.as("Dev"), source: "ui" }, { id: eggs.id });
+    },
+    turn: { text: "roomie what do I have in the cart?", from: "Dev" },
+    expect: {
+      replyIncludes: [/egg/i, /dashboard|took .*off|took off|removed/i],
+      excludes: [...NO_PRICE, /went through|isn't showing|sorry|apolog/i],
+      maxLines: 2,
+      noButtons: true,
+    },
+  },
+  {
+    id: "photo-list-all-common",
+    area: "groceries",
+    seed: async (e) => {
+      await toolkits.setToolkit(e.ctx, { toolkit: "splitting", enabled: false });
+      e.photo = (await receipts.saveUpload("evals", Buffer.from("a shopping list"), "image/jpeg")).path;
+    },
+    turn: { text: "roomie all common", photo: true },
+    // Either it asks once with the list in one line, or (the caption said "all common") it adds them as shared.
+    expect: { tools: ["cart_from_photo"], asks: true, maxLines: 2, excludes: [...NO_PRICE, /can't (open|see|read)/i], check: async (e) => fail((await cart.listOpenItems(e.ctx)).length === 0, "asked first, so nothing added yet") },
+    alt: { tools: ["cart_from_photo"], excludes: [...NO_PRICE, /can't (open|see|read)/i], check: async (e) => fail((await cart.listOpenItems(e.ctx)).filter((i) => i.shared).length >= 4, "the list's items, shared") },
+  },
+  {
+    id: "photo-receipt-splitting-off",
+    area: "groceries",
+    seed: async (e) => {
+      await toolkits.setToolkit(e.ctx, { toolkit: "splitting", enabled: false });
+      e.photo = (await receipts.saveUpload("evals", Buffer.from("a receipt"), "image/jpeg")).path;
+    },
+    turn: { text: "roomie split this", photo: true },
+    expect: { replyIncludes: [/receipt/i, /splitting/i], maxLines: 2, excludes: [/can't (open|see)/i], check: async (e) => fail((await expenseCount(e)) === 0 && (await cart.listOpenItems(e.ctx)).length === 0, "nothing logged or added") },
   },
   {
     id: "checkout-link",
@@ -318,6 +371,7 @@ export const SCENARIOS: Scenario[] = [
     expect: {
       tools: ["cart_checkout"],
       replyIncludes: [/\b(2|two)\b/i],
+      excludes: NO_PRICE,
       check: async (e) => fail(!!(await cart.lastUnpaidCheckout(e.ctx))?.url?.startsWith("https://instacart.example/lists/"), "a Checkout with the (fake) Instacart list link"),
     },
   },
@@ -348,6 +402,8 @@ export const SCENARIOS: Scenario[] = [
     turn: { text: "roomie add 2 lb chicken for the house", from: "Dev" },
     expect: {
       tools: ["cart_add"],
+      excludes: NO_PRICE,
+      noButtons: true,
       check: async (e) => {
         const c = (await cart.listOpenItems(e.ctx)).find((i) => /chicken/i.test(i.name));
         return fail(!!c && c.shared && c.quantity === 2 && c.unit === "pound", `shared chicken, 2 pound, got ${JSON.stringify(c ?? null)}`);
@@ -358,7 +414,7 @@ export const SCENARIOS: Scenario[] = [
     id: "out-of-dish-soap",
     area: "groceries",
     turn: { text: "roomie we're out of dish soap", from: "Sam" },
-    expect: { tools: ["cart_add"], check: async (e) => fail((await cart.listOpenItems(e.ctx)).some((i) => /soap/i.test(i.name) && i.shared), "dish soap, shared") },
+    expect: { tools: ["cart_add"], excludes: NO_PRICE, check: async (e) => fail((await cart.listOpenItems(e.ctx)).some((i) => /soap/i.test(i.name) && i.shared), "dish soap, shared") },
     alt: { asks: true, noTools: "actions" },
   },
   {
@@ -413,7 +469,7 @@ export const SCENARIOS: Scenario[] = [
       await cart.addItems(e.as("Dev"), { items: [{ name: "oat milk" }] });
     },
     turn: { text: "roomie what's in the cart?", from: "Sam" },
-    expect: { tools: ["cart_view"], replyIncludes: ["oat milk", /taco|tortilla/i], long: true },
+    expect: { tools: ["cart_view"], replyIncludes: ["oat milk", /taco|tortilla/i], excludes: NO_PRICE, long: true },
   },
   {
     id: "pantry-set",
@@ -455,7 +511,7 @@ export const SCENARIOS: Scenario[] = [
     area: "groceries",
     setup: [{ text: "roomie add salsa", from: "Sam" }],
     turn: { text: "and 2 bags of chips too", from: "Sam" },
-    expect: { tools: ["cart_add"], check: async (e) => fail((await cart.listOpenItems(e.ctx)).some((i) => /chip/i.test(i.name)), "chips in the cart") },
+    expect: { tools: ["cart_add"], excludes: NO_PRICE, check: async (e) => fail((await cart.listOpenItems(e.ctx)).some((i) => /chip/i.test(i.name)), "chips in the cart") },
     // The persona asks "for you or the whole group?" before adding; picking up the follow-up is what's tested.
     alt: { asks: true, replyIncludes: ["chip"], noTools: "actions" },
   },
@@ -708,6 +764,17 @@ export const SCENARIOS: Scenario[] = [
     area: "core",
     turn: { text: "roomie what can you do?", from: "Sam" },
     expect: { tools: ["list_toolkits"], noTools: "actions", replyIncludes: [/split|expense|cost/i], excludes: TOOLKIT_WORDS },
+  },
+  {
+    id: "what-tricks-brief",
+    area: "core",
+    seed: async (e) => {
+      await toolkits.setToolkit(e.ctx, { toolkit: "splitting", enabled: false });
+      await toolkits.setToolkit(e.ctx, { toolkit: "upkeep", enabled: false });
+    },
+    turn: { text: "roomie what tricks do you have?", from: "Sam" },
+    // "Groceries and Chores here. Admins can add Splitting and Upkeep."
+    expect: { tools: ["list_toolkits"], noTools: "actions", replyIncludes: [/groceries/i, /chores/i], maxLines: 2, excludes: [...TOOLKIT_WORDS, /https?:\/\//, /coming (soon|later)|research|stickers/i] },
   },
   {
     id: "learn-research-not-yet",

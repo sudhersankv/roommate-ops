@@ -4,6 +4,7 @@
 // the enabled Toolkits' manifest fragments (instructions.ts fills that slot).
 import { Agent } from "@mastra/core/agent";
 import { model } from "@/lib/llm";
+import { changesSinceRoomieSpoke } from "@/services/activity";
 import { roomieRecentTexts } from "@/services/chatlog";
 import { enabledToolkits, getGroup } from "@/services/groups";
 import { listGroupMembers, peopleFacts } from "@/services/members";
@@ -26,7 +27,7 @@ export const roomie = new Agent({
     const ctx = requestContext.all;
     if (!ctx.groupId) return roomieInstructions(ctx, "unknown yet");
     const g = { groupId: ctx.groupId };
-    const [group, people, personality, mood, facts, recentReplies, toolkits] = await Promise.all([
+    const [group, people, personality, mood, facts, recentReplies, toolkits, changes] = await Promise.all([
       getGroup(ctx.groupId),
       listGroupMembers(g),
       getPersonality(g),
@@ -34,6 +35,7 @@ export const roomie = new Agent({
       peopleFacts(g),
       roomieRecentTexts(ctx.groupId),
       ctx.toolkits ?? enabledToolkits(g),
+      changesSinceRoomieSpoke(ctx.groupId).catch(() => []),
     ]);
     return roomieInstructions(ctx, describeMembers(people), new Date(), group?.timezone ?? DEFAULT_TIMEZONE, {
       onboarding: !!group && !group.onboardedAt,
@@ -42,6 +44,7 @@ export const roomie = new Agent({
       mood,
       people: facts,
       recentReplies,
+      changes,
     });
   },
   model,
