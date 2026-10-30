@@ -192,7 +192,8 @@ COMPOSIO_API_KEY, COMPOSIO_SPLITWISE_AUTH_CONFIG_ID   Splitwise (SPLITWISE_FAKE=
 NEON_AUTH_BASE_URL               Neon Auth URL (branch -> Auth)
 NEON_AUTH_COOKIE_SECRET          32+ chars, ours
 DEV_AUTH_EMAIL                   dev-only sign-in bypass for browser automation
-APP_URL=http://localhost:3000    links Roomie sends (https://roomie.fly.dev = the prod bot: ALLOW_PROD_BOT=1 to poll / move its webhook)
+APP_URL=http://localhost:3000    links Roomie sends
+ALLOW_PROD_BOT=1                 lets npm run telegram / telegram:webhook poll or move @imroomiebot (prod); off by default
 TELEGRAM_BOT_TOKEN, TELEGRAM_BOT_USERNAME, TELEGRAM_WEBHOOK_SECRET   Telegram (docs/telegram.md)
 WHATSAPP_ENABLED=1               this process holds the WhatsApp socket (docs/whatsapp.md); WA_LOG = Baileys' log level
 ROOMIE_OPERATOR_EMAILS           who may open /admin/whatsapp (comma-separated)
