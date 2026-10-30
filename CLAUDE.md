@@ -1,6 +1,8 @@
 # Roomie
 
-Roomie is an AI groupmate that lives in a group chat and on a per-group dashboard. It splits costs, keeps the shared grocery cart, tracks chores and upkeep, and sets reminders. Persona: the group chat's pet. Each Group's Roomie takes its personality from the group (a vibe, a name, quirks, and the slang it slowly picks up); always brief and exact about facts (see "Personality" below).
+Roomie is the roommate who actually keeps track: it lives in an apartment's group chat (and on a per-group dashboard) and handles rent, splits, groceries, chores and the landlord's emails. One Roomie, one voice, not renameable; it quietly picks up how the group talks (ADR 0020). Always brief and exact about facts. Roommates are who it's built for (ADR 0015); other groups work as a footnote. Nothing a person reads says AI, bot, brain, assistant or smart.
+
+**Direction in progress (ADRs 0015-0020, GitHub issues labelled `ready-for-agent`):** five buckets — core (Gate, memory, Reminders, the morning Bundle, polls, DMs, Documents) and the Tricks Money, Groceries, House (Chores + Upkeep) and Lease Inbox. The "Personality" section and the vibe picker described below are being removed; read the ADRs before touching them.
 
 **Read first:** the rebuild plan is in `docs/plan.md`, the vocabulary in `GLOSSARY.md`, and the decisions in `docs/adr/`. They are the spec; where they conflict with this file, they win. Steps 1 (rename), 2 (WhatsApp, waiting for its live test), 2b (Telegram), 3 (Mastra agent), 4 (identity, Groups, dashboard), 5 (Splitting), 6 (Groceries) and 7 (Chores, Upkeep, reminders, Group time zones) are done, plus the public landing page with the WhatsApp beta form (`docs/landing.md`); the code below is what exists today. Before a real Telegram group: `npm run telegram:check`, then `docs/first-group-test.md`; WhatsApp: `docs/whatsapp.md` (link the number at `/admin/whatsapp`). `npm run dev-chat` simulates a group chat without any app.
 
@@ -408,6 +410,20 @@ Adding deps: `npx -y npm@11 install <pkg>` (npm 10 trips on this lockfile; `npm 
 ## Before you commit
 
 `npm run typecheck` and `npm test` must pass. Test a service with a `*.test.ts` before wiring its tool or page. Each plan step gets its own branch and PR.
+
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues in `sudhersankv/roommate-ops`, via `gh` (never the `upstream` remote). See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five default labels (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
 <!-- BEGIN:nextjs-agent-rules -->
 
 # This is NOT the Next.js you know
