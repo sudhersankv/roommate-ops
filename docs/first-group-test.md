@@ -36,10 +36,12 @@ Two people: **you** (you add Roomie, so you're its Admin) and **Friend**. Send t
 
 | # | Who | Send | Roomie should |
 |---|---|---|---|
-| 1 | You | Create a new group with Friend, then add `@imroomiebot` to it | Post one intro, three lines, no feature list: who it is, "tell me what this group is for ... and I'll learn the right Tricks", and you as admin plus "tap @imroomiebot and press Start". Terminal 2: `[roomie] joined ...` |
-| 2 | Both | Open a 1:1 chat with `@imroomiebot` and press **Start** | Reply with one line: "Now I can DM you..." No link. |
-| 3 | You | `roommates, USD, Chicago` | Confirm in one or two lines: "Learned Splitting, Groceries, Chores and Upkeep", three starter chores and five upkeep items added. No "roomie" needed: it's the answer to its question. |
-| 4 | Friend | `/help` | At most 8 short lines: "Tricks I know here: ...", a line of examples per Trick, how to teach or drop one. |
+| 1 | You | Create a new group with Friend, then add `@imroomiebot` to it | Post one intro, three lines, no feature list: who it is, "tell me what this group is for ... and I'll learn the right Tricks", and you as admin plus "tap @imroomiebot and press Start, so I can DM you the setup and your dashboard link". Terminal 2: `[roomie] joined ...` and `[telegram] setup DM for <id> waits for /start` |
+| 2 | You | Open a 1:1 chat with `@imroomiebot` and press **Start** | The **setup DM** (ADR 0014): "Hi <you> 👋 You added me to <group>, so you're its admin. Your own dashboard link is below (just for you, it works once)." / "Answer the setup here or in the group: what's the group for, currency, city, vibe." with an **Open dashboard** button (your Claim link). |
+| 2b | Friend | Press **Start** too | One line: "Now I can DM you..." No link. |
+| 3 | You | In the DM: `roommates, USD, Chicago` | Two lines, in the DM **and in the group**: "Learned Splitting, Groceries, Chores and Upkeep. Say ..." and "Everyone: your dashboard is at <APP_URL>/j/<code>. Sign in with Google and pick your name." (Answering in the group instead works the same, no "roomie" needed.) |
+| 3b | Friend | Say `hi all` in the group (Telegram can't list members: Roomie learns people as they speak), then open the Join link, sign in with Google, pick their name | "Which one are you?" lists you both; picking their own name lands on the Group's dashboard at once. On your Members page Friend shows "On the dashboard as <Google name>". |
+| 4 | Friend | `/help` | At most 8 short lines: "Tricks I know here: ...", a line of examples per Trick, the dashboard's Join link on the "Always" line. |
 | 5 | Friend | `lol this is so weird` | **Nothing.** Chatter isn't for Roomie (a reply here is a Gate false positive). |
 | 6 | You | `roomie I paid 60 for internet` | "Logged: $60 internet... $30 each". |
 | 7 | Friend | `I did the dishes` | Ask first ("want me to log that?"), because nobody named it. Not log it silently. |
@@ -51,7 +53,8 @@ Two people: **you** (you add Roomie, so you're its Admin) and **Friend**. Send t
 | 13 | You | `roomie remind me in 2 minutes to check the oven` | Confirm the time. **Within about 3 minutes the reminder arrives in your DM**, not in the group (the scheduler in terminal 1 checks once a minute). |
 | 14 | Friend | `roomie what's due this week?` | Chores due and upkeep due soon, a few lines. |
 | 15 | You | `roomie weekly report` | One message, emoji lines (or plain sentences once Roomie thinks the chat is casual), about 8 lines, no extra chatter around it. |
-| 16 | Friend | `send me the dashboard` | Friend gets a Claim link **in the DM**, and the group gets one line saying it went there. Never a link in the group. Open it, sign in with Google, see the Chores page. |
+| 16 | Friend | `send me the dashboard`, then `roomie send us the dashboard` | First: Friend is already connected, so a button to their own dashboard (no Claim link). Second: one line with the Join link ("Everyone: your dashboard is at .../j/..."). Never a Claim link in the group. |
+| 16b | You | `roomie rotate the join link` (and Friend tries it too) | You: "New Join link: .../j/<new>. The old one doesn't work anymore." (the old URL is a 404). Friend: kindly refused, you're the admin. |
 | 17 | Friend | `roomie book us a flight to Lisbon` | A short, honest "can't do that yet", not an invented booking. |
 | 18 | Friend | `roomie forget upkeep` | Kindly refused: only an admin (you) can make Roomie forget a Trick. |
 | 19 | You | `roomie forget upkeep`, then `roomie learn upkeep` | "Forgot Upkeep ... nothing's deleted", then "Learned Upkeep. Try: ...". |
@@ -64,7 +67,7 @@ Optional if you have time: add a third person to the group (Roomie asks you to a
 - **Tone:** brief (1 to 3 lines), friendly, not a help desk. No bullet lists in normal replies. Amounts exact.
 - **Timing:** "typing..." then the reply within a few seconds (Sonnet takes 4 to 10 s). Over 20 s is worth noting with the line number from the log.
 - **The Gate:** step 5 must stay quiet; step 7 must ask first; steps with "roomie" must always answer. A reply to plain chatter is a false positive; silence after "roomie ..." is a false negative. Both go in the report.
-- **Privacy:** Claim links and one-person reminders only ever in DMs.
+- **Privacy:** Claim links and one-person reminders only ever in DMs. The Join link is the one link Roomie posts in the group (it binds nobody: [docs/joining.md](./joining.md)).
 - **Time zone:** "Tuesday 8pm" lands on the right date at 8:00 PM Chicago time (DST ended on Nov 1, so it's UTC-6).
 
 ## Reporting issues
@@ -90,8 +93,9 @@ Run the script above with these differences:
 
 | # | On WhatsApp |
 |---|---|
-| 1 | Create a WhatsApp group with Friend and add Roomie's number. The intro names you as admin and asks the setup questions, with **no** "press Start" line. Everyone in the group is already a Member (`roomie who's here` lists you both right away, not as they speak). |
+| 1 | Create a WhatsApp group with Friend and add Roomie's number. The **setup DM** arrives right away (your Claim link as a last line `Open dashboard — https://...`); the intro names you as admin and asks the setup questions, with **no** "press Start" line. Everyone in the group is already a Member (`roomie who's here` lists you both right away, not as they speak). |
 | 2 | Skip it: WhatsApp lets Roomie message you first. Typing `/start` to Roomie privately still gets one line, never a link. |
+| 3 | Answer in the DM or the group; the Join link line arrives in the group as text on its own line. People named by their number show as `+1 ••• 7393` on the picker until WhatsApp gives their name. |
 | 4 | `/help` works if typed; nobody needs it. |
 | 13 | The reminder arrives as a private WhatsApp chat from Roomie. |
 | 16 | The Claim link arrives in a private chat from Roomie as a last line `Open dashboard — https://...` (no button), with no preview. Never in the group. |

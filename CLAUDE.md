@@ -26,7 +26,8 @@ src/
                         BufferJSON rows "creds" / "<type>-<id>") and wa_contacts (LID -> phone JID + name); beta_requests
                         (the landing page's WhatsApp beta form, not tied to a Group); trick_votes ("I want this" on a
                         coming-soon Trick, migration 0008); rate_counters (fixed-window cap counts) and groups.paused_at
-                        (migration 0009)
+                        (migration 0009); groups.join_code / join_code_rotated_at / join_policy, chats.participant_count
+                        (+ _at) and members.wants_seat_id (Join links, migration 0011)
   db/enums.ts           categories, split methods, recurrences, sources, Group purposes, beta sizes / statuses (no drizzle
                         import: client code uses them)
   db/index.ts           db client
@@ -41,6 +42,10 @@ src/
                         facts (rememberAboutMe, knownAbout: your own or an Admin, peopleFacts for the instructions),
                         rekeyChannelUser (WhatsApp LID -> phone JID), fillPlaceholderName
     claims.ts           Claim links: issueDashboardLink, createClaimToken, consumeClaim, upsertAccount
+    joins.ts            Join links (ADR 0014, docs/joining.md): ensureJoinCode / joinLink / joinLine, rotateJoinCode,
+                        setJoinPolicy (Admins), rosterSize (chats.participant_count, dev = active Members, refreshed from
+                        Channel.participantCount), pickerFor, claimSeat (free seat -> connected, else Pending wanting the
+                        seat + one chat ask; 10/h per IP and Account), seatStates, revokeSeat, reassignSeat, groupsListFor
     activity.ts         record(..., source) + listActivity(): who added, changed or deleted what, and where (chat |
                         dashboard: sourceOf(ctx), migration 0010); recentChanges / changesSinceRoomieSpoke (<= 8 lines)
     chatlog.ts          chat_messages: log, recent chatter, follow-up window facts, retention delete
@@ -85,7 +90,8 @@ src/
                         setGroupPaused, leaveGroupChat (Channel.leaveChat + pause), pausedGroupIds (the scheduler skips them)
     whatsapp-access.ts  the WhatsApp beta allowlist: WHATSAPP_ALLOWED_ADDERS + onboarded beta_requests.phone; whatsappAdmission
                         (empty list = anyone, as before)
-  onboarding.ts         onGroupJoined (Group + Chat + Members, adder = Admin, intro + setup questions),
+  onboarding.ts         onGroupJoined (Group + Chat + Members + Join code, adder = Admin, intro + setup questions, and the
+                        Admin's setupDm: their Claim link + "Answer the setup here or in the group"; setupDmFor for /start),
                         onParticipantJoined (Pending + "approve X?") and onUnknownSender (Pending, or active inside a
                         Channel's roster grace, ADR 0010). Called by Channel adapters (ADR 0008)
   pipeline.ts           the message flow, channel-agnostic: handleIncoming(msg) resolves Group/Member itself (unknown
@@ -132,7 +138,8 @@ src/
     util.ts             ctxOf, toCents, memberIdByName (opts.includePending), dashboardLinks
     core/               manifest.ts + server.ts; members (list, list_pending, approve/decline/promote, set_payment_handle,
                         forget_me), people (remember, what_do_you_know_about_me), settings (set_group_settings incl.
-                        personality, toggle_toolkit, list_toolkits), dashboard (get_dashboard_link), reminders, report
+                        personality, toggle_toolkit, list_toolkits), dashboard (get_dashboard_link: forEveryone = the Join
+                        link line; rotate_join_link, set_join_policy, revoke_seat: adminOnly), reminders, report
     splitting/ groceries/ chores/ upkeep/   manifest.ts + server.ts + the tools (+ dashboard.tsx: Home/Settings sections;
                         groceries: cart.ts + recipes.ts)
   integrations/         composio.ts (client + cached key health), splitwise.ts (SplitwiseClient: ComposioSplitwise and
@@ -193,7 +200,7 @@ src/
                         groups.personality.learned (setCandidateReader() for tests); jobs/style-candidates.ts = the
                         JSON-only prompt + zod parse (no structured output: the gateway rejects it), bad answers skip
   proxy.ts              THE middleware (a root proxy.ts is ignored because the app is under src/): Neon Auth guard on
-                        /g/* (-> /signin?next=<path>); /, /signin, /claim/* and /admin/* pass (admin pages 404 for
+                        /g/* (-> /signin?next=<path>); /, /signin, /claim/*, /j/* and /admin/* pass (admin pages 404 for
                         non-operators, signed out included); a stray neon_auth_session_verifier on any matched page ->
                         /auth/callback (dev bypass skips it)
   lib/auth/             server.ts (createNeonAuth, sameSite lax), client.ts, oauth-paths.ts (client-safe URL helpers:
@@ -216,7 +223,8 @@ src/
   app/
     layout.tsx globals.css   Figtree, theme script, toasts; the design tokens
     page.tsx            the landing page for everyone (_landing/, docs/landing.md); signed in, the nav says "Open dashboard"
-    app/                /app: where a signed-in person lands: last/first Group, or "No groups yet" (+ paste a Claim link);
+    app/                /app: where a signed-in person lands: their one Group, a list of 2+ (name, chat app, your seat), or
+                        "No groups yet" (+ paste a Claim link);
                         signed out -> /signin. The default `next` after sign-in (APP_PATH)
     _landing/           landing.tsx (sections), demos.ts (the fake chats; Roomie's lines from ARCHETYPES), chat.tsx
                         (ChatWindow), landing.css (CSS-only motion), beta-form.tsx + actions.ts (the WhatsApp beta form)
@@ -226,6 +234,9 @@ src/
     signin/             the sign-in screen: Google + paste a Claim link + "Sign-in didn't complete"; ?next= afterwards
     privacy/            the short privacy page (what's kept, per Group, forget me)
     claim/[token]/      Claim link: sign in, consume, link the Account, -> /g/<id>
+    j/[code]/           the Join link (noindex, no-referrer): signed out -> /signin?next=/j/<code>; already in the Group ->
+                        /g/<id>; else the seat picker ("Which one are you?", open seats, "I'm not on this list") ->
+                        pickSeat (actions.ts) -> joins.claimSeat; unknown or rotated code = 404
     auth/callback/      Google sign-in return: verifier -> session cookies -> `next` (or `next?auth_error=<reason>`)
     g/[groupId]/        layout (session + GroupProvider + shell; Pending members see a waiting screen; groupView builds the
                         nav, overflow and owned pages from the enabled manifests once), Home (doorway + Toolkits' Home
@@ -270,11 +281,12 @@ scripts/studio-presets.ts  writes .mastra-presets.json for Studio (run by mastra
 
 ## Identity and permissions
 
-- **Accounts and Claim links** (ADR 0003): a Member gets a single-use, 24-hour Claim link only when they ask for the dashboard (`get_dashboard_link`, which sends it privately and reuses a live one) or from `dev-chat link`. Never in bulk (ADR 0001). `/claim/<token>` signs them in with Google, upserts `accounts` from the session user (mirrored by `auth_user_id`, ADR 0008) and links `members.account_id`. One Account can be a Member of many Groups.
+- **Join links** (ADR 0014, `docs/joining.md`): one per Group, `APP_URL/j/<code>`, posted in the Chat when setup finishes (`set_group_settings` returns `say` = the learned line + "Everyone: your dashboard is at <link>. Sign in with Google and pick your name."; answered in a DM it's posted in the group too) and for "send us the dashboard". It binds nobody: signing in and picking an open seat connects only when the policy is "free" and claimed Accounts < `rosterSize`; everything else is a Pending Member (with `wants_seat_id`) an Admin approves (approval moves the Account onto that seat). Admins revoke / reassign seats and rotate the code (old = 404). All in `services/joins.ts`.
+- **Accounts and Claim links** (ADR 0003): a Member gets a single-use, 24-hour Claim link in the Admin's setup DM, when they ask for the dashboard for themselves (`get_dashboard_link`, which sends it privately and reuses a live one) or from `dev-chat link`. Never in bulk (ADR 0001). `/claim/<token>` signs them in with Google, upserts `accounts` from the session user (mirrored by `auth_user_id`, ADR 0008) and links `members.account_id`. One Account can be a Member of many Groups.
 - **Who is what** (ADR 0008): whoever adds Roomie is Admin; people already in the Chat are active; later joiners and unknown senders are Pending until an Admin approves (chat or Members page).
 - **Telegram can't list members** (ADR 0010): at join time Roomie knows the adder (Admin) and the group's Telegram admins (active). Anyone else becomes a Member on their first message: active if it's within 24 h of Roomie joining (`ROSTER_GRACE_MS`, from `chats.created_at`), Pending after. `new_chat_members` are Pending at once (with the approval ask), even inside the 24 h; people added together with Roomie count as already there.
 - **WhatsApp can list members** (ADR 0013): when Roomie is added, the whole group (from `groupMetadata`) becomes active Members, the adder the Admin; there is no roster window and no "press Start": Roomie can DM any Member. Later joiners are Pending, as everywhere. A Member's `channel_user_id` is the phone JID (`<number>@s.whatsapp.net`) when resolvable, else the LID (`…@lid`); every learned pair is kept in memory, but only Members' pairs go to `wa_contacts` (`deleteContactFor(jid)` in `whatsapp-store.ts` drops one) and LID Members move to the phone JID (`rekeyChannelUser`). Members named by their number (`+1555…`, or "Someone" for a hidden one) take the profile name from their first message.
-- **Private messages on Telegram:** a bot can't DM anyone first, so the intro asks people to tap @bot and press Start once. A refused DM is a `CantMessagePrivatelyError`; `get_dashboard_link` relays its "tap @bot and press Start" message and never posts the Claim link in the group. A DM from a Member of exactly one Group goes through the pipeline as that Group with `isPrivate`.
+- **Private messages on Telegram:** a bot can't DM anyone first, so the intro asks people to tap @bot and press Start once; the Admin's setup DM is tried at join and otherwise sent on their `/start` (`setupDmFor`). On WhatsApp it goes out at once. A refused DM is a `CantMessagePrivatelyError`; `get_dashboard_link` relays its "tap @bot and press Start" message and never posts the Claim link in the group. A DM from a Member of exactly one Group goes through the pipeline as that Group with `isPrivate`.
 - **Rules** (`services/authz.ts`): Pending members can chat and read, but every write service calls `requireActive` and refuses with "Hang on, an admin needs to approve you first. <Admin> can approve you." Members, roles, settings, Toolkits and delete-group-data call `requireAdmin`. Expenses can be changed by whoever added or paid them, anyone with a Share, or an Admin. Any active Member can add a chore and record a Settlement between two other Members (intended).
 - **Dashboard:** every page and action goes through `lib/session.ts`; nothing trusts a member id from the client. Non-Admins don't see admin controls, and the actions return 403 anyway.
 - **Dev sign-in bypass:** with `NODE_ENV !== "production"` and `DEV_AUTH_EMAIL` set, that email is the signed-in Account (loud warning in the log). For automated browser checks only.
@@ -309,7 +321,7 @@ scripts/studio-presets.ts  writes .mastra-presets.json for Studio (run by mastra
 - **Reminders:** `memberId` null = the whole Group (posted with `deliver`), set = that Member privately (`deliverPrivate`), never both; if Roomie can't DM them yet it goes to the Chat once, addressed to them, with the Start hint. `created_by` gives "(set by Maya)" when set for someone else. Repeats (daily / weekly / monthly, monthly clamped to day 28) keep the local wall-clock and skip missed occurrences. The scheduler claims a reminder (sets `sent_at`) before sending and releases it on failure. Lists show only what the viewer may see (`visibleTo`); cancel = the target, the setter, anyone for a whole-group one, or an Admin.
 - **Posts Roomie makes on its own (ADR 0001):** the chores nudge at `group_toolkits["chores"].settings.nudgeHour` (default 9, null = off), only when something is due or late; the weekly Group Report at `group_toolkits["core"].settings.report = { weekday, hour }` (default Sunday 18). Both are claimed in `scheduled_posts (group, kind, local period)` before sending, so at most one per day / week across restarts and processes; a failed send gives the claim back. Upkeep has no post of its own: it's a line in the report. The window is the whole hour; a scheduler that was off for it skips that day rather than posting late.
 - **The Group Report** is one message of at most ~12 lines (`reportParts`): Settle plan, chores this week (counts, the best streak, what's up now, the chart), upkeep due soon, the Cart's size, the next week's whole-group reminders. Sections of switched-off Toolkits are left out. Emoji-led lines by default; when the Group style note's tone is casual (`isCasualStyle`) the same sentences run together without the list look. `group_report` returns the same text (`groupReportText`) and Roomie posts it verbatim.
-- **Onboarding copy:** the intro is three lines and no feature list (who Roomie is, "tell me what this group is for ... and I'll learn the right Tricks", the Admin); when setup finishes `set_group_settings` returns `learned` (`learnedLine`: "Learned Splitting and Groceries. Say "roomie, learn chores" any time.", or "You didn't say what this group is for, so I kept the roommates set: ..."), which Roomie says as it is.
+- **Onboarding copy:** the intro is three lines and no feature list (who Roomie is, "tell me what this group is for ... and I'll learn the right Tricks", the Admin); when setup finishes `set_group_settings` returns `learned` (`learnedLine`: "Learned Splitting and Groceries. Say "roomie, learn chores" any time.", or "You didn't say what this group is for, so I kept the roommates set: ..."), and `say` (that line + the Join link line), which Roomie posts as it is.
 - **Onboarding** for roommates and families adds the three starter chores (no Rotation, so new people join in) and the usual five upkeep items, once, and only for Toolkits that are on. Family now also gets Upkeep.
 - **First contact** (`channels/text.ts`, shared by both adapters): `/help` (group or DM) is at most 8 lines naming the Group's Tricks (`helpText`), `/start` in a DM is one line and never a link (on WhatsApp nobody needs either; they work when typed, and other text starting with "/" goes through as text there), on Telegram other slash commands are ignored, a failure while Roomie was addressed gets one friendly line (`OOPS`) and the stack goes to the log. `npm run telegram` prints a `[roomie]` line per message (gate, tools, time, trace id) and per reply.
 
