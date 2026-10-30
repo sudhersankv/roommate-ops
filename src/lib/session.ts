@@ -20,7 +20,17 @@ export const sessionUser = cache(async (): Promise<AuthUser | null> => {
       ? { id: existing.authUserId, email: existing.email, name: existing.name, image: existing.image }
       : { id: `dev:${devEmail}`, email: devEmail, name: devEmail.split("@")[0] };
   }
-  const { data } = await auth.getSession();
+  let data: Awaited<ReturnType<typeof auth.getSession>>["data"];
+  try {
+    ({ data } = await auth.getSession());
+  } catch (err) {
+    // The SDK sometimes wants to rewrite the session cookie while it reads it (a stale cookie after sign-out, a refresh).
+    // Next forbids cookie writes during a page render and throws; that must mean "signed out", never a broken page.
+    // The next sign-in sets fresh cookies from a route handler, so nothing is lost.
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!/Cookies can only be modified/i.test(msg)) console.warn(`[auth] getSession failed, treating as signed out: ${msg.slice(0, 160)}`);
+    return null;
+  }
   const u = data?.user;
   return u ? { id: u.id, email: u.email, name: u.name, image: u.image ?? null, emailVerified: u.emailVerified === true } : null;
 });
