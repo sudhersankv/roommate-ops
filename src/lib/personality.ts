@@ -1,10 +1,14 @@
-// Roomie's personality (docs/personality.md, ADR 0012): an Archetype + the Admin's dials + Quirks + Learned style.
-// Pure and client-safe: the dashboard previews with it, services validate with it, mastra/persona.ts turns it into
-// instructions, and the pipeline uses its lines (greetings, wins) without an LLM call.
+// Roomie's personality (docs/personality.md, ADR 0012, ADR 0020): one voice (the chill Archetype) + the Learned style.
+// The other Archetypes, the name, quirks and dials stay in code behind a dev-only switch (ROOMIE_ARCHETYPES=1 outside
+// production) for evals; whatever a Group stored is otherwise inert. Pure and client-safe: services validate with it,
+// mastra/persona.ts turns it into instructions, and the pipeline uses its lines (greetings, wins) without an LLM call.
 
 export const ARCHETYPE_IDS = ["chill", "hype", "deadpan", "mom", "gremlin", "butler"] as const;
 export type ArchetypeId = (typeof ARCHETYPE_IDS)[number];
 export const isArchetypeId = (s: unknown): s is ArchetypeId => typeof s === "string" && (ARCHETYPE_IDS as readonly string[]).includes(s);
+
+/** The dev switch (ADR 0020): stored archetypes, names, quirks and dials only count with ROOMIE_ARCHETYPES=1 outside production. */
+export const archetypesUnlocked = (env: Record<string, string | undefined> = process.env): boolean => env.ROOMIE_ARCHETYPES === "1" && env.NODE_ENV !== "production";
 
 export const EMOJI_LEVELS = ["none", "light", "lots"] as const;
 export type EmojiLevel = (typeof EMOJI_LEVELS)[number];
@@ -249,20 +253,30 @@ const str = (s: unknown) => (typeof s === "string" ? s : "");
 const arr = <T>(a: unknown): T[] => (Array.isArray(a) ? (a as T[]) : []);
 const clamp01 = (n: number) => Math.min(1, Math.max(0, n));
 
-/** Whatever is in the jsonb column (possibly {}), as a full Personality. Never throws. */
-export function normalizePersonality(raw: unknown): Personality {
+/**
+ * Whatever is in the jsonb column (possibly {}), as a full Personality. Never throws. Outside the dev switch
+ * (`archetypes`, default `archetypesUnlocked()`) the stored base, name, quirks and dials are ignored: Roomie is chill,
+ * called Roomie, with chill's defaults (ADR 0020). Languages and the Learned style are read either way.
+ */
+export function normalizePersonality(raw: unknown, opts: { archetypes?: boolean } = {}): Personality {
   const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
   const l = (r.learned && typeof r.learned === "object" ? r.learned : {}) as Record<string, unknown>;
   const base = emptyLearned();
   const hours = arr<number>(l.hours).map((h) => num(h));
+  const unlocked = opts.archetypes ?? archetypesUnlocked();
+  const voice: Pick<Personality, "base" | "name" | "quirks" | "emoji" | "humor" | "formality"> = unlocked
+    ? {
+        base: isArchetypeId(r.base) ? r.base : DEFAULT_ARCHETYPE,
+        name: str(r.name).trim() || DEFAULT_PET_NAME,
+        quirks: arr<string>(r.quirks).map(str).filter(Boolean).slice(0, MAX_QUIRKS),
+        ...((EMOJI_LEVELS as readonly unknown[]).includes(r.emoji) ? { emoji: r.emoji as EmojiLevel } : {}),
+        ...(isDial(r.humor) ? { humor: r.humor } : {}),
+        ...(isDial(r.formality) ? { formality: r.formality } : {}),
+      }
+    : { base: DEFAULT_ARCHETYPE, name: DEFAULT_PET_NAME, quirks: [] };
   return {
-    base: isArchetypeId(r.base) ? r.base : DEFAULT_ARCHETYPE,
-    name: str(r.name).trim() || DEFAULT_PET_NAME,
-    quirks: arr<string>(r.quirks).map(str).filter(Boolean).slice(0, MAX_QUIRKS),
+    ...voice,
     languages: arr<string>(r.languages).map(str).filter(Boolean).slice(0, 5),
-    ...((EMOJI_LEVELS as readonly unknown[]).includes(r.emoji) ? { emoji: r.emoji as EmojiLevel } : {}),
-    ...(isDial(r.humor) ? { humor: r.humor } : {}),
-    ...(isDial(r.formality) ? { formality: r.formality } : {}),
     learned: {
       languages: arr<{ name: string; share: number }>(l.languages).filter((x) => str(x?.name)).map((x) => ({ name: x.name, share: clamp01(num(x.share)) })),
       codeSwitching: clamp01(num(l.codeSwitching)),
@@ -384,19 +398,11 @@ export const usableNicknames = (learned: Pick<LearnedStyle, "nicknames">) => lea
 
 export const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-/** "Dino, add milk" / "ok dino?" call the pet by name (whole word, any case). */
-export function saysName(text: string, name: string): boolean {
-  const n = name.trim();
-  if (!n) return false;
-  return new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegex(n)}(?![\\p{L}\\p{N}])`, "iu").test(text);
-}
-
-/** "/pet", "/pet@roomie_bot" (Telegram reads @bot as "Roomie"), "pet roomie", "*pets dino*". */
-export function isPetCommand(text: string, name = DEFAULT_PET_NAME): boolean {
+/** "/pet", "/pet@roomie_bot" (Telegram reads @bot as "Roomie"), "pet roomie", "*pets roomie*". Roomie has one name (ADR 0020). */
+export function isPetCommand(text: string): boolean {
   const t = text.trim();
   if (/^\/pet(?:@\w+|roomie)?$/i.test(t)) return true;
-  const names = [...new Set(["roomie", name.toLowerCase()])].map(escapeRegex).join("|");
-  return new RegExp(`^\\*?\\s*(?:pets?|petting|pat|pats|headpats?)\\s+(?:the\\s+)?(?:${names})\\b[\\s\\p{P}\\p{Extended_Pictographic}]*$`, "iu").test(t);
+  return /^\*?\s*(?:pets?|petting|pat|pats|headpats?)\s+(?:the\s+)?roomie\b[\s\p{P}\p{Extended_Pictographic}]*$/iu.test(t);
 }
 
 /* ---------- mood ---------- */

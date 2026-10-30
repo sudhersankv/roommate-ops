@@ -10,9 +10,10 @@ const withLearned = (over: Partial<Personality["learned"]>, p: Partial<Personali
   learned: { ...emptyLearned(), messagesSeen: 120, slang: [{ phrase: "no cap", count: 8 }, { phrase: "bet", count: 5 }], ...over },
 });
 
-test("core rules, the archetype's voice and the dials are all in, as sentences", () => {
+test("core rules, the archetype's voice and the dials are all in, as sentences (the dev switch still composes any archetype)", () => {
   const text = composePersona({ personality: { ...defaultPersonality(), base: "deadpan", name: "Dino", quirks: ["obsessed with the plant"] } });
-  assert.match(text, /You're Dino, this group chat's pet/);
+  assert.match(text, /You're Dino, the roommate in this group chat who actually keeps track/);
+  assert.match(composePersona({ personality: defaultPersonality() }), /You're Roomie, the roommate in this group chat who actually keeps track/);
   assert.match(text, /Never do math yourself/);
   assert.match(text, /VOICE: deadpan/);
   assert.match(text, /Use no emoji at all/);

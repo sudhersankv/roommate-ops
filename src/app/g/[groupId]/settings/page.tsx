@@ -1,6 +1,6 @@
 import type { Metadata } from "next"
 
-import { PersonalitySection } from "@/components/app/personality-section"
+import { LearnedReset } from "@/components/app/learned-reset"
 import { zonesByRegion } from "@/lib/time"
 import { currentMember } from "@/lib/session"
 import { scheduleView } from "../_components/data"
@@ -11,15 +11,16 @@ export const metadata: Metadata = { title: "Settings" }
 
 type Props = { params: Promise<{ groupId: string }> }
 
-// Core settings, Personality, and each enabled Toolkit's settings section (from its manifest). Admins get every
-// control; the sections and the server actions check the role again.
+// Core settings, "Reset what it's learned" (Admins; the one Personality control left, ADR 0020) and each enabled
+// Toolkit's settings section (from its manifest). Admins get every control; the sections and the server actions check
+// the role again.
 export default async function SettingsPage({ params }: Props) {
   const { groupId } = await params
   const s = await currentMember(groupId)
   const admin = s.member.role === "admin" && s.member.status === "active"
   const [schedule, sections] = await Promise.all([scheduleView(s), s.member.status === "active" ? settingsSections(s) : null])
   return (
-    <SettingsScreen zones={admin ? zonesByRegion() : []} schedule={schedule} personality={<PersonalitySection groupId={groupId} />}>
+    <SettingsScreen zones={admin ? zonesByRegion() : []} schedule={schedule} learned={<LearnedReset groupId={groupId} />}>
       {sections}
     </SettingsScreen>
   )

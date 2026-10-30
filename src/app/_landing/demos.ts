@@ -1,99 +1,112 @@
-// The landing page's fake chats (docs/landing.md). Roomie's lines follow the persona (docs/personality.md): short, facts
-// first, no lists; task replies keep normal capitalization and names, the vibe shows in asides. Vibe lines come from
-// ARCHETYPES, so editing an archetype updates the page. Every number here adds up; keep it that way.
-import { ARCHETYPES, previewOwes, type ArchetypeId } from "@/lib/personality"
+// The landing page's fake chats (docs/landing.md): one apartment, Apt 4B. Roomie's lines follow the persona
+// (docs/personality.md, one voice since ADR 0020): short, facts first, no lists; task replies keep normal capitalization
+// and names. Every number here adds up (the arithmetic is in a comment above each chat, and demos.test.ts checks it);
+// keep it that way.
+import { ARCHETYPES } from "@/lib/personality"
 import type { ChatLine } from "./chat"
 
-/** The hero: an argument, settled. A friends group, chill vibe. */
+/** The apartment every chat is set in. */
+export const APARTMENT = { title: "Apt 4B", people: "Maya, Dev, Sam, Roomie" }
+
+/**
+ * The hero: rent, a split and the landlord in one scroll.
+ * Rent $2,400 (each share goes out by DM: 3 x $800). Internet $60 / 3 = $20 each, so Maya and Sam owe Dev $20 each.
+ */
 export const HERO = {
-  title: "Friday dinner",
-  people: "Maya, Dev, Sam, Roomie",
+  ...APARTMENT,
   lines: [
-    { who: "Maya", text: "dev you still owe me for the pizza", time: "8:02 PM" },
-    { who: "Dev", text: "i paid you back tuesday??", time: "8:03 PM", me: true },
-    { who: "Sam", text: "roomie settle this", time: "8:03 PM" },
-    { who: "Roomie", text: "Dev paid Maya $18 for the pizza on Tuesday. If anything, Maya owes Dev $4 for the Uber", time: "8:03 PM", button: "Pay Dev $4 on Venmo", win: true },
-    { who: "Maya", text: "…ok fine", time: "8:04 PM" },
+    { who: "Sam", text: "roomie is rent this week?", time: "8:02 PM" },
+    { who: "Roomie", text: "Rent $2,400 is due Saturday. Maya pays the landlord; I'll DM everyone their share Wednesday.", time: "8:02 PM" },
+    { who: "Dev", text: "roomie i paid $60 for internet", time: "8:05 PM", me: true },
+    { who: "Roomie", text: "Logged. $60 internet, $20 each: Maya and Sam owe Dev $20", time: "8:05 PM", win: true },
+    { who: "Maya", text: "and the landlord? heat's still weird", time: "8:06 PM" },
+    { who: "Roomie", text: "He wrote back this morning: a tech comes Thursday 1-3. I'll remind you Wednesday night.", time: "8:06 PM" },
   ] satisfies ChatLine[],
 }
 
 export type Demo = {
   id: string
-  /** The Trick the chat shows (a toolkit id; its name and accent come from the catalog). */
-  trick: string
+  /** The Trick the chat shows: a toolkit id (for its accent) and the name people see (ADR 0015's words). */
+  trick: { id: string; name: string }
   title: string
   body: string
-  group: { title: string; people: string; vibe: ArchetypeId }
+  group: { title: string; people: string }
   lines: ChatLine[]
-  photo?: "receipt"
 }
 
-const hypeStreak = ARCHETYPES.hype.wins.streak[0].replace("{n}", "7").replace("{who}", "Dev")
+/** "7 in a row for Dev. quietly impressive", in the one voice. */
+const streak = ARCHETYPES.chill.wins.streak[0].replace("{n}", "7").replace("{who}", "Dev")
 
+/** Five chats, one per bucket: Money (rent, the private pay link), Lease Inbox, Groceries, House, Money (a Poll). */
 export const DEMOS: Demo[] = [
   {
-    // $920 + $180 = $1,100 over 4 = $275 each. Leo paid 920 (+645), Ana 180 (-95), Kai and Priya -275 each.
-    id: "trip",
-    trick: "splitting",
-    title: "Split the Airbnb.",
-    body: "Any split, any group, exact to the cent. Pay links included.",
-    group: { title: "Lisbon trip", people: "Leo, Ana, Kai, Priya, Roomie", vibe: "hype" },
+    // Rent $2,400 / 3 = $800 each. Maya pays the landlord, so Dev (the viewer) and Sam each owe Maya $800; Dev's DM.
+    id: "rent",
+    trick: { id: "splitting", name: "Money" },
+    title: "Nobody has to be that guy anymore.",
+    body: "Rent is split before it's due. Who owes what is said in private, with a pay link.",
+    group: APARTMENT,
     lines: [
-      { who: "Leo", text: "roomie split the airbnb 4 ways, i paid $920", time: "2:14 PM" },
-      { who: "Roomie", text: "Logged! $920 Airbnb, $230 each. Lisbon's gonna be good 🌴", time: "2:14 PM" },
-      { who: "Ana", text: "roomie the boat tour was $180, i got it", time: "6:40 PM", me: true },
-      { who: "Roomie", text: "Logged, $45 each. Kai and Priya owe Leo $275 each, Ana owes Leo $95", time: "6:40 PM", button: "Pay Leo $95 on Venmo" },
+      { who: "Roomie", text: "Rent $2,400 is due Saturday. Maya pays the landlord.", time: "9:00 AM" },
+      { who: "Roomie", text: "You owe Maya $800 for rent, due Saturday.", time: "9:00 AM", dm: true, button: "Pay Maya $800 on Venmo" },
+      { who: "Dev", text: "paid", time: "9:14 AM", me: true, dm: true },
+      { who: "Roomie", text: "Got it. You and Maya are square for rent 👍", time: "9:14 AM", dm: true, win: true },
     ],
   },
   {
-    // Receipt split: unclaimed items shared, tax proportional. $42.18 = wine 12.99 (Dev) + 27.34 shared + 1.85 tax.
-    id: "receipts",
-    trick: "splitting",
-    title: "Snap the receipt.",
-    body: "It reads every line, splits by who had what, and asks first.",
-    photo: "receipt",
-    group: { title: "Apt 4B", people: "Maya, Dev, Sam, Roomie", vibe: "chill" },
+    // No money: a work order from "tell them" to the landlord's reply, with the reminder Roomie sets itself.
+    id: "lease",
+    trick: { id: "lease-inbox", name: "Lease Inbox" },
+    title: "The landlord, handled.",
+    body: "Your group gets its own email address. Roomie writes, reads what comes back and remembers the follow-up.",
+    group: APARTMENT,
     lines: [
-      { who: "Dev", text: "roomie split this, the wine's mine", time: "8:15 PM", me: true },
-      { who: "Roomie", text: "$42.18 at Trader Joe's. Wine's on you, the rest three ways: Dev $23.12, Maya $9.53, Sam $9.53. Log it?", time: "8:15 PM" },
-      { who: "Dev", text: "yep", time: "8:16 PM", me: true },
-      { who: "Roomie", text: "Logged 🧾", time: "8:16 PM" },
+      { who: "Sam", text: "roomie the sink's leaking, tell them", time: "7:40 PM" },
+      { who: "Roomie", text: "Sent: reported the leaking kitchen sink. I'll say when they answer.", time: "7:41 PM" },
+      { day: "Tomorrow" },
+      { who: "Roomie", text: "Landlord: plumber Tuesday 10-12. I'll remind you Monday.", time: "10:15 AM", win: true },
     ],
   },
   {
+    // The Cart: 2 things open (eggs, bread) + milk + dish soap (shared) = 4, + Sam's oat milk = 5.
     id: "groceries",
-    trick: "groceries",
-    title: "One Cart. Then Instacart.",
-    body: "Anyone adds from the chat. Whoever shops gets the list.",
-    group: { title: "The Parkers", people: "Nina, Theo, Mom, Roomie", vibe: "gremlin" },
+    trick: { id: "groceries", name: "Groceries" },
+    title: "It notices before you run out.",
+    body: "Anyone adds from the chat. Roomie says when something's probably low, from how often you buy it.",
+    group: APARTMENT,
     lines: [
-      { who: "Theo", text: "roomie add hot cheetos", time: "4:02 PM" },
-      { who: "Roomie", text: "Added. Cart's at 7 things, 3 of them hot cheetos 👀", time: "4:02 PM" },
-      { who: "Nina", text: "roomie i'm ordering tonight, send the list", time: "5:48 PM", me: true },
-      { who: "Roomie", text: "7 things on the list 🛒 I left the cheetos in. you're welcome 😈", time: "5:48 PM", button: "Open in Instacart" },
+      { who: "Roomie", text: "Probably low: milk, dish soap. Add them?", time: "9:00 AM" },
+      { who: "Dev", text: "yes", time: "9:02 AM", me: true },
+      { who: "Roomie", text: "Added both as shared. Cart's at 4.", time: "9:02 AM" },
+      { who: "Sam", text: "roomie add oat milk for me", time: "9:10 AM" },
+      { who: "Roomie", text: "Added, yours. Cart's at 5.", time: "9:10 AM", win: true },
     ],
   },
   {
-    id: "chores",
-    trick: "house",
+    // The chart: Dev's 7th dish day in a row; dishes are Sam's tomorrow.
+    id: "house",
+    trick: { id: "house", name: "House" },
     title: "The 7-day dish streak.",
-    body: "It knows whose turn it is, and nudges once a day at most.",
-    group: { title: "Apt 4B", people: "Maya, Dev, Sam, Roomie", vibe: "hype" },
+    body: "It knows whose turn it is. One morning line, only when something's due.",
+    group: APARTMENT,
     lines: [
       { who: "Dev", text: "roomie dishes done", time: "10:05 PM", me: true },
-      { who: "Roomie", text: `Logged. ${hypeStreak} Sam's up tomorrow`, time: "10:05 PM", win: true },
+      { who: "Roomie", text: `Logged. ${streak} 🔥 Dishes are Sam's tomorrow`, time: "10:05 PM", win: true },
       { day: "Tomorrow" },
-      { who: "Roomie", text: "Morning, team! Dishes are on Sam today 🧹", time: "9:00 AM" },
+      { who: "Roomie", text: "Morning. Dishes are on Sam today, trash goes out tonight.", time: "9:00 AM" },
     ],
   },
-]
-
-/** One line per vibe for the strip: gremlin and deadpan lead. From ARCHETYPES, so the page follows the voice. */
-export const VIBE_LINES: { id: ArchetypeId; line: string }[] = [
-  { id: "gremlin", line: ARCHETYPES.gremlin.examples[1] },
-  { id: "deadpan", line: previewOwes({ base: "deadpan" }) },
-  { id: "hype", line: ARCHETYPES.hype.wins.square[0] },
-  { id: "mom", line: previewOwes({ base: "mom" }) },
-  { id: "butler", line: previewOwes({ base: "butler" }) },
-  { id: "chill", line: previewOwes({ base: "chill" }) },
+  {
+    // Pizza $36, three of four had some: $36 / 3 = $12 each. Maya paid, so Dev and Sam owe Maya $12; Priya's out.
+    id: "pizza",
+    trick: { id: "splitting", name: "Money" },
+    title: "Who had pizza? Ask the room.",
+    body: "When the answer needs more than one person, Roomie asks the chat and logs it once they've answered.",
+    group: { title: "Apt 4B", people: "Maya, Dev, Sam, Priya, Roomie" },
+    lines: [
+      { who: "Maya", text: "roomie i got the pizza, $36. split it with whoever had some", time: "9:52 PM" },
+      { poll: "Who had pizza?", of: 4, time: "9:52 PM", options: [{ label: "I did", votes: 3, voters: "Maya, Dev, Sam" }, { label: "Not me", votes: 1, voters: "Priya" }] },
+      { who: "Roomie", text: "Logged. $36 pizza, three ways: Dev and Sam owe Maya $12 each. Priya's out of it", time: "10:20 PM", win: true },
+    ],
+  },
 ]
