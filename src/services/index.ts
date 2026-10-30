@@ -3,6 +3,7 @@ export * as groups from "./groups";
 export * as toolkits from "./toolkits";
 export * as members from "./members";
 export * as claims from "./claims";
+export * as joins from "./joins";
 export * as activity from "./activity";
 export * as money from "./money";
 export * as cart from "./cart";

@@ -17,7 +17,7 @@ Roomie is a groupmate, not a platform: brief, witty, exact about facts, and it s
 | Models (Neon AI Gateway) | `claude-sonnet-5-5` for the agent and recipes. `claude-haiku-5-5` for background summaries and Group style. `typesafeai-jev-1-14-0` for the Gate ([ADR 0002](./adr/0002-jev-gate-before-the-agent.md)). `qwen3-embedding-0-6b` for semantic recall. |
 | Observability | Mastra tracing to the **Mastra platform** (`MastraPlatformExporter`) and to local storage for Studio. About 10% of live replies are scored. `npm run evals` runs a fixed scenario set. |
 | When Roomie speaks | Hard triggers ("roomie", @-mention, a reply to Roomie, a voice note); the follow-up window after it speaks; or the Gate says act or clarify above the Group's Chattiness thresholds (default: normal). Roomie asks before logging anything it wasn't asked to log. |
-| Identity | **Neon Auth** with Google. Members are linked to Accounts by **Claim links** sent in private messages ([ADR 0003](./adr/0003-neon-auth-and-claim-links.md)). Whoever adds Roomie is the first Admin. New Members are Pending until an Admin approves them in the chat or on the dashboard. |
+| Identity | **Neon Auth** with Google. Members are linked to Accounts by the Group's **Join link** (pick your name, [ADR 0014](./adr/0014-joining-a-group-dashboard.md)) or **Claim links** sent in private messages ([ADR 0003](./adr/0003-neon-auth-and-claim-links.md)). Whoever adds Roomie is the first Admin. New Members are Pending until an Admin approves them in the chat or on the dashboard. |
 | Integrations | Instacart and Splitwise through **Composio**, wrapped in Roomie's own tools ([ADR 0004](./adr/0004-composio-for-instacart-and-splitwise.md)). |
 | Money | Integer cents, computed in code ([ADR 0007](./adr/0007-money-is-integer-cents-computed-in-code.md)). One currency per Group. |
 | Personality | Each Group's Roomie is its pet: an archetype (chill by default, hype, deadpan, mom, gremlin, butler), a name, quirks and sliders the Admin sets, plus a Learned style counted from the messages. It borrows slang gradually and never more than the group ([ADR 0012](./adr/0012-personality-archetype-sliders-learned-style.md), [docs/personality.md](./personality.md)). Jokes are a trait, not a Toolkit. |
@@ -173,6 +173,12 @@ Each step gets its own branch and PR, and you test locally before it's merged. S
 - [x] Photos and voice notes only when Roomie is addressed (or in the follow-up window / setup); a voice note is no hard trigger.
 - [x] `wa_contacts` only for Members (+ `scripts/wa-contacts-prune.ts`), the WhatsApp adder allowlist, admin-only tools that need the Admin's own ask (manifest `adminOnly`).
 - **Done when:** the DB-backed checks (`npx tsx --test src/abuse.dbtest.ts`) pass on the dev branch, the prune has run on prod, and a paused test Group stays quiet on Fly.
+
+### Joining a Group's dashboard (`feat/joining`, [ADR 0014](./adr/0014-joining-a-group-dashboard.md), [docs/joining.md](./joining.md))
+- [x] The Admin's setup DM (Claim link + the setup question): WhatsApp at once, Telegram on `/start`; setup answered in a DM posts the learned line and the Join link in the group too.
+- [x] One Join link per Group (`groups.join_code`, `join_policy`, `chats.participant_count`, `members.wants_seat_id`, migration 0011; `scripts/backfill-join-codes.ts`), `/j/[code]` seat picker, free seats vs Pending, 10 picks an hour per IP and Account.
+- [x] Seats on the Members page (connected / open / pending, Disconnect, Move to another seat, Join link card with Copy and Rotate), Settings → Joining, chat tools `rotate_join_link`, `set_join_policy`, `revoke_seat`; `get_dashboard_link` for everyone = the Join link; `/help` names it; `/app` lists 2+ Groups.
+- **Done when:** in a real group the Admin gets the setup DM, the Join link lands in the chat after setup, and a friend picks their name and is in without asking Roomie for a link.
 
 ## Parked (v2 / v3)
 

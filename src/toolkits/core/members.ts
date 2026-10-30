@@ -24,7 +24,7 @@ export const memberTools = {
     inputSchema: z.object({ name: z.string().min(1).describe("The pending member's name") }),
     execute: async ({ name }, context) => {
       const ctx = ctxOf(context);
-      const m = await members.approveMember(ctx, { memberId: await memberIdByName(ctx, name, { includePending: true }) });
+      const m = await members.approveMember(ctx, { memberId: await memberIdByName(ctx, name, { preferPending: true }) });
       return { approved: m.displayName };
     },
   }),
@@ -34,7 +34,7 @@ export const memberTools = {
     inputSchema: z.object({ name: z.string().min(1) }),
     execute: async ({ name }, context) => {
       const ctx = ctxOf(context);
-      const m = await members.declineMember(ctx, { memberId: await memberIdByName(ctx, name, { includePending: true }) });
+      const m = await members.declineMember(ctx, { memberId: await memberIdByName(ctx, name, { preferPending: true }) });
       return { declined: m.displayName };
     },
   }),

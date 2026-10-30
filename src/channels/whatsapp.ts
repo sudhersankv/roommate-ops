@@ -67,7 +67,17 @@ export type { WaContact };
 export type WhatsAppDeps = {
   handleIncoming(msg: IncomingMessage): Promise<Outgoing | null>;
   /** `refused`: Onboarding said no (too many new Groups from this adder today) and already left the Chat. */
-  onGroupJoined(chat: ChatRef, participants: ChannelUser[], addedBy: ChannelUser, opts: { dmHandle?: string }): Promise<{ intro: Outgoing | null; refused?: boolean }>;
+  /** `setupDm`: the Admin's private setup message (ADR 0014), sent right away. */
+  onGroupJoined(
+    chat: ChatRef,
+    participants: ChannelUser[],
+    addedBy: ChannelUser,
+    opts: { dmHandle?: string; participantCount?: number | null },
+  ): Promise<{ intro: Outgoing | null; setupDm?: Outgoing | null; refused?: boolean }>;
+  /** The Chat's head count changed (people besides Roomie). Join link seats use it. */
+  setParticipantCount?(chatExternalId: string, count: number | null): Promise<void>;
+  /** The Group's Join link for /help ("dashboard: <link>"); undefined when there's none. */
+  dashboardIn?(chatExternalId: string): Promise<string | undefined>;
   onParticipantJoined(groupId: string, user: ChannelUser): Promise<{ announce: Outgoing | null }>;
   groupIdOfChat(chatExternalId: string): Promise<string | undefined>;
   /** External ids of the Chats where this person is a Member (where their DMs belong). */
@@ -285,6 +295,19 @@ export class WhatsAppChannel implements Channel {
     const done = new Promise<void>((r) => (resolve = r));
     const timer = setTimeout(() => void this.flushIntro(chatExternalId), ms);
     this.intros.set(chatExternalId, { timer, out, done, resolve });
+  }
+
+  /** People in the group besides Roomie, from its metadata; null when not connected. */
+  async participantCount(chatExternalId: string): Promise<number | null> {
+    const sock = this.socket();
+    if (!sock) return null;
+    try {
+      const meta = await sock.groupMetadata(chatExternalId);
+      const isMe = isMeIn(meOf(sock.user));
+      return meta.participants.filter((p) => ![p.id, p.phoneNumber, p.lid].some((j) => isMe(j))).length;
+    } catch {
+      return null;
+    }
   }
 
   /** Leave the group (the intro, if still waiting, never goes out). */
@@ -628,7 +651,7 @@ export function createWhatsApp(opts: WhatsAppOptions): WhatsApp {
         await channel.leaveChat(jid).catch((err) => console.error(`[whatsapp] couldn't leave ${jid}`, err));
         return false;
       }
-      const res = await deps.onGroupJoined({ channel: "whatsapp", externalId: jid, title: meta.subject || undefined }, people, named, {});
+      const res = await deps.onGroupJoined({ channel: "whatsapp", externalId: jid, title: meta.subject || undefined }, people, named, { participantCount: people.length });
       if (res.refused) {
         refuse(jid);
         return false;
@@ -638,6 +661,8 @@ export function createWhatsApp(opts: WhatsAppOptions): WhatsApp {
       if (adderSource) await member(adderSource);
       console.log(`[whatsapp] joined ${JSON.stringify(meta.subject ?? "")} (${jid}) with ${people.length} people, added by ${named.name}`);
       if (res.intro) channel.introLater(jid, res.intro, joinDelayMs);
+      // The Admin's setup DM goes out at once: WhatsApp lets Roomie message anyone (ADR 0014).
+      if (res.setupDm) await channel.sendPrivate(named.userExternalId, res.setupDm).catch((err) => console.error(`[whatsapp] setup DM to the admin of ${jid} failed`, err));
       return true;
     } finally {
       joining.delete(jid);
@@ -660,13 +685,26 @@ export function createWhatsApp(opts: WhatsAppOptions): WhatsApp {
         const res = await deps.onParticipantJoined(groupId, u);
         if (res.announce) await channel.sendToChat(e.id, res.announce);
       }
+      await recount(e.id);
       return;
     }
     if (e.action === "remove" && e.participants.some(isMeParticipant)) {
       channel.dropIntro(e.id);
       console.log(`[whatsapp] removed from ${e.id}`);
+      return;
     }
-    // Someone else leaving or being removed: nothing to do (as on Telegram, Members stay until an Admin removes them).
+    // Someone else leaving or being removed: Members stay until an Admin removes them (as on Telegram); only the head
+    // count changes.
+    if (e.action === "remove") await recount(e.id);
+  }
+
+  /** The group's head count (people besides Roomie) for the Join link's free seats. */
+  async function recount(jid: string) {
+    if (!deps.setParticipantCount || !(await deps.groupIdOfChat(jid))) return;
+    const meta = await metadata(jid, true);
+    if (!meta) return;
+    const n = meta.participants.filter((p) => !isMeParticipant(p)).length;
+    await deps.setParticipantCount(jid, n).catch((err) => console.error(`[whatsapp] couldn't store the head count of ${jid}`, err));
   }
 
   async function groupsUpdate(updates: BaileysEventMap["groups.update"]) {
@@ -696,6 +734,9 @@ export function createWhatsApp(opts: WhatsAppOptions): WhatsApp {
     }
     if (out) await reply(out);
   }
+
+  const helpFor = async (jid: string) =>
+    helpText(await deps.tricksIn?.(jid).catch(() => undefined), { dashboard: await deps.dashboardIn?.(jid).catch(() => undefined) });
 
   // A failed lookup counts as paused: /help and /start can wait, a paused Group shouldn't hear from Roomie.
   const paused = (jid: string) =>
@@ -759,7 +800,7 @@ export function createWhatsApp(opts: WhatsAppOptions): WhatsApp {
     if (!from) return;
     if (commandOf(read.text) === "help") {
       if (await paused(jid)) return;
-      return channel.sendToChat(jid, { text: helpText(await deps.tricksIn?.(jid).catch(() => undefined)) });
+      return channel.sendToChat(jid, { text: await helpFor(jid) });
     }
     const say = (out: Outgoing) => channel.sendToChat(jid, out);
     const got = await content(m, read, say, jid, jid, from);
@@ -788,7 +829,7 @@ export function createWhatsApp(opts: WhatsAppOptions): WhatsApp {
       }
     } else if (chats.length) await member(ids, m.pushName); // a Member's DM: keep their pair and name
     if ((command === "help" || command === "start") && chats.length === 1 && (await paused(chats[0]))) return;
-    if (command === "help") return say({ text: helpText(chats.length === 1 ? await deps.tricksIn?.(chats[0]).catch(() => undefined) : undefined) });
+    if (command === "help") return say({ text: chats.length === 1 ? await helpFor(chats[0]) : helpText() });
     if (command === "start") return say({ text: startReply(from.name.split(" ")[0], chats.length, "whatsapp") });
     if (chats.length !== 1) {
       if (chats.length) return say({ text: MANY_GROUPS });

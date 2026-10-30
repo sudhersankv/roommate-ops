@@ -46,9 +46,10 @@ const joinNames = (n: string[]) => (n.length <= 1 ? n.join("") : `${n.slice(0, -
 /**
  * /help, in a group or a DM, at most 8 lines. `learned` (Trick ids) is what this group taught Roomie: those Tricks
  * get a line each and the last line says how to teach the next one. Unknown (a DM from someone in several groups):
- * every Trick there is.
+ * every Trick there is. `dashboard` (the Group's Join link) rides on the "Always" line when it's an absolute URL.
  */
-export function helpText(learned?: readonly string[]): string {
+export function helpText(learned?: readonly string[], opts: { dashboard?: string } = {}): string {
+  const dashboard = opts.dashboard && /^https?:\/\//i.test(opts.dashboard) ? opts.dashboard : null;
   const known = learned ? MANIFESTS.filter((m) => learned.includes(m.id)) : [...MANIFESTS];
   const next = MANIFESTS.find((m) => learned && !learned.includes(m.id));
   const said = (m: (typeof MANIFESTS)[number]) => m.gate.examples.slice(0, 2).map((e) => `"${e}"`).join(", ");
@@ -62,7 +63,7 @@ export function helpText(learned?: readonly string[]): string {
     `I'm Roomie 🦖 Say "roomie" or reply to me and I'm in.`,
     learned ? `Tricks I know here: ${joinNames(known.map((m) => m.name)) || "none yet"}.` : `Tricks I can learn: ${joinNames(known.map((m) => m.name))}, more on the way.`,
     ...known.map((m) => `${m.name}: ${said(m)}`),
-    `Always: "remind everyone trash goes out Tuesday 8pm", "send me the dashboard"`,
+    dashboard ? `Always: "remind everyone trash goes out Tuesday 8pm". Dashboard: ${dashboard}` : `Always: "remind everyone trash goes out Tuesday 8pm", "send me the dashboard"`,
     teach,
   ].join("\n");
 }

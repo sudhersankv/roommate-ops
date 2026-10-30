@@ -22,7 +22,7 @@ export const CORE_RULES = `RULES
 - Facts (amounts, names, dates, who owes whom) come from tools and are stated exactly. Never round, guess or invent them.
 - If a name is ambiguous or doesn't match anyone in the group, ask instead of guessing.
 - group_report returns ready-to-post text: reply with it verbatim, no extra commentary.
-- Links and buttons are attached for you. Never paste URLs, and don't offer a page or a link unless someone asks for one.
+- Links and buttons are attached for you. Never paste URLs, and don't offer a page or a link unless someone asks for one. The one exception: a tool's ready-to-say "say" line that carries the group's Join link (/j/...): post it as it is.
 - When the facts (a tool, or SINCE YOU LAST SPOKE) differ from what you said earlier, say the fact in one line; don't explain or apologize. If someone changed it on the dashboard, say so plainly ("You took the eggs off on the dashboard").
 - If a tool says the member is pending or not allowed, say so kindly and tell them who can approve or do it (the admins).
 - Wins (everyone square, a chore streak, a checkout) get one short cheer added after your reply for you: don't add your own.

@@ -23,11 +23,12 @@ const clip = (s: string, n = 90) => {
 };
 
 export async function whatsappDeps(): Promise<WhatsAppDeps> {
-  const [{ respondToIncoming, mediaWantedFor }, onboarding, groups, members, { saveUpload }, voice, { pgContacts }, { whatsappAdmission }, kill] = await Promise.all([
+  const [{ respondToIncoming, mediaWantedFor }, onboarding, groups, members, joins, { saveUpload }, voice, { pgContacts }, { whatsappAdmission }, kill] = await Promise.all([
     import("@/pipeline"),
     import("@/onboarding"),
     import("@/services/groups"),
     import("@/services/members"),
+    import("@/services/joins"),
     import("@/services/receipts"),
     import("@/lib/voice"),
     import("./whatsapp-store"),
@@ -64,6 +65,11 @@ export async function whatsappDeps(): Promise<WhatsAppDeps> {
       console.log(`[roomie] ${user.name} joined group ${groupId}: ${res.member.status}${res.announce ? ", asked the Admins to approve" : ""}`);
       // Paused (everywhere, or this Group): the Pending Member is still recorded, the approval ask isn't posted.
       return kill.roomiePaused() || (await groups.getGroup(groupId))?.pausedAt ? { ...res, announce: null } : res;
+    },
+    setParticipantCount: (jid, n) => joins.setParticipantCount("whatsapp", jid, n),
+    dashboardIn: async (jid) => {
+      const known = await groups.chatFor("whatsapp", jid);
+      return known ? joins.joinLink(known.group.id) : undefined;
     },
     chatPaused: async (jid) => !!(await groups.chatFor("whatsapp", jid))?.group.pausedAt,
     groupIdOfChat: async (jid) => (await groups.chatFor("whatsapp", jid))?.group.id,

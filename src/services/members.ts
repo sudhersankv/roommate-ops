@@ -1,5 +1,5 @@
 // Members: who is in a Group, approvals (Pending -> active), roles, payment handles and "forget me".
-import { and, asc, eq, inArray, ne, or, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import type { ChannelName, MemberNote, PaymentApp } from "@/db/schema";
 import { anonymize } from "@/lib/forget-text";
@@ -103,18 +103,64 @@ async function target(ctx: Ctx, memberId: string): Promise<Member> {
   return m;
 }
 
-/** Admin: Pending -> active. */
+/**
+ * Admin: Pending -> active. A Join link sign-in that asked for a seat (wantsSeatId, services/joins.ts) is approved by
+ * moving its Account onto that seat, when the seat is still open; its placeholder row goes. Returns the Member who is
+ * active now.
+ */
 export async function approveMember(ctx: Ctx, input: { memberId: string }): Promise<Member> {
   await requireAdmin(ctx);
   const m = await target(ctx, input.memberId);
   if (m.status === "active") throw new Error(`${m.displayName} is already approved.`);
-  const [updated] = await db
-    .update(members)
-    .set({ status: "active", approvedBy: ctx.memberId, approvedAt: new Date() })
-    .where(eq(members.id, m.id))
-    .returning();
+  // One transaction under the Group and seat locks (services/joins.ts lockSeats), the request re-read inside it: two
+  // Admins approving (or one declining) at once can't both act, and a pick that just took the seat wins.
+  const { lockSeats } = await import("./joins");
+  const result = await db.transaction(async (tx) => {
+    const locked = await lockSeats(tx, ctx.groupId, m.wantsSeatId ? [m.id, m.wantsSeatId] : [m.id]);
+    const now = locked.get(m.id);
+    if (!now || now.status !== "pending") throw new Error(`${m.displayName} isn't waiting for approval anymore.`);
+    const seat = now.wantsSeatId ? locked.get(now.wantsSeatId) : undefined;
+    // Never onto an Admin seat: approving a Join link sign-in doesn't hand out Admin powers.
+    if (now.accountId && seat && seat.status === "active" && !seat.accountId && seat.role !== "admin") {
+      await tx.update(members).set({ status: "removed", accountId: null, wantsSeatId: null }).where(eq(members.id, now.id));
+      const [row] = await tx.update(members).set({ accountId: now.accountId }).where(and(eq(members.id, seat.id), isNull(members.accountId))).returning();
+      if (!row) throw new Error(`Someone just connected as ${seat.displayName}. Approve again to add ${m.displayName} as their own Member.`);
+      return { row, moved: true };
+    }
+    const [row] = await tx
+      .update(members)
+      .set({ status: "active", approvedBy: ctx.memberId, approvedAt: new Date(), wantsSeatId: null })
+      .where(and(eq(members.id, now.id), eq(members.status, "pending")))
+      .returning();
+    return { row, moved: false };
+  });
+  if (result.moved) {
+    await recordFor(ctx, "member.approved", `approved ${m.displayName} as ${result.row.displayName}`, { table: "members", id: result.row.id });
+    await toldInChat(ctx, `${m.displayName} is in: connected to the dashboard as ${result.row.displayName}.`);
+    return result.row;
+  }
   await recordFor(ctx, "member.approved", `approved ${m.displayName}`, { table: "members", id: m.id });
-  return updated;
+  if (!m.channelUserId && m.accountId) await toldInChat(ctx, `${m.displayName} is in: connected to the dashboard.`);
+  return result.row;
+}
+
+/**
+ * A Join link sign-in was told "I'll let you know in the chat": an approval made on the dashboard says so there. In
+ * the chat Roomie's own reply already does.
+ */
+async function toldInChat(ctx: Ctx, text: string) {
+  if (ctx.source !== "ui") return;
+  try {
+    const [g] = await db.select({ pausedAt: schema.groups.pausedAt }).from(schema.groups).where(eq(schema.groups.id, ctx.groupId));
+    const [chat] = await db.select({ id: schema.chats.id }).from(schema.chats).where(eq(schema.chats.groupId, ctx.groupId));
+    if (!chat || g?.pausedAt) return;
+    const { deliver } = await import("@/channels");
+    const { logMessage } = await import("./chatlog");
+    await deliver(ctx.groupId, { text });
+    await logMessage(ctx.groupId, null, text);
+  } catch (e) {
+    console.warn("[members] couldn't say the approval in the chat", e);
+  }
 }
 
 /** Admin: a Pending member is turned away. They stay in the Chat; Roomie won't act for them. */
@@ -122,7 +168,9 @@ export async function declineMember(ctx: Ctx, input: { memberId: string }): Prom
   await requireAdmin(ctx);
   const m = await target(ctx, input.memberId);
   if (m.status !== "pending") throw new Error(`${m.displayName} isn't waiting for approval.`);
-  const [updated] = await db.update(members).set({ status: "removed" }).where(eq(members.id, m.id)).returning();
+  // Only while still Pending: an approval that just went through isn't undone.
+  const [updated] = await db.update(members).set({ status: "removed" }).where(and(eq(members.id, m.id), eq(members.status, "pending"))).returning();
+  if (!updated) throw new Error(`${m.displayName} isn't waiting for approval anymore.`);
   await recordFor(ctx, "member.declined", `declined ${m.displayName}`, { table: "members", id: m.id });
   return updated;
 }

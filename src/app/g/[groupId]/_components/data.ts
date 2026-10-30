@@ -6,7 +6,7 @@ import { ToolkitIcon } from "@/components/app/toolkit-icon"
 import { localDay } from "@/lib/dates"
 import type { GroupSession } from "@/lib/session"
 import { instacartAvailability } from "@/integrations/instacart"
-import { activity, cart, chatlog, chores, groups, members, money, pantry, recipes, reminders, schedule, splitwise, toolkits, upkeep } from "@/services"
+import { activity, cart, chatlog, chores, groups, joins, members, money, pantry, recipes, reminders, schedule, splitwise, toolkits, upkeep } from "@/services"
 import { canChangeExpense } from "@/services/authz"
 import { guessCategory } from "@/services/categories"
 import type { Expense } from "@/services/money"
@@ -58,18 +58,37 @@ function shellView(groupId: string, on: Record<string, boolean>): Pick<GroupView
 }
 
 export async function groupView(s: GroupSession): Promise<GroupView> {
-  const [people, toolkits] = await Promise.all([members.listMembersWithHandles({ groupId: s.group.id }), toolkitStates(s.group.id)])
+  const active = s.member.status === "active"
+  const [people, toolkits, seats, joinUrl] = await Promise.all([
+    members.listMembersWithHandles({ groupId: s.group.id }),
+    toolkitStates(s.group.id),
+    joins.seatStates({ groupId: s.group.id }),
+    active ? joins.joinLink(s.group.id) : Promise.resolve(null),
+  ])
   const on = Object.fromEntries(TOOLKIT_IDS.map((id) => [id, toolkits.find((t) => t.id === id)?.enabled ?? false])) as Record<ToolkitId, boolean>
   const tz = s.group.timezone
-  const view = (m: (typeof people)[number]): MemberView => ({
-    id: m.id,
-    name: m.displayName,
-    role: m.role,
-    status: m.status,
-    joined: localDay(m.joinedAt, tz),
-    handles: m.handles,
-    hasAccount: !!m.accountId,
-  })
+  const admin = active && s.member.role === "admin"
+  const view = (m: (typeof people)[number]): MemberView => {
+    const seat = seats.get(m.id)
+    return {
+      id: m.id,
+      name: m.displayName,
+      role: m.role,
+      status: m.status,
+      joined: localDay(m.joinedAt, tz),
+      handles: m.handles,
+      hasAccount: !!m.accountId,
+      inChat: !!m.channelUserId,
+      seat: {
+        state: seat?.state ?? (m.status === "pending" ? "pending" : m.accountId ? "connected" : "open"),
+        accountName: seat?.account?.name ?? null,
+        accountImage: seat?.account?.image ?? null,
+        // Who signed in is the Admins' business: they approve, revoke and reassign seats.
+        accountEmail: admin || m.id === s.member.id ? (seat?.account?.email ?? null) : null,
+        wantsSeat: seat?.wantsSeat ?? null,
+      },
+    }
+  }
   const me = people.find((m) => m.id === s.member.id)
   return {
     group: {
@@ -81,10 +100,30 @@ export async function groupView(s: GroupSession): Promise<GroupView> {
       purpose: s.group.purpose,
       simplifyDebts: s.group.simplifyDebts,
       onboarded: !!s.group.onboardedAt,
+      joinPolicy: s.group.joinPolicy,
     },
-    me: me ? view(me) : { id: s.member.id, name: s.member.displayName, role: s.member.role, status: s.member.status, joined: localDay(s.member.joinedAt, tz), handles: {}, hasAccount: true },
+    joinUrl,
+    me: me
+      ? view(me)
+      : {
+          id: s.member.id,
+          name: s.member.displayName,
+          role: s.member.role,
+          status: s.member.status,
+          joined: localDay(s.member.joinedAt, tz),
+          handles: {},
+          hasAccount: true,
+          inChat: !!s.member.channelUserId,
+          seat: { state: "connected", accountName: s.account.name, accountImage: s.account.image, accountEmail: s.account.email, wantsSeat: null },
+        },
     groups: s.groups,
-    members: people.map(view),
+    // A Pending Member (now anyone holding the Join link) sees only who can let them in: the active Admins' names and
+    // their own row. No handles, no Google names or avatars of others in the payload.
+    members: active
+      ? people.map(view)
+      : people
+          .filter((m) => m.id === s.member.id || (m.role === "admin" && m.status === "active"))
+          .map((m) => (m.id === s.member.id ? view(m) : { ...view(m), handles: {}, hasAccount: false, seat: { state: "open" as const, accountName: null, accountImage: null, accountEmail: null, wantsSeat: null } })),
     toolkits: on,
     toolkitNames: MANIFESTS.filter((m) => on[m.id]).map((m) => m.name),
     ...shellView(s.group.id, on),

@@ -53,6 +53,8 @@ export interface Channel {
   leaveChat(chatExternalId: string): Promise<void>;
   /** Forget an intro still waiting to go out (the Group was paused). */
   dropIntro?(chatExternalId: string): void;
+  /** How many people (not Roomie) are in the Chat right now, or null when the Channel can't say (Join link seats). */
+  participantCount?(chatExternalId: string): Promise<number | null>;
 }
 
 /** What the adapters ask before downloading a photo or transcribing a voice note (the pipeline's mediaWantedFor: a

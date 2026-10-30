@@ -11,12 +11,13 @@
 import "@/lib/env";
 import { RequestContext } from "@mastra/core/request-context";
 import { SpanType, type AnySpan } from "@mastra/core/observability";
-import { deliver } from "@/channels";
+import { deliver, deliverPrivate } from "@/channels";
 import type { Button, IncomingMessage, Outgoing } from "@/channels/types";
 import { chatFor, enabledToolkits, getGroup } from "@/services/groups";
 import { getMember, listGroupMembers, memberByChannelUser, type Member } from "@/services/members";
 import { humanMessagesSince, lastRoomieReplyAt, logMessage, recentChatter } from "@/services/chatlog";
 import type { Ctx } from "@/services/types";
+import { NotAllowedError } from "@/services/authz";
 import { mastra } from "@/mastra";
 import type { RoomieContext } from "@/mastra/context";
 import { inFollowUpWindow, isHardTrigger, parseSilent, runGate, type Chattiness, type GateRun } from "@/mastra/gate";
@@ -100,6 +101,8 @@ export async function resolveIncoming(msg: IncomingMessage): Promise<{ groupId: 
   if (!known) {
     const joined = await onGroupJoined({ channel: msg.channel, externalId: msg.chatExternalId, title: msg.chatTitle }, [sender], sender);
     if (joined.intro) await deliver(joined.group.id, joined.intro);
+    // The Admin's setup DM; a Channel that can't DM them yet (Telegram before Start) sends it from /start instead.
+    if (joined.setupDm) await deliverPrivate(joined.members[0].id, joined.setupDm).catch((e) => console.log(`[pipeline] setup DM not sent now (${e instanceof Error ? e.message : e})`));
     return { groupId: joined.group.id, member: joined.members[0] };
   }
   const groupId = known.group.id;
@@ -145,6 +148,9 @@ export async function respondToIncoming(msg: IncomingMessage): Promise<PipelineR
 export async function askRoomie(ctx: Ctx, text: string): Promise<Outgoing> {
   const me = await getMember(ctx, ctx.memberId);
   if (!me) throw new Error("Not a member of this group.");
+  // A Pending sign-in from the Join link isn't in the chat: it can't read the Group through Roomie before an Admin
+  // approves it (a Pending Member of the chat already reads the chat, so they still may).
+  if (me.status !== "active" && !me.channelUserId) throw new NotAllowedError("An Admin needs to approve you before Roomie can help here.", "pending");
   const { out, capped } = await respond({ groupId: ctx.groupId, member: me, text, source: "ui", channel: "dashboard" });
   if (capped) throw new CappedError();
   return out ?? { text: ACK };
@@ -297,6 +303,7 @@ export async function respond(input: RespondInput): Promise<PipelineResult> {
     ...(gate.mayStaySilent ? { mayStaySilent: true } : {}),
     ...(petted ? { pet: "petted" as const } : greeting ? { pet: "greet" as const } : {}),
     latest: text,
+    ...(input.isPrivate ? { isPrivate: true } : {}),
   };
   const requestContext = new RequestContext<RoomieContext>(Object.entries(ctx) as [keyof RoomieContext, never][]);
 

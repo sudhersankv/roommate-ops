@@ -73,7 +73,7 @@ Telegram bots can't list a group's members. Roomie knows the person who added it
 
 ## Private messages
 
-A DM to the bot from someone who is a Member of exactly one Group is handled as that Group's conversation (Roomie answers in the DM; nothing is logged in the group chat). In no Group: "Add me to your group chat first"; in several: "ask me in the group chat you mean". `/start` answers with one line: for a Member, that DMs work now and how to get the dashboard; for anyone else, how to add Roomie to a group. Never a link (Claim links only go out when someone asks, ADR 0003). Reminders for one Member arrive here too.
+A DM to the bot from someone who is a Member of exactly one Group is handled as that Group's conversation (Roomie answers in the DM; nothing is logged in the group chat). In no Group: "Add me to your group chat first"; in several: "ask me in the group chat you mean". `/start` from the Admin of a Group that hasn't finished setup sends the **setup DM** (their Claim link button and "Answer the setup here or in the group: what's the group for, currency, city, vibe.", [docs/joining.md](./joining.md)); otherwise one line: for a Member, that DMs work now and how to get the dashboard; for anyone else, how to add Roomie to a group, never a link. When setup is answered (DM or group), the Group's Join link is posted in the group, and `/help` names it. Reminders for one Member arrive here too.
 
 ## Webhook (public URL later)
 

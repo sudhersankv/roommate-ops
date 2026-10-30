@@ -40,6 +40,18 @@ _Avoid_: Guest, unverified user
 A private, single-use link Roomie sends a Member so they can connect their Account to their Member.
 _Avoid_: Magic link, invite link
 
+**Join link**:
+The Group's one shareable dashboard address (`/j/<code>`), posted in the Chat when setup finishes. It binds nobody by itself: opening it means signing in with Google and picking your Seat. An Admin can rotate it (the old one stops working).
+_Avoid_: Invite link, magic link, dashboard link (that's the personal one)
+
+**Seat**:
+A Member as the Join link's picker shows them: open (no Account connected), connected (an Account is on it), or asked for by a Pending sign-in. An Admin can disconnect (revoke) or move (reassign) the Account on a Seat.
+_Avoid_: Slot, profile
+
+**Join policy**:
+What a Join link pick does: "free" (anyone in the chat picks their name, connected at once while the Group has free Seats) or "approve every join" (every pick waits for an Admin).
+_Avoid_: Privacy mode, invite mode
+
 **Onboarding**:
 The short conversation after Roomie joins a Chat in which it creates the Group, learns what the Group is for, and learns the Tricks that fit.
 _Avoid_: Setup, profiling (in user-facing text)

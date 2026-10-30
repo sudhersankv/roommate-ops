@@ -17,8 +17,9 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
-import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel, FieldLegend, FieldSeparator, FieldSet } from "@/components/ui/field"
+import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel, FieldLegend, FieldSeparator, FieldSet, FieldTitle } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { toast } from "@/components/ui/toast"
@@ -31,6 +32,7 @@ import {
   exportSplitwise,
   importSplitwise,
   listSplitwiseGroups,
+  setJoinPolicy,
   setSimplifyDebts,
   setSplitwiseMirror,
   updateSchedule,
@@ -290,8 +292,52 @@ function AdminSettings({ zones, schedule }: { zones: ZoneGroup[]; schedule: Sche
         </p>
       </FieldSet>
 
+      <JoinPolicySettings />
+
       <ScheduleSettings schedule={schedule} choresOn={on.chores} />
     </>
+  )
+}
+
+const JOIN_POLICIES = [
+  { value: "free", title: "Anyone in the chat picks their name", description: "Connects at once while the group has seats free. A taken name, or more sign-ins than people, waits for an Admin." },
+  { value: "approve_all", title: "I approve every join", description: "Every sign-in with the Join link waits on the Members page until an Admin approves it." },
+] as const
+
+/** Who gets in from the Join link (ADR 0014). */
+function JoinPolicySettings() {
+  const { group, base } = useGroup()
+  const [, start] = useTransition()
+  const save = (policy: "free" | "approve_all") =>
+    start(async () => {
+      const res = await setJoinPolicy(group.id, policy)
+      if (!res.ok) return void toast.add({ title: "Couldn't save that", description: res.error, type: "error" })
+      toast.add({ title: policy === "free" ? "People pick their own name" : "You approve every join", description: policy === "free" ? undefined : "New sign-ins show up on the Members page." })
+    })
+  return (
+    <FieldSet>
+      <FieldLegend className="type-heading">Joining</FieldLegend>
+      <FieldDescription>
+        What happens when someone opens the{" "}
+        <Link href={`${base}/members`} className="underline decoration-primary decoration-2 underline-offset-4 hover:decoration-foreground">
+          Join link
+        </Link>{" "}
+        and picks a name.
+      </FieldDescription>
+      <RadioGroup value={group.joinPolicy} onValueChange={(v) => save(v as "free" | "approve_all")} aria-label="Join policy" className="gap-2">
+        {JOIN_POLICIES.map((p) => (
+          <FieldLabel key={p.value} htmlFor={`join-${p.value}`} className="rounded-2xl">
+            <Field orientation="horizontal">
+              <FieldContent>
+                <FieldTitle>{p.title}</FieldTitle>
+                <FieldDescription>{p.description}</FieldDescription>
+              </FieldContent>
+              <RadioGroupItem value={p.value} id={`join-${p.value}`} />
+            </Field>
+          </FieldLabel>
+        ))}
+      </RadioGroup>
+    </FieldSet>
   )
 }
 

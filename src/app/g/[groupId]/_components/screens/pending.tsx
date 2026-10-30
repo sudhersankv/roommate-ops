@@ -7,8 +7,27 @@ import { useGroup } from "../group-context"
 import { TopBar } from "../shell"
 
 export function PendingScreen() {
-  const { group, active, setAskOpen } = useGroup()
+  const { group, active, me, setAskOpen } = useGroup()
   const admins = active.filter((m) => m.role === "admin").map((m) => m.name)
+  // A Join link sign-in isn't in the chat: nothing to ask Roomie until an Admin lets them in.
+  if (!me.inChat) {
+    return (
+      <>
+        <TopBar title={group.name} />
+        <Empty className="mx-4 mt-6 rounded-3xl bg-card">
+          <EmptyHeader>
+            <EmptyMedia>
+              <Roomie size={96} mood="sleepy" animated />
+            </EmptyMedia>
+            <EmptyTitle>Waiting for an Admin</EmptyTitle>
+            <EmptyDescription>
+              {admins.join(" or ") || "An Admin"} needs to approve you; I&apos;ll let you know in the chat. Then {group.name}&apos;s dashboard opens right here.
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      </>
+    )
+  }
   return (
     <>
       <TopBar title={group.name} />

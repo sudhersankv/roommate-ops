@@ -35,10 +35,11 @@ const clip = (s: string, n = 90) => {
 };
 
 export async function telegramDeps(): Promise<TelegramDeps> {
-  const [{ respondToIncoming, mediaWantedFor }, onboarding, groups, { saveUpload }, voice, kill] = await Promise.all([
+  const [{ respondToIncoming, mediaWantedFor }, onboarding, groups, joins, { saveUpload }, voice, kill] = await Promise.all([
     import("@/pipeline"),
     import("@/onboarding"),
     import("@/services/groups"),
+    import("@/services/joins"),
     import("@/services/receipts"),
     import("@/lib/voice"),
     import("@/lib/kill-switch"),
@@ -57,14 +58,14 @@ export async function telegramDeps(): Promise<TelegramDeps> {
     onGroupJoined: async (chat, participants, addedBy, opts) => {
       if (kill.roomiePaused()) {
         kill.logPaused(`joining ${chat.externalId}`);
-        return { intro: null };
+        return { intro: null, setupDm: null };
       }
       try {
         const res = await onboarding.onGroupJoined(chat, participants, addedBy, opts);
         console.log(`[roomie] joined ${clip(chat.title ?? "")} (${chat.externalId}), added by ${addedBy.name}; ${res.created ? `new Group ${res.group.id}, intro queued` : "already known"}`);
         return res;
       } catch (e) {
-        if (e instanceof onboarding.JoinRefusedError) return { intro: null };
+        if (e instanceof onboarding.JoinRefusedError) return { intro: null, setupDm: null };
         throw e;
       }
     },
@@ -73,6 +74,12 @@ export async function telegramDeps(): Promise<TelegramDeps> {
       console.log(`[roomie] ${user.name} joined group ${groupId}: ${res.member.status}${res.announce ? ", asked the Admins to approve" : ""}`);
       // Paused (everywhere, or this Group): the Pending Member is still recorded, the approval ask isn't posted.
       return kill.roomiePaused() || (await groups.getGroup(groupId))?.pausedAt ? { ...res, announce: null } : res;
+    },
+    setupDmFor: (userId) => onboarding.setupDmFor("telegram", userId),
+    setParticipantCount: (id, n) => joins.setParticipantCount("telegram", id, n),
+    dashboardIn: async (id) => {
+      const known = await groups.chatFor("telegram", id);
+      return known ? joins.joinLink(known.group.id) : undefined;
     },
     chatPaused: async (id) => !!(await groups.chatFor("telegram", id))?.group.pausedAt,
     groupIdOfChat: async (id) => (await groups.chatFor("telegram", id))?.group.id,

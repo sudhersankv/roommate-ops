@@ -14,13 +14,27 @@ export const core = defineManifest({
   status: "stable",
   gate: {
     criterion:
-      "Reminders at a time or date, and the group itself: members and approvals, settings (including Roomie's name, vibe and quirks), what Roomie can do and which Tricks it knows, teaching Roomie a Trick or making it learn or forget one ('roomie learn trips', 'roomie forget groceries', 'turn on chores'), lasting facts about a member ('remember I'm vegetarian', 'what do you know about me'), the dashboard link, the weekly report.",
-    examples: ["remind everyone trash goes out tuesday 8pm", "what can you do?", "learn chores", "approve Priya", "send me the dashboard"],
+      "Reminders at a time or date, and the group itself: members and approvals, settings (including Roomie's name, vibe and quirks), what Roomie can do and which Tricks it knows, teaching Roomie a Trick or making it learn or forget one ('roomie learn trips', 'roomie forget groceries', 'turn on chores'), lasting facts about a member ('remember I'm vegetarian', 'what do you know about me'), the dashboard link (for me, or for everyone: the group's Join link, rotating it, who may join, disconnecting someone's dashboard seat), the weekly report.",
+    examples: ["remind everyone trash goes out tuesday 8pm", "what can you do?", "learn chores", "approve Priya", "send me the dashboard", "send us the dashboard"],
   },
   adminOnly: {
     approve_member: { action: String.raw`\b(?:approve|accept|admit)|\blet\b.*\bin\b`, target: "name", ask: `Approve {target}? Say "roomie, yes approve {target}".` },
     decline_member: { action: String.raw`\b(?:decline|reject|deny|refuse|not approve|don'?t approve)`, target: "name", ask: `Decline {target}? Say "roomie, yes decline {target}".` },
     promote_member: { action: String.raw`\b(?:promote|admin)`, target: "name", ask: `Make {target} an admin? Say "roomie, yes promote {target}".` },
+    rotate_join_link: {
+      // An instruction, not a question: "rotate the join link" passes, "should I rotate it?" / "what's the new link?" ask.
+      action: String.raw`(?<!\b(?:what|whats|how|why|when|which|where|who|does|do|did|should|can|could|would|will|is|are)\b.*)(?:\b(?:rotate|reset|regenerate|renew|replace)\b|\bnew\b[^.?!]*\blink\b)`,
+      ask: `Make a new Join link? The old one stops working. Say "roomie, yes rotate the join link".`,
+    },
+    set_join_policy: {
+      action: String.raw`\b(?:join policy|approve (?:every|all|each)\b|every join|(?:pick|choose) (?:their|your|his|her) (?:own )?names?|let (?:anyone|everyone|people) (?:in|join|pick))`,
+      ask: `Change who gets in from the Join link? Say "roomie, yes change the join policy".`,
+    },
+    revoke_seat: {
+      action: String.raw`\b(?:revoke|disconnect|unlink)|\b(?:kick|remove|boot)\b[^.?!]*\b(?:off|from) the dashboard`,
+      target: "name",
+      ask: `Disconnect the Google account on {target}'s seat? Say "roomie, yes disconnect {target}".`,
+    },
     toggle_toolkit: {
       action: String.raw`\b(?:learn|forget|teach|unlearn|enable|disable|stop|start)|\b(?:turn|switch)\b.*\b(?:on|off)\b`,
       target: "toolkit",

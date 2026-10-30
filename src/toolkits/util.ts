@@ -12,10 +12,12 @@ export const toCents = (dollars: number) => Math.round(dollars * 100);
  * Case-insensitive first-name match among active Members (or pending ones too, for approvals). Unknown names throw
  * so the model can ask.
  */
-export async function memberIdByName(ctx: Ctx, name: string, opts: { includePending?: boolean } = {}): Promise<string> {
-  const people = opts.includePending ? await listGroupMembers(ctx) : await listMembers(ctx);
+export async function memberIdByName(ctx: Ctx, name: string, opts: { includePending?: boolean; preferPending?: boolean } = {}): Promise<string> {
+  const people = opts.includePending || opts.preferPending ? await listGroupMembers(ctx) : await listMembers(ctx);
   const q = name.trim().toLowerCase();
-  const hit = people.find((p) => p.displayName.toLowerCase() === q) ?? people.find((p) => p.displayName.toLowerCase().startsWith(q));
+  // Approvals look at Pending people first: a Join link sign-in may share a name with the seat it asked for.
+  const pool = opts.preferPending ? [...people.filter((p) => p.status === "pending"), ...people.filter((p) => p.status !== "pending")] : people;
+  const hit = pool.find((p) => p.displayName.toLowerCase() === q) ?? pool.find((p) => p.displayName.toLowerCase().startsWith(q));
   if (!hit) throw new Error(`No member named "${name}". Members: ${people.map((p) => p.displayName).join(", ")}`);
   return hit.id;
 }

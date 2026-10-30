@@ -34,6 +34,8 @@ export const roomieContextSchema = z.object({
   pet: z.enum(["petted", "greet"]).optional(),
   /** The sender's own words in this message (no "[Name]" prefix). Admin-only tools check it (toolkits/admin-ask.ts). */
   latest: z.string().optional(),
+  /** A 1:1 message with Roomie (a Member's DM): what's for the whole group has to be posted there separately. */
+  isPrivate: z.boolean().optional(),
 });
 
 export type RoomieContext = z.infer<typeof roomieContextSchema>;

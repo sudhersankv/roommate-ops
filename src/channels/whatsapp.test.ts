@@ -496,8 +496,35 @@ describe("groups", () => {
       { userExternalId: DEV.lid, name: "Someone" },
     ]);
     assert.deepEqual(addedBy, { userExternalId: MAYA.pn, name: "+15551110001" });
-    assert.deepEqual(opts, {}, "no 'press Start' line: WhatsApp can DM anyone");
+    assert.deepEqual(opts, { participantCount: 3 }, "no 'press Start' line (WhatsApp can DM anyone); the head count, Roomie not included");
     assert.deepEqual(h.sock().sent, [{ jid: GROUP, text: "intro" }]);
+  });
+
+  test("the Admin's setup DM goes out right away, the Claim link as a trailing line; the intro still waits", async () => {
+    const dm = { text: "Hi 👋 You added me to Apt 4B, so you're its admin.\nAnswer the setup here or in the group: what's the group for, currency, city, vibe.", buttons: [{ text: "Open dashboard", url: "https://roomie.fly.dev/claim/abc" }] };
+    const h = harness({ deps: { onGroupJoined: async (...args) => (h.seen.joined.push(args), { intro: { text: "intro" }, setupDm: dm }) } });
+    await h.open();
+    h.sock().emit("group-participants.update", { id: GROUP, author: MAYA.lid, authorPn: MAYA.pn, action: "add", participants: [{ id: ROOMIE_LID, phoneNumber: ROOMIE_PN }] });
+    await h.settle();
+    const toMaya = h.sock().sent.find((s) => s.jid === MAYA.pn);
+    assert.ok(toMaya, "the DM went to the adder's phone JID");
+    assert.match(toMaya!.text, /Answer the setup here or in the group/);
+    assert.match(toMaya!.text, /Open dashboard — https:\/\/roomie\.fly\.dev\/claim\/abc/);
+    assert.ok(!h.sock().sent.some((s) => s.jid === GROUP && /claim/.test(s.text)), "no Claim link in the group");
+  });
+
+  test("people added or leaving refresh the head count; /help names the Join link", async () => {
+    const counts: [string, number | null][] = [];
+    const h = harness({ deps: { setParticipantCount: async (id, n) => void counts.push([id, n]), dashboardIn: async () => "https://roomie.fly.dev/j/abcdefghij" } });
+    h.markKnown();
+    await h.open();
+    h.sock().emit("group-participants.update", { id: GROUP, author: MAYA.lid, authorPn: MAYA.pn, action: "remove", participants: [{ id: SAM.lid, phoneNumber: SAM.pn }] });
+    await h.settle();
+    assert.equal(counts.length, 1);
+    assert.equal(counts[0][0], GROUP);
+    assert.equal(typeof counts[0][1], "number");
+    await h.feed([msg({ message: { conversation: "/help" } })]);
+    assert.match(h.sock().sent.at(-1)!.text, /Dashboard: https:\/\/roomie\.fly\.dev\/j\/abcdefghij/);
   });
 
   test("groups.upsert (added at creation) is a join too, and a second event changes nothing", async () => {
