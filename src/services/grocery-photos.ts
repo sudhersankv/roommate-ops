@@ -101,7 +101,8 @@ const cache = new Map<string, GroceryPhoto>();
 export async function readGroceryPhoto(url: string): Promise<GroceryPhoto> {
   const hit = cache.get(url);
   if (hit) return hit;
-  const photo = parsePhotoJson(await currentReader().read({ dataUrl: await imageDataUrl(url) }));
+  // Only photos someone sent in the chat or uploaded (stored by us): never a URL the model or a member typed.
+  const photo = parsePhotoJson(await currentReader().read({ dataUrl: await imageDataUrl(url, { ownOnly: true }) }));
   if (cache.size > 200) cache.delete(cache.keys().next().value!);
   cache.set(url, photo);
   return photo;
@@ -121,10 +122,13 @@ export type PhotoAdded = {
   needsClarification: string[];
 };
 
-/** A recipe photo's ingredients as Recipe ingredients (amounts read with lib/units; unreadable ones are 1 each). */
+/**
+ * A recipe photo's ingredients as Recipe ingredients: amounts read with lib/units ("a pinch" is 1 pinch, so a
+ * buyable teaspoon); what still can't be read is 1 each, and display_text keeps what the photo said.
+ */
 export function photoIngredients(items: PhotoItem[]): RecipeIngredient[] {
   return items.map((i) => {
-    const m = parseAmount(i.qty) ?? measurementOrEach(1, null);
+    const m = parseAmount(i.qty?.replace(/^(a|an|one)\s+/i, "1 ")) ?? measurementOrEach(1, null);
     return { name: i.name, quantity: m.quantity, unit: m.unit, display_text: i.qty ? `${i.qty} ${i.name}` : i.name };
   });
 }
@@ -140,7 +144,7 @@ export async function addPhotoToCart(ctx: Ctx, photo: GroceryPhoto, opts: { shar
   if (photo.kind === "recipe") {
     const servings = photo.servings ?? Math.max(1, (await listMembers(ctx)).length);
     const saved = await saveRecipe(ctx, { title: photo.title ?? "Recipe from a photo", servings, cookingTimeMinutes: null, ingredients: photoIngredients(photo.items), steps: photo.steps, source: "member" });
-    const r = await addRecipeToCart(ctx, saved.id, { skip, shared: opts.forMemberId ? false : (opts.shared ?? true) });
+    const r = await addRecipeToCart(ctx, saved.id, { skip, shared: opts.shared, forMemberId: opts.forMemberId });
     return { kind: "recipe", recipe: saved.title, added: r.added.map((i) => i.name), skippedHave: r.have, alreadyInCart: r.alreadyInCart, needsClarification: [] };
   }
   const wanted = photo.items.filter((i) => !skip.includes(i.name)).map((i) => ({ name: i.name, ...(i.qty ? { qty: i.qty } : {}) }));

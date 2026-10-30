@@ -33,13 +33,25 @@ test("photoSummary: one line, at most 8 names, no prices", () => {
   assert.equal(photoSummary([{ name: "milk", qty: "1" }]), "1 item: milk");
 });
 
-test("photoIngredients: amounts read with lib/units, unreadable ones are 1 each", () => {
-  assert.deepEqual(photoIngredients([{ name: "flour", qty: "2 cups" }, { name: "eggs", qty: "3" }, { name: "salt", qty: "a pinch" }, { name: "basil", qty: null }]), [
+test("photoIngredients: amounts read with lib/units ('a pinch' too), unreadable ones are 1 each", () => {
+  assert.deepEqual(photoIngredients([{ name: "flour", qty: "2 cups" }, { name: "eggs", qty: "3" }, { name: "salt", qty: "a pinch" }, { name: "lime", qty: "juice of" }, { name: "basil", qty: null }]), [
     { name: "flour", quantity: 2, unit: "cup", display_text: "2 cups flour" },
     { name: "eggs", quantity: 3, unit: "each", display_text: "3 eggs" },
-    { name: "salt", quantity: 1, unit: "each", display_text: "a pinch salt" },
+    { name: "salt", quantity: 0.13, unit: "teaspoon", display_text: "a pinch salt" },
+    { name: "lime", quantity: 1, unit: "each", display_text: "juice of lime" },
     { name: "basil", quantity: 1, unit: "each", display_text: "basil" },
   ]);
+});
+
+test("readGroceryPhoto: only our own uploads, never a URL someone typed", async () => {
+  setPhotoReader({ read: async () => SAMPLE_LIST_JSON });
+  try {
+    for (const url of ["https://169.254.169.254/latest/meta-data.jpg", "http://127.0.0.9:1/uploads/x/a.jpg", "file:///etc/passwd", "/uploads/../../.env"]) {
+      await assert.rejects(readGroceryPhoto(url), /only read photos sent in the chat/, url);
+    }
+  } finally {
+    setPhotoReader(null);
+  }
 });
 
 test("readGroceryPhoto: the reader seam, cached per url so 'yes, add them' doesn't read again", async () => {

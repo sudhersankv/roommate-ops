@@ -81,7 +81,7 @@ export async function listOpenItems(ctx: GroupCtx): Promise<CartItem[]> {
 
 /** "eggs", "eggs and milk", "eggs, milk, bread and 2 more" (lower case, for Activity lines). */
 export function itemList(names: string[], max = 3): string {
-  const n = names.map((s) => s.trim().toLowerCase()).filter(Boolean);
+  const n = names.map((s) => s.replace(/\s+/g, " ").trim().toLowerCase().slice(0, 40)).filter(Boolean);
   if (n.length <= 1) return n[0] ?? "nothing";
   if (n.length <= max) return `${n.slice(0, -1).join(", ")} and ${n[n.length - 1]}`;
   return `${n.slice(0, max).join(", ")} and ${n.length - max} more`;
@@ -135,7 +135,7 @@ export async function addAsSaid(ctx: Ctx, input: { items: { name: string; qty?: 
 
 async function recordRemoved(ctx: Ctx, item: { id: string; name: string; addedBy: string }) {
   const whose = item.addedBy === ctx.memberId ? "" : ` (${(await namesFor(ctx.groupId)).get(item.addedBy) ?? "someone"}'s)`;
-  await record(ctx.groupId, ctx.memberId, "cart.removed", `took ${item.name.toLowerCase()}${whose} off the Cart`, { table: "cart_items", id: item.id }, sourceOf(ctx));
+  await record(ctx.groupId, ctx.memberId, "cart.removed", `took ${itemList([item.name])}${whose} off the Cart`, { table: "cart_items", id: item.id }, sourceOf(ctx));
 }
 
 function checkRemove(actor: { id: string; role: string }, item: { addedBy: string; name: string }, adderName: string) {

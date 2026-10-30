@@ -22,13 +22,21 @@ test("parseCandidates: plain JSON, fenced JSON, prose around it; missing lists d
   assert.deepEqual(parseCandidates(`{"slang": ["fr"]}`), { languages: [], codeSwitching: 0, slang: ["fr"], tone: [], nicknames: [], insideJokes: [] });
 });
 
-test("parseCandidates: not JSON, or the wrong shape -> null", () => {
-  assert.equal(parseCandidates("I can't help with that."), null);
-  assert.equal(parseCandidates("{not json}"), null);
-  assert.equal(parseCandidates(`{"codeSwitching": 7}`), null);
+test("parseCandidates: lenient, because a skipped batch is lost: long lists cut, percents read as shares, bad entries dropped", () => {
+  const r = parseCandidates(JSON.stringify({ languages: [{ name: "Hindi", share: 45 }, { name: "English", share: 0.55 }, { name: 3 }], codeSwitching: 7, tone: ["a", "b", "c", "d", "e", "f"], slang: "bet" }))!;
+  assert.deepEqual(r.languages, [{ name: "Hindi", share: 0.45 }, { name: "English", share: 0.55 }]);
+  assert.equal(r.codeSwitching, 0.07);
+  assert.deepEqual(r.tone, ["a", "b", "c", "d", "e"]);
+  assert.deepEqual(r.slang, []);
 });
 
-test("readerFrom: a fake model's text becomes candidates; a bad answer skips the batch", async () => {
+test("parseCandidates: not JSON (or not an object) -> null", () => {
+  assert.equal(parseCandidates("I can't help with that."), null);
+  assert.equal(parseCandidates("{not json}"), null);
+  assert.equal(parseCandidates(""), null);
+});
+
+test("readerFrom: a fake model's text becomes candidates; a bad answer skips the batch and is logged with a sample", async () => {
   let asked = "";
   const reader = readerFrom(async (prompt) => {
     asked = prompt;
@@ -36,5 +44,8 @@ test("readerFrom: a fake model's text becomes candidates; a bad answer skips the
   });
   assert.deepEqual(await reader(lines), good);
   assert.match(asked, /\[Ryan\] bet/);
-  assert.equal(await readerFrom(async () => "sorry")(lines), null);
+  const logs: string[] = [];
+  const bad = readerFrom(async () => "sorry, no", (m) => logs.push(m));
+  assert.equal(await bad(lines), null);
+  assert.match(logs[0] ?? "", /wasn't JSON; skipped 1 batch so far\. It began: "sorry, no"/);
 });

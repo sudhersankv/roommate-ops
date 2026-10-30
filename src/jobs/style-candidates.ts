@@ -3,13 +3,22 @@
 import { z } from "zod";
 import type { StyleCandidates, StyleLine } from "@/lib/style-stats";
 
+// Lenient on purpose: a skipped batch is lost (styleNoteAt has moved on), so overlong lists are cut, a share written
+// as a percent (45) is read as 0.45, and anything out of range is clamped. Only a reply that isn't JSON is skipped.
+const share = z.coerce.number().transform((n) => (Number.isFinite(n) ? Math.min(1, Math.max(0, n > 1 ? n / 100 : n)) : 0));
+const list = <T extends z.ZodType>(item: T, max: number) =>
+  z
+    .array(z.unknown())
+    .catch([])
+    .transform((xs) => xs.flatMap((x) => { const r = item.safeParse(x); return r.success ? [r.data as z.infer<T>] : []; }).slice(0, max));
+
 export const candidatesSchema = z.object({
-  languages: z.array(z.object({ name: z.string(), share: z.number().min(0).max(1) })).default([]),
-  codeSwitching: z.number().min(0).max(1).default(0),
-  slang: z.array(z.string()).max(15).default([]),
-  tone: z.array(z.string()).max(5).default([]),
-  nicknames: z.array(z.object({ nickname: z.string(), member: z.string() })).max(10).default([]),
-  insideJokes: z.array(z.string()).max(10).default([]),
+  languages: list(z.object({ name: z.string(), share }), 10).default([]),
+  codeSwitching: share.catch(0).default(0),
+  slang: list(z.string(), 15).default([]),
+  tone: list(z.string(), 5).default([]),
+  nicknames: list(z.object({ nickname: z.string(), member: z.string() }), 10).default([]),
+  insideJokes: list(z.string(), 10).default([]),
 });
 
 export const STYLE_INSTRUCTIONS = `You study how one group chat talks so their pet Roomie can slowly sound like them.
@@ -42,18 +51,16 @@ export function parseCandidates(text: string): StyleCandidates | null {
 
 export type CandidateReader = (lines: StyleLine[]) => Promise<StyleCandidates | null>;
 
-let warned = false;
+let skipped = 0;
 /**
- * A CandidateReader from a text model call (`generate(prompt)` -> the reply text). A reply that doesn't parse gives
- * null (the batch is skipped) and is logged once per process.
+ * A CandidateReader from a text model call (`generate(prompt)` -> the reply text). A reply that isn't JSON gives
+ * null (the batch is skipped): logged the first time and every 10th after, with the count and the reply's start.
  */
-export function readerFrom(generate: (prompt: string) => Promise<string>): CandidateReader {
+export function readerFrom(generate: (prompt: string) => Promise<string>, log: (msg: string) => void = console.warn): CandidateReader {
   return async (lines) => {
-    const out = parseCandidates(await generate(stylePrompt(lines)));
-    if (!out && !warned) {
-      warned = true;
-      console.warn("[style] the model's answer wasn't the JSON asked for; skipping this batch");
-    }
+    const text = await generate(stylePrompt(lines));
+    const out = parseCandidates(text);
+    if (!out && skipped++ % 10 === 0) log(`[style] the model's answer wasn't JSON; skipped ${skipped} batch${skipped === 1 ? "" : "es"} so far. It began: ${JSON.stringify(text.slice(0, 120))}`);
     return out;
   };
 }

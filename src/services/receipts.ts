@@ -238,18 +238,29 @@ export async function saveUpload(folder: string, bytes: Buffer, mime: string, ba
 
 const mimeOf = (p: string) => Object.entries(EXT).find(([, e]) => p.toLowerCase().endsWith(`.${e}`) || (e === "jpg" && p.toLowerCase().endsWith(".jpeg")))?.[0] ?? "image/jpeg";
 
-/** Our own uploads are read from disk (the gateway can't reach localhost); anything else is fetched here. */
-export async function imageDataUrl(url: string): Promise<string> {
-  const local = /\/uploads\/((?:[a-z0-9-]+\/)*[a-z0-9-]+)\/([a-z0-9_-]+\.[a-z]+)$/i.exec(url);
+const UPLOAD_PATH = /\/uploads\/((?:[a-z0-9-]+\/)*[a-z0-9-]+)\/([a-z0-9_-]+\.[a-z]+)$/i;
+
+/** One of our own uploads (`/uploads/...`, or under APP_URL): what the Channels and the dashboard store. */
+export function isOwnUpload(url: string): boolean {
   const base = appUrl();
-  if (local && (url.startsWith("/uploads/") || (base && url.startsWith(base)))) {
+  return UPLOAD_PATH.test(url) && (url.startsWith("/uploads/") || (!!base && url.startsWith(`${base}/uploads/`)));
+}
+
+/**
+ * Our own uploads are read from disk (the gateway can't reach localhost); with `ownOnly` nothing else is read.
+ * Otherwise an https image is fetched here: no redirects, and the size is checked before the body is read.
+ */
+export async function imageDataUrl(url: string, opts: { ownOnly?: boolean } = {}): Promise<string> {
+  const local = UPLOAD_PATH.exec(url);
+  if (local && isOwnUpload(url)) {
     const bytes = await readFile(path.join(UPLOADS, local[1], local[2]));
     return `data:${mimeOf(local[2])};base64,${bytes.toString("base64")}`;
   }
-  if (!/^https:\/\//i.test(url)) throw new Error("I can only read photos sent in the chat or uploaded on the dashboard.");
-  const res = await fetch(url, { signal: AbortSignal.timeout(20_000) });
+  if (opts.ownOnly || !/^https:\/\//i.test(url)) throw new Error("I can only read photos sent in the chat or uploaded on the dashboard.");
+  const res = await fetch(url, { signal: AbortSignal.timeout(20_000), redirect: "error" });
   const type = res.headers.get("content-type")?.split(";")[0] ?? "";
   if (!res.ok || !type.startsWith("image/")) throw new Error("Couldn't download that photo.");
+  if (Number(res.headers.get("content-length") ?? 0) > MAX_BYTES) throw new Error("That photo is over 8 MB.");
   const bytes = Buffer.from(await res.arrayBuffer());
   if (bytes.length > MAX_BYTES) throw new Error("That photo is over 8 MB.");
   return `data:${type};base64,${bytes.toString("base64")}`;
