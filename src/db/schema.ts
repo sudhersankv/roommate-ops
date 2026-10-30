@@ -519,3 +519,27 @@ export const maintenance = pgTable("maintenance", {
   everyDays: integer("every_days").notNull(),
   lastDone: timestamp("last_done", { withTimezone: true }),
 });
+
+// ---- purchase events (#26) ----
+
+/**
+ * One thing bought, for Restock (services/restock.ts): written when the Cart is marked bought (one per item) and when
+ * a receipt is logged (one per line). `item` is normalizeItem's name; member_id = a personal purchase, null = shared.
+ * Derived from the Cart and receipts, never a second ledger: no money here.
+ */
+export const purchaseEvents = pgTable(
+  "purchase_events",
+  {
+    id: id(),
+    groupId: uuid("group_id").notNull().references(() => groups.id, { onDelete: "cascade" }),
+    item: text("item").notNull(),
+    memberId: uuid("member_id").references(() => members.id, { onDelete: "cascade" }),
+    // The Group's local day it was bought.
+    occurredOn: date("occurred_on").notNull(),
+    source: text("source", { enum: ["cart", "receipt"] }).notNull(),
+    // The cart_items row or the Expense it came from (the backfill skips what it already wrote).
+    sourceId: uuid("source_id"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("purchase_events_group_item_day").on(t.groupId, t.item, t.occurredOn), index("purchase_events_source").on(t.sourceId)],
+);
