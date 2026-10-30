@@ -9,7 +9,7 @@
 import "@/lib/env";
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { and, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { PgColumn, PgTable } from "drizzle-orm/pg-core";
 import { isValidationError } from "@mastra/core/tools";
 import { RequestContext } from "@mastra/core/request-context";
@@ -24,7 +24,7 @@ import { bundleJob, sendDueReminders, weeklyReportJob } from "@/jobs/scheduler";
 import { addDaysInZone, addDaysToDay, dayInZone, nextWeekday, zonedParts, zonedTimeToUtc } from "@/lib/time";
 import { onGroupJoined, onParticipantJoined } from "@/onboarding";
 import { deleteGroup, groupsWithChat } from "@/services/groups";
-import { activity, cart, chatlog, chores, groups, members, money, personality as personalitySvc, receipts, recipes, recurring, splitwise, toolkits as toolkitsSvc } from "@/services";
+import { activity, cart, chatlog, chores, groups, members, money, personality as personalitySvc, receipts, recipes, recurring, schedule, splitwise, toolkits as toolkitsSvc } from "@/services";
 import { composioHealth } from "@/integrations/composio";
 import { FakeSplitwise, setSplitwiseClient } from "@/integrations/splitwise";
 import { ComposioInstacart, FakeInstacart, setInstacartClient } from "@/integrations/instacart";
@@ -1075,6 +1075,40 @@ describe("Roomie tools against the dev DB", () => {
       assert.equal((await run("toggle_toolkit", { toolkit: "groceries", enabled: true }, rc)).enabled, true, "Money on, Groceries follows");
     } finally {
       await deleteGroup(gid);
+    }
+  });
+
+  test("migration 0012: a Group's chores / upkeep rows become one house row (on if either was on, the nudge hour kept); running it again changes nothing", async () => {
+    // The migration's own SQL, as scripts/migrate.ts runs it. Idempotent, so it's safe on the dev branch (no old rows left).
+    const statements = (await readFile("drizzle/0012_house.sql", "utf8")).split("--> statement-breakpoint").map((s) => s.trim()).filter(Boolean);
+    const migrate = async () => {
+      for (const s of statements) await db.execute(sql.raw(s));
+    };
+    const houseRow = async (gid: string) => (await db.select().from(schema.groupToolkits).where(and(eq(schema.groupToolkits.groupId, gid), eq(schema.groupToolkits.toolkit, "house"))))[0];
+    const onlyChores = await onGroupJoined({ channel: "dev", externalId: `mig-a-${Date.now()}`, title: "Chores only" }, [{ userExternalId: devUserId(`mig-a-${Date.now()}`), name: "Maya" }], { userExternalId: devUserId(`mig-a-${Date.now()}`), name: "Maya" });
+    const bothOff = await onGroupJoined({ channel: "dev", externalId: `mig-b-${Date.now()}`, title: "Both off" }, [{ userExternalId: devUserId(`mig-b-${Date.now()}`), name: "Dev" }], { userExternalId: devUserId(`mig-b-${Date.now()}`), name: "Dev" });
+    try {
+      // The old shape: a Group with Chores on (nudge at 7) and no Upkeep row; another that had forgotten both.
+      await db.delete(schema.groupToolkits).where(and(eq(schema.groupToolkits.groupId, onlyChores.group.id), eq(schema.groupToolkits.toolkit, "house")));
+      await db.insert(schema.groupToolkits).values({ groupId: onlyChores.group.id, toolkit: "chores", enabled: true, settings: { nudgeHour: 7 } });
+      await db.delete(schema.groupToolkits).where(and(eq(schema.groupToolkits.groupId, bothOff.group.id), eq(schema.groupToolkits.toolkit, "house")));
+      await db.insert(schema.groupToolkits).values([
+        { groupId: bothOff.group.id, toolkit: "chores", enabled: false, settings: { nudgeHour: null } },
+        { groupId: bothOff.group.id, toolkit: "upkeep", enabled: false },
+      ]);
+      await migrate();
+      assert.deepEqual([(await houseRow(onlyChores.group.id)).enabled, (await houseRow(onlyChores.group.id)).settings], [true, { nudgeHour: 7 }]);
+      assert.deepEqual([(await houseRow(bothOff.group.id)).enabled, (await houseRow(bothOff.group.id)).settings], [false, { nudgeHour: null }]);
+      assert.deepEqual(await groups.enabledToolkits({ groupId: onlyChores.group.id }), ["splitting", "groceries", "house"]);
+      assert.deepEqual(await groups.enabledToolkits({ groupId: bothOff.group.id }), ["splitting", "groceries"]);
+      assert.deepEqual(await schedule.getSchedule({ groupId: onlyChores.group.id }), { nudgeHour: 7, reportWeekday: 0, reportHour: 18 }, "the nudge hour carried over");
+      const old = await db.select().from(schema.groupToolkits).where(inArray(schema.groupToolkits.toolkit, ["chores", "upkeep"]));
+      assert.equal(old.length, 0, "the old rows are gone");
+      await migrate();
+      assert.deepEqual([(await houseRow(onlyChores.group.id)).enabled, (await houseRow(bothOff.group.id)).enabled], [true, false], "a second run changes nothing");
+    } finally {
+      await deleteGroup(onlyChores.group.id);
+      await deleteGroup(bothOff.group.id);
     }
   });
 
