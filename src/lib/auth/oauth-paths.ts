@@ -7,6 +7,8 @@ export const CALLBACK_PATH = "/auth/callback"
 export const SIGNIN_PATH = "/signin"
 /** Where a signed-in person lands: their Group's dashboard, or "no groups yet" with the paste-a-Claim-link form. */
 export const APP_PATH = "/app"
+/** `/app?not_connected=1`: you opened a Group's dashboard that your Account isn't connected to (lib/session.ts). */
+export const NOT_CONNECTED_PARAM = "not_connected"
 
 /** A path on this site to continue to. Anything else (absolute, protocol-relative, backslashes) becomes /signin. */
 export function safeNext(raw: string | null | undefined): string {

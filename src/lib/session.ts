@@ -4,7 +4,7 @@ import { cache } from "react";
 import { notFound, redirect } from "next/navigation";
 import { auth } from "@/lib/auth/server";
 import { devAuthEmail, warnDevAuth } from "@/lib/auth/dev";
-import { signInPath } from "@/lib/auth/oauth-paths";
+import { APP_PATH, NOT_CONNECTED_PARAM, signInPath } from "@/lib/auth/oauth-paths";
 import { accountByEmail, upsertAccount, type Account, type AuthUser } from "@/services/claims";
 import { getGroup, groupsForAccount, type Group } from "@/services/groups";
 import { getMember, type Member } from "@/services/members";
@@ -57,10 +57,15 @@ export const memberSession = cache(async (groupId: string): Promise<GroupSession
   };
 });
 
-/** Pages: the session for a Group, or a redirect to sign-in / a 404 for Groups you're not in. */
+/**
+ * Pages: the session for a Group, or a redirect to sign-in; a Group you're not connected to sends you to /app with
+ * `not_connected` so it can say what to do (ask Roomie for your own link), instead of a bare 404. The id isn't echoed.
+ */
 export async function currentMember(groupId: string): Promise<GroupSession> {
   if (!(await currentAccount())) redirect(signInPath(`/g/${groupId}`));
   const s = await memberSession(groupId);
-  if (!s) notFound();
+  if (!s) redirect(/^[0-9a-f-]{36}$/i.test(groupId) ? `${APP_PATH}?${NOT_CONNECTED_PARAM}=1` : notFoundPath());
   return s;
 }
+
+const notFoundPath = (): never => notFound();

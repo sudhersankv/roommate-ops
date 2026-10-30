@@ -26,6 +26,8 @@ import { claimWins, dayGreeting, dbMoments } from "@/services/pet";
 
 /** How many earlier chat lines Jev sees; the agent sees up to 30 as context. */
 const GATE_RECENT = 6;
+/** While setup is unfinished, the Admin's Chat messages are for Roomie for this long after it joined. */
+const SETUP_WINDOW_MS = 24 * 60 * 60 * 1000;
 const ACK = "👍";
 
 export type RespondInput = {
@@ -128,6 +130,9 @@ export async function respond(input: RespondInput): Promise<PipelineResult> {
     // Onboarding asked the Chat a question; an active Member's reply in the window is the answer.
     if (inWindow && group && !group.onboardedAt && member.status === "active") hardTrigger = true;
   }
+  // The Admin was asked that question directly, and people answer hours later: until setup is done (for a day), what
+  // the Admin says in the Chat is for Roomie.
+  if (chat && group && !group.onboardedAt && member.role === "admin" && Date.now() - group.createdAt.getTime() < SETUP_WINDOW_MS) hardTrigger = true;
   // The day's first message gets one hello (services/pet.ts); claimed here so it happens once, whatever the Gate says.
   const greeting =
     chat && group && group.onboardedAt
