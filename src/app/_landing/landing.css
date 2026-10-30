@@ -281,8 +281,9 @@
     }
   }
 
-  /* Tricks: hidden until the stack is on screen, then each block snaps on from above, bottom first (the last lands
-     at ~1 s), then the sheen and the glow run up the stack once. */
+  /* Tricks: hidden until the stack is on screen, then each block snaps on from above, bottom first, then the sheen
+     and the glow run up the stack once, from when the last block lands (--land, set from the count in landing.tsx;
+     keep the 0.12 s / 0.16 s / 0.42 s here in step with landMs there). */
   .lp-stage[data-state="armed"] .lp-block {
     opacity: 0;
   }
@@ -290,10 +291,10 @@
     animation: lp-snap-on 0.42s cubic-bezier(0.3, 0.9, 0.4, 1.25) calc(0.12s + var(--k, 0) * 0.16s) both;
   }
   .lp-stage[data-state="play"] .lp-sheen::before {
-    animation: lp-sheen 0.6s ease-out calc(1.05s + var(--k, 0) * 0.08s);
+    animation: lp-sheen 0.6s ease-out calc(var(--land, 1.02s) + 0.03s + var(--k, 0) * 0.08s);
   }
   .lp-stage[data-state="play"] .lp-brick::after {
-    animation: lp-glow-once 0.7s ease-out calc(1.05s + var(--k, 0) * 0.08s);
+    animation: lp-glow-once 0.7s ease-out calc(var(--land, 1.02s) + 0.03s + var(--k, 0) * 0.08s);
   }
 
   .lp-vibe:hover .lp-confetti i,

@@ -230,14 +230,16 @@ function Demos({ addUrl }: { addUrl: string }) {
 
 /* ---------- Tricks: blocks that snap onto Roomie, and the ones waiting (vote) ---------- */
 
-// The dino on the stack: asleep until the stack is on screen, awake as the first block lands, hops when the last one
-// does (landing.css: block k lands at 0.12 s + k * 0.16 s + 0.42 s).
-const STACK_CUES = { callMs: 300, replyMs: 1050, winMs: 1050 }
+// When the stack's last block lands (landing.css: block k starts at 0.12 s + k * 0.16 s and takes 0.42 s). The dino
+// is asleep until the stack is on screen, awake as the first block lands, and hops when the last one does; the sheen
+// and glow start then too (--land).
+const landMs = (blocks: number) => 120 + Math.max(blocks - 1, 0) * 160 + 420
 // A hand-stacked look: each block sits a few px off the one below it.
 const NUDGE = ["0px", "5px", "-4px", "3px"]
 
 function Tricks({ votes }: { votes: Record<string, number> }) {
   const built = builtTricks()
+  const land = landMs(built.length)
   return (
     <section id="tricks" aria-labelledby="tricks-title" className="mx-auto max-w-6xl scroll-mt-6 px-5 pt-32 sm:px-8 lg:pt-40">
       <SectionHead id="tricks-title" title="Teach it Tricks. They snap on.">
@@ -245,9 +247,9 @@ function Tricks({ votes }: { votes: Record<string, number> }) {
       </SectionHead>
       <div className="mt-10 grid items-start gap-14 lg:mt-12 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] lg:gap-16">
         <div className="flex w-full max-w-md flex-col gap-4 lg:sticky lg:top-10">
-          <Stage cues={STACK_CUES} size={72} className="pt-16" dinoClassName="top-0 right-5">
+          <Stage cues={{ callMs: 300, replyMs: land + 30, winMs: land + 30 }} size={72} className="pt-16" dinoClassName="top-0 right-5">
             {/* Splitting first in the list, at the bottom of the stack. */}
-            <ul aria-label="Tricks Roomie knows" className="m-0 flex list-none flex-col-reverse gap-2.5 p-0">
+            <ul aria-label="Tricks Roomie knows" style={{ ["--land" as string]: `${land / 1000}s` }} className="m-0 flex list-none flex-col-reverse gap-2.5 p-0">
               {built.map((m, k) => {
                 const page = m.dashboard?.nav?.label
                 return (
