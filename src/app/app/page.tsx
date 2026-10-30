@@ -31,7 +31,7 @@ export default async function AppHome({ searchParams }: { searchParams: Promise<
 
   const first = account.name?.split(" ")[0] ?? "there"
   return (
-    <SignInScreen title={notConnected ? `Hi ${first}. That link wasn't yours.` : `Hi ${first}. No groups yet.`}>
+    <SignInScreen title={notConnected ? `Hi ${first}. That link wasn't yours.` : `Hi ${first}. No groups yet.`} signedInAs={account.email}>
       {notConnected && (
         <Alert>
           <AlertTitle>Dashboard links are personal</AlertTitle>

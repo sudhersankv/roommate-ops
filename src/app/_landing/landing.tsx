@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { ToolkitIcon } from "@/components/app/toolkit-icon"
 import { Roomie } from "@/components/roomie/mascot"
+import { SignOutLink } from "@/components/app/sign-out-link"
 import { APP_PATH, SIGNIN_PATH } from "@/lib/auth/oauth-paths"
 import { ARCHETYPES } from "@/lib/personality"
 import { SHOW_COUNT_FROM } from "@/services/trick-votes"
@@ -518,6 +519,7 @@ function Footer({ signedIn }: { signedIn: boolean }) {
           <Link href={signedIn ? APP_PATH : SIGNIN_PATH} className={linkClass}>
             {signedIn ? "Open dashboard" : "Sign in"}
           </Link>
+          {signedIn ? <SignOutLink className={linkClass} /> : null}
           <a href={GITHUB_URL} target="_blank" rel="noopener noreferrer" className={linkClass}>
             GitHub
           </a>

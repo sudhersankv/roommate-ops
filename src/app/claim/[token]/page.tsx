@@ -58,15 +58,15 @@ export default async function ClaimPage({
   try {
     groupId = (await claims.consumeClaim(token, user)).groupId
   } catch (e) {
-    if (e instanceof claims.ClaimError) return <Problem message={e.message} />
+    if (e instanceof claims.ClaimError) return <Problem message={e.message} signedInAs={user.email} />
     throw e
   }
   redirect(`/g/${groupId}`)
 }
 
-function Problem({ message }: { message: string }) {
+function Problem({ message, signedInAs }: { message: string; signedInAs?: string }) {
   return (
-    <SignInScreen title="That link didn't work.">
+    <SignInScreen title="That link didn't work." signedInAs={signedInAs}>
       <Empty className="rounded-3xl bg-card">
         <EmptyHeader>
           <EmptyMedia variant="icon">
