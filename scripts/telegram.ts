@@ -3,11 +3,13 @@
 import "../src/lib/env";
 import { TOKEN_MISSING, telegramBot, telegramToken } from "../src/channels/telegram-boot";
 import { TELEGRAM_UPDATES } from "../src/channels/telegram";
+import { isProdAppUrl, prodBotAllowed, refuseProdBot } from "./lib/prod-guard";
 
 if (!telegramToken()) {
   console.error(TOKEN_MISSING);
   process.exit(1);
 }
+if (isProdAppUrl(process.env.APP_URL) && !prodBotAllowed()) refuseProdBot(`APP_URL is ${process.env.APP_URL}, so this is the production bot, and polling deletes its webhook.`);
 
 const { db } = await import("../src/db");
 const { mastra } = await import("../src/mastra");
