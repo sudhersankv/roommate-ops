@@ -55,7 +55,7 @@ Open the Claim link the seed printed (single use, 24 hours), sign in with Google
 
 ### Telegram
 
-1. Create the Telegram account with [@BotFather](https://t.me/BotFather): `/newbot`, then `/setprivacy` â†’ **Disable** and `/setjoingroups` â†’ **Enable** (full checklist in [docs/telegram.md](docs/telegram.md)).
+1. Create the Telegram account with [@BotFather](https://t.me/BotFather): `/newbot`, then `/setprivacy` → **Disable** and `/setjoingroups` → **Enable** (full checklist in [docs/telegram.md](docs/telegram.md)).
 2. Put `TELEGRAM_BOT_TOKEN` and `TELEGRAM_BOT_USERNAME` (no @) in `.env`.
 3. `npm run telegram` (long polling; no public URL needed), and `npm run dev` for the dashboard.
 4. `npm run telegram:check` (read-only) says whether the token, privacy mode, `APP_URL`, the database and the gateway are ready.
