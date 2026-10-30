@@ -141,7 +141,7 @@ An Expense that repeats monthly or weekly; Roomie adds a copy on each due day, s
 _Avoid_: Subscription, standing order
 
 **Activity**:
-The Group's record of who added, changed or deleted what.
+The Group's record of who added, changed or deleted what, and where: its **source** is the chat or the dashboard (none for Roomie's own work). Roomie reads the Activity since it last spoke.
 _Avoid_: Audit log, history, feed
 
 ## Groceries
@@ -151,11 +151,11 @@ The Group's shared list of things to buy.
 _Avoid_: Shopping list, basket, order
 
 **Cart item**:
-One thing in the Cart, added by a Member, either personal (charged to whoever added it) or shared (split evenly).
-_Avoid_: Product, line item
+One thing in the Cart, added by a Member, either personal (charged to whoever added it) or shared (split evenly), with its quantity as said ("2 cartons"). A Cart item has no price; the receipt does.
+_Avoid_: Product, line item, estimate
 
 **Recipe**:
-A dish Roomie wrote for the Group, with ingredients scaled to the people eating. A Recipe does not touch the Cart unless someone asks.
+A dish Roomie wrote for the Group (or read from a photo), with ingredients scaled to the people eating. A Recipe does not touch the Cart unless someone asks.
 _Avoid_: Meal plan
 
 **Pantry**:

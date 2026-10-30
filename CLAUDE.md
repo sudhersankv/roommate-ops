@@ -40,7 +40,8 @@ src/
                         facts (rememberAboutMe, knownAbout: your own or an Admin, peopleFacts for the instructions),
                         rekeyChannelUser (WhatsApp LID -> phone JID), fillPlaceholderName
     claims.ts           Claim links: issueDashboardLink, createClaimToken, consumeClaim, upsertAccount
-    activity.ts         record() + listActivity(): who added, changed or deleted what
+    activity.ts         record(..., source) + listActivity(): who added, changed or deleted what, and where (chat |
+                        dashboard: sourceOf(ctx), migration 0011); recentChanges / changesSinceRoomieSpoke (<= 8 lines)
     chatlog.ts          chat_messages: log, recent chatter, follow-up window facts, retention delete
     split.ts            pure split math (no DB import, so the drawer previews with it): splitEvenly, splitExact,
                         splitPercent, splitShares, checkPayers, apportion (largest remainder), computeShares
@@ -48,12 +49,16 @@ src/
                         payers, category, note, occurredOn, recurring), delete/restore, Balances (from expense_payers),
                         getSettlePlan (simplified or pairwiseDebts per groups.simplify_debts), settleUp, debtBetween
     categories.ts       guessCategory (fallback when nobody picked one)   recurring.ts  latestOccurrence + runRecurring
-    receipts.ts         photo -> parsed receipt (vision on the gateway, sums recomputed), receiptSplits, saveUpload
+    receipts.ts         photo -> parsed receipt (vision on the gateway, sums recomputed), receiptSplits, saveUpload,
+                        askVision (the one vision call), imageDataUrl
+    grocery-photos.ts   a recipe / list / shelf photo -> items as written (readGroceryPhoto, cached per url;
+                        setPhotoReader for tests), addPhotoToCart (a recipe is saved first), photoSummary
     splitwise.ts        connect / import / export / live mirror (ADR 0004) + runSplitwiseOutbox
     outbox.ts           outbox_jobs: enqueue, due, done/failed with backoff (ADR 0009)
-    cart.ts             Cart items (recipe_id, quantity + unit next to the free-text qty), removal (adder or Admin),
-                        checkout (snapshot -> Instacart shopping list -> cart_checkouts), markPurchased (exact Expense)
-    cart-split.ts       pure: computeCartSplits, cartTotal, canRemoveItem (the "I paid" drawer previews with it)
+    cart.ts             Cart items (recipe_id, quantity + unit next to the free-text qty, no prices), addAsSaid (ambiguous
+                        quantities -> needsClarification), removal (adder or Admin), checkout (snapshot -> Instacart
+                        shopping list -> cart_checkouts), markPurchased (exact Expense); every change is an Activity row
+    cart-split.ts       pure: computeCartSplits (one share per item), canRemoveItem (the "I paid" drawer previews with it)
     recipes.ts          draftRecipe / writeRecipe (Sonnet, strict JSON, one retry), save/list/get, addRecipeToCart,
                         recipeLink (cached by recipeKey), upcomingRecipes
     recipe-math.ts      pure: Pantry matching (covers, haveNeed), scaleIngredients, recipeKey
@@ -155,7 +160,8 @@ src/
                         zone), formatInZone, describeNow, resolveTimeZone ("Chicago", "CST", "India" -> IANA), zonesByRegion
   lib/money.ts          formatMoney / parseMoney (client-safe)
   lib/units.ts          Instacart's units, synonyms (tbsp, lb, pcs), clove/pinch/slice -> buyable, parseAmount, formatAmount
-  lib/voice.ts lib/prices.ts lib/style-note.ts
+                        clarifyQuantities ("eggs, 12, 18" -> one question)
+  lib/voice.ts lib/style-note.ts
   lib/personality.ts    pure, client-safe: ARCHETYPES, Personality (normalize / validate / apply patch), confidenceFor,
                         slangBudget, usableNicknames, saysName, isPetCommand, moodFrom, greeting / win / preview lines
   lib/style-stats.ts    pure: the Learned style's counts (countPhrase, countNickname, mergeLearned, activeHours)
@@ -166,7 +172,8 @@ src/
   jobs/report-text.ts   groupReportText: the same text for the weekly post and group_report (casual from the style note)
   jobs/retention.ts     deletes chat_messages older than 30 days (ADR 0006)
   jobs/style-note.ts    every 50 chat lines: Haiku proposes style candidates, style-stats counts them into
-                        groups.personality.learned (setCandidateReader() for tests)
+                        groups.personality.learned (setCandidateReader() for tests); jobs/style-candidates.ts = the
+                        JSON-only prompt + zod parse (no structured output: the gateway rejects it), bad answers skip
   proxy.ts              THE middleware (a root proxy.ts is ignored because the app is under src/): Neon Auth guard on
                         /g/* (-> /signin?next=<path>); /, /signin, /claim/* and /admin/* pass (admin pages 404 for
                         non-operators, signed out included); a stray neon_auth_session_verifier on any matched page ->
@@ -257,9 +264,10 @@ scripts/studio-presets.ts  writes .mastra-presets.json for Studio (run by mastra
 - **A Recipe never touches the Cart by itself** (plan Q7). `recipe_draft` writes and saves one (servings default to the active Members), returns ready-to-post text (need / have, step count) and an `askToAdd` question; only `recipe_add_to_cart` (someone asked, or clearly meant it) puts ingredients in, minus the Pantry and `skip` ("we have onions"), minus what's already open from that Recipe or shared, as shared items with `recipe_id`.
 - **Recipe JSON** comes from `RECIPE_MODEL ?? LLM_MODEL` on `/v1/chat/completions` (no `temperature`). zod validates it; units must map to Instacart's list (`lib/units.ts`), else one retry with the error as feedback, then unknown units become `each`. A recipe written for the wrong number of people is scaled in code (countable units round up). `RECIPE_FAKE=1` / `setRecipeWriter()` skip the model.
 - **Pantry** lives in `group_toolkits.settings.pantry` (groceries), names normalized. Matching is word-based with the last word as the thing itself: "oil" covers "olive oil", "rice" doesn't cover "rice vinegar".
-- **Estimates** stay in `lib/prices.ts` (catalog, $4.99 default); Recipe ingredients use `estimateMeasured` (countable units count up to 6 store items, weights and volumes are one). The model never prices anything.
+- **No prices** (docs/toolkits.md#groceries): track -> Instacart list -> receipt -> who had what -> confirm -> split. Nothing is estimated; `est_cents` is no longer written (old rows are ignored), and no tool result, persona line or page shows a price or a cart total. Quantities are kept as said; `addAsSaid` returns `needsClarification` for ones that can't be read one way. Routine Groceries tools return no `links` (`cart_view` with `link: true` when someone asks for the page).
+- **Photos**: `cart_from_photo` reads a recipe / list / shelf (`services/grocery-photos.ts`), asks in one line, adds on `confirm` (a recipe is saved too); a receipt with Splitting off gets "That's a receipt. Teach me Splitting and I'll split it.".
 - **Checkout** (`cart_checkout`, "Get Instacart link"): snapshots the open Cart into `cart_checkouts`, builds an Instacart shopping list (structured `quantity`/`unit`, else parsed from `qty`), returns an "Open in Instacart" button. The same open items reuse the last unpaid Checkout. If Instacart can't be reached the Checkout is still saved with a null url and Roomie says the link isn't available yet.
-- **"I paid $84"** is `cart_purchased` (persona: not `log_expense`). `markPurchased` flips the open items (or a Checkout's) to purchased in a transaction, then `logExpense` with `method: "exact"`, `category: "groceries"` and `computeCartSplits` rows (personal to the adder, shared evenly, weighted by estimates, payer-first remainder); the newest unpaid Checkout it covers gets `expense_id` + `paid_at`. The drawer previews with the same function and the active Members in `listMembers` order, so it matches to the cent.
+- **"I paid $84"** is `cart_purchased` (persona: not `log_expense`). `markPurchased` flips the open items (or a Checkout's) to purchased in a transaction, then `logExpense` with `method: "exact"`, `category: "groceries"` and `computeCartSplits` rows (one share per item: personal to the adder, shared evenly; payer-first remainder); the newest unpaid Checkout it covers gets `expense_id` + `paid_at`. The drawer previews with the same function and the active Members in `listMembers` order, so it matches to the cent.
 - **Instacart** (ADR 0004): `InstacartClient` with `ComposioInstacart` (`tools.execute("INSTACART_CREATE_SHOPPING_LIST_PAGE" | "INSTACART_CREATE_RECIPE_PAGE", { userId: "roomie-app", arguments })`, Instacart IDP body shapes, `products_link_url` found at any depth) and `FakeInstacart` (deterministic `https://instacart.example/...`). Instacart is a "no auth" Composio toolkit: no auth config, no connection, only `COMPOSIO_API_KEY`. `INSTACART_FAKE=1` / `setInstacartClient()` pick the fake; dev-chat switches by itself when the key is missing or rejected; failures are `InstacartUnavailableError`, relayed as text. The dashboard button is enabled only for the real client with a healthy key. Recipe links are cached on the Recipe by `recipeKey` (title, servings, ingredients).
 
 ## Chores, upkeep and reminders (step 7)
@@ -281,6 +289,7 @@ scripts/studio-presets.ts  writes .mastra-presets.json for Studio (run by mastra
 - **Instructions are composed in code** (`mastra/persona.ts`), never one free-text prompt: core rules (facts from tools, no math, brevity) first, then the voice, sliders as sentences, quirks, learned style, `/* TOOLKIT_PERSONA */` (enabled manifests' optional `persona: string`), mood, what Roomie knows about people. Jokes are a trait, not a Toolkit.
 - **Adaptation is bounded by code:** confidence comes from messages seen (`confidenceFor`); below 0.3 no slang, 0.3-0.6 one phrase per 5 replies (checked against Roomie's last 4 chat lines), above 0.6 free but never more than the group; nicknames only after 3 sightings by others. Counts come from the messages (`lib/style-stats.ts`); the model only proposes candidates. Change the rules there, with a test.
 - **Say-once behaviours** claim a `pet_moments` row (group, kind, key): the day's greeting (not when quiet, not after Roomie already posted that day, one line, no link) and win cheers (square after a Settlement, chore streak 3/7/30, a Checkout), appended as one short line in the archetype's voice. `/pet` (and "pet roomie") is a hard trigger with a 1-2 line in-character reply.
+- **Brief and current**: the house style says answer first, one or two lines, no recap, links only when asked. The instructions carry SINCE YOU LAST SPOKE (`activity.changesSinceRoomieSpoke`, read in `agents/roomie.ts`): what changed since Roomie last spoke, with where ("(dashboard, 2 min ago)"); when it differs from what Roomie said, Roomie says the fact in one line.
 - **Mood** (`groupMood`): worried if anyone owes > $100, sleepy after 5 quiet days, happy when everyone's square, calm otherwise; the Home dino and one line of the instructions.
 - **Member facts** (`remember`, `what_do_you_know_about_me`) live in `member_notes.note` next to the handles; only your own, or an Admin for anyone; "forget me" wipes them.
 - Evals: the runner claims the day's greeting for every scenario except `greet: true` ones, so a hello doesn't change other replies.
@@ -295,7 +304,7 @@ scripts/studio-presets.ts  writes .mastra-presets.json for Studio (run by mastra
 - Every service takes `ctx: Ctx` first. `ctx.memberId` is the sender in chat or the signed-in Member on the dashboard; use it as the default payer/doer/adder. Group-level reads take `GroupCtx`.
 - Tools resolve names to ids with `memberIdByName()` and throw a helpful error on unknown names (the model then asks). Money tools return amounts as ready-to-say strings ("$22.50", `expenseSummary`), so the model never formats cents.
 - Tools get the Group and sender from `ctxOf(context)` (the RequestContext), never from closures.
-- Tools attach buttons by returning `links: [{ text, url }]` (see `cart_add` / `dashboardLinks()`); the pipeline collects them from every tool result into `Outgoing.buttons`. Never paste URLs. Buttons need an absolute `APP_URL`.
+- Tools attach buttons by returning `links: [{ text, url }]` (see `cart_checkout` / `dashboardLinks()`); the pipeline collects them from every tool result into `Outgoing.buttons`. Never paste URLs. Buttons need an absolute `APP_URL`. Only for something the person asked to open: routine actions (adds, removes, views, chores done) return none (WhatsApp shows each button as a bare URL line).
 - A new Toolkit = a folder with `manifest.ts` + `server.ts` + tools, one line in `toolkits/manifests.ts` and one in `toolkits/registry.ts` (docs/toolkits.md has the checklist). Its Gate criterion, persona lines, nav tab, Home and Settings sections come from the manifest; never add them to the shell, `gate/jev.ts` or the persona.
 - The Tricks page (`/g/<id>/tricks`, same page as `/toolkits`) is the one place Tricks are taught or forgotten in the UI; Settings only summarizes and links there. In UI text it's "Tricks", not a store or marketplace (Roomie is a groupmate).
 - Dashboard pattern: a page (server) calls `currentMember(groupId)`, reads services through `_components/data.ts` and renders a client screen; writes are server actions in `g/[groupId]/actions.ts` that call a service with the session's Ctx and `revalidatePath`. They return `{ ok, error, status }`, so screens toast errors. Coming-soon Toolkits (Research, PDFs, Trips, Stickers, Household admin) are manifest-only stubs: listed on the Toolkits page and refused kindly.

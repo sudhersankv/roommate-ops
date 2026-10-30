@@ -87,3 +87,15 @@ export const groceries = defineToolkit(manifest, {
 - [ ] glossary words for anything new (GLOSSARY.md)
 
 A coming-soon Toolkit is just a manifest in `src/toolkits/coming-soon.ts`. Building it means moving it into its own folder and adding it to the two lists.
+
+## Routine actions carry no links
+
+Tools return `links` only for something the person asked to open: the Instacart list (`cart_checkout`, `recipe_link`), a sign-in or connect button, the dashboard (`get_dashboard_link`), or a page they asked for (`cart_view` with `link: true`). Adds, removes, views, chores done and the Tricks list return none: WhatsApp shows a button as a bare URL line under every reply.
+
+## Groceries
+
+The flow is **track -> Instacart list -> receipt -> who had what -> confirm -> split**. Groceries itself has **no prices**: nothing is estimated, `cart_items.est_cents` is no longer written (the column stays for old rows and is ignored), and no tool result, persona line, Cart page or Recipe shows a price or a cart total. Real money arrives later: "I paid 84" (`cart_purchased`, one Expense split by who added what, one share per item, shared items evenly) or a receipt photo through Splitting (`expense_from_receipt`, item by item at the printed prices).
+
+- **Quantities** are free text, kept as said ("2 cartons", "12", "1 lb"); `lib/units.parseAmount` fills the structured quantity + unit for Instacart. `cart.addAsSaid` holds back what can't be read one way (`clarifyQuantities`: "eggs, 12, 18" -> `needsClarification: ["eggs: 12 and 18 what? cartons or eggs?"]`) and adds the rest; Roomie asks that one question.
+- **Photos**: `cart_from_photo({ photo_url, shared?, for?, confirm?, skip? })` reads a recipe, a shopping list or a shelf with the vision model (`services/grocery-photos.ts`, the same `askVision` call as receipts; `setPhotoReader()` in tests, `RECEIPT_FAKE=1` in evals picks a fake by the photo's bytes). Without `confirm` it returns `{ kind, items: [{ name, qty }], summary, needsConfirmation }` and Roomie asks in one line ("5 items: eggs (12), milk, …. Add them as shared?"); with `confirm` it adds them (`addPhotoToCart`: a recipe is saved as a Recipe and goes in like one, minus the Pantry and `skip`). A receipt photo says so: with Splitting off, "That's a receipt. Teach me Splitting and I'll split it."; with it on, Roomie uses `expense_from_receipt`.
+- **Awareness**: every Cart, Recipe and Pantry change writes an Activity row with its source (chat or dashboard), so Roomie's SINCE YOU LAST SPOKE facts say "Ryan took eggs off the Cart (dashboard, 2 min ago)".

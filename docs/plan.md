@@ -134,7 +134,7 @@ Each step gets its own branch and PR, and you test locally before it's merged. S
   - [x] 50/25/25, 2:2:1, multi-payer, edit and undo match to the cent between dev-chat and the dashboard ([walkthrough](./dev-chat.md)) · [x] Splitwise import, export and mirror round-trip against the in-memory fake (`npm run test:tools`) · [ ] the same against real Splitwise (blocked on a valid `COMPOSIO_API_KEY`; the current one gets 401, which the app reports as "Splitwise isn't available")
 
 ### 6. Groceries Toolkit (`step/6-groceries`) ✅ done
-- [x] Cart (personal vs shared items, estimated prices, Recipe sub-groups, remove your own or as an Admin) and an Instacart shopping-list link through Composio, recorded as a Checkout (`services/cart.ts`, `integrations/instacart.ts`; migration 0003). "I paid $84" becomes one exact Expense (category groceries) split by who wanted what, weighted by the estimates (`computeCartSplits`, which the dashboard previews with).
+- [x] Cart (personal vs shared items, estimated prices (removed later: `feat/groceries-natural`), Recipe sub-groups, remove your own or as an Admin) and an Instacart shopping-list link through Composio, recorded as a Checkout (`services/cart.ts`, `integrations/instacart.ts`; migration 0003). "I paid $84" becomes one exact Expense (category groceries) split by who wanted what, weighted by the estimates (`computeCartSplits`, which the dashboard previews with).
 - [x] Recipes: "tacos for 5 friday" gives a scaled Recipe (Sonnet, strict JSON, Instacart units, one retry) and an Instacart recipe link, cached until the ingredients change. Ingredients go into the Cart only when someone asks or clearly means it, minus the Pantry and what they say they have (`services/recipes.ts`, `services/pantry.ts`).
 - [x] The Cart page: Recipe cards and detail, a New recipe sheet, the Pantry editor, Get Instacart link, and the "I paid" drawer. Home shows the next planned Recipe.
 - **Done when:** a recipe, a cart, the checkout link and the paid-to-Expense step all work end to end in the test group.
@@ -160,6 +160,12 @@ Each step gets its own branch and PR, and you test locally before it's merged. S
 
 ### Landing reframe: Tricks, any group, /help (`feat/landing-tricks`)
 - [x] `/` reframed as an AI that joins any group chat and learns **Tricks** (the user-facing word for Toolkits): new headline, one hero chat with a reacting dino, Trick-labelled demos (+ a trip group), the Tricks strip from the catalog with coming-soon votes (`trick_votes`, migration 0008), a vibe strip, "What's your group?" from `PRESETS`, a share row, ember accents and CSS motion with reduced-motion fallbacks. `/help` with a 14-question FAQ ([docs/landing.md](./landing.md)).
+
+### Natural Groceries, dashboard awareness, short replies (`feat/groceries-natural`)
+- [x] Groceries without prices (track -> Instacart list -> receipt -> who had what -> confirm -> split; `lib/prices.ts` gone, "I paid" splits one share per item), quantities as said with one question when ambiguous, `cart_from_photo` for recipe / list photos ([docs/toolkits.md](./toolkits.md#groceries)).
+- [x] Activity has a source (chat | dashboard, migration 0011); every Cart / Recipe / Pantry / chore change is recorded, and Roomie reads what changed since it last spoke ([docs/personality.md](./personality.md#since-you-last-spoke)).
+- [x] House style: answer first, one or two lines, links only when asked; the style job asks for JSON in plain text (the gateway rejects structured output).
+- **Done when:** the new Groceries scenarios pass in evals on a dev branch and a real "removed it on the dashboard, then asked" reads as one line.
 
 ## Parked (v2 / v3)
 
