@@ -15,6 +15,7 @@ import { claims, groups, money, chores as choresSvc, pantry as pantrySvc, recipe
 import { dollars } from "../src/services/types";
 import { presetFor } from "../src/toolkits/presets";
 import { PRESETS_FILE, writeStudioPresets } from "./lib/presets";
+import { assertNotProdDb } from "./lib/prod-guard";
 
 const RESET = process.argv.includes("--reset");
 const NAME = "Apt 4B";
@@ -131,6 +132,7 @@ async function addHouseholdDemos(groupId: string) {
   return true;
 }
 
+await assertNotProdDb(db, "seed");
 const existing = await groups.chatFor("dev", CHAT);
 if (existing && !RESET) {
   const added = await addSplitDemos(existing.group.id);

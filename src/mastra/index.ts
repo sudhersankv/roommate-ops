@@ -7,6 +7,7 @@ import { SpanType } from "@mastra/core/observability";
 import { MastraPlatformExporter, MastraStorageExporter, Observability, SensitiveDataFilter } from "@mastra/observability";
 import { roomie } from "./agents/roomie";
 import { storage } from "./memory";
+import { UnaddressedTextFilter } from "./observability";
 import { answerRelevancyScorer, brevityToneScorer } from "./scorers";
 
 loadEnv(); // already ran through lib/llm.ts; explicit so bundlers keep it
@@ -28,7 +29,7 @@ export const mastra = new Mastra({
       default: {
         serviceName: "roomie",
         exporters: [...(platformExport ? [new MastraPlatformExporter()] : []), new MastraStorageExporter()],
-        spanOutputProcessors: [new SensitiveDataFilter()],
+        spanOutputProcessors: [new UnaddressedTextFilter(), new SensitiveDataFilter()],
         excludeSpanTypes: [SpanType.MODEL_CHUNK], // one row per streamed chunk otherwise
         requestContextKeys: ["groupId", "memberId", "role", "status", "toolkit"],
       },

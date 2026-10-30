@@ -2,6 +2,7 @@
 
 import { useState, type ReactNode } from "react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { TriangleAlertIcon } from "lucide-react"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -60,8 +61,38 @@ export function SignInFailed({ reason }: { reason: string }) {
   )
 }
 
-/** The sign-in screen: the Roomie lockup, a line, and whatever actions go at the bottom. */
-export function SignInScreen({ title, children }: { title: string; children: ReactNode }) {
+/**
+ * "Signed in as … · Sign out": on every screen a signed-in person can get stuck on (no groups yet, a link that wasn't
+ * theirs, a used link), so the wrong Google account is never a dead end. After signing out you land on `next`.
+ */
+export function SignedInAs({ email, next = SIGNIN_PATH }: { email: string; next?: string }) {
+  const router = useRouter()
+  const [busy, setBusy] = useState(false)
+  return (
+    <p className="type-caption flex flex-wrap items-center justify-center gap-x-2 text-center text-muted-foreground">
+      <span>
+        Signed in as <span className="font-medium text-foreground">{email}</span>
+      </span>
+      <span aria-hidden="true">·</span>
+      <button
+        type="button"
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true)
+          await authClient.signOut().catch(() => {})
+          router.push(next)
+          router.refresh()
+        }}
+        className="underline decoration-primary decoration-2 underline-offset-4 hover:decoration-foreground disabled:opacity-60"
+      >
+        {busy ? "Signing out…" : "Not you? Sign out"}
+      </button>
+    </p>
+  )
+}
+
+/** The sign-in screen: the Roomie lockup, a line, and whatever actions go at the bottom. `signedInAs` adds the sign-out line. */
+export function SignInScreen({ title, children, signedInAs }: { title: string; children: ReactNode; signedInAs?: string | null }) {
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-md flex-col justify-between px-6 pt-[18dvh] pb-10">
       <div className="flex flex-col gap-8">
@@ -76,7 +107,10 @@ export function SignInScreen({ title, children }: { title: string; children: Rea
         </h1>
         <p className="type-title max-w-[18ch] text-pretty">{title}</p>
       </div>
-      <div className="flex flex-col gap-4">{children}</div>
+      <div className="flex flex-col gap-4">
+        {children}
+        {signedInAs ? <SignedInAs email={signedInAs} /> : null}
+      </div>
     </main>
   )
 }
