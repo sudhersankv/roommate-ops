@@ -32,6 +32,8 @@ export const roomieContextSchema = z.object({
   mayStaySilent: z.boolean().optional(),
   /** A pet behaviour for this reply (services/pet.ts): "/pet", or the day's first message (open with a hello). */
   pet: z.enum(["petted", "greet"]).optional(),
+  /** The sender's own words in this message (no "[Name]" prefix). Admin-only tools check it (toolkits/admin-ask.ts). */
+  latest: z.string().optional(),
 });
 
 export type RoomieContext = z.infer<typeof roomieContextSchema>;

@@ -23,6 +23,9 @@ export const upkeep = defineManifest({
     upkeep_status: "Say what's overdue or due soon",
     upkeep_remove: "Stop tracking an upkeep item",
   },
+  adminOnly: {
+    upkeep_remove: { action: String.raw`remove|delete|drop|stop|untrack|get rid|no more`, target: "item", ask: `Stop tracking {target}? Say "roomie, yes remove {target}".` },
+  },
   // Upkeep lives on the Chores page's Upkeep tab; with Chores off, its own tab still gets you there.
   dashboard: {
     nav: { label: "Upkeep", href: (g) => `/g/${g}/chores?tab=upkeep`, icon: "Wrench", order: 40 },

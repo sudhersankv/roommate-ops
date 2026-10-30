@@ -17,4 +17,20 @@ export const core = defineManifest({
       "Reminders at a time or date, and the group itself: members and approvals, settings (including Roomie's name, vibe and quirks), what Roomie can do and which Tricks it knows, teaching Roomie a Trick or making it learn or forget one ('roomie learn trips', 'roomie forget groceries', 'turn on chores'), lasting facts about a member ('remember I'm vegetarian', 'what do you know about me'), the dashboard link, the weekly report.",
     examples: ["remind everyone trash goes out tuesday 8pm", "what can you do?", "learn chores", "approve Priya", "send me the dashboard"],
   },
+  adminOnly: {
+    approve_member: { action: String.raw`\b(?:approve|accept|admit)|\blet\b.*\bin\b`, target: "name", ask: `Approve {target}? Say "roomie, yes approve {target}".` },
+    decline_member: { action: String.raw`\b(?:decline|reject|deny|refuse|not approve|don'?t approve)`, target: "name", ask: `Decline {target}? Say "roomie, yes decline {target}".` },
+    promote_member: { action: String.raw`\b(?:promote|admin)`, target: "name", ask: `Make {target} an admin? Say "roomie, yes promote {target}".` },
+    toggle_toolkit: {
+      action: String.raw`\b(?:learn|forget|teach|unlearn|enable|disable|stop|start)|\b(?:turn|switch)\b.*\b(?:on|off)\b`,
+      target: "toolkit",
+      ask: `Learn or forget {target}? Say "roomie, yes learn {target}" or "roomie, yes forget {target}".`,
+    },
+    set_group_settings: {
+      action: String.raw`\b(?:settings?|purpose|currency|time\s?zone|city|chatty|chattiness|quiet\w*|talk (?:less|more)|simplif\w*|nudge|report|vibe|personality|quirks?|call (?:you|yourself)|your name|rename\w*|roommates?|flatmates?|housemates?|family|friends|trip|work|usd|eur|gbp|inr|cad|aud|hype|chill|deadpan|mom|gremlin|butler|tricks?)\b`,
+      target: "*",
+      needs: "either",
+      ask: `Change the group's settings ({target})? Say "roomie, yes change the settings".`,
+    },
+  },
 });

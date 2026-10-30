@@ -40,6 +40,13 @@ export const splitting = defineManifest({
     splitwise_export: "Admins: copy this group's expenses to Splitwise",
     splitwise_mirror: "Admins: keep a Splitwise group in sync",
   },
+  adminOnly: {
+    set_simplify_debts: { action: String.raw`simplif|fewest|pairwise|pair by pair`, ask: `Change how debts settle? Say "roomie, yes simplify debts" (or "roomie, yes don't simplify debts").` },
+    splitwise_connect: { action: "splitwise", ask: `Connect Splitwise? Say "roomie, yes connect Splitwise".` },
+    splitwise_import: { action: "splitwise", ask: `Import that Splitwise group? Say "roomie, yes import from Splitwise".` },
+    splitwise_export: { action: "splitwise", ask: `Copy this group's expenses to Splitwise? Say "roomie, yes export to Splitwise".` },
+    splitwise_mirror: { action: "splitwise", ask: `Change the Splitwise mirror? Say "roomie, yes mirror Splitwise" (or "roomie, yes stop the Splitwise mirror").` },
+  },
   dashboard: {
     nav: { label: "Money", href: (g) => `/g/${g}/money`, icon: "Wallet", order: 10 },
     pages: ["money"],
