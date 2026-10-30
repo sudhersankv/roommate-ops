@@ -28,7 +28,7 @@ export const NAV_TABS = 3
  * yet and the coming-soon ones as greyed slots. And every owned page with its owners' on/off state. The Group's own
  * pages (Reminders, Members, Settings) are the dock's, not a manifest's.
  */
-function shellView(groupId: string, on: Record<string, boolean>): Pick<GroupView, "nav" | "drawer" | "ownedPages"> {
+export function shellView(groupId: string, on: Record<string, boolean>): Pick<GroupView, "nav" | "drawer" | "ownedPages"> {
   const icon = (name: IconName) => createElement(ToolkitIcon, { name })
   const entries = MANIFESTS.filter((m) => on[m.id] && m.dashboard?.nav)
     .map((m) => ({ m, nav: m.dashboard!.nav! }))
