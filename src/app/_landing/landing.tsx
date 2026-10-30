@@ -10,30 +10,32 @@ import { ToolkitIcon } from "@/components/app/toolkit-icon"
 import { Roomie } from "@/components/roomie/mascot"
 import { SignOutLink } from "@/components/app/sign-out-link"
 import { APP_PATH, SIGNIN_PATH } from "@/lib/auth/oauth-paths"
-import { ARCHETYPES } from "@/lib/personality"
-import { SHOW_COUNT_FROM } from "@/services/trick-votes"
+import { SHOW_COUNT_FROM, SOON_CHANNELS } from "@/services/trick-votes"
 import { BetaForm } from "./beta-form"
-import { ChatWindow, ReceiptPhoto, cuesFor } from "./chat"
-import { DEMOS, HERO, VIBE_LINES } from "./demos"
+import { ChatWindow, cuesFor } from "./chat"
+import { DEMOS, HERO } from "./demos"
 import { GITHUB_URL, TelegramMark, WhatsAppMark, linkClass, shareLinks, telegramAddUrl } from "./marks"
 import { CopyLink } from "./share-row"
 import { Stage } from "./stage"
-import { GROUP_KINDS, accentOf, builtTricks, comingSoonTricks, trickName } from "./tricks"
+import { accentOf, builtTricks, comingSoonTricks } from "./tricks"
 import { VoteButton } from "./vote-button"
 import "./landing.css"
 
 export { GITHUB_URL, telegramAddUrl } from "./marks"
 
-/** The headline, also used by the metadata and the share image (scripts/og-image.ts keeps its own copy). */
-export const HEADLINE = "Your group chat finally has a brain."
-export const SUBLINE = "An AI that joins your group chat and learns Tricks: splitting, groceries, chores and more."
+/** The words (ADR 0015). The headline is also the metadata's and the share image's (scripts/og-image.ts keeps its own copy). */
+export const HEADLINE = "The roommate who actually keeps track."
+export const SUBLINE = "Add it to the group chat. It handles rent, splits, groceries, chores and the landlord, so none of you have to."
+export const DEMOS_TITLE = "Five apps and a group mom. Or Roomie."
+export const DEMOS_SUBLINE = "Splitwise, a list app, a chores app, calendar reminders and the landlord thread one of you is stuck forwarding. One roommate instead."
+export const OTHER_GROUPS_LINE = "Not roommates? It works for trips and friends too."
 
 const accent = (id: string) => ({ "--accent": accentOf(id) }) as CSSProperties
 
 /**
  * The public landing page. Server components, except the stages (the dino watching a chat), the vote buttons, the
  * copy-link button and the beta form. `signedIn` only swaps the nav's Sign in for Open dashboard; `votes` are the
- * coming-soon Tricks' vote counts (shown from 5).
+ * coming-soon Tricks' and Channels' vote counts (shown from 5).
  */
 export function Landing({ signedIn = false, votes = {} }: { signedIn?: boolean; votes?: Record<string, number> }) {
   const addUrl = telegramAddUrl()
@@ -44,10 +46,9 @@ export function Landing({ signedIn = false, votes = {} }: { signedIn?: boolean; 
       </a>
       <Hero addUrl={addUrl} signedIn={signedIn} />
       <main id="main">
+        <Channels addUrl={addUrl} votes={votes} />
         <Demos addUrl={addUrl} />
         <Tricks votes={votes} />
-        <Vibes addUrl={addUrl} />
-        <Groups />
         <HowItWorks addUrl={addUrl} />
         <DashboardPeek />
         <Beta addUrl={addUrl} />
@@ -59,6 +60,24 @@ export function Landing({ signedIn = false, votes = {} }: { signedIn?: boolean; 
 }
 
 /* ---------- hero: headline, one line, two buttons, one chat ---------- */
+
+/** The hero's buttons: the WhatsApp beta first (ADR 0015), Telegram as "works today". Reused after the demos. */
+function AddButtons({ addUrl, size = "lg" }: { addUrl: string; size?: "lg" | "default" }) {
+  const small = size === "lg" ? "max-sm:h-11 max-sm:px-4 max-sm:text-sm" : ""
+  return (
+    <div className="flex flex-wrap gap-2 sm:gap-3">
+      <Button size={size} nativeButton={false} render={<a href="#whatsapp-beta" />} className={small}>
+        <WhatsAppMark />
+        WhatsApp beta
+      </Button>
+      <Button size={size} variant="tint" nativeButton={false} render={<a href={addUrl} target="_blank" rel="noopener noreferrer" />} className={small}>
+        <TelegramMark />
+        Works on Telegram today
+        <span className="sr-only">(opens Telegram in a new tab)</span>
+      </Button>
+    </div>
+  )
+}
 
 function Hero({ addUrl, signedIn }: { addUrl: string; signedIn: boolean }) {
   return (
@@ -86,17 +105,7 @@ function Hero({ addUrl, signedIn }: { addUrl: string; signedIn: boolean }) {
             {HEADLINE}
           </h1>
           <p className="m-0 max-w-[40ch] text-base leading-snug text-mint/80 sm:text-xl sm:leading-relaxed">{SUBLINE}</p>
-          <div className="flex flex-wrap gap-2 sm:gap-3">
-            <Button size="lg" nativeButton={false} render={<a href={addUrl} target="_blank" rel="noopener noreferrer" />} className="max-sm:h-11 max-sm:px-4 max-sm:text-sm">
-              <TelegramMark />
-              Add to Telegram
-              <span className="sr-only">(opens Telegram in a new tab)</span>
-            </Button>
-            <Button size="lg" variant="tint" nativeButton={false} render={<a href="#whatsapp-beta" />} className="max-sm:h-11 max-sm:px-4 max-sm:text-sm">
-              <WhatsAppMark />
-              WhatsApp beta
-            </Button>
-          </div>
+          <AddButtons addUrl={addUrl} />
           <p className="type-caption m-0 text-mint/70">Free while in beta.</p>
         </div>
 
@@ -108,7 +117,7 @@ function Hero({ addUrl, signedIn }: { addUrl: string; signedIn: boolean }) {
               people={HERO.people}
               lines={HERO.lines}
               motion="stage"
-              label="An example group chat: Maya says Dev still owes her for pizza, Dev says he paid, and Roomie settles it: Dev paid Maya $18 on Tuesday, and Maya owes Dev $4."
+              label="An example apartment chat: Sam asks if rent is this week, and Roomie says $2,400 is due Saturday and Maya pays the landlord. Dev paid $60 for internet, so Maya and Sam owe him $20 each. Maya asks about the landlord, and Roomie says a tech comes Thursday 1 to 3 and it will remind them Wednesday night."
               className="relative -mb-24 shadow-2xl shadow-black/40"
             />
           </Stage>
@@ -168,61 +177,113 @@ function SectionHead({ id, title, children, className }: { id: string; title: st
   )
 }
 
-/** The small "add it" link that follows each demo block. */
-function TinyAdd({ addUrl, className }: { addUrl: string; className?: string }) {
-  return (
-    <a
-      href={addUrl}
-      target="_blank"
-      rel="noopener noreferrer"
-      className={cn("inline-flex w-fit items-center gap-1.5 rounded-full text-[0.875rem] font-semibold text-owed outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50 [&_svg]:size-4", className)}
-    >
-      <TelegramMark />
-      Add Roomie to your group
-      <span className="sr-only">(opens Telegram in a new tab)</span>
-    </a>
-  )
-}
-
-function TrickChip({ id }: { id: string }) {
+function TrickChip({ id, name }: { id: string; name: string }) {
   return (
     <span style={accent(id)} className="lp-chip inline-flex w-fit items-center gap-1.5 rounded-full bg-raised py-1 pr-3 pl-1.5 text-[0.8125rem] font-semibold">
       <span aria-hidden className="size-2.5 rounded-full bg-(--accent)" />
-      {trickName(id)} Trick
+      {name} Trick
     </span>
   )
 }
 
-/* ---------- the demos: moments people screenshot ---------- */
+/* ---------- channels: the apps, in the order roommates use them ---------- */
+
+/** The Soon Channels' marks and glows, by their vote id (services/trick-votes.ts SOON_CHANNELS). */
+const CHANNEL_LOOK: Record<string, { mark: ReactNode; accent: string }> = {
+  "channel:discord": { mark: <DiscordMark />, accent: "#8ea1ff" },
+  "channel:imessage": { mark: <IMessageMark />, accent: "#5ee07a" },
+}
+
+/** WhatsApp (beta) · Telegram (today) · Discord and iMessage (Soon, with a vote each; the votes share trick_votes). */
+function Channels({ addUrl, votes }: { addUrl: string; votes: Record<string, number> }) {
+  const tile = "flex flex-col gap-2 rounded-3xl border bg-card p-4"
+  const name = "flex items-center gap-2 font-extrabold tracking-[-0.01em] [&_svg]:size-5"
+  return (
+    <section id="channels" aria-labelledby="channels-title" className="mx-auto max-w-6xl scroll-mt-6 px-5 pt-32 sm:px-8 lg:pt-36">
+      <h2 id="channels-title" className="type-heading m-0 text-muted-foreground">
+        Where it lives
+      </h2>
+      <ul className="m-0 mt-4 grid list-none grid-cols-2 gap-3 p-0 sm:grid-cols-4">
+        <li className={cn(tile, "relative")}>
+          <span className={name}>
+            <WhatsAppMark />
+            WhatsApp
+          </span>
+          <Badge className="absolute -top-2.5 right-3">Beta</Badge>
+          <a href="#whatsapp-beta" className={cn(linkClass, "w-fit text-[0.875rem] font-semibold")}>
+            Ask to join
+          </a>
+        </li>
+        <li className={tile}>
+          <span className={name}>
+            <TelegramMark />
+            Telegram
+          </span>
+          <a href={addUrl} target="_blank" rel="noopener noreferrer" className={cn(linkClass, "w-fit text-[0.875rem] font-semibold")}>
+            Works today
+            <span className="sr-only">(opens Telegram in a new tab)</span>
+          </a>
+        </li>
+        {SOON_CHANNELS.map((c) => (
+          <li key={c.id} className="lp-trick is-soon relative flex flex-col gap-2 rounded-3xl border-2 border-dashed bg-card/60 p-4" style={{ ["--accent" as string]: CHANNEL_LOOK[c.id].accent }}>
+            <span className={name}>
+              {CHANNEL_LOOK[c.id].mark}
+              {c.name}
+            </span>
+            <Badge variant="secondary" className="absolute -top-2.5 right-3">
+              Soon
+            </Badge>
+            <VoteButton trickId={c.id} name={c.name} count={votes[c.id] ?? 0} showFrom={SHOW_COUNT_FROM} />
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
+
+function DiscordMark() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden fill="currentColor">
+      <path d="M19.27 5.33A17.3 17.3 0 0 0 15.02 4l-.2.4a16 16 0 0 1 3.9 1.95 13.4 13.4 0 0 0-13.44 0A16 16 0 0 1 9.18 4.4L8.98 4a17.3 17.3 0 0 0-4.25 1.33C2.03 9.37 1.3 13.3 1.66 17.17a17.4 17.4 0 0 0 5.2 2.63l1.1-1.78a11.2 11.2 0 0 1-1.76-.85l.43-.33a12.4 12.4 0 0 0 10.74 0l.43.33c-.56.33-1.15.62-1.76.85l1.1 1.78a17.4 17.4 0 0 0 5.2-2.63c.43-4.48-.73-8.37-3.07-11.84ZM8.68 14.8c-1.03 0-1.88-.95-1.88-2.12s.83-2.12 1.88-2.12c1.06 0 1.9.96 1.88 2.12 0 1.17-.83 2.12-1.88 2.12Zm6.64 0c-1.03 0-1.88-.95-1.88-2.12s.83-2.12 1.88-2.12c1.06 0 1.9.96 1.88 2.12 0 1.17-.82 2.12-1.88 2.12Z" />
+    </svg>
+  )
+}
+
+function IMessageMark() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden fill="currentColor">
+      <path d="M12 3C6.48 3 2 6.8 2 11.5c0 2.6 1.37 4.93 3.53 6.5-.1 1.1-.5 2.3-1.3 3.4 1.9-.2 3.5-.9 4.7-1.9.98.27 2.02.42 3.07.42 5.52 0 10-3.8 10-8.5S17.52 3 12 3Z" />
+    </svg>
+  )
+}
+
+/* ---------- the demos: one per bucket ---------- */
 
 function Demos({ addUrl }: { addUrl: string }) {
   return (
-    <section aria-labelledby="demos-title" className="mx-auto max-w-6xl px-5 pt-36 sm:px-8 lg:pt-44">
-      <SectionHead id="demos-title" title="Moments worth a screenshot.">
-        Say &ldquo;roomie&rdquo; and ask. Every Trick is one less thing to keep track of.
+    <section aria-labelledby="demos-title" className="mx-auto max-w-6xl px-5 pt-32 sm:px-8 lg:pt-40">
+      <SectionHead id="demos-title" title={DEMOS_TITLE}>
+        {DEMOS_SUBLINE}
       </SectionHead>
       <div className="mt-12 grid items-start gap-x-12 gap-y-16 md:grid-cols-2">
         {DEMOS.map((d) => (
           <article key={d.id} aria-labelledby={`demo-${d.id}`} className="flex flex-col gap-4">
             <div className="flex flex-col gap-2">
-              <TrickChip id={d.trick} />
+              <TrickChip id={d.trick.id} name={d.trick.name} />
               <h3 id={`demo-${d.id}`} className="m-0 text-2xl font-extrabold tracking-[-0.02em]">
                 {d.title}
               </h3>
               <p className="type-body m-0 max-w-[44ch] text-muted-foreground">{d.body}</p>
             </div>
             <Stage cues={cuesFor(d.lines)} size={52} className="pt-9" dinoClassName="top-0 right-6">
-              <ChatWindow
-                title={d.group.title}
-                people={`${d.group.people} ${ARCHETYPES[d.group.vibe].accessory}`}
-                motion="stage"
-                label={`Example chat in "${d.group.title}" with a ${ARCHETYPES[d.group.vibe].label.toLowerCase()} Roomie: ${d.title}`}
-                lines={d.photo === "receipt" ? d.lines.map((l, i) => (i === 0 && "who" in l ? { ...l, photo: <ReceiptPhoto /> } : l)) : d.lines}
-              />
+              <ChatWindow title={d.group.title} people={d.group.people} motion="stage" label={`Example chat in ${d.group.title}: ${d.title} ${d.body}`} lines={d.lines} />
             </Stage>
-            <TinyAdd addUrl={addUrl} />
           </article>
         ))}
+        <div className="flex flex-col gap-4 self-center">
+          <p className="m-0 max-w-[36ch] text-xl leading-snug font-extrabold tracking-[-0.02em] text-balance">Say &ldquo;roomie&rdquo; and ask. Or message it privately: &ldquo;what do I owe?&rdquo;</p>
+          <AddButtons addUrl={addUrl} size="default" />
+        </div>
       </div>
     </section>
   )
@@ -243,12 +304,12 @@ function Tricks({ votes }: { votes: Record<string, number> }) {
   return (
     <section id="tricks" aria-labelledby="tricks-title" className="mx-auto max-w-6xl scroll-mt-6 px-5 pt-32 sm:px-8 lg:pt-40">
       <SectionHead id="tricks-title" title="Teach it Tricks. They snap on.">
-        Each Trick brings its own page on the dashboard.
+        Roommates start with the stack. Each Trick brings its own page on the dashboard.
       </SectionHead>
       <div className="mt-10 grid items-start gap-14 lg:mt-12 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] lg:gap-16">
         <div className="flex w-full max-w-md flex-col gap-4 lg:sticky lg:top-10">
           <Stage cues={{ callMs: 300, replyMs: land + 30, winMs: land + 30 }} size={72} className="pt-16" dinoClassName="top-0 right-5">
-            {/* Splitting first in the list, at the bottom of the stack. */}
+            {/* Money first in the list, at the bottom of the stack. */}
             <ul aria-label="Tricks Roomie knows" style={{ ["--land" as string]: `${land / 1000}s` }} className="m-0 flex list-none flex-col-reverse gap-2.5 p-0">
               {built.map((m, k) => {
                 const page = m.dashboard?.nav?.label
@@ -271,7 +332,7 @@ function Tricks({ votes }: { votes: Record<string, number> }) {
               })}
             </ul>
           </Stage>
-          <p className="type-caption m-0 text-muted-foreground">Say &ldquo;roomie, learn chores&rdquo; in the chat, or tap Teach on the dashboard.</p>
+          <p className="type-caption m-0 text-muted-foreground">Say &ldquo;roomie, learn lease inbox&rdquo; in the chat, or tap Teach on the dashboard.</p>
         </div>
 
         <div className="flex flex-col gap-4">
@@ -298,6 +359,7 @@ function Tricks({ votes }: { votes: Record<string, number> }) {
           </ul>
         </div>
       </div>
+      <p className="m-0 mt-12 text-base leading-snug text-muted-foreground sm:text-lg">{OTHER_GROUPS_LINE}</p>
     </section>
   )
 }
@@ -313,97 +375,12 @@ function Studs({ ghost = false }: { ghost?: boolean }) {
   )
 }
 
-/* ---------- vibes: one killer line each ---------- */
-
-function Vibes({ addUrl }: { addUrl: string }) {
-  return (
-    <section aria-labelledby="vibes-title" className="mx-auto max-w-6xl px-5 pt-32 sm:px-8 lg:pt-40">
-      <SectionHead id="vibes-title" title="Pick its vibe.">
-        Six of them. Then give it a name and a quirk or two.
-      </SectionHead>
-      <ul className="m-0 -mx-5 mt-10 flex list-none snap-x snap-mandatory gap-4 overflow-x-auto px-5 pt-2 pb-4 sm:mx-0 sm:grid sm:grid-cols-2 sm:overflow-visible sm:px-0 lg:grid-cols-3">
-        {VIBE_LINES.map(({ id, line }) => {
-          const a = ARCHETYPES[id]
-          return (
-            <li key={id} data-vibe={id} className="lp-vibe relative flex w-[78vw] max-w-80 shrink-0 snap-center flex-col gap-4 overflow-hidden rounded-3xl border bg-card p-5 sm:w-auto sm:max-w-none">
-              {id === "hype" && <Confetti />}
-              <div className="flex items-center gap-3">
-                <span aria-hidden className="flex size-12 items-center justify-center rounded-full bg-raised text-2xl">
-                  {a.accessory}
-                </span>
-                <span className="flex flex-col">
-                  <span className="type-title">{a.label}</span>
-                  <span className="type-caption text-muted-foreground">{a.tagline}</span>
-                </span>
-              </div>
-              <p className="m-0 w-fit max-w-full rounded-2xl rounded-bl-md bg-raised px-3.5 py-2 text-[1.0625rem] leading-snug font-medium">{line}</p>
-            </li>
-          )
-        })}
-      </ul>
-      <TinyAdd addUrl={addUrl} className="mt-6" />
-    </section>
-  )
-}
-
-function Confetti() {
-  const bits = [
-    ["8%", "14%", "#ffb547", -18],
-    ["22%", "6%", "#ff5fa2", 24],
-    ["70%", "9%", "#86efa0", -30],
-    ["84%", "18%", "#ff8a5c", 12],
-    ["92%", "6%", "#7cc7ff", 40],
-    ["58%", "4%", "#ffb547", -8],
-    ["40%", "10%", "#ff5fa2", 55],
-  ] as const
-  return (
-    <span aria-hidden className="lp-confetti">
-      {bits.map(([x, y, c, r], k) => (
-        <i key={k} style={{ left: x, top: y, background: c, ["--r" as string]: `${r}deg`, ["--k" as string]: k }} />
-      ))}
-    </span>
-  )
-}
-
-/* ---------- what's your group ---------- */
-
-function Groups() {
-  return (
-    <section aria-labelledby="groups-title" className="mx-auto max-w-6xl px-5 pt-32 sm:px-8 lg:pt-40">
-      <SectionHead id="groups-title" title="What's your group?">
-        Tell Roomie what the group&apos;s for. It starts with the right Tricks.
-      </SectionHead>
-      <ul className="m-0 mt-10 grid list-none grid-cols-2 gap-3 p-0 lg:grid-cols-3">
-        {GROUP_KINDS.map((g) => (
-          <li key={g.id} className="flex flex-col gap-2.5 rounded-3xl border bg-card p-4 sm:gap-3 sm:p-5">
-            <div className="flex items-center gap-2.5 sm:gap-3">
-              <span aria-hidden className="flex size-9 shrink-0 items-center justify-center rounded-full bg-owed-soft text-owed sm:size-10">
-                <ToolkitIcon name={g.icon} className="size-5" />
-              </span>
-              <h3 className="m-0 text-lg leading-tight font-extrabold tracking-[-0.02em] sm:text-[1.625rem]">{g.label}</h3>
-            </div>
-            <p className="m-0 text-[0.875rem] leading-snug text-muted-foreground sm:text-[0.9375rem]">{g.scenario}</p>
-            <ul aria-label={`${g.label} starts with`} className="m-0 mt-auto flex list-none flex-wrap gap-1.5 p-0">
-              {g.tricks.map((t) => (
-                <li key={t} style={accent(t)} className="inline-flex items-center gap-1.5 rounded-full bg-raised py-0.5 pr-2.5 pl-1.5 text-[0.8125rem] font-medium">
-                  <span aria-hidden className="size-2 rounded-full bg-(--accent)" />
-                  {trickName(t)}
-                </li>
-              ))}
-            </ul>
-          </li>
-        ))}
-      </ul>
-    </section>
-  )
-}
-
 /* ---------- how it works ---------- */
 
 const STEPS: { title: string; body: ReactNode }[] = [
-  { title: "Add it to the group", body: "Telegram today. WhatsApp is in beta." },
-  { title: "Answer one question", body: "What the group's for. It picks the Tricks." },
-  { title: "Get your dashboard", body: <>Say &ldquo;roomie send me the dashboard&rdquo;.</> },
+  { title: "Add it to the group chat", body: "WhatsApp is in beta; Telegram works today." },
+  { title: "Answer one question", body: "What the group's for. It learns the right Tricks." },
+  { title: "Open the dashboard", body: "It posts one Join link for everyone. Sign in with Google, pick your name." },
 ]
 
 function HowItWorks({ addUrl }: { addUrl: string }) {
@@ -422,11 +399,7 @@ function HowItWorks({ addUrl }: { addUrl: string }) {
         ))}
       </ol>
       <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-3">
-        <Button size="lg" nativeButton={false} render={<a href={addUrl} target="_blank" rel="noopener noreferrer" />}>
-          <TelegramMark />
-          Add to Telegram
-          <span className="sr-only">(opens Telegram in a new tab)</span>
-        </Button>
+        <AddButtons addUrl={addUrl} size="default" />
         <Link href="/help" className={cn(linkClass, "text-[0.9375rem] font-semibold")}>
           The full guide and FAQ
         </Link>
@@ -435,17 +408,17 @@ function HowItWorks({ addUrl }: { addUrl: string }) {
         <div className="flex flex-col gap-2 rounded-3xl border bg-card p-5">
           <Roomie mood="sleepy" size={52} animated className="-ml-1" />
           <h3 className="type-heading m-0">Speaks when spoken to</h3>
-          <p className="type-body m-0 text-muted-foreground">Say &ldquo;roomie&rdquo;, @mention it or reply to it. Otherwise it naps.</p>
+          <p className="type-body m-0 text-muted-foreground">Say &ldquo;roomie&rdquo;, @mention it or reply to it. One morning post, then it keeps quiet.</p>
         </div>
         <div className="flex flex-col gap-2 rounded-3xl border bg-card p-5">
           <LockIcon aria-hidden className="m-3 size-7 text-owed" />
           <h3 className="type-heading m-0">Stays in your group</h3>
-          <p className="type-body m-0 text-muted-foreground">Each group has its own memory. &ldquo;roomie forget me&rdquo; works.</p>
+          <p className="type-body m-0 text-muted-foreground">Each group has its own memory. Who owes what is said privately. &ldquo;roomie forget me&rdquo; works.</p>
         </div>
         <div className="flex flex-col gap-2 rounded-3xl border bg-card p-5">
           <LayoutDashboardIcon aria-hidden className="m-3 size-7 text-owed" />
           <h3 className="type-heading m-0">A dashboard per group</h3>
-          <p className="type-body m-0 text-muted-foreground">Balances, the Cart and the chore chart, for Members only.</p>
+          <p className="type-body m-0 text-muted-foreground">Rent, Balances, the Cart, the chart and the landlord&apos;s mail, for Members only.</p>
         </div>
       </div>
     </section>
@@ -457,7 +430,7 @@ function HowItWorks({ addUrl }: { addUrl: string }) {
 const SCREENS = [
   { src: "/landing/dashboard-money.jpg", alt: "The Money page: Dev owes you $30.00, Sam owes you $12.50, and the Settle plan." },
   { src: "/landing/dashboard-home.jpg", alt: "The group's Home page: Roomie in its doorway, you're owed $42.50, today's chore and the Cart." },
-  { src: "/landing/dashboard-chores.jpg", alt: "The Chores page: your turn to take out the trash, with Mark done and Pass it on." },
+  { src: "/landing/dashboard-chores.jpg", alt: "The House page: your turn to take out the trash, with Mark done and Pass it on." },
 ]
 
 function DashboardPeek() {
@@ -489,7 +462,7 @@ function Beta({ addUrl }: { addUrl: string }) {
       <div className="flex flex-col gap-5">
         <Roomie mood="calm" size={72} animated />
         <SectionHead id="beta-title" title="Want it on WhatsApp?">
-          WhatsApp is in a small beta. Tell us about your group.
+          WhatsApp is in a small beta. Tell us about your apartment.
         </SectionHead>
         <p className="type-body m-0 max-w-[44ch] text-muted-foreground">
           On Telegram?{" "}
@@ -514,19 +487,19 @@ function Share() {
         <div className="flex items-center gap-4">
           <Roomie mood="happy" size={64} animated className="shrink-0" />
           <h2 id="share-title" className="m-0 text-[clamp(1.6rem,4vw,2.25rem)] leading-[1.05] font-extrabold tracking-[-0.03em] text-balance">
-            Know a group chat that needs this?
+            Know an apartment chat that needs this?
           </h2>
         </div>
         <div className="flex flex-wrap gap-2.5">
-          <Button nativeButton={false} render={<a href={s.telegram} target="_blank" rel="noopener noreferrer" />}>
-            <TelegramMark />
-            Send on Telegram
-            <span className="sr-only">(opens Telegram in a new tab)</span>
-          </Button>
-          <Button variant="secondary" nativeButton={false} render={<a href={s.whatsapp} target="_blank" rel="noopener noreferrer" />}>
+          <Button nativeButton={false} render={<a href={s.whatsapp} target="_blank" rel="noopener noreferrer" />}>
             <WhatsAppMark />
             Send on WhatsApp
             <span className="sr-only">(opens WhatsApp in a new tab)</span>
+          </Button>
+          <Button variant="secondary" nativeButton={false} render={<a href={s.telegram} target="_blank" rel="noopener noreferrer" />}>
+            <TelegramMark />
+            Send on Telegram
+            <span className="sr-only">(opens Telegram in a new tab)</span>
           </Button>
           <CopyLink url={s.url} />
         </div>

@@ -49,8 +49,9 @@ async function main() {
   </svg>`;
 
   const [bold, semi] = await Promise.all([font(800), font(600)]);
-  const headline = await text(`<span foreground="${MINT}" letter_spacing="-1600">Your group chat finally has a brain.</span>`, bold, "Figtree ExtraBold 70", 600);
-  const sub = await text(`<span foreground="${SPROUT}">An AI for your group chat that learns Tricks.</span>`, semi, "Figtree SemiBold 28", 640);
+  // ADR 0015's words; HEADLINE in src/app/_landing/landing.tsx is the same string.
+  const headline = await text(`<span foreground="${MINT}" letter_spacing="-1600">The roommate who actually keeps track.</span>`, bold, "Figtree ExtraBold 70", 600);
+  const sub = await text(`<span foreground="${SPROUT}">Rent, splits, groceries, chores and the landlord, in the group chat.</span>`, semi, "Figtree SemiBold 28", 560);
   const headMeta = await sharp(headline).metadata();
 
   await sharp(Buffer.from(base))
