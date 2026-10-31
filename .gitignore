@@ -13,3 +13,6 @@ plans/
 .mastra/
 .mastra-presets.json
 public/uploads/
+
+# Claude Code's local launch configs
+.claude/launch.json
