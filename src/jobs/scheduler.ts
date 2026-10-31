@@ -7,8 +7,9 @@
 // restarts (ADR 0001: at most one Bundle per Group per day, nothing when no Toolkit has anything to say). The tick
 // never rejects. ROOMIE_PAUSED=1 skips the whole tick; a paused Group (groups.paused_at) gets no reminders or posts
 // until resumed.
-import { deliver, deliverPrivate } from "@/channels";
-import { CantMessagePrivatelyError } from "@/channels/types";
+import { deliver } from "@/channels";
+import { nudgeOrHint } from "@/services/dm";
+import { expirePolls } from "@/services/polls";
 import { groupBundle } from "@/services/bundle";
 import { groupsWithChat } from "@/services/groups";
 import { claimReminder, dueReminders, releaseReminder, reminderLine, scheduleNext, type Reminder } from "@/services/reminders";
@@ -48,7 +49,7 @@ type GroupRow = Awaited<ReturnType<typeof groupsWithChat>>[number];
 
 /**
  * One reminder: the whole Group's into the Chat, a Member's privately, never both. When Roomie can't DM that Member
- * yet (they never pressed Start), it goes to the Chat instead, addressed to them, with the one-line fix.
+ * yet (they never pressed Start), the Chat gets the neutral Start hint instead, at most weekly (services/dm.ts).
  */
 export async function deliverReminder(r: Reminder): Promise<"chat" | "private"> {
   const text = reminderLine(r);
@@ -56,14 +57,7 @@ export async function deliverReminder(r: Reminder): Promise<"chat" | "private"> 
     await deliver(r.groupId, { text });
     return "chat";
   }
-  try {
-    await deliverPrivate(r.memberId, { text });
-    return "private";
-  } catch (err) {
-    if (!(err instanceof CantMessagePrivatelyError)) throw err;
-    await deliver(r.groupId, { text: `${text} (for ${r.memberName ?? "you"}. ${err.message.replace(/, then ask me again\.?$/, ".")})` });
-    return "chat";
-  }
+  return (await nudgeOrHint(r.memberId, r.groupId, { text })) === "private" ? "private" : "chat";
 }
 
 export async function sendDueReminders(now: Date, groupId?: string, paused: ReadonlySet<string> = new Set()): Promise<number> {
@@ -236,6 +230,7 @@ export async function tick(now = new Date()): Promise<void> {
       await sendDueReminders(now, undefined, paused);
       await flushPendingPosts(now, paused).catch((e) => console.error("scheduler: held posts failed", e));
       await runGroupJobs(now, paused);
+      await expirePolls(now, paused).catch((e) => console.error("scheduler: poll expiry failed", e));
     }
     await recurringExpenses(now);
     await splitwiseOutbox(now);

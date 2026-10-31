@@ -50,5 +50,5 @@ export function ctxOf(context: { requestContext?: unknown } | undefined): Ctx {
   if (typeof groupId !== "string" || !groupId || typeof memberId !== "string" || !memberId) {
     throw new Error("Roomie tools need groupId and memberId in the requestContext.");
   }
-  return { groupId, memberId, source: rc?.get("source") === "ui" ? "ui" : "chat" };
+  return { groupId, memberId, source: rc?.get("source") === "ui" ? "ui" : rc?.get("isPrivate") === true ? "dm" : "chat" };
 }

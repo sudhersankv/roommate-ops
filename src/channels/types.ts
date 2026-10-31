@@ -26,7 +26,22 @@ export type IncomingMessage = {
 };
 
 export type Button = { text: string; url: string };
-export type Outgoing = { text: string; buttons?: Button[] };
+/** A Poll (ADR 0018): a who-question with up to four options. `text` still goes with it as the fallback line. */
+export type OutgoingPoll = { question: string; options: string[]; multi: boolean };
+export type Outgoing = { text: string; buttons?: Button[]; poll?: OutgoingPoll };
+
+/** What a send returns: the sent message's id when the Channel knows it (a Poll's votes point at it) and, on
+ * WhatsApp, the Poll's messageSecret (votes are encrypted with it). */
+export type Sent = { externalId?: string; secret?: Uint8Array };
+
+/** One person's answer to a Poll, as the Channel saw it. `optionIds` are 0-based; empty = they took their vote back. */
+export type PollVote = {
+  channel: ChannelName;
+  chatExternalId: string;
+  pollExternalId: string;
+  userExternalId: string;
+  optionIds: number[];
+};
 
 /** A person on a Channel, as the adapter sees them (group join events). */
 export type ChannelUser = { userExternalId: string; name: string };
@@ -44,11 +59,14 @@ export class CantMessagePrivatelyError extends Error {
 
 export interface Channel {
   readonly name: ChannelName;
+  /** Whether `Outgoing.poll` goes out as the Channel's own poll (votes come back as PollVotes). Otherwise it's sent as
+   * numbered options and a bare number from a Member is the vote (the pipeline). */
+  readonly nativePolls?: boolean;
   /** Post into a Chat. */
-  sendToChat(chatExternalId: string, msg: Outgoing): Promise<void>;
+  sendToChat(chatExternalId: string, msg: Outgoing): Promise<Sent>;
   /** A private 1:1 message (Claim links go out this way, ADR 0003). Throws CantMessagePrivatelyError when the
    * Channel needs the person to message Roomie first. */
-  sendPrivate(userExternalId: string, msg: Outgoing): Promise<void>;
+  sendPrivate(userExternalId: string, msg: Outgoing): Promise<Sent>;
   /** Roomie leaves the Chat (an operator's "Leave chat", too many new Groups from one person). */
   leaveChat(chatExternalId: string): Promise<void>;
   /** Forget an intro still waiting to go out (the Group was paused). */

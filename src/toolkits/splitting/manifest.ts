@@ -24,6 +24,7 @@ export const splitting = defineManifest({
     `- "[photo: <url>]" in a message is a picture someone sent. If it's a receipt, use expense_from_receipt with that url.`,
     `- "Settle up with X" means show what's owed and the pay buttons (settle_up with paid=false). Record a payment only once someone says it's paid.`,
     `- "Undo" right after you deleted an expense means restore_expense.`,
+    `- "I paid 60 for pizza" with nobody named is an even split among everyone, logged now (no poll); say how to change it. Only "not sure who was in" gets a who's-in poll (ask_poll with about), and nothing is logged until it resolves. "I was in too" afterwards is update_expense.`,
   ].join("\n"),
   abilities: {
     log_expense: "Log a shared cost: evenly, exact amounts, percentages or shares, one or several payers",

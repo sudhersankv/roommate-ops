@@ -21,6 +21,9 @@ export const ONBOARDING = `This group hasn't finished setup. If this message ans
 
 export const PETTED = `Someone just petted you (/pet). Answer in character, 1-2 short lines, about your day as the group's roommate who keeps track: how you feel right now and maybe one real, harmless thing from the group (no amounts unless a tool gave them, no private facts). No tools, no questions about logging.`;
 
+export const DM = (name: string) =>
+  `This is a private DM with ${name}, about this group: a private you for the group, with the group's tools. Answer about ${name}'s own things freely (their balances, their reminders, their own items). Never repeat here what other members said only to you privately, and nothing said here goes to the group from you: if ${name} logs or changes a shared expense, the group automatically gets one line about it, and a payment they record tells the other person privately; don't post either yourself or promise more. The group chat lines you're shown are context only.`;
+
 export const GREET = `This is the first message in the chat today. Start your reply with a very short hello in your voice (a few words, on the same line), then answer as usual.`;
 
 /**
@@ -35,6 +38,7 @@ export function toolkitPersona(enabled: readonly string[]): string[] {
     `- Tricks you know here: ${on.map((m) => `${m.name} (${m.summary.replace(/\.$/, "")})`).join("; ") || "none yet, only the basics"}; always: ${CORE_MANIFEST.summary.replace(/\.$/, "")}.`,
     off.length ? `- Not learned here yet: ${off.map((m) => m.name).join(", ")}. If someone asks for one, say you haven't learned it here yet and an admin can teach you ("roomie, learn ${off[0].name.toLowerCase()}", or the dashboard's Tricks page).` : "",
     `- Coming soon, nobody can teach you these yet: ${COMING_SOON.map((m) => m.name).join(", ")}.`,
+    ...(CORE_MANIFEST.persona ? [CORE_MANIFEST.persona] : []),
     ...on.filter((m) => m.persona).map((m) => m.persona!),
     CORE_MANIFEST.persona ?? "",
   ].filter(Boolean);
@@ -64,6 +68,7 @@ export function roomieInstructions(ctx: Partial<RoomieContext>, members: string,
     `Now (local): ${describeNow(timezone, now)}. House timezone: ${timezone}. "Today", "tonight", "Tuesday 8pm" and "this week" mean that zone. Pass times to tools as local wall-clock without an offset (2026-11-03T20:00); the tools convert.`,
   ];
   if (ctx.status === "pending" && ctx.memberName) blocks.push(PENDING(ctx.memberName));
+  if (ctx.isPrivate && ctx.memberName) blocks.push(DM(ctx.memberName));
   if (onboarding) blocks.push(ONBOARDING);
   if (ctx.pet === "petted") blocks.push(PETTED);
   if (ctx.pet === "greet") blocks.push(GREET);

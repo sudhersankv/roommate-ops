@@ -1013,4 +1013,61 @@ export const SCENARIOS: Scenario[] = [
     turn: { text: "roomie what do you know about Dev?", from: "Sam" },
     expect: { excludes: [/vegan/i, /peanut/i] },
   },
+
+  /* ---------- polls and DMs (#24B, ADR 0018, ADR 0020) ---------- */
+  {
+    id: "pizza-no-poll",
+    area: "splitting",
+    turn: { text: "roomie I paid 60 for pizza" },
+    expect: {
+      tools: ["log_expense"],
+      noTools: ["ask_poll"],
+      check: async (e) => fail((await balanceOf(e, "Dev")) === -2000 && (await balanceOf(e, "Sam")) === -2000, "an even split at once, no poll"),
+    },
+  },
+  {
+    id: "pizza-not-sure-who-polls",
+    area: "splitting",
+    turn: { text: "roomie I paid 60 for pizza, not sure who was in though" },
+    expect: {
+      tools: ["ask_poll"],
+      noTools: ["log_expense"],
+      check: async (e) => {
+        const open = await db.select().from(schema.polls).where(eq(schema.polls.groupId, e.ctx.groupId));
+        const about = open[0]?.about as { kind?: string; cents?: number } | undefined;
+        return fail(open.length === 1 && about?.kind === "who-in" && about.cents === 6000 && open[0].options.length <= 4 && (await expenseCount(e)) === 0, "one who's-in poll about $60, nothing logged yet");
+      },
+    },
+  },
+  {
+    id: "dm-paid-maya",
+    area: "splitting",
+    seed: async (e) => void (await money.logExpense(e.as("Maya"), { cents: 6000, description: "internet", category: "utilities" })),
+    turn: { text: "paid Maya", from: "Dev", private: true },
+    expect: {
+      tools: ["settle_up"],
+      check: async (e) => {
+        const posted = (await chatlog.roomieLines(e.ctx.groupId, 10)).map((l) => l.text);
+        return fail((await balanceOf(e, "Dev")) === 0 && !posted.some((t) => /paid|\$20/i.test(t)), `a Settlement, and nothing in the group; group lines: ${posted.join(" | ")}`);
+      },
+    },
+  },
+  {
+    id: "dm-pizza-echoes",
+    area: "splitting",
+    turn: { text: "I paid 40 for pizza", from: "Dev", private: true },
+    expect: {
+      tools: ["log_expense"],
+      check: async (e) => {
+        const posted = (await chatlog.roomieLines(e.ctx.groupId, 10)).map((l) => l.text);
+        return fail(posted.filter((t) => /^Dev logged \$40\.00 pizza, split 3 ways\.$/.test(t)).length === 1, `one group line; got ${posted.join(" | ")}`);
+      },
+    },
+  },
+  {
+    id: "stop-nudging-me",
+    area: "core",
+    turn: { text: "roomie stop nudging me", from: "Sam" },
+    expect: { tools: ["set_nudges"], maxLines: 1, check: async (e) => fail(await members.nudgesOff(e.member.Sam), "Sam's nudges are off") },
+  },
 ];

@@ -99,11 +99,21 @@ export async function memberLineInMemory(groupId: string, name: string): Promise
   return line?.trim() ?? null;
 }
 
-/** Drops the Group's whole memory: thread, messages, embeddings and working memory. */
+/** Drops one Member's DM thread with Roomie for this Group (and its working memory). */
+export async function forgetDmInMemory(groupId: string, memberId: string): Promise<void> {
+  const { thread, resource } = threadFor(groupId, memberId);
+  await memory.deleteThread(thread).catch(() => {});
+  await db.execute(sql`delete from mastra_resources where id = ${resource}`).catch(() => {});
+}
+
+/** Drops the Group's whole memory: thread, messages, embeddings and working memory, and every Member's DM thread. */
 export async function forgetGroupInMemory(groupId: string): Promise<void> {
   const { thread, resource } = threadFor(groupId);
   await memory.deleteThread(thread).catch(() => {});
   await db.execute(sql`delete from mastra_resources where id = ${resource}`).catch(() => {});
+  const dms = await db.execute(sql`select id from mastra_threads where id like ${`${thread}-dm-%`}`).catch(() => ({ rows: [] }));
+  for (const r of dms.rows as { id: string }[]) await memory.deleteThread(r.id).catch(() => {});
+  await db.execute(sql`delete from mastra_resources where id like ${`${groupId}:dm:%`}`).catch(() => {});
 }
 
 /* ---------- traces (mastra_ai_spans) and live scores (mastra_scorers) ---------- */

@@ -51,7 +51,7 @@ export type GateDecision = {
   decision: "act" | "clarify" | "maybe" | "ignore";
   /** "paused" / "capped" / "media" never come from decideGate: the pipeline stopped before the Gate (lib/caps.ts,
    * /admin/groups, a photo or voice note nobody addressed to Roomie). */
-  reason: "hard-trigger" | "jev-unavailable" | "jev-act" | "jev-clarify" | "follow-up" | "jev-ignore" | "paused" | "capped" | "media";
+  reason: "hard-trigger" | "jev-unavailable" | "jev-act" | "jev-clarify" | "follow-up" | "jev-ignore" | "paused" | "capped" | "media" | "poll-vote" | "which-group";
   unprompted: boolean;
   mayStaySilent: boolean;
   toolkit?: GateToolkit;
