@@ -1761,6 +1761,43 @@ describe("Join links and seats", () => {
   });
 });
 
+describe("polls and nudges (#24B)", () => {
+  let pgid: string;
+  let people: Record<string, string>;
+  const posted: DevOutput[] = [];
+  const rc = (name: string) => new RequestContext<unknown>([["groupId", pgid], ["memberId", people[name]], ["memberName", name], ["role", name === "Maya" ? "admin" : "member"], ["status", "active"], ["source", "chat"]]);
+
+  before(async () => {
+    registerChannel(new DevChannel((o) => posted.push(o)));
+    const stamp = Date.now();
+    const list = ["Maya", "Dev", "Sam"].map((name) => ({ userExternalId: devUserId(`polls-${name}-${stamp}`), name }));
+    const joined = await onGroupJoined({ channel: "dev", externalId: `polls-${stamp}`, title: `Polls ${stamp}` }, list, list[0]);
+    pgid = joined.group.id;
+    people = Object.fromEntries(joined.members.map((m) => [m.displayName, m.id]));
+  });
+  after(async () => {
+    if (pgid) await deleteGroup(pgid);
+  });
+
+  test("ask_poll: a who's-in poll about $60 pizza goes to the chat and nothing is logged", async () => {
+    const r = await run("ask_poll", { question: "Who's in on the $60 pizza?", options: ["I'm in", "Not me"], multi: false, about: { amount: 60, description: "pizza", category: "food" } }, rc("Maya"));
+    assert.equal(r.asked, true);
+    assert.equal(r.answerWith, "a number", "dev-chat has no native polls");
+    assert.match(posted.at(-1)?.msg.text ?? "", /^\(poll \d+\) Who's in on the \$60 pizza\?\n1\. I'm in\n2\. Not me/);
+    const [p] = await db.select().from(schema.polls).where(eq(schema.polls.groupId, pgid));
+    assert.deepEqual(p.about, { kind: "who-in", payerId: people.Maya, cents: 6000, description: "pizza", category: "food" });
+    assert.equal((await money.listExpenses({ groupId: pgid })).length, 0);
+    await assert.rejects(run("ask_poll", { question: "Which?", options: ["a", "b", "c", "d", "e"], multi: false } as never, rc("Maya")));
+  });
+
+  test("set_nudges: off, then on again", async () => {
+    assert.equal((await run("set_nudges", { on: false }, rc("Sam"))).nudges, "off");
+    assert.equal(await members.nudgesOff(people.Sam), true);
+    assert.equal((await run("set_nudges", { on: true }, rc("Sam"))).nudges, "on");
+    assert.equal(await members.nudgesOff(people.Sam), false);
+  });
+});
+
 describe("coverage", () => {
   test("every tool in the registry was exercised", () => {
     const all = Object.keys(tools).sort();
