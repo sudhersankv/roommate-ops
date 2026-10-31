@@ -1,7 +1,7 @@
 "use client"
 
 import { useRef, useState, useSyncExternalStore, useTransition } from "react"
-import { CopyIcon, PencilIcon, Share2Icon, ShoppingCart, XIcon } from "lucide-react"
+import { CheckIcon, CopyIcon, PencilIcon, Share2Icon, ShoppingCart, XIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Drawer, DrawerClose, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/ui/drawer"
@@ -141,6 +141,7 @@ const noSubscribe = () => () => {}
 /** The list as text (the same the chat gets): the phone's share sheet, or Copy where there's none. */
 function ShareListButton({ text }: { text: string }) {
   const canShare = useSyncExternalStore(noSubscribe, () => typeof navigator.share === "function", () => false)
+  const [copied, setCopied] = useState(false)
   const share = async () => {
     if (canShare) {
       try {
@@ -151,15 +152,18 @@ function ShareListButton({ text }: { text: string }) {
     }
     try {
       await navigator.clipboard.writeText(text)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2500)
       toast.add({ title: "List copied", description: "Paste it anywhere." })
     } catch {
       toast.add({ title: "Couldn't copy the list", type: "error" })
     }
   }
+  const Icon = canShare ? Share2Icon : copied ? CheckIcon : CopyIcon
   return (
-    <Button size="lg" variant="outline" onClick={share}>
-      {canShare ? <Share2Icon data-icon="inline-start" /> : <CopyIcon data-icon="inline-start" />}
-      {canShare ? "Share list" : "Copy list"}
+    <Button size="lg" variant="outline" onClick={share} aria-live="polite">
+      <Icon data-icon="inline-start" />
+      {canShare ? "Share list" : copied ? "Copied" : "Copy list"}
     </Button>
   )
 }
@@ -243,7 +247,7 @@ function UsualsSection({ rows }: { rows: UsualView[] }) {
                 <span className="font-normal text-muted-foreground">{u.qty}</span>
               </ItemTitle>
               <ItemDescription>
-                {u.scope === "mine" ? "Yours" : "The house's"} · {u.learned ? "From what you bought" : "You told Roomie"}
+                {u.scope === "mine" ? "Yours" : "The house's"} · {u.learned ? "From what you bought" : u.scope === "mine" ? "You told Roomie" : "Told Roomie"}
               </ItemDescription>
             </ItemContent>
             <ItemActions className="gap-1">
