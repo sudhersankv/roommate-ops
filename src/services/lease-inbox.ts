@@ -110,6 +110,24 @@ export async function trustSender(ctx: Ctx, addressOrDomain: string, source: Sen
   return { trusted, line: `I'll treat ${widest} as the landlord from now on.` };
 }
 
+/** What trusting this sender would trust at its widest: the domain, or the address on a public mail provider. */
+export const widestTrust = (addressOrDomain: string): string | null => trustRows(addressOrDomain).at(-1) ?? null;
+
+/** The newest sender filed as new-sender that isn't trusted yet: who "is this your building?" asked about. */
+export async function askedSender(groupId: string): Promise<string | null> {
+  const rows = await db
+    .select({ original: mailMessages.originalFrom, address: mailMessages.fromAddress })
+    .from(mailMessages)
+    .where(and(eq(mailMessages.groupId, groupId), eq(mailMessages.class, "new-sender")))
+    .orderBy(desc(mailMessages.receivedAt))
+    .limit(20);
+  for (const r of rows) {
+    const sender = r.original ?? r.address;
+    if (!(await isTrusted(groupId, sender))) return sender;
+  }
+  return null;
+}
+
 export async function knownSenders(groupId: string): Promise<string[]> {
   const rows = await db.select({ value: landlordSenders.value }).from(landlordSenders).where(eq(landlordSenders.groupId, groupId)).orderBy(asc(landlordSenders.createdAt));
   return rows.map((r) => r.value);

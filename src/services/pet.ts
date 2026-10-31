@@ -8,7 +8,8 @@ import { greetingLine, winLine, type Personality, type Win } from "@/lib/persona
 import { localDay } from "@/lib/dates";
 import { localHour } from "@/lib/style-stats";
 
-export type MomentKind = "greeting" | "win";
+/** new-sender / lease-intro: the Lease Inbox's once-per-domain asks to the Admin (key = the domain). */
+export type MomentKind = "greeting" | "win" | "new-sender" | "lease-intro";
 export type MomentStore = { claim(groupId: string, kind: MomentKind, key: string): Promise<boolean> };
 
 /** Claims in Postgres: true only for the first caller, ever, per (group, kind, key). */
