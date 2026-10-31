@@ -13,7 +13,6 @@
 //   6. Otherwise: logged as context, no reply.
 // "unprompted" = nobody addressed Roomie and it's not a follow-up: the agent asks before logging anything.
 import type { GateToolkit } from "../context";
-import { saysName } from "@/lib/personality";
 
 export type Chattiness = "quiet" | "normal" | "chatty";
 export const CHATTINESS: readonly Chattiness[] = ["quiet", "normal", "chatty"];
@@ -45,6 +44,8 @@ export type GateFacts = {
   inWindow: boolean;
   jev: JevAnswers | null;
   chattiness: Chattiness;
+  /** The message carries a photo: a receipt or a shopping list, and Jev can't tell which, so the tools stay wide. */
+  hasPhoto?: boolean;
 };
 
 export type GateDecision = {
@@ -52,14 +53,15 @@ export type GateDecision = {
   decision: "act" | "clarify" | "maybe" | "ignore";
   /** "paused" / "capped" / "media" never come from decideGate: the pipeline stopped before the Gate (lib/caps.ts,
    * /admin/groups, a photo or voice note nobody addressed to Roomie). */
-  reason: "hard-trigger" | "jev-unavailable" | "jev-act" | "jev-clarify" | "follow-up" | "jev-ignore" | "paused" | "capped" | "media";
+  reason: "hard-trigger" | "jev-unavailable" | "jev-act" | "jev-clarify" | "follow-up" | "jev-ignore" | "paused" | "capped" | "media" | "poll-vote" | "which-group";
   unprompted: boolean;
   mayStaySilent: boolean;
   toolkit?: GateToolkit;
 };
 
-export function decideGate({ hardTrigger, inWindow, jev, chattiness }: GateFacts): GateDecision {
-  const toolkit = jev && jev.toolkit.p >= TOOLKIT_MIN && jev.toolkit.choice !== "none" ? jev.toolkit.choice : undefined;
+export function decideGate({ hardTrigger, inWindow, jev, chattiness, hasPhoto }: GateFacts): GateDecision {
+  // A photo is a receipt (Money) or a list / recipe / shelf (Groceries) and only the tools can tell: never narrow.
+  const toolkit = !hasPhoto && jev && jev.toolkit.p >= TOOLKIT_MIN && jev.toolkit.choice !== "none" ? jev.toolkit.choice : undefined;
   const quiet = (reason: GateDecision["reason"]): GateDecision => ({ speak: false, decision: "ignore", reason, unprompted: false, mayStaySilent: false });
 
   if (hardTrigger) return { speak: true, decision: "act", reason: "hard-trigger", unprompted: false, mayStaySilent: false, toolkit };
@@ -81,16 +83,16 @@ export function decideGate({ hardTrigger, inWindow, jev, chattiness }: GateFacts
 /** The trigger word: "roomie" as a whole word, any case ("Roomie, add milk", "ok roomie?"). */
 export const TRIGGER_WORD = /\broomie\b/i;
 export const saysRoomie = (text: string) => TRIGGER_WORD.test(text);
-/** "roomie" always works; so does the name the Group gave its pet ("Dino, add milk"). */
-export const callsPet = (text: string, petName?: string) => saysRoomie(text) || (!!petName && saysName(text, petName));
+/** "roomie" is the one name (ADR 0020); the @mention arrives separately as `mentionsRoomie`. */
+export const callsPet = (text: string) => saysRoomie(text);
 
 /**
  * The message-level hard triggers: anything that isn't a group Chat line (a DM, the dashboard), /pet, a reply to
- * Roomie, an @mention, "roomie" or the pet's name. A voice note isn't one by itself (audit H2): one replying to Roomie
- * still is, through isReplyToRoomie, and so is a transcript that says "roomie".
+ * Roomie, an @mention or "roomie". A voice note isn't one by itself (audit H2): one replying to Roomie still is,
+ * through isReplyToRoomie, and so is a transcript that says "roomie".
  */
-export function isHardTrigger(m: { groupChat: boolean; petted?: boolean; isReplyToRoomie?: boolean; mentionsRoomie?: boolean; isVoice?: boolean; text: string; petName?: string }): boolean {
-  return !m.groupChat || !!m.petted || !!m.isReplyToRoomie || !!m.mentionsRoomie || callsPet(m.text, m.petName);
+export function isHardTrigger(m: { groupChat: boolean; petted?: boolean; isReplyToRoomie?: boolean; mentionsRoomie?: boolean; isVoice?: boolean; text: string }): boolean {
+  return !m.groupChat || !!m.petted || !!m.isReplyToRoomie || !!m.mentionsRoomie || callsPet(m.text);
 }
 
 export const FOLLOW_UP_WINDOW_MS = 180_000;
@@ -134,8 +136,6 @@ export type MediaFacts = {
   isReplyToRoomie?: boolean;
   /** The caption (photos; voice notes have none). */
   caption?: string;
-  /** The Group's name for its pet, if any. */
-  petName?: string;
   /** The follow-up window is open (counting this message). */
   inWindow?: boolean;
   /** Setup is waiting on this sender (an Admin, while Onboarding is open): their messages are for Roomie. */
@@ -144,13 +144,13 @@ export type MediaFacts = {
 
 /**
  * Whether Roomie downloads a photo or transcribes a voice note at all. A photo: when its caption or reply addresses
- * Roomie (@mention, reply, "roomie" or the pet's name), or in the follow-up window. A voice note: when it replies to
- * Roomie or @mentions it, in the follow-up window, or when setup is waiting on this Admin. Anything else is logged as
+ * Roomie (@mention, reply, "roomie"), or in the follow-up window. A voice note: when it replies to Roomie or
+ * @mentions it, in the follow-up window, or when setup is waiting on this Admin. Anything else is logged as
  * "(photo)" / "(voice note)" and goes no further: nothing is stored and nothing goes to the transcriber.
  */
 export function mediaWanted(f: MediaFacts): boolean {
   if (f.isPrivate || f.mentionsRoomie || f.isReplyToRoomie || f.inWindow) return true;
-  if (f.kind === "photo") return !!f.caption && callsPet(f.caption, f.petName);
+  if (f.kind === "photo") return !!f.caption && callsPet(f.caption);
   return !!f.setupPending;
 }
 

@@ -5,28 +5,10 @@ import { z } from "zod";
 import { EXPENSE_CATEGORIES, RECURRENCES, SPLIT_METHODS } from "@/db/enums";
 import { payLinks } from "@/lib/pay-links";
 import { groups, members, money } from "@/services";
-import type { Expense, Transfer } from "@/services/money";
+import { expenseSummary, type Transfer } from "@/services/money";
 import type { Ctx } from "@/services/types";
 import { dollars } from "@/services/types";
 import { ctxOf, memberIdByName, toCents } from "../util";
-
-/** What the model reads back: names and ready-made dollar strings, so it never formats or adds cents itself. */
-export function expenseSummary(e: Expense) {
-  return {
-    id: e.id,
-    description: e.description,
-    total: dollars(e.cents),
-    date: e.occurredOn,
-    category: e.category,
-    method: e.method,
-    paidBy: (e.payers ?? []).map((p) => ({ name: p.name, paid: dollars(p.cents) })),
-    shares: (e.splits ?? []).map((s) => ({ name: s.name, owes: dollars(s.cents), ...(s.weight != null ? { [e.method === "percent" ? "percent" : "shares"]: s.weight } : {}) })),
-    ...(e.note ? { note: e.note } : {}),
-    ...(e.recurring ? { repeats: e.recurring } : {}),
-    ...(e.receiptUrl ? { hasReceipt: true } : {}),
-    ...(e.splitwiseId ? { inSplitwise: true } : {}),
-  };
-}
 
 const transferText = (t: Transfer) => ({ from: t.fromName, to: t.toName, amount: dollars(t.cents) });
 

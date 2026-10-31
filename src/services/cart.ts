@@ -13,6 +13,7 @@ import { NotAllowedError, requireActive } from "./authz";
 import { canRemoveItem, computeCartSplits } from "./cart-split";
 import { listMembers } from "./members";
 import { logExpense, type Expense } from "./money";
+import type { ReportPart } from "./report";
 import { dollars, type Ctx, type GroupCtx } from "./types";
 
 export { canRemoveItem, computeCartSplits, type SplitItem } from "./cart-split";
@@ -77,6 +78,11 @@ async function openRows(groupId: string): Promise<Row[]> {
 export async function listOpenItems(ctx: GroupCtx): Promise<CartItem[]> {
   const [rows, names, titles] = await Promise.all([openRows(ctx.groupId), namesFor(ctx.groupId), recipeTitles(ctx.groupId)]);
   return rows.map((r) => toItem(r, names, titles));
+}
+
+/** Groceries' section of the weekly Group Report: the Cart's size (no prices). Pure. */
+export function cartReportParts(openCount: number): ReportPart[] {
+  return [{ icon: "🛒", text: openCount ? `${openCount} thing${openCount === 1 ? "" : "s"} in the Cart.` : "The Cart's empty." }];
 }
 
 /** "eggs", "eggs and milk", "eggs, milk, bread and 2 more" (lower case, for Activity lines). */

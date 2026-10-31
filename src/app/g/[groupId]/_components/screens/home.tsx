@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { Fragment, useEffect, useState, useTransition, type ReactNode } from "react"
-import { ChevronRightIcon, ShoppingCart, WrenchIcon } from "lucide-react"
+import { BellIcon, ChevronRightIcon, FileTextIcon, ShoppingCart, WrenchIcon } from "lucide-react"
 
 import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { Button } from "@/components/ui/button"
@@ -21,22 +21,27 @@ import { markChoreDone } from "../../actions"
 import { useGroup } from "../group-context"
 import { SettleDrawer } from "../settle-drawer"
 import { TopBar } from "../shell"
-import type { CartItemView, ChoreView, NarrationView, Transfer, UpkeepView } from "../types"
+import type { CartItemView, ChoreView, NarrationView, RecentDocumentView, ReminderView, TodayRowView, Transfer, UpkeepView } from "../types"
 
 /**
- * Home: Roomie in the doorway with the Group's mood, then each enabled Toolkit's Home section (children, in nav
- * order, from their manifests: standing, today, ...), then what Roomie said lately.
+ * Home: Roomie in the doorway with the Group's mood, the Today strip (the morning Bundle on a page), Recent documents
+ * (when there are any), then each enabled Toolkit's Home section (children, in home order, from their manifests),
+ * core's Reminders coming up, then what Roomie said lately.
  */
 export function HomeScreen({
   mood,
   moodReason,
   narration,
+  today,
+  documents,
   children,
 }: {
   mood: RoomieMood
   /** Why (services/personality.ts groupMood); without one the mood came from a Toolkit (your own Balance). */
   moodReason?: string | null
   narration: NarrationView[]
+  today: TodayRowView[]
+  documents: RecentDocumentView[]
   children: ReactNode
 }) {
   const { group, base, cheers } = useGroup()
@@ -55,7 +60,11 @@ export function HomeScreen({
       </Doorway>
       <h1 className="sr-only">{group.name}</h1>
 
-      <div className="flex flex-col gap-8 pt-6">{children}</div>
+      <div className="flex flex-col gap-8 pt-6">
+        <TodayStrip rows={today} />
+        <RecentDocuments docs={documents} />
+        {children}
+      </div>
 
       <section aria-labelledby="activity-title" className="flex flex-col gap-4 px-4 pt-8">
         <div className="flex items-baseline justify-between px-1">
@@ -129,7 +138,76 @@ function HomeCard({ id, title, children }: { id: string; title: string; children
   )
 }
 
-/** Chores' Home section: your chores due today, with Mark done. */
+/**
+ * The Today strip: the same lines the morning post is made of (each learned Trick's, in post order, with its accent
+ * dot) plus your Reminders due today. One quiet line when nothing is due.
+ */
+export function TodayStrip({ rows }: { rows: TodayRowView[] }) {
+  return (
+    <HomeCard id="today-title" title="Today">
+      {rows.length === 0 ? (
+        <p className="type-body px-4 py-3.5 text-muted-foreground">Nothing due today.</p>
+      ) : (
+        rows.map((r, i) => (
+          <Fragment key={r.id}>
+            {i > 0 ? <Separator className="mx-4 data-horizontal:w-auto" /> : null}
+            <Item render={r.href ? <Link href={r.href} /> : undefined} className="py-3">
+              <ItemMedia className="size-8 justify-center">
+                {r.accent ? (
+                  <span className="size-2.5 rounded-full" style={{ backgroundColor: r.accent }} aria-hidden />
+                ) : (
+                  <BellIcon className="size-4 text-muted-foreground" aria-hidden />
+                )}
+              </ItemMedia>
+              <ItemContent>
+                <ItemTitle className="font-normal text-pretty">{r.text}</ItemTitle>
+              </ItemContent>
+              {r.href ? (
+                <ItemActions>
+                  <ChevronRightIcon className="size-4 text-muted-foreground" aria-hidden />
+                </ItemActions>
+              ) : null}
+            </Item>
+          </Fragment>
+        ))
+      )}
+    </HomeCard>
+  )
+}
+
+/**
+ * The Recent documents strip: the Group's newest Documents (the lease first in practice), one tap each. Nothing at all
+ * for a Group without Documents; fed `[]` until core's Documents land.
+ */
+export function RecentDocuments({ docs }: { docs: RecentDocumentView[] }) {
+  const { dates } = useGroup()
+  if (docs.length === 0) return null
+  return (
+    <HomeCard id="docs-title" title="Recent documents">
+      {docs.slice(0, 3).map((d, i) => (
+        <Fragment key={d.id}>
+          {i > 0 ? <Separator className="mx-4 data-horizontal:w-auto" /> : null}
+          <Item render={<Link href={d.href} />} className="py-3">
+            <ItemMedia variant="icon" className="size-8 justify-center">
+              <FileTextIcon aria-hidden />
+            </ItemMedia>
+            <ItemContent>
+              <ItemTitle>{d.title}</ItemTitle>
+              <ItemDescription>
+                {d.kind.charAt(0).toUpperCase() + d.kind.slice(1)}, {dates.dayLabel(d.createdAt)}
+              </ItemDescription>
+            </ItemContent>
+            <ItemActions>
+              <ChevronRightIcon className="size-4 text-muted-foreground" aria-hidden />
+            </ItemActions>
+          </Item>
+        </Fragment>
+      ))}
+    </HomeCard>
+  )
+}
+
+/** House's Home section: your chores due today, with Mark done (nothing when none are on you; Today says so). */
 export function ChoresToday({ chores }: { chores: ChoreView[] }) {
   const { group, me, name, dates, cheer } = useGroup()
   const [pending, start] = useTransition()
@@ -144,17 +222,10 @@ export function ChoresToday({ chores }: { chores: ChoreView[] }) {
       toast.add({ title: `${c.name}: done`, description: streak > 1 ? `That's ${streak} on time in a row.` : "Logged. The chart is happy.", type: "success" })
     })
 
+  if (mineToday.length === 0) return null
   return (
-    <HomeCard id="today-title" title="Today">
-      {mineToday.length === 0 ? (
-        <Item>
-          <ItemContent>
-            <ItemTitle>No chores on you today</ItemTitle>
-            <ItemDescription>Next one shows up here the day it&apos;s yours.</ItemDescription>
-          </ItemContent>
-        </Item>
-      ) : (
-        mineToday.map((c, i) => (
+    <HomeCard id="chores-title" title="Your chores">
+      {mineToday.map((c, i) => (
           <Fragment key={c.id}>
             {i > 0 ? <Separator className="mx-4 data-horizontal:w-auto" /> : null}
             <Item className="py-3">
@@ -175,20 +246,19 @@ export function ChoresToday({ chores }: { chores: ChoreView[] }) {
               </ItemActions>
             </Item>
           </Fragment>
-        ))
-      )}
+        ))}
     </HomeCard>
   )
 }
 
-/** Upkeep's Home section: the next upkeep item that's due or overdue (nothing when the house is fine). */
+/** House's Home section, part two: the next upkeep item that's due or overdue (nothing when the house is fine). */
 export function UpkeepToday({ upkeep }: { upkeep: UpkeepView[] }) {
   const { base, dates } = useGroup()
   const house = upkeep.find((u) => u.status !== "ok")
   if (!house) return null
   return (
     <HomeCard id="upkeep-title" title="House care">
-      <Item render={<Link href={`${base}/chores?tab=upkeep`} />} className="py-3">
+      <Item render={<Link href={`${base}/house?tab=upkeep`} />} className="py-3">
         <ItemMedia variant="icon" className="size-8 justify-center">
           <WrenchIcon aria-hidden />
         </ItemMedia>
@@ -200,6 +270,39 @@ export function UpkeepToday({ upkeep }: { upkeep: UpkeepView[] }) {
           <ChevronRightIcon className="size-4 text-muted-foreground" aria-hidden />
         </ItemActions>
       </Item>
+    </HomeCard>
+  )
+}
+
+/**
+ * Core's Home card: the next Reminders you may see after today (today's are in the Today strip; nothing when there
+ * are none); the Reminders page has them all.
+ */
+export function RemindersComingUp({ reminders }: { reminders: ReminderView[] }) {
+  const { base, me, name, dates } = useGroup()
+  const later = reminders.filter((r) => r.day > dates.today)
+  if (later.length === 0) return null
+  return (
+    <HomeCard id="reminders-title" title="Coming up">
+      {later.slice(0, 3).map((r, i) => (
+        <Fragment key={r.id}>
+          {i > 0 ? <Separator className="mx-4 data-horizontal:w-auto" /> : null}
+          <Item render={<Link href={`${base}/reminders`} />} className="py-3">
+            <ItemMedia variant="icon" className="size-8 justify-center">
+              <BellIcon aria-hidden />
+            </ItemMedia>
+            <ItemContent>
+              <ItemTitle>{r.text}</ItemTitle>
+              <ItemDescription>
+                {r.when}. {r.for ? (r.for === me.id ? "Just for you" : `For ${name(r.for)}`) : "For everyone"}.
+              </ItemDescription>
+            </ItemContent>
+            <ItemActions>
+              <ChevronRightIcon className="size-4 text-muted-foreground" aria-hidden />
+            </ItemActions>
+          </Item>
+        </Fragment>
+      ))}
     </HomeCard>
   )
 }

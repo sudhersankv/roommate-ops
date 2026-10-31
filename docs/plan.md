@@ -4,9 +4,9 @@ Status: **draft, waiting for sign-off.** Vocabulary is in [`GLOSSARY.md`](../GLO
 
 ## What Roomie is
 
-Roomie is an AI groupmate. You add it to a WhatsApp group and it becomes part of the chat: it splits costs like a mini Splitwise, keeps the group's grocery cart, writes recipes, tracks chores, and later does research, makes PDFs, plans trips and makes stickers. Each of these is a **Toolkit** that a Group switches on. Everyone in the group signs in with Google to see their own view of that group's dashboard.
+Roomie is the roommate who actually keeps track ([ADR 0015](./adr/0015-roommates-first-and-the-five-tricks.md)). You add it to your apartment's group chat and it handles rent, splits, groceries, chores and the landlord's emails, so none of you have to: "five apps and a group mom, or Roomie". Each of those is a **Trick** (a **Toolkit** in code) the Group teaches it; other kinds of group work too, as a footnote. Everyone in the group signs in with Google to see the group's dashboard.
 
-Roomie is a groupmate, not a platform: brief, witty, exact about facts, and it slowly picks up each group's slang and languages.
+Roomie is one roommate with one voice, brief and exact about facts, and it quietly picks up how the group talks. It speaks up on its own once a morning ([ADR 0017](./adr/0017-proactive-bundle-and-private-nudges.md)) and takes the awkward stuff (who owes whom) to DMs.
 
 ## Decisions
 
@@ -180,11 +180,49 @@ Each step gets its own branch and PR, and you test locally before it's merged. S
 - [x] Seats on the Members page (connected / open / pending, Disconnect, Move to another seat, Join link card with Copy and Rotate), Settings → Joining, chat tools `rotate_join_link`, `set_join_policy`, `revoke_seat`; `get_dashboard_link` for everyone = the Join link; `/help` names it; `/app` lists 2+ Groups.
 - **Done when:** in a real group the Admin gets the setup DM, the Join link lands in the chat after setup, and a friend picks their name and is in without asking Roomie for a link.
 
+## Roommates first (ADRs 0015-0020; GitHub issues, label `ready-for-agent`)
+
+Specs live as GitHub issues: epic [#22](https://github.com/sudhersankv/roommate-ops/issues/22), children [#23](https://github.com/sudhersankv/roommate-ops/issues/23) (step 0), [#24](https://github.com/sudhersankv/roommate-ops/issues/24) (core slots), [#25](https://github.com/sudhersankv/roommate-ops/issues/25) (Money), [#26](https://github.com/sudhersankv/roommate-ops/issues/26) (Restock), [#27](https://github.com/sudhersankv/roommate-ops/issues/27) (Lease Inbox), [#28](https://github.com/sudhersankv/roommate-ops/issues/28) (landing, dashboard, one voice); `docs/agents/issue-tracker.md`. #24 is blocked by #23; #25 and #26 by #24; #27 by #24 and #25; #28 by #23. The decisions are in the ADRs; the glossary has the new words (Money, House, Lease Inbox, Bundle, Settle nudge, Poll, DM, Echo, Rent, Utility, Restock, Document, Work order).
+
+### 0. Decoupling and the House merge (`step/0-decouple`)
+- Groceries declares `requires: splitting`; `cart_from_photo` stops checking for Splitting itself.
+- Manifest contract gains `bundle` and `report` contributions; `jobs/scheduler.ts` and `services/report.ts` stop naming Toolkits; starter chores / default upkeep move into `onEnable`.
+- `chores` + `upkeep` become one `house` Toolkit (two tabs); Reminders leave the Chores page. Toolkit id `splitting` is shown as **Money**.
+- **Done when:** no Toolkit id appears outside its folder, manifests, presets, tests and marketing copy; `npm test`, `test:tools` and evals hold the baseline.
+
+### 1. Core: the Bundle, polls, DMs, Documents (`feat/core-slots`)
+- The morning Bundle and the urgent slot, quiet hours, claimed in `scheduled_posts`; the weekly report counts Balances instead of naming them.
+- `Outgoing.poll`, inbound votes on both adapters and dev-chat, `polls` table, `ask_poll` core tool, majority-or-2h resolution.
+- DMs: Group resolution order, per-(Group, Member) memory thread, the Echo rule, the no-DM-path fallback line, "stop nudging me".
+- `documents` table + `BlobStore` (Neon Object Storage, in-memory fake), the Docs tab, receipts moved off `public/`.
+- **Done when:** a Bundle posts once with lines from two Tricks, a poll resolves on a fake WhatsApp socket and a fake Telegram update, a DM "paid" records a Settlement and echoes nothing, a receipt lands in object storage behind the session check.
+
+### 2. Money: Rent, Utilities, the Settle nudge (`feat/money-rent`)
+- Rent = recurring Expense, category `rent`, set up on first mention / first report / the Rent card; the 3-days-before line, per-share DMs, due-day line.
+- Variable recurring Expenses; the payer's amount DM; pre-fill from Lease Inbox when present.
+- Settle nudge eligibility, DM text, opt-out, Admin threshold.
+- **Done when:** the "rent 2400 on the 1st, Maya pays; Maya 1000, Dev 800, Sam 600" scenario produces the right rows, DMs and group lines across a month boundary in America/Chicago.
+
+### 3. Groceries: Restock (`feat/groceries-restock`)
+- Purchase history per normalized item from Cart purchases and receipt lines; median interval after 3 buys; shared items in the Bundle, personal by DM; mute; Checkout suggestions.
+- **Done when:** a seeded 90-day history yields the expected "probably low" lines on the expected days, and a mute sticks.
+
+### 4. Lease Inbox (`feat/lease-inbox`)
+- `MailClient` (AgentMail + fake), inbox per Group on teach, Svix-verified webhook with `event_id` dedupe, forwarded-header parsing (Gmail and Outlook), landlord trust by domain, the new-sender ask.
+- Classification → actions (notice / rent-lease / work order / other), Reminders, Documents, the urgent slot; work orders as entities; the send rule (simple vs complex), the signature, the intro email; the dashboard inbox and reply box.
+- **Done when:** a forwarded inspection notice from a fake inbox becomes a chat line, a Reminder and a Document; "the sink's leaking, tell them" sends at once with the signature; "tell them we're not renewing" asks first.
+
+### 5. Landing, dashboard, one voice (`feat/roommates-landing`)
+- Hero, demos, Tricks stack, Soon tiles (Outings, Cooking, Trips, Stickers, Guests, Move-out), channel order (WhatsApp, Telegram, Discord soon, iMessage soon), the footnote for other groups; `/help` and the FAQ; the share image.
+- Dashboard: dock = Home · Money · Ask · House · More; Home's Today gains rent and landlord items and recent Documents; the Rent card; Cart's "Probably low"; the Tricks page as a list; Settings loses Personality, gains Nudges; the Inbox and Docs pages.
+- Personality: one voice; the picker, name, quirks and sliders removed from the UI; archetypes dev-only.
+- **Done when:** the landing page passes the copy rules in ADR 0015 (no AI words, Trick vocabulary) and the screens in `design/screens/` are retaken.
+
 ## Parked (v2 / v3)
 
-- **v2:** Research (web search), PDF generation (itineraries, receipts, summaries), and Trip planning, which builds on Research, PDF and Splitting.
-- **v3:** Stickers from Members' photos (the gateway lists no image-generation model yet, so check again when we get there).
-- **Gmail through Composio:** rent and leasing-office email.
+- **Soon Tricks:** Outings, Cooking, Trips (builds on Money), Stickers (no image model on the gateway yet), Guests, Move-out. PDF *making* and Research are parked without a tile.
+- **Channels:** Discord (official bot API); iMessage through the operator's own Mac relay.
+- **Members' own Gmail (optional):** bills that never reach the Lease Inbox. Never required.
 - **Before a public launch:** an official WhatsApp or Photon adapter, a Splitwise licence decision, and hosting.
 
 ## Your to-dos
@@ -195,6 +233,8 @@ Each step gets its own branch and PR, and you test locally before it's merged. S
 - [ ] Mastra platform: `MASTRA_PLATFORM_ACCESS_TOKEN` and `MASTRA_PROJECT_ID` in `.env`.
 - [ ] Composio: a valid `COMPOSIO_API_KEY` in `.env` (the current one is rejected with 401). Then connect Splitwise once from Settings and put the logged `COMPOSIO_SPLITWISE_AUTH_CONFIG_ID` in `.env`, and press "Get Instacart link" on the Cart page once to confirm Instacart works with no Instacart key.
 - [ ] `@neondatabase/auth` 0.7.0-beta (the newest) pins `better-auth` 1.7.6, inside GHSA-r4xp-prcw-77qf (OAuth Proxy sign-in as another user, critical) and a drizzle-adapter rate-limit advisory; fixed in 1.7.14. Roomie doesn't run the OAuth Proxy plugin itself (sign-in is Neon's hosted Better Auth behind `auth.handler()`), so the exposure is Neon's side. Upgrade as soon as Neon ships a release on a fixed better-auth (`npm view @neondatabase/auth versions`); its nested zod is already forced to the patched 4.6.7 by `overrides` in package.json (audit H7).
+- [ ] AgentMail: an account on the Developer plan (one inbox per Group; the free plan stops at 3), `AGENTMAIL_API_KEY` and the webhook secret in `fly secrets`, the webhook pointed at `<APP_URL>/api/mail` ([ADR 0016](./adr/0016-lease-inbox.md)). A custom domain (`@roomie.…`) is optional and reads better than `@agentmail.to`.
+- [ ] Neon Object Storage on the project for Documents ([ADR 0018](./adr/0018-polls-and-documents.md)): in `fly secrets`, set `NEON_STORAGE_*`, or `BLOB_FAKE=1` to accept that Documents don't survive a restart. Production with neither refuses uploads (the startup log says which store is in use).
 - [ ] Google Cloud OAuth client for Neon Auth, before anyone outside the dev team signs in (dev uses Neon's shared Google keys; the consent screen shows Neon). Add it under the branch's Auth -> OAuth providers. At the same time, turn off email+password sign-up on that branch (Neon enables it by default; Roomie only uses Google).
 
 ## Environment

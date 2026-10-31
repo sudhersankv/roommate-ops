@@ -205,29 +205,17 @@
   opacity: 0;
 }
 
-/* ---------- vibes: confetti on the hype card ---------- */
+/* ---------- DMs and Polls in the chats ---------- */
 
-.lp-confetti {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
+/* A line from the viewer's private chat with Roomie: a dashed edge in the brand green, so it reads as another room. */
+.lp-dm-bubble > [data-slot="bubble-content"] {
+  outline: 1.5px dashed color-mix(in oklab, var(--color-owed, #4fcb78) 70%, transparent);
+  outline-offset: 1px;
 }
-.lp-confetti i {
-  position: absolute;
-  width: 7px;
-  height: 11px;
-  border-radius: 2px;
-  transform: rotate(var(--r));
-  opacity: 0.9;
-}
-@keyframes lp-confetti {
-  0%,
-  100% {
-    transform: translateY(0) rotate(var(--r));
-  }
-  50% {
-    transform: translateY(-5px) rotate(calc(var(--r) + 40deg));
-  }
+/* A Poll's bars: the final width is the option's share (--w, 0..1); with motion they grow from the left. */
+.lp-poll-bar {
+  transform: scaleX(var(--w, 0));
+  transform-origin: left center;
 }
 
 /* ---------- the share card: a warm edge ---------- */
@@ -297,9 +285,9 @@
     animation: lp-glow-once 0.7s ease-out calc(var(--land, 1.02s) + 0.03s + var(--k, 0) * 0.08s);
   }
 
-  .lp-vibe:hover .lp-confetti i,
-  .lp-vibe:focus-within .lp-confetti i {
-    animation: lp-confetti 0.9s ease-in-out calc(var(--k) * 0.06s) 2;
+  /* A Poll's bars grow as its line lands. */
+  .lp-stage[data-state="play"] .lp-poll-bar {
+    animation: lp-poll-grow 0.6s cubic-bezier(0.2, 0.8, 0.3, 1) calc(0.7s + var(--i, 0) * 0.85s) both;
   }
 
   .lp-voted.is-fresh {
@@ -341,6 +329,14 @@
   }
   40% {
     opacity: 0.85;
+  }
+}
+@keyframes lp-poll-grow {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(var(--w, 0));
   }
 }
 

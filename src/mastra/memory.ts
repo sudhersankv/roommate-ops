@@ -44,7 +44,12 @@ export const memory = new Memory({
   },
 });
 
-export const threadFor = (groupId: string) => ({ thread: `group-${groupId}`, resource: groupId });
+/**
+ * The Group's thread, or with `memberId` that Member's DM thread (ADR 0020): its own resource too, so the Group's
+ * resource-scoped recall never finds what was said in a DM. The DM run reads the Group's recent chat as context only.
+ */
+export const threadFor = (groupId: string, memberId?: string) =>
+  memberId ? { thread: `group-${groupId}-dm-${memberId}`, resource: `${groupId}:dm:${memberId}` } : { thread: `group-${groupId}`, resource: groupId };
 
 /** The Group style section of a Group's working memory ("" when there's none yet). */
 export async function groupStyle(groupId: string): Promise<string> {

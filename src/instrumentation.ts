@@ -1,6 +1,8 @@
 export async function register() {
   if (process.env.NEXT_RUNTIME === "nodejs") {
     await import("./lib/env"); // .env over stale process env (see lib/env.ts)
+    // Which store Documents use; a production process without one logs the error here (uploads refuse with it).
+    void import("./integrations/blob-store").then(({ blobStore }) => console.log(`[documents] files go to ${blobStore().kind === "neon" ? "Neon Object Storage" : "memory (lost on restart)"}`)).catch((e) => console.error(`[documents] ${e instanceof Error ? e.message : e}`));
     if (process.env.TELEGRAM_BOT_TOKEN) {
       // Outbound only, so the scheduler and Claim links reach Telegram; updates come from `npm run telegram` or the webhook.
       const { telegramChannel } = await import("./channels/telegram-boot");

@@ -11,6 +11,8 @@ export const groceries = defineManifest({
   category: "food",
   tags: ["cart", "recipes", "pantry", "shopping", "Instacart", "meal plan"],
   defaultOn: true,
+  // "I paid 84" ends in an Expense, so Money has to be on (toggle_toolkit and the Tricks page both check).
+  requires: { toolkits: ["splitting"] },
   worksWith: { integrations: ["instacart"] },
   status: "stable",
   gate: {
@@ -20,7 +22,7 @@ export const groceries = defineManifest({
   },
   persona: `- Groceries has no prices. Never say a price, an estimate or a cart total; the real money comes from the receipt later. Quantities as people said them.
 - Adding: if it's unclear whether it's for them or everyone, ask "for you or the whole house?"; household stuff, "for the house" and "common" are shared. If cart_add returns needsClarification, ask just that, in one line. After an add, one line: what went in ("Added eggs."), no recap of the cart.
-- "[photo: <url>]" is cart_from_photo (it tells you when it's a receipt), unless it's clearly a receipt and expense_from_receipt is one of your tools. For a recipe or a list: say its summary in one line and ask "Add them as shared?" (or for whom), unless the caption already said; on yes, cart_from_photo again with confirm. If it says kind "receipt", relay its say line, or use expense_from_receipt when splitting is true.
+- "[photo: <url>]" is cart_from_photo (it tells you when it's a receipt), unless it's clearly a receipt: then expense_from_receipt (Money's tool) with that url. For a recipe or a list: say its summary in one line and ask "Add them as shared?" (or for whom), unless the caption already said; on yes, cart_from_photo again with confirm. If it says kind "receipt", use expense_from_receipt with the same url.
 - A Recipe ("tacos for 5 friday") is recipe_draft, written for the group's size unless they say how many; post its text and ask its askToAdd question. A Recipe never touches the cart by itself: add its ingredients (recipe_add_to_cart) only when someone asks or clearly means it ("yes add them", "...and put it on the list"); what they say they have ("we have onions") goes in skip. Put what you know about the people eating (vegetarian, allergies) in recipe_draft's request.
 - "Checkout" / "order it" is cart_checkout. "I paid 84 for groceries" while the cart has things (or after a checkout) is cart_purchased, not log_expense: say each person's part from its shares. "We always have salt" is pantry_set.
 - Don't offer the Cart page unless they ask for it (then cart_view with link).`,
@@ -37,8 +39,11 @@ export const groceries = defineManifest({
     pantry_set: "Remember what the group always has",
     pantry_list: "Say what's in the Pantry",
   },
+  // Groceries' lines come after money, the landlord and the house (ADR 0017).
+  postOrder: 40,
   dashboard: {
-    nav: { label: "Cart", href: (g) => `/g/${g}/cart`, icon: "ShoppingCart", order: 20 },
+    // After Money (10) and House (30) in the dock's order: the Cart's writes happen in the chat (ADR 0015).
+    nav: { label: "Cart", href: (g) => `/g/${g}/cart`, icon: "ShoppingCart", order: 40 },
     pages: ["cart"],
   },
 });

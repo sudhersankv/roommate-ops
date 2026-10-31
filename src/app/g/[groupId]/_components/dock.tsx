@@ -4,9 +4,8 @@ import Link from "next/link"
 import { usePathname, useSearchParams } from "next/navigation"
 import { useEffect, useState, type ReactNode } from "react"
 import { cn } from "cn"
-import { House, LayoutGrid, Plus, Settings, Users } from "lucide-react"
+import { Bell, House, LayoutGrid, Settings, Sparkles, Users } from "lucide-react"
 
-import { Badge } from "@/components/ui/badge"
 import { Drawer, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle } from "@/components/ui/drawer"
 import { Roomie } from "@/components/roomie/mascot"
 import { useCheer } from "@/components/roomie/use-cheer"
@@ -40,7 +39,7 @@ function useActiveHref(base: string, targets: Target[]): string | null {
 const pathOf = (href: string | null) => href?.split("?")[0] ?? null
 
 /**
- * The dock: Home, up to three learned Tricks (manifest nav order), More; Ask Roomie sits in the middle with equal
+ * The dock: Home, the first two learned Tricks (manifest nav order), More; Ask Roomie sits in the middle with equal
  * halves either side. More opens the drawer with everything else.
  */
 export function Dock() {
@@ -50,7 +49,8 @@ export function Dock() {
   const tricks = `${base}/tricks`
   const active = useActiveHref(base, [
     { href: base, exact: true },
-    ...drawer.learned.map((n) => ({ href: n.href })),
+    ...[...nav, ...drawer.learned].map((n) => ({ href: n.href })),
+    { href: `${base}/reminders` },
     { href: `${base}/members` },
     { href: `${base}/settings` },
     { href: tricks },
@@ -133,8 +133,9 @@ function DockLink({ href, label, icon, active }: { href: string; label: string; 
 }
 
 /**
- * Everything the dock has no room for: every learned Trick, a greyed slot for each one not learned yet (Teach, or
- * Ask an admin) and each coming-soon one (inert, "Soon"), Teach a Trick, then Members and Settings.
+ * Everything the dock has no room for: the learned Tricks that aren't in the dock, a greyed slot for each one not
+ * learned yet (Teach, or Ask an admin), one "What's coming" tile (the Tricks page's Soon list), then the Group's own
+ * pages: Reminders (core, no Trick owns them), Members and Settings.
  */
 function MoreDrawer({ open, onOpenChange, active }: { open: boolean; onOpenChange: (open: boolean) => void; active: string | null }) {
   const { base, group, isAdmin, drawer } = useGroup()
@@ -145,13 +146,23 @@ function MoreDrawer({ open, onOpenChange, active }: { open: boolean; onOpenChang
       <DrawerContent className="mx-auto max-w-md">
         <DrawerHeader>
           <DrawerTitle className="type-heading">More</DrawerTitle>
-          <DrawerDescription>What Roomie knows in {group.name}, and what it could learn next.</DrawerDescription>
+          <DrawerDescription>The rest of {group.name}.</DrawerDescription>
         </DrawerHeader>
         <nav aria-label="More" className="flex min-h-0 flex-col gap-6 overflow-y-auto p-4 pb-[calc(1rem+env(safe-area-inset-bottom))]">
           <section aria-labelledby="more-tricks" className="flex flex-col gap-3">
-            <h3 id="more-tricks" className="type-caption font-semibold tracking-wide text-muted-foreground uppercase">
-              Tricks
-            </h3>
+            <div className="flex items-baseline justify-between">
+              <h3 id="more-tricks" className="type-caption font-semibold tracking-wide text-muted-foreground uppercase">
+                Tricks
+              </h3>
+              <Link
+                href={tricks}
+                onClick={close}
+                aria-current={active === tricks ? "page" : undefined}
+                className="type-caption font-medium text-foreground underline decoration-primary decoration-2 underline-offset-4 hover:decoration-foreground"
+              >
+                All Tricks
+              </Link>
+            </div>
             <ul className="grid grid-cols-3 gap-2 min-[420px]:grid-cols-4">
               {drawer.learned.map((n) => (
                 <Tile key={n.href} href={n.href} icon={n.icon} label={n.label} active={active === n.href} onNavigate={close} />
@@ -168,19 +179,17 @@ function MoreDrawer({ open, onOpenChange, active }: { open: boolean; onOpenChang
                   onNavigate={close}
                 />
               ))}
-              {drawer.soon.map((t) => (
-                <li key={t.id} aria-disabled="true" className="relative flex flex-col items-center gap-1.5 rounded-2xl bg-muted/40 px-1 py-3 text-center opacity-55 grayscale select-none">
-                  <span className="flex size-10 items-center justify-center rounded-2xl bg-muted text-muted-foreground [&_svg]:size-5" aria-hidden>
-                    {t.icon}
-                  </span>
-                  <span className="w-full truncate text-xs font-medium text-muted-foreground">{t.name}</span>
-                  <Badge variant="outline" className="absolute top-1.5 right-1.5 h-4 px-1.5 text-[0.625rem]">
-                    Soon
-                  </Badge>
-                  <span className="sr-only">, coming soon</span>
-                </li>
-              ))}
-              <Tile href={tricks} icon={<Plus />} label="Teach a Trick" active={active === tricks} state="teach" onNavigate={close} />
+              {drawer.soon.length ? (
+                <Tile
+                  href={`${tricks}#soon`}
+                  icon={<Sparkles />}
+                  label="What's coming"
+                  sub={`${drawer.soon.length} soon`}
+                  ariaLabel={`What's coming: ${drawer.soon.length} Tricks Roomie is learning next`}
+                  state="soon"
+                  onNavigate={close}
+                />
+              ) : null}
             </ul>
           </section>
           <section aria-labelledby="more-group" className="flex flex-col gap-3">
@@ -188,6 +197,7 @@ function MoreDrawer({ open, onOpenChange, active }: { open: boolean; onOpenChang
               Group
             </h3>
             <ul className="grid grid-cols-3 gap-2 min-[420px]:grid-cols-4">
+              <Tile href={`${base}/reminders`} icon={<Bell />} label="Reminders" active={active === `${base}/reminders`} onNavigate={close} />
               <Tile href={`${base}/members`} icon={<Users />} label="Members" active={active === `${base}/members`} onNavigate={close} />
               <Tile href={`${base}/settings`} icon={<Settings />} label="Settings" active={active === `${base}/settings`} onNavigate={close} />
             </ul>
@@ -214,7 +224,7 @@ function Tile({
   sub?: string
   ariaLabel?: string
   active?: boolean
-  state?: "learned" | "not-yet" | "teach"
+  state?: "learned" | "not-yet" | "soon"
   onNavigate: () => void
 }) {
   const muted = state === "not-yet"
@@ -228,7 +238,7 @@ function Tile({
         className={cn(
           "flex min-w-0 flex-1 flex-col items-center gap-1.5 rounded-2xl px-1 py-3 text-center outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50",
           muted ? "border border-dashed border-foreground/15 bg-transparent hover:bg-muted/50" : "bg-muted/60 hover:bg-muted",
-          state === "teach" && "border border-dashed border-primary/50 bg-primary/8",
+          state === "soon" && "border border-dashed border-primary/50 bg-primary/8",
           active && "bg-primary/18 ring-2 ring-primary/60"
         )}
       >

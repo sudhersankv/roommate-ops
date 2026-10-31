@@ -23,7 +23,7 @@ const clip = (s: string, n = 90) => {
 };
 
 export async function whatsappDeps(): Promise<WhatsAppDeps> {
-  const [{ respondToIncoming, mediaWantedFor }, onboarding, groups, members, joins, { saveUpload }, voice, { pgContacts }, { whatsappAdmission }, kill] = await Promise.all([
+  const [{ respondToIncoming, mediaWantedFor, handlePollVote }, onboarding, groups, members, joins, { saveUpload }, voice, { pgContacts, pollSecretFor }, { whatsappAdmission }, kill] = await Promise.all([
     import("@/pipeline"),
     import("@/onboarding"),
     import("@/services/groups"),
@@ -92,6 +92,9 @@ export async function whatsappDeps(): Promise<WhatsAppDeps> {
     ...(process.env.OPENROUTER_API_KEY ? { transcribe: voice.transcribe } : {}),
     mediaWanted: mediaWantedFor,
     admission: whatsappAdmission,
+    // The poll's messageSecret lives in the polls row (whatsapp-store.ts), so votes after a restart still decrypt.
+    pollSecret: pollSecretFor,
+    onPollVote: handlePollVote,
   };
 }
 

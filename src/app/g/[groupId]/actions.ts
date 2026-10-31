@@ -7,6 +7,7 @@ import { revalidatePath } from "next/cache"
 import type { JoinPolicy, PaymentApp } from "@/db/schema"
 import { InstacartUnavailableError } from "@/integrations/instacart"
 import { memberSession } from "@/lib/session"
+import { parseInZone } from "@/lib/time"
 import { cart, chores, groups, isNotAllowed, joins, members, money, pantry, recipes, reminders, schedule, splitwise, toolkits, upkeep, type Ctx } from "@/services"
 import type { SettingsPatch } from "@/services/groups"
 import type { ToolkitId } from "@/toolkits/types"
@@ -46,8 +47,8 @@ const clean = (input: ExpenseForm): ExpenseForm => ({
   note: input.note ?? null,
   occurredOn: input.occurredOn,
   recurring: input.recurring ?? null,
-  // Only our own uploads can be attached from the dashboard.
-  receiptUrl: input.receiptUrl && /^\/uploads\/[a-z0-9-]+\/[a-z0-9-]+\.[a-z]+$/i.test(input.receiptUrl) ? input.receiptUrl : null,
+  // Only our own Documents can be attached from the dashboard (/api/docs/<id>, ADR 0018); the service checks the Group.
+  receiptUrl: input.receiptUrl && /^\/api\/docs\/[0-9a-f-]{36}$/i.test(input.receiptUrl) ? input.receiptUrl : null,
 })
 
 export async function addExpense(groupId: string, input: ExpenseForm) {
@@ -163,6 +164,15 @@ export async function addUpkeepDefaults(groupId: string) {
 
 export async function removeUpkeep(groupId: string, itemId: string) {
   return act(groupId, (ctx) => upkeep.removeMaintenance(ctx, { id: itemId }))
+}
+
+/** `at` is the Group's local wall-clock ("2026-11-03T20:00"); `justMe` sends it to the signed-in Member privately. */
+export async function addReminder(groupId: string, input: { text: string; at: string; justMe: boolean; repeat: "daily" | "weekly" | "monthly" | null }) {
+  return act(groupId, async (ctx) => {
+    const tz = await schedule.groupTimezone(ctx.groupId)
+    const r = await reminders.setReminder(ctx, { text: input.text, dueAt: parseInZone(input.at, tz), memberId: input.justMe ? ctx.memberId : undefined, recurring: input.repeat })
+    return { text: r.text, when: r.when }
+  })
 }
 
 export async function cancelReminder(groupId: string, reminderId: string) {

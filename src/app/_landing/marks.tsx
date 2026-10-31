@@ -11,8 +11,8 @@ export const telegramAddUrl = (username = process.env.TELEGRAM_BOT_USERNAME?.tri
 /** The page's public address for sharing: APP_URL when it's absolute, else the production one. */
 export const publicUrl = () => (isAbsoluteUrl(appUrl()) ? appUrl() : PUBLIC_URL_FALLBACK)
 
-/** What a share says, from the person sending it to their group. */
-export const SHARE_TEXT = "Adding this to our group chat. It remembers who paid 🦖"
+/** What a share says, from the person sending it to their apartment's chat (ADR 0015). */
+export const SHARE_TEXT = "Adding this to our apartment chat. It remembers who paid 🦖"
 
 export const shareLinks = (url = publicUrl(), text = SHARE_TEXT) => ({
   url,

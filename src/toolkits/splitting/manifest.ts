@@ -1,15 +1,16 @@
 import { defineManifest } from "../define";
 
+// The id stays "splitting" (group_toolkits rows, evals, tests); people see "Money" (ADR 0015).
 export const splitting = defineManifest({
   id: "splitting",
-  name: "Splitting",
+  name: "Money",
   description: "Shared Expenses (any split, several payers, receipts), Balances, settling up with pay links, and Splitwise import/export.",
   summary: "Log shared costs, split them any way, settle up with pay links.",
   longDescription:
     "Tell Roomie what you paid and it splits it: evenly, by exact amounts, percentages or shares, even with several payers. Send a photo of a receipt and it splits it item by item. Balances and the Settle plan are always exact, and Settle up hands out Venmo, PayPal or Cash App links with the amount filled in. Bring an old Splitwise group along, or keep one in sync.",
   icon: "Wallet",
   category: "money",
-  tags: ["expenses", "balances", "settle up", "receipts", "Splitwise", "Venmo"],
+  tags: ["expenses", "split", "splitting", "balances", "settle up", "receipts", "Splitwise", "Venmo"],
   defaultOn: true,
   worksWith: { integrations: ["splitwise"] },
   status: "stable",
@@ -20,9 +21,10 @@ export const splitting = defineManifest({
   persona: [
     `- Splits: pass the intent, not your arithmetic. "50/25/25" is percents, "2:2:1" is shares, "I owe 30, Dev 20" is exact amounts, "Alex paid 60 and I paid 40" is payers. If amounts don't add up, the tool says so: ask, don't fix them yourself.`,
     `- Always set a category when you log an expense; ask only if the amount or who's in it is unclear.`,
-    `- "[photo: <url>]" in a message is a picture someone sent. If it's a receipt, use expense_from_receipt with that url.`,
+    `- "[photo: <url>]" in a message is a picture someone sent; you can't see it. Use expense_from_receipt with that url when the caption says receipt, bill or split (or when cart_from_photo isn't one of your tools). Otherwise let cart_from_photo read it first: it says when it's a receipt.`,
     `- "Settle up with X" means show what's owed and the pay buttons (settle_up with paid=false). Record a payment only once someone says it's paid.`,
     `- "Undo" right after you deleted an expense means restore_expense.`,
+    `- "I paid 60 for pizza" with nobody named is an even split among everyone, logged now (no poll); say how to change it. Only "not sure who was in" gets a who's-in poll (ask_poll with about), and nothing is logged until it resolves. "I was in too" afterwards is update_expense.`,
   ].join("\n"),
   abilities: {
     log_expense: "Log a shared cost: evenly, exact amounts, percentages or shares, one or several payers",
@@ -49,6 +51,8 @@ export const splitting = defineManifest({
     splitwise_export: { action: String.raw`^(?=.*\bsplitwise\b)(?=.*\b(?:export\w*|copy|push|send\b.*\bto)\b)`, ask: `Copy this group's expenses to Splitwise? Say "roomie, yes export to Splitwise".` },
     splitwise_mirror: { action: String.raw`^(?=.*\bsplitwise\b)(?=.*\b(?:mirror\w*|sync\w*|keep\b.*\bin sync)\b)`, ask: `Change the Splitwise mirror? Say "roomie, yes mirror Splitwise" (or "roomie, yes stop the Splitwise mirror").` },
   },
+  // Money leads the Bundle and the report (ADR 0017).
+  postOrder: 10,
   dashboard: {
     nav: { label: "Money", href: (g) => `/g/${g}/money`, icon: "Wallet", order: 10 },
     pages: ["money"],

@@ -2,7 +2,7 @@
 // Run: npx tsx --test src/services/money.test.ts
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { computePairwiseDebts, computeSettlePlan, splitEvenly, type Balance, type Transfer } from "./money";
+import { computePairwiseDebts, computeSettlePlan, expenseSummary, splitEvenly, type Balance, type Expense, type Transfer } from "./money";
 import { apportion, checkPayers, splitExact, splitPercent, splitShares, SplitError } from "./split";
 
 const b = (name: string, cents: number): Balance => ({ memberId: name.toLowerCase(), name, cents });
@@ -254,4 +254,11 @@ test("pairwise and simplified plans both zero every balance", () => {
     const net = applyPlan(balances, plan);
     for (const v of net.values()) assert.equal(v, 0);
   }
+});
+
+test("expenseSummary: hasReceipt only for a Document's link, never an old /uploads path", () => {
+  const e = (receiptUrl: string | null): Expense => ({ id: "e1", payerName: "Dev", cents: 6000, description: "Luigi's", createdAt: new Date(), receiptUrl });
+  assert.equal(expenseSummary(e("/api/docs/0b7e4a52-3c1d-4f6a-9e2b-5d8c7a1f0e93")).hasReceipt, true);
+  assert.equal(expenseSummary(e("/uploads/tg/-100123/AQAD.jpg")).hasReceipt, undefined);
+  assert.equal(expenseSummary(e(null)).hasReceipt, undefined);
 });

@@ -5,8 +5,7 @@ import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { cart } from "@/services";
 import { addPhotoToCart, photoSummary, readGroceryPhoto } from "@/services/grocery-photos";
-import { enabledToolkits } from "@/services/groups";
-import { expenseSummary } from "../splitting/money";
+import { expenseSummary } from "@/services/money";
 import { ctxOf, dashboardLinks, memberIdByName, toCents } from "../util";
 
 type Item = { name: string; qty: string; shared: boolean; addedByName: string; recipeTitle?: string | null };
@@ -66,7 +65,7 @@ export const cartTools = {
   cart_from_photo: createTool({
     id: "cart_from_photo",
     description:
-      "A photo of a recipe, a shopping list or a shelf ('[photo: <url>]' in the message) -> the things to buy. confirm=false (the default) only reads it: say the `summary` in one line and ask whether to add them (as shared, or for whom) unless they already said ('all common' = shared). confirm=true adds them (a recipe is saved too and its ingredients go in minus the Pantry and `skip`). If `kind` is 'receipt', relay `say` as it is (or, when `splitting` is true, use expense_from_receipt with the same url).",
+      "A photo of a recipe, a shopping list or a shelf ('[photo: <url>]' in the message) -> the things to buy. confirm=false (the default) only reads it: say the `summary` in one line and ask whether to add them (as shared, or for whom) unless they already said ('all common' = shared). confirm=true adds them (a recipe is saved too and its ingredients go in minus the Pantry and `skip`). If `kind` is 'receipt', it's money, not groceries: use expense_from_receipt (`next`) with the same url.",
     inputSchema: z.object({
       photo_url: z.string().min(1).describe("The photo's url from the message"),
       shared: z.boolean().optional().describe("true when it's for the whole house ('all common', 'for everyone')"),
@@ -77,12 +76,8 @@ export const cartTools = {
     execute: async (input, context) => {
       const ctx = ctxOf(context);
       const photo = await readGroceryPhoto(input.photo_url, ctx.groupId);
-      if (photo.kind === "receipt") {
-        const splitting = (await enabledToolkits(ctx)).includes("splitting");
-        return splitting
-          ? { kind: "receipt", splitting: true, next: "expense_from_receipt" }
-          : { kind: "receipt", splitting: false, say: "That's a receipt. Teach me Splitting and I'll split it." };
-      }
+      // Groceries requires Money (its manifest says so), so the receipt tool is always there.
+      if (photo.kind === "receipt") return { kind: "receipt", next: "expense_from_receipt" };
       if (photo.items.length === 0) return { kind: photo.kind, items: [], say: "I can't find a list or a recipe in that photo." };
       if (!input.confirm) {
         const items = photo.items.map((i) => ({ name: i.name, ...(i.qty ? { qty: i.qty } : {}) }));

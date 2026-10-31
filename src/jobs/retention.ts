@@ -1,8 +1,8 @@
 // Retention (ADR 0006, audit B4), run daily from the scheduler tick: raw chat lines, traces and live scores, and Roomie's
-// memory-thread messages all live 30 days. Working memory (Group style, Member notes) isn't raw chat and stays.
+// memory-thread messages all live 30 days, and so do Chat photos nobody kept (unfiled Documents). Working memory (Group style, Member notes) isn't raw chat and stays.
 import { deleteOlderThan, RETENTION_DAYS } from "@/services/chatlog";
 
-export type RetentionCounts = { chatLines: number; spans: number; scores: number; memoryMessages: number };
+export type RetentionCounts = { chatLines: number; spans: number; scores: number; memoryMessages: number; documents: number };
 
 export async function runRetention(now = new Date()): Promise<RetentionCounts> {
   const chatLines = await deleteOlderThan(RETENTION_DAYS, now);
@@ -13,9 +13,12 @@ export async function runRetention(now = new Date()): Promise<RetentionCounts> {
   const spans = old.spans + (await forgetRemovedMembersTraces(FORMER_MEMBER));
   const scores = old.scores;
   const memoryMessages = await deleteOldMemory(now, MEMORY_RETENTION_DAYS);
-  const counts = { chatLines, spans, scores, memoryMessages };
-  if (chatLines || spans || scores || memoryMessages) {
-    console.log(`retention: deleted ${chatLines} chat lines, ${spans} trace spans, ${scores} scores, ${memoryMessages} memory messages (older than ${RETENTION_DAYS} days)`);
+  // Chat photos nobody kept (and deleted Documents) go with the lines they came in.
+  const { purgeOldDocuments } = await import("@/services/documents");
+  const documents = await purgeOldDocuments(now, RETENTION_DAYS);
+  const counts = { chatLines, spans, scores, memoryMessages, documents };
+  if (chatLines || spans || scores || memoryMessages || documents) {
+    console.log(`retention: deleted ${chatLines} chat lines, ${spans} trace spans, ${scores} scores, ${memoryMessages} memory messages, ${documents} unkept photos (older than ${RETENTION_DAYS} days)`);
   }
   return counts;
 }

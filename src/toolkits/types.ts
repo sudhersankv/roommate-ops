@@ -7,8 +7,11 @@ import type { icons } from "lucide-react";
 import type { ReactNode } from "react";
 import type { RoomieMood } from "@/components/roomie/mascot";
 import type { GroupSession } from "@/lib/session";
+import type { ReportPart } from "@/services/report";
+import type { GroupCtx } from "@/services/types";
 
 export { TOOLKIT_IDS, isToolkitId, type ToolkitId } from "./manifests";
+export type { ReportPart };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type AnyTool = ToolAction<any, any, any, any, any, any>;
@@ -78,6 +81,11 @@ export type ToolkitManifest<Id extends string = string> = {
    * for it (toolkits/admin-ask.ts); otherwise the tool returns { refused: "confirm", ask } and Roomie asks first.
    */
   adminOnly?: Record<string, AdminAsk>;
+  /**
+   * Where its lines sit in Roomie's own posts, the morning Bundle and the weekly report (ADR 0017: money 10, the
+   * landlord 20, the house 30, groceries 40). Default: its nav order, then last.
+   */
+  postOrder?: number;
   dashboard?: {
     nav?: NavEntry;
     /** Route prefixes under /g/<id>/ it owns ("money"); they show the off state while it's off. */
@@ -96,7 +104,7 @@ export type MoodRef = () => Promise<(ctx: ToolkitSectionCtx) => Promise<RoomieMo
 /** Who switched a Toolkit on or off (null: Roomie itself, e.g. Onboarding). */
 export type HookCtx = { groupId: string; memberId: string | null };
 
-/** A manifest plus what runs on the server: tools, dashboard sections, hooks. */
+/** A manifest plus what runs on the server: tools, dashboard sections, hooks, and its lines in Roomie's own posts. */
 export type Toolkit<Id extends string = string> = Omit<ToolkitManifest<Id>, "dashboard"> & {
   /** Keyed by tool id. */
   tools: Record<string, AnyTool>;
@@ -110,4 +118,8 @@ export type Toolkit<Id extends string = string> = Omit<ToolkitManifest<Id>, "das
   /** Runs when the Toolkit goes from off to on (and for the Onboarding preset). Must be idempotent. */
   onEnable?(ctx: HookCtx): Promise<void>;
   onDisable?(ctx: HookCtx): Promise<void>;
+  /** Its line in the morning Bundle (ADR 0017), or null when it has nothing to say. A thin call into its service. */
+  bundle?(ctx: GroupCtx, now: Date): Promise<string | null>;
+  /** Its sections of the weekly Group Report, in order (none when there's nothing to report). */
+  report?(ctx: GroupCtx, now: Date): Promise<ReportPart[]>;
 };

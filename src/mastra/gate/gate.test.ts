@@ -36,9 +36,9 @@ const REC = {
   owes: jev(0.94, 0.06, 0, 0, 0.58, "splitting", 1), // "[Sam] who owes what?"
   lol: jev(0.01, 0, 0.12, 0.87, 0.1, "groceries", 0.92), // "[Maya] lol same" (in window)
   chipsToo: jev(0.78, 0.21, 0, 0.01, 0.66, "groceries", 1), // "[Dev] and 2 bags of chips too" (in window)
-  dishes: jev(0.93, 0.04, 0.01, 0.02, 0.1, "chores", 1), // "[Sam] I did the dishes"
+  dishes: jev(0.93, 0.04, 0.01, 0.02, 0.1, "house", 1), // "[Sam] I did the dishes" (recorded as "chores", now House's choice)
   vague: jev(0.02, 0.97, 0, 0.01, 0.17, "splitting", 1), // "[Maya] someone paid for something yesterday"
-  trash: jev(0.99, 0.01, 0, 0, 0.58, "chores", 0.48), // "[Dev] remind everyone trash goes out tuesday 8pm"
+  trash: jev(0.99, 0.01, 0, 0, 0.58, "house", 0.48), // "[Dev] remind everyone trash goes out tuesday 8pm" (recorded as "chores")
   uber: jev(0.76, 0.24, 0, 0, 0.16, "splitting", 1), // "[Maya] pagué 30 por el uber"
   seeYou: jev(0.01, 0.03, 0.01, 0.95, 0.04, "core", 0.79), // "[Sam] ok see you at 7" (recorded as "reminders", now core's choice)
   // Recorded with step 6's groceries wording (recipes, cooking, meal planning, pantry).
@@ -55,7 +55,7 @@ describe("decideGate with recorded Jev answers (normal chattiness)", () => {
   test("logging statements nobody addressed: act, unprompted (ask before logging), narrowed", () => {
     for (const [j, tk] of [
       [REC.pizza, "splitting"],
-      [REC.dishes, "chores"],
+      [REC.dishes, "house"],
       [REC.uber, "splitting"],
     ] as const) {
       const d = gate(j);
@@ -74,6 +74,14 @@ describe("decideGate with recorded Jev answers (normal chattiness)", () => {
       assert.equal(d.unprompted, false);
     }
     assert.equal(gate(REC.milk).toolkit, "groceries");
+  });
+
+  test("a photo never narrows the tools: a receipt is Money, a list is Groceries, and only the tools can tell", () => {
+    const sure = jev(0.9, 0.1, 0, 0, 0.9, "splitting", 0.97); // "[Dev] [photo] roomie all common"
+    assert.equal(gate(sure, { hardTrigger: true }).toolkit, "splitting", "without a photo Jev's pick stands");
+    const d = decideGate({ hardTrigger: true, inWindow: false, jev: sure, chattiness: "normal", hasPhoto: true });
+    assert.equal(d.speak, true);
+    assert.equal(d.toolkit, undefined);
   });
 
   test("chatter between people is ignored", () => {
@@ -193,8 +201,8 @@ const ENABLED_REC = [
   },
   {
     latest: "[Maya] I paid 40 for pizza",
-    enabled: ["splitting", "groceries", "chores", "upkeep"],
-    toolkit: { type: "choice", choice: "splitting", confidence: 0.95, probabilities: { splitting: 0.96, groceries: 0.04, chores: 0, upkeep: 0, core: 0, none: 0 } },
+    enabled: ["splitting", "groceries", "house"],
+    toolkit: { type: "choice", choice: "splitting", confidence: 0.95, probabilities: { splitting: 0.96, groceries: 0.04, house: 0, core: 0, none: 0 } },
     intent: { act: 0.75, clarify: 0.25, chat: 0, ignore: 0 },
     addressed: 0.22,
   },
@@ -223,8 +231,8 @@ const ENABLED_REC = [
 
 describe("the toolkit question comes from the enabled manifests", () => {
   test("criteria: each enabled Toolkit's gate criterion, then core and none", () => {
-    const c = toolkitCriteria(["groceries", "chores"]);
-    assert.deepEqual(Object.keys(c), ["groceries", "chores", "core", "none"]);
+    const c = toolkitCriteria(["groceries", "house"]);
+    assert.deepEqual(Object.keys(c), ["groceries", "house", "core", "none"]);
     assert.equal(c.groceries, MANIFESTS.find((m) => m.id === "groceries")!.gate.criterion);
     assert.deepEqual(Object.keys(questionsFor(["splitting"]).toolkit.criteria), ["splitting", "core", "none"]);
     assert.deepEqual(Object.keys(questionsFor().toolkit.criteria), [...TOOLKIT_IDS, "core", "none"]);
@@ -251,7 +259,7 @@ describe("the toolkit question comes from the enabled manifests", () => {
 
   test("a choice for a Toolkit that's off (stale answer) never narrows", () => {
     const parsed = parseJev(
-      { answers: { intent: { type: "choice", choice: "act", probabilities: { act: 0.9 } }, addressed: { type: "noul", noul: 0.9 }, toolkit: { type: "choice", choice: "chores", probabilities: { chores: 0.99 } } } },
+      { answers: { intent: { type: "choice", choice: "act", probabilities: { act: 0.9 } }, addressed: { type: "noul", noul: 0.9 }, toolkit: { type: "choice", choice: "house", probabilities: { house: 0.99 } } } },
       ["splitting"],
     );
     assert.deepEqual(parsed?.toolkit, { choice: "none", p: 0 });
@@ -303,11 +311,10 @@ describe("saysRoomie", () => {
     for (const t of ["my roomies are out", "roomiebot", "add milk", ""]) assert.equal(saysRoomie(t), false, t);
   });
 
-  test("callsPet: 'roomie' always, and the Group's own name for its pet", () => {
-    assert.equal(callsPet("dino add milk", "Dino"), true);
-    assert.equal(callsPet("roomie add milk", "Dino"), true, "the species name keeps working");
-    assert.equal(callsPet("dinosaurs rule", "Dino"), false);
-    assert.equal(callsPet("dino add milk"), false, "no custom name: only roomie");
+  test("callsPet: 'roomie' is the one name (ADR 0020); a name a Group once stored is not a trigger", () => {
+    assert.equal(callsPet("roomie add milk"), true);
+    assert.equal(callsPet("dino add milk"), false, "only roomie");
+    assert.equal(callsPet("dinosaurs rule"), false);
   });
 });
 
@@ -349,10 +356,11 @@ describe("hard triggers (audit H2: a voice note is not one by itself)", () => {
     assert.equal(chat({ isVoice: true, text: "roomie add milk" }), true);
   });
 
-  test("DMs and the dashboard, /pet, @mention, reply, the word roomie or the pet's name", () => {
+  test("DMs and the dashboard, /pet, @mention, reply, the word roomie; never another name", () => {
     assert.equal(isHardTrigger({ groupChat: false, text: "anything" }), true);
     assert.equal(chat({ petted: true }), true);
-    assert.equal(chat({ text: "dino add milk", petName: "Dino" }), true);
+    assert.equal(chat({ text: "roomie add milk" }), true);
+    assert.equal(chat({ text: "dino add milk" }), false);
     assert.equal(chat({ text: "lol same" }), false);
   });
 });
@@ -360,7 +368,7 @@ describe("hard triggers (audit H2: a voice note is not one by itself)", () => {
 describe("mediaWanted (photos and voice notes are only fetched when Roomie is talked to)", () => {
   test("photos: an addressed caption, a reply, an @mention, the window, a DM", () => {
     assert.equal(mediaWanted({ kind: "photo", caption: "roomie split this" }), true);
-    assert.equal(mediaWanted({ kind: "photo", caption: "Dino split this", petName: "Dino" }), true);
+    assert.equal(mediaWanted({ kind: "photo", caption: "Dino split this" }), false, "a stored name is not a trigger");
     assert.equal(mediaWanted({ kind: "photo", isReplyToRoomie: true }), true);
     assert.equal(mediaWanted({ kind: "photo", mentionsRoomie: true }), true);
     assert.equal(mediaWanted({ kind: "photo", inWindow: true }), true);

@@ -5,7 +5,7 @@
 import { eq } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { CATALOG, findManifest, isToolkitId, manifestOf, MANIFESTS, type ToolkitId } from "@/toolkits/manifests";
-import type { HookCtx, Integration, ToolkitManifest } from "@/toolkits/types";
+import type { HookCtx, Integration, Toolkit, ToolkitManifest } from "@/toolkits/types";
 import { recordFor } from "./activity";
 import { requireAdmin } from "./authz";
 import { logMessage } from "./chatlog";
@@ -59,6 +59,23 @@ export function checkRequirements(m: ToolkitManifest, facts: RequirementFacts): 
 }
 
 export const unmet = (reqs: Requirement[]) => reqs.filter((r) => r.blocking && !r.ok);
+
+/**
+ * A whole list of Toolkits to have on (set_group_settings, Onboarding's preset): what each one `requires` comes along
+ * (Groceries brings Money), coming-soon and unknown ids drop out. Catalog order. Pure.
+ */
+export function resolveToolkitSet(ids: readonly string[], catalog: readonly ToolkitManifest[]): ToolkitId[] {
+  const live = new Map(catalog.filter((m) => m.status !== "coming-soon" && isToolkitId(m.id)).map((m) => [m.id, m]));
+  const on = new Set<string>();
+  const add = (id: string) => {
+    const m = live.get(id);
+    if (!m || on.has(id)) return;
+    on.add(id);
+    for (const dep of m.requires?.toolkits ?? []) add(dep);
+  };
+  ids.forEach(add);
+  return [...live.keys()].filter((id) => on.has(id)) as ToolkitId[];
+}
 
 /** The live facts: env, the Group's enabled Toolkits, and integration health (cached by the integrations). */
 export async function requirementFacts(groupId: string, needed: Iterable<Integration>): Promise<RequirementFacts> {
@@ -156,6 +173,16 @@ export async function runHooks(ctx: HookCtx, on: readonly string[], off: readonl
   const { toolkitById } = await import("@/toolkits/registry");
   for (const id of on) await toolkitById(id)?.onEnable?.(ctx);
   for (const id of off) await toolkitById(id)?.onDisable?.(ctx);
+}
+
+/** Post order for Roomie's own posts (the Bundle, the report): a manifest's `postOrder`, else its nav order, else last. Pure. */
+export const byPostOrder = <T extends Pick<ToolkitManifest, "postOrder" | "dashboard">>(list: readonly T[]): T[] =>
+  [...list].sort((a, b) => (a.postOrder ?? a.dashboard?.nav?.order ?? 100) - (b.postOrder ?? b.dashboard?.nav?.order ?? 100));
+
+/** The Group's enabled Toolkits' server entries (bundle / report contributions, hooks) in post order. Lazy, like runHooks. */
+export async function enabledToolkitEntries(ctx: GroupCtx): Promise<Toolkit[]> {
+  const [{ TOOLKITS }, on] = await Promise.all([import("@/toolkits/registry"), enabledToolkits(ctx)]);
+  return byPostOrder(TOOLKITS.filter((t) => (on as readonly string[]).includes(t.id)));
 }
 
 /** The line Roomie posts when a Toolkit goes on from the dashboard. Pure. */

@@ -2,9 +2,7 @@
 // No DB, no gateway. Run: npx tsx --test src/services/grocery-photos.test.ts
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { rm } from "node:fs/promises";
-import { clearPhotoCache, parsePhotoJson, photoIngredients, photoSummary, readGroceryPhoto, SAMPLE_LIST_JSON, setPhotoReader } from "./grocery-photos";
-import { saveUpload, uploadBelongsTo } from "./receipts";
+import { parsePhotoJson, photoIngredients, photoSummary, readGroceryPhoto, SAMPLE_LIST_JSON, setPhotoReader } from "./grocery-photos";
 
 test("parsePhotoJson: a shopping list -> items as written (names lower case, qty kept)", () => {
   const p = parsePhotoJson(SAMPLE_LIST_JSON);
@@ -44,43 +42,17 @@ test("photoIngredients: amounts read with lib/units ('a pinch' too), unreadable 
 });
 
 const GROUP = "11111111-1111-4111-8111-111111111111";
-const OTHER = "22222222-2222-4222-8222-222222222222";
 
-test("readGroceryPhoto: only this Group's own uploads, never a URL someone typed or another Group's photo", async () => {
+// Another Group's Document and the per-url cache need the DB: src/services/core-slots.dbtest.ts.
+test("readGroceryPhoto: never a URL someone typed (only this Group's own Documents)", async () => {
   setPhotoReader({ read: async () => SAMPLE_LIST_JSON });
-  const theirs = await saveUpload(`g-${OTHER}`, Buffer.from("their list"), "image/jpeg");
   try {
-    for (const url of ["https://169.254.169.254/latest/meta-data.jpg", "http://127.0.0.9:1/uploads/x/a.jpg", "file:///etc/passwd", "/uploads/../../.env", theirs.path, "/uploads/other/a.jpg"]) {
+    for (const url of ["https://169.254.169.254/latest/meta-data.jpg", "http://127.0.0.9:1/uploads/x/a.jpg", "file:///etc/passwd", "/uploads/../../.env", "/api/docs/not-an-id"]) {
       await assert.rejects(readGroceryPhoto(url, GROUP), /only read photos sent in this group's chat/, url);
     }
-    assert.equal(await uploadBelongsTo(theirs.path, OTHER), true, "the dashboard folder is its own Group's");
-    assert.equal(await uploadBelongsTo(theirs.path, GROUP), false);
+    // An old pre-Documents path: that disk is gone.
+    await assert.rejects(readGroceryPhoto("/uploads/other/a.jpg", GROUP), /That photo isn't here anymore\./);
   } finally {
     setPhotoReader(null);
-    await rm(theirs.file, { force: true });
-  }
-});
-
-test("readGroceryPhoto: the reader seam, cached per url so 'yes, add them' doesn't read again", async () => {
-  const photo = await saveUpload("test", Buffer.from("a shopping list"), "image/jpeg");
-  let reads = 0;
-  setPhotoReader({
-    read: async ({ dataUrl }) => {
-      reads++;
-      assert.match(dataUrl, /^data:image\/jpeg;base64,/);
-      return SAMPLE_LIST_JSON;
-    },
-  });
-  try {
-    clearPhotoCache();
-    const a = await readGroceryPhoto(photo.path, GROUP);
-    const b = await readGroceryPhoto(photo.path, GROUP);
-    assert.equal(a.items.length, 5);
-    assert.equal(b, a);
-    assert.equal(reads, 1);
-  } finally {
-    setPhotoReader(null);
-    clearPhotoCache();
-    await rm(photo.file, { force: true });
   }
 });

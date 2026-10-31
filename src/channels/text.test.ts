@@ -10,29 +10,30 @@ test("/help for a group: the Tricks it taught Roomie, one line each, and how to 
   const lines = text.split("\n");
   assert.ok(lines.length <= 8, `at most 8 lines, got ${lines.length}`);
   assert.match(lines[0], /^I'm Roomie 🦖 Say "roomie"/);
-  assert.equal(lines[1], "Tricks I know here: Splitting and Groceries.");
-  assert.match(text, /^Splitting: "I paid 60 for internet", "who owes what\?"$/m);
+  assert.equal(lines[1], "Tricks I know here: Money and Groceries.");
+  assert.match(text, /^Money: "I paid 60 for internet", "who owes what\?"$/m);
   assert.match(text, /^Groceries: "tacos for 5 friday"/m);
-  assert.ok(!/^Chores:/m.test(text), "only what this group taught it");
-  assert.match(lines.at(-1)!, /Teach me more: "roomie, learn chores"\. Drop one: "roomie, forget groceries"\./);
+  assert.ok(!/^House:/m.test(text), "only what this group taught it");
+  assert.match(lines.at(-1)!, /Teach me more: "roomie, learn house"\. Drop one: "roomie, forget groceries"\./);
   assert.ok(!BANNED.test(text));
+  assert.ok(!/Splitting/.test(text), "the Trick is called Money");
   assert.ok(!/https?:\/\//.test(text));
 });
 
-test("/help with every Trick learned: 8 lines, no 'learn' suggestion for something it knows", () => {
-  const text = helpText(["splitting", "groceries", "chores", "upkeep"]);
-  assert.equal(text.split("\n").length, 8);
-  assert.match(text, /Tricks I know here: Splitting, Groceries, Chores and Upkeep\./);
+test("/help with every Trick learned: at most 8 lines, no 'learn' suggestion for something it knows", () => {
+  const text = helpText(["splitting", "groceries", "house"]);
+  assert.ok(text.split("\n").length <= 8);
+  assert.match(text, /Tricks I know here: Money, Groceries and House\./);
   assert.ok(!/roomie, learn/.test(text));
-  assert.match(text, /Drop one any time: "roomie, forget upkeep"\. Lease stuff and more are on the way\./);
+  assert.match(text, /Drop one any time: "roomie, forget house"\. Lease Inbox and more are on the way\./);
 });
 
 test("/help with nothing learned, and without a group (a DM): still short and in Tricks words", () => {
   assert.match(helpText([]), /Tricks I know here: none yet\.\n/);
-  assert.match(helpText([]), /Teach me more: "roomie, learn splitting"\.$/);
+  assert.match(helpText([]), /Teach me more: "roomie, learn money"\.$/);
   const dm = helpText();
   assert.ok(dm.split("\n").length <= 8);
-  assert.match(dm, /Tricks I can learn: Splitting, Groceries, Chores and Upkeep, more on the way\./);
+  assert.match(dm, /Tricks I can learn: Money, Groceries and House, more on the way\./);
   assert.ok(!BANNED.test(dm));
 });
 

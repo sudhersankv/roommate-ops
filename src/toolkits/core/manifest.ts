@@ -4,7 +4,7 @@ import { defineManifest } from "../define";
 export const core = defineManifest({
   id: "core",
   name: "Core",
-  description: "Members and approvals, settings, what Roomie knows about you, the dashboard link, reminders and the Group Report. Always on.",
+  description: "Members and approvals, settings, what Roomie knows about you, the dashboard link, reminders, polls, DMs, the Group Report and the group's documents. Always on.",
   summary: "Members, approvals, settings, reminders and the weekly report.",
   longDescription: "What Roomie always does: knows who's in the group, asks Admins to approve newcomers, sets reminders, posts the Group Report and sends your dashboard link.",
   icon: "Sparkles",
@@ -14,8 +14,21 @@ export const core = defineManifest({
   status: "stable",
   gate: {
     criterion:
-      "Reminders at a time or date, and the group itself: members and approvals, settings (including Roomie's name, vibe and quirks), what Roomie can do and which Tricks it knows, teaching Roomie a Trick or making it learn or forget one ('roomie learn trips', 'roomie forget groceries', 'turn on chores'), lasting facts about a member ('remember I'm vegetarian', 'what do you know about me'), the dashboard link (for me, or for everyone: the group's Join link, rotating it, who may join, disconnecting someone's dashboard seat), the weekly report.",
-    examples: ["remind everyone trash goes out tuesday 8pm", "what can you do?", "learn chores", "approve Priya", "send me the dashboard", "send us the dashboard"],
+      "Reminders at a time or date, the group's documents ('roomie keep this' on a photo or file, 'find the lease', 'the March internet bill'), and the group itself: members and approvals, settings, what Roomie can do and which Tricks it knows, teaching Roomie a Trick or making it learn or forget one ('roomie learn trips', 'roomie forget groceries', 'turn on chores'), lasting facts about a member ('remember I'm vegetarian', 'what do you know about me'), the dashboard link (for me, or for everyone: the group's Join link, rotating it, who may join, disconnecting someone's dashboard seat), the weekly report, turning a member's private nudges off or on ('roomie stop nudging me', 'nudge me again').",
+    examples: ["remind everyone trash goes out tuesday 8pm", "roomie keep this, it's the lease", "roomie find the lease", "what can you do?", "learn house", "approve Priya", "send me the dashboard", "send us the dashboard"],
+  },
+  persona: [
+    `- "roomie keep this" on a [photo: <url>] or file is keep_document with that url (with a title and kind when they said what it is).`,
+    `- "find the lease" / "the March internet bill" is find_documents: say what you found in one line, and pass open=true only when they asked to open or see it.`,
+    `- Polls (ask_poll) only for WHO questions with at most 4 options, when more than one person's answer is needed: who was in, who's shopping, which day. Never for how to split or whether something is shared.`,
+    `- "I paid 60 for pizza" with no who: log it evenly among everyone at once (no poll) and end with how to change it ("not everyone in? say who"). Ask a who's-in poll (ask_poll with about) only when the sender says they're not sure who was in; nothing is logged until it resolves. The payer's own "just me and Dev" while it's open: log that.`,
+    `- "roomie stop nudging me" / "nudge me again" is set_nudges; confirm in one line.`,
+  ].join("\n"),
+  abilities: {
+    keep_document: "Keep a photo or file someone sent: the lease, a bill, a notice",
+    find_documents: "Find a kept document by name or kind",
+    ask_poll: "Ask the chat a quick poll for who-questions (who was in, who's shopping)",
+    set_nudges: "Stop or restart your private nudges",
   },
   adminOnly: {
     approve_member: { action: String.raw`\b(?:approve|accept|admit)|\blet\b.*\bin\b`, target: "name", ask: `Approve {target}? Say "roomie, yes approve {target}".` },
@@ -41,7 +54,7 @@ export const core = defineManifest({
       ask: `Learn or forget {target}? Say "roomie, yes learn {target}" or "roomie, yes forget {target}".`,
     },
     // Every field the call changes needs its own words: "roommates, USD, Chicago" sets purpose, currency and time zone,
-    // never Tricks or the personality.
+    // never Tricks.
     set_group_settings: {
       action: String.raw`\bsettings?\b`,
       fields: {
@@ -55,7 +68,6 @@ export const core = defineManifest({
         choresNudgeHour: { words: String.raw`\b(?:nudge\w*|chores? (?:reminder|ping)s?)\b` },
         reportDay: { words: String.raw`\breports?\b` },
         reportHour: { words: String.raw`\breports?\b` },
-        personality: { words: String.raw`\b(?:vibe|personality|quirks?|call (?:you|yourself)|your name|name you|hype|chill|deadpan|mom|gremlin|butler)\b` },
       },
       ask: `Change the group's settings ({target})? Say "roomie, yes change the settings".`,
     },

@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState, useTransition } from "react"
-import { ArrowDownIcon, ArrowUpIcon, BellIcon, EllipsisIcon, FlameIcon, ListChecks, PlusIcon, WrenchIcon } from "lucide-react"
+import { ArrowDownIcon, ArrowUpIcon, EllipsisIcon, FlameIcon, ListChecks, PlusIcon, WrenchIcon } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -18,18 +18,19 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { Roomie } from "@/components/roomie/mascot"
 import { useCheer } from "@/components/roomie/use-cheer"
 import { MemberAvatar } from "@/components/app/member-avatar"
-import { addChore, addUpkeep, addUpkeepDefaults, cancelReminder, markChoreDone, markUpkeepDone, removeChore, removeUpkeep, skipChore } from "../../actions"
+import { addChore, addUpkeep, addUpkeepDefaults, markChoreDone, markUpkeepDone, removeChore, removeUpkeep, skipChore } from "../../actions"
 import { useGroup } from "../group-context"
 import { PageHeader, TopBar } from "../shell"
-import type { ChoreView, ReminderView, UpkeepView } from "../types"
+import type { ChoreView, UpkeepView } from "../types"
 
-export type ChoresTab = "chores" | "upkeep" | "reminders"
+export type HouseTab = "chores" | "upkeep"
 
-export function ChoresScreen({ initialTab = "chores", chores, upkeep, reminders }: { initialTab?: ChoresTab; chores: ChoreView[]; upkeep: UpkeepView[]; reminders: ReminderView[] }) {
-  const { group, me, dates, cheers, cheer, toolkits } = useGroup()
+/** The House page: the chore chart and Upkeep, one Trick with two tabs. */
+export function HouseScreen({ initialTab = "chores", chores, upkeep }: { initialTab?: HouseTab; chores: ChoreView[]; upkeep: UpkeepView[] }) {
+  const { group, me, dates, cheers, cheer } = useGroup()
   const [cheering, hop] = useCheer()
   const [pending, start] = useTransition()
-  const [tab, setTab] = useState<ChoresTab>(initialTab)
+  const [tab, setTab] = useState<HouseTab>(initialTab)
   const [adding, setAdding] = useState<"chore" | "upkeep" | null>(null)
   const yours = chores.filter((c) => c.turn === me.id && c.due <= dates.today)
 
@@ -37,7 +38,7 @@ export function ChoresScreen({ initialTab = "chores", chores, upkeep, reminders 
     if (cheers > 0) hop()
   }, [cheers, hop])
 
-  const show = (t: ChoresTab) => {
+  const show = (t: HouseTab) => {
     setTab(t)
     window.history.replaceState(null, "", t === "chores" ? window.location.pathname : `?tab=${t}`)
   }
@@ -61,8 +62,10 @@ export function ChoresScreen({ initialTab = "chores", chores, upkeep, reminders 
 
   return (
     <>
-      <TopBar title="Chores" />
-      <PageHeader title="Chores" />
+      <TopBar title="House" />
+      <PageHeader title="House">
+        <p className="type-body text-muted-foreground">Whose turn it is, and what the place needs next.</p>
+      </PageHeader>
 
       <section aria-label="Your turn" className="mx-4 flex items-center gap-4 rounded-3xl bg-card p-4">
         <Roomie size={76} mood={yours.length ? "calm" : "happy"} animated cheer={cheering} />
@@ -84,31 +87,26 @@ export function ChoresScreen({ initialTab = "chores", chores, upkeep, reminders 
       </section>
 
       <div className="px-4 pt-6 pb-4">
-        <ToggleGroup variant="segmented" spacing={1} value={[tab]} onValueChange={(v) => v[0] && show(v[0] as ChoresTab)} aria-label="Show">
+        <ToggleGroup variant="segmented" spacing={1} value={[tab]} onValueChange={(v) => v[0] && show(v[0] as HouseTab)} aria-label="Show">
           <ToggleGroupItem value="chores">Chores</ToggleGroupItem>
           <ToggleGroupItem value="upkeep">Upkeep</ToggleGroupItem>
-          <ToggleGroupItem value="reminders">Reminders</ToggleGroupItem>
         </ToggleGroup>
       </div>
 
       <div className="flex flex-col gap-8 px-4 pb-28">
         {tab === "chores" ? (
-          <ChoresTabView chores={chores} onDone={done} onSkip={skip} pending={pending} onAdd={() => setAdding("chore")} disabled={!toolkits.chores} />
-        ) : tab === "upkeep" ? (
-          <UpkeepTabView upkeep={upkeep} onAdd={() => setAdding("upkeep")} disabled={!toolkits.upkeep} />
+          <ChoresTabView chores={chores} onDone={done} onSkip={skip} pending={pending} onAdd={() => setAdding("chore")} />
         ) : (
-          <RemindersTabView reminders={reminders} />
+          <UpkeepTabView upkeep={upkeep} onAdd={() => setAdding("upkeep")} />
         )}
       </div>
 
-      {tab !== "reminders" ? (
-        <div className="pointer-events-none fixed inset-x-0 bottom-24 z-20 mx-auto flex max-w-md justify-end px-4">
-          <Button size="lg" className="pointer-events-auto shadow-lg" onClick={() => setAdding(tab === "chores" ? "chore" : "upkeep")}>
-            <PlusIcon data-icon="inline-start" />
-            {tab === "chores" ? "Add chore" : "Add upkeep"}
-          </Button>
-        </div>
-      ) : null}
+      <div className="pointer-events-none fixed inset-x-0 bottom-24 z-20 mx-auto flex max-w-md justify-end px-4">
+        <Button size="lg" className="pointer-events-auto shadow-lg" onClick={() => setAdding(tab === "chores" ? "chore" : "upkeep")}>
+          <PlusIcon data-icon="inline-start" />
+          {tab === "chores" ? "Add chore" : "Add upkeep"}
+        </Button>
+      </div>
 
       <Drawer open={adding === "chore"} onOpenChange={(o) => !o && setAdding(null)}>
         <DrawerContent className="mx-auto max-w-md">{adding === "chore" ? <AddChore onDone={() => setAdding(null)} /> : null}</DrawerContent>
@@ -122,7 +120,7 @@ export function ChoresScreen({ initialTab = "chores", chores, upkeep, reminders 
 
 /* ---------- Chores ---------- */
 
-function ChoresTabView({ chores, onDone, onSkip, pending, onAdd, disabled }: { chores: ChoreView[]; onDone: (c: ChoreView) => void; onSkip: (c: ChoreView) => void; pending: boolean; onAdd: () => void; disabled: boolean }) {
+function ChoresTabView({ chores, onDone, onSkip, pending, onAdd }: { chores: ChoreView[]; onDone: (c: ChoreView) => void; onSkip: (c: ChoreView) => void; pending: boolean; onAdd: () => void }) {
   const { dates } = useGroup()
   const today = chores.filter((c) => c.due <= dates.today)
   const later = chores.filter((c) => c.due > dates.today)
@@ -134,7 +132,7 @@ function ChoresTabView({ chores, onDone, onSkip, pending, onAdd, disabled }: { c
             <ListChecks />
           </EmptyMedia>
           <EmptyTitle>No chores on the chart</EmptyTitle>
-          <EmptyDescription>{disabled ? "Roomie hasn't learned Chores here yet." : "Add one here, or tell Roomie in the chat: “roomie add dishes every day”."}</EmptyDescription>
+          <EmptyDescription>Add one here, or tell Roomie in the chat: “roomie add dishes every day”.</EmptyDescription>
         </EmptyHeader>
         <EmptyContent>
           <Button onClick={onAdd}>Add a chore</Button>
@@ -334,7 +332,7 @@ function AddChore({ onDone }: { onDone: () => void }) {
 
 /* ---------- Upkeep ---------- */
 
-function UpkeepTabView({ upkeep, onAdd, disabled }: { upkeep: UpkeepView[]; onAdd: () => void; disabled: boolean }) {
+function UpkeepTabView({ upkeep, onAdd }: { upkeep: UpkeepView[]; onAdd: () => void }) {
   const { group, dates, isAdmin, cheer } = useGroup()
   const [pending, start] = useTransition()
 
@@ -366,7 +364,7 @@ function UpkeepTabView({ upkeep, onAdd, disabled }: { upkeep: UpkeepView[]; onAd
             <WrenchIcon />
           </EmptyMedia>
           <EmptyTitle>Nothing tracked yet</EmptyTitle>
-          <EmptyDescription>{disabled ? "Roomie hasn't learned Upkeep here yet." : "Filters, smoke alarms, the dryer vent: Roomie remembers so nobody has to."}</EmptyDescription>
+          <EmptyDescription>Filters, smoke alarms, the dryer vent: Roomie remembers so nobody has to.</EmptyDescription>
         </EmptyHeader>
         <EmptyContent className="flex-row justify-center">
           <Button disabled={pending} onClick={usual}>
@@ -480,66 +478,5 @@ function AddUpkeep({ onDone }: { onDone: () => void }) {
         <DrawerClose render={<Button variant="ghost" size="lg" />}>Cancel</DrawerClose>
       </DrawerFooter>
     </>
-  )
-}
-
-/* ---------- Reminders ---------- */
-
-function RemindersTabView({ reminders }: { reminders: ReminderView[] }) {
-  const { group, name, me } = useGroup()
-  const [pending, start] = useTransition()
-  const cancel = (r: ReminderView) =>
-    start(async () => {
-      const res = await cancelReminder(group.id, r.id)
-      if (!res.ok) return void toast.add({ title: "Couldn't cancel it", description: res.error, type: "error" })
-      toast.add({ title: "Reminder cancelled", description: r.text })
-    })
-
-  if (reminders.length === 0) {
-    return (
-      <Empty className="rounded-3xl bg-card">
-        <EmptyHeader>
-          <EmptyMedia variant="icon">
-            <BellIcon />
-          </EmptyMedia>
-          <EmptyTitle>No reminders coming up</EmptyTitle>
-          <EmptyDescription>Ask in the chat: “roomie remind everyone trash goes out Tuesday 8pm”, or “remind me to pay rent on the 1st every month”.</EmptyDescription>
-        </EmptyHeader>
-      </Empty>
-    )
-  }
-  return (
-    <section aria-labelledby="reminders" className="flex flex-col gap-2">
-      <div className="flex flex-col gap-0.5 px-1">
-        <h2 id="reminders" className="type-heading">
-          Coming up
-        </h2>
-        <p className="type-caption text-muted-foreground">Everyone&apos;s go to the group chat. One person&apos;s go to them privately.</p>
-      </div>
-      <ItemGroup className="gap-0 rounded-3xl bg-card py-1">
-        {reminders.map((r) => (
-          <Item key={r.id} className="py-3">
-            <ItemMedia>{r.for ? <MemberAvatar name={r.for === me.id ? me.name : name(r.for)} /> : <BellIcon className="size-5 text-muted-foreground" aria-hidden />}</ItemMedia>
-            <ItemContent className="min-w-0">
-              <ItemTitle className="flex-wrap">
-                {r.text}
-                {r.repeat ? <Badge variant="secondary">{r.repeat === "daily" ? "Every day" : r.repeat === "weekly" ? "Every week" : "Every month"}</Badge> : null}
-              </ItemTitle>
-              <ItemDescription className="line-clamp-none">
-                {r.when}. {r.for ? (r.for === me.id ? "Just for you" : `For ${name(r.for)}`) : "For everyone"}
-                {r.setBy && r.setBy !== r.for ? `, set by ${name(r.setBy) === "You" ? "you" : name(r.setBy)}` : ""}.
-              </ItemDescription>
-            </ItemContent>
-            {r.canCancel ? (
-              <ItemActions>
-                <Button size="sm" variant="ghost" disabled={pending} onClick={() => cancel(r)}>
-                  Cancel
-                </Button>
-              </ItemActions>
-            ) : null}
-          </Item>
-        ))}
-      </ItemGroup>
-    </section>
   )
 }

@@ -2,7 +2,7 @@
 import type { Category } from "@/components/app/categories"
 import type { ReactNode } from "react"
 import type { Recurrence, SplitMethod } from "@/db/enums"
-import type { ToolkitCategory, ToolkitStatus } from "@/toolkits/types"
+import type { ToolkitStatus } from "@/toolkits/types"
 
 export type Transfer = { from: string; to: string; cents: number }
 
@@ -138,6 +138,8 @@ export type ReminderView = {
   text: string
   /** "Tue Nov 3, 8:00 PM" in the Group's time zone. */
   when: string
+  /** "8:00 PM" in the Group's time zone. */
+  time: string
   day: string
   /** Member id, null = everyone. */
   for: string | null
@@ -148,7 +150,24 @@ export type ReminderView = {
 
 export type ScheduleView = { nudgeHour: number | null; reportWeekday: number; reportHour: number }
 
-/** One marketplace card and its detail sheet, from the Toolkit's manifest and this Group's state. */
+/**
+ * One row of Home's Today strip: a Trick's line from the morning Bundle (`trick` = its id, for the accent dot), or one
+ * of today's Reminders (`trick` null: core's).
+ */
+export type TodayRowView = { id: string; text: string; trick: string | null; accent: string | null; href: string | null }
+
+/** A Document for Home's "Recent documents" strip (filled by the Documents slot once core has `documentsView`). */
+export type RecentDocumentView = {
+  id: string
+  /** "lease", "notice", "receipt", ... as core's Documents name them. */
+  kind: string
+  title: string
+  /** The day it was kept, "YYYY-MM-DD" in the Group's time zone (lib/dates localDay). */
+  createdAt: string
+  href: string
+}
+
+/** One Trick's card on the Tricks page and its detail sheet, from the Toolkit's manifest and this Group's state. */
 export type ToolkitCardView = {
   id: string
   name: string
@@ -156,8 +175,6 @@ export type ToolkitCardView = {
   longDescription: string
   /** Rendered on the server (components/app/toolkit-icon.tsx). */
   icon: ReactNode
-  category: ToolkitCategory
-  tags: string[]
   status: ToolkitStatus
   enabled: boolean
   /** What it can do, in plain words (one per tool). */
