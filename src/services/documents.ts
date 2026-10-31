@@ -4,7 +4,7 @@
 // checks they're an active Member of its Group. A photo sent in the Chat is a Document too, held unfiled (filed_at
 // null: readable by Roomie, not on the Docs list, gone after 30 days) until someone keeps it or it becomes a receipt.
 import { createHash } from "node:crypto";
-import { and, desc, eq, ilike, inArray, isNotNull, isNull, lt, or, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, ilike, inArray, isNotNull, isNull, lt, ne, or, sql, type SQL } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { DOCUMENT_KINDS, type DocumentKind } from "@/db/schema";
 import { blobStore } from "@/integrations/blob-store";
@@ -15,7 +15,7 @@ import { NotAllowedError, requireActive } from "./authz";
 import { groupTimezone } from "./schedule";
 import type { Ctx, GroupCtx } from "./types";
 
-const { documents, members } = schema;
+const { documents, expenses, members } = schema;
 
 export { DOCUMENT_KINDS, type DocumentKind };
 export const MAX_DOCUMENT_BYTES = 20 * 1024 * 1024;
@@ -171,43 +171,61 @@ export async function fileDocument(ctx: GroupCtx, input: FileInput): Promise<Doc
   const id = input.id ?? crypto.randomUUID();
   const key = storageKey(ctx.groupId, id);
   await blobStore().put(key, input.bytes, input.contentType);
+  const now = new Date();
+  const row = {
+    kind: input.kind,
+    title,
+    contentType: input.contentType,
+    size: input.bytes.length,
+    storageKey: key,
+    source: input.source ?? null,
+    uploadedBy: input.uploadedBy ?? null,
+    filedAt: input.filed === false ? null : now,
+    createdAt: now,
+    deletedAt: null,
+  };
   try {
+    // A stable id that's taken here can only be a deleted Document (a live one returned above): the same photo sent
+    // again after someone deleted it comes back as a new one.
     await db
       .insert(documents)
-      .values({
-        id,
-        groupId: ctx.groupId,
-        kind: input.kind,
-        title,
-        contentType: input.contentType,
-        size: input.bytes.length,
-        storageKey: key,
-        source: input.source ?? null,
-        uploadedBy: input.uploadedBy ?? null,
-        filedAt: input.filed === false ? null : new Date(),
-      })
-      .onConflictDoNothing();
+      .values({ id, groupId: ctx.groupId, ...row })
+      .onConflictDoUpdate({ target: documents.id, set: row, setWhere: and(eq(documents.groupId, ctx.groupId), isNotNull(documents.deletedAt)) });
   } catch (e) {
     await blobStore().delete(key).catch(() => {});
     throw e;
   }
-  return (await getDocument(ctx, id))!;
+  const doc = await getDocument(ctx, id);
+  if (!doc) throw new Error("Couldn't keep that file. Try sending it again?");
+  return doc;
 }
 
-/** An Expense's receipt: the Document becomes a filed receipt pointing at it, titled after the Expense. */
+/**
+ * An Expense's receipt: the Document becomes a filed receipt pointing at it, titled after the Expense, and the Expense
+ * points back (receipt_document_id). A receipt belongs to one Expense: attaching it to another moves it, and the
+ * Expense it was on loses its receipt, in the same transaction.
+ */
 export async function attachReceipt(ctx: Ctx, documentId: string, expense: { id: string; description: string }): Promise<boolean> {
-  const rows = await db
-    .update(documents)
-    .set({
-      kind: "receipt",
-      title: `Receipt: ${expense.description}`.slice(0, 200),
-      source: { table: "expenses", id: expense.id },
-      filedAt: sql`coalesce(${documents.filedAt}, now())`,
-      uploadedBy: sql`coalesce(${documents.uploadedBy}, ${ctx.memberId}::uuid)`,
-    })
-    .where(and(eq(documents.id, documentId), eq(documents.groupId, ctx.groupId), isNull(documents.deletedAt)))
-    .returning({ id: documents.id });
-  return rows.length > 0;
+  return db.transaction(async (tx) => {
+    const rows = await tx
+      .update(documents)
+      .set({
+        kind: "receipt",
+        title: `Receipt: ${expense.description}`.slice(0, 200),
+        source: { table: "expenses", id: expense.id },
+        filedAt: sql`coalesce(${documents.filedAt}, now())`,
+        uploadedBy: sql`coalesce(${documents.uploadedBy}, ${ctx.memberId}::uuid)`,
+      })
+      .where(and(eq(documents.id, documentId), eq(documents.groupId, ctx.groupId), isNull(documents.deletedAt)))
+      .returning({ id: documents.id });
+    if (!rows.length) return false;
+    await tx
+      .update(expenses)
+      .set({ receiptDocumentId: null, receiptUrl: null })
+      .where(and(eq(expenses.groupId, ctx.groupId), eq(expenses.receiptDocumentId, documentId), ne(expenses.id, expense.id)));
+    await tx.update(expenses).set({ receiptDocumentId: documentId }).where(and(eq(expenses.id, expense.id), eq(expenses.groupId, ctx.groupId)));
+    return true;
+  });
 }
 
 const NOT_OURS = "I can only keep photos and files sent in this group's chat or uploaded on its dashboard.";
@@ -246,11 +264,30 @@ export async function deleteDocument(ctx: Ctx, id: string): Promise<{ deleted: s
 
 /* ---------- forget me, delete group data, retention ---------- */
 
+/**
+ * The file first, then the row. A file the store wouldn't delete keeps its row, soft-deleted, so retention
+ * (purgeOldDocuments) tries again; nothing is left in storage without a row pointing at it. Returns how many went.
+ */
 async function hardDelete(rows: { id: string; storageKey: string }[]): Promise<number> {
   if (!rows.length) return 0;
-  await db.delete(documents).where(inArray(documents.id, rows.map((r) => r.id)));
-  for (const r of rows) await blobStore().delete(r.storageKey).catch((e) => console.warn(`[documents] couldn't delete ${r.storageKey}`, e));
-  return rows.length;
+  const gone: string[] = [];
+  const kept: string[] = [];
+  let firstError: unknown;
+  for (const r of rows) {
+    try {
+      await blobStore().delete(r.storageKey);
+      gone.push(r.id);
+    } catch (e) {
+      kept.push(r.id);
+      firstError ??= e;
+    }
+  }
+  if (gone.length) await db.delete(documents).where(inArray(documents.id, gone));
+  if (kept.length) {
+    await db.update(documents).set({ deletedAt: sql`coalesce(${documents.deletedAt}, now())` }).where(inArray(documents.id, kept));
+    console.warn(`[documents] couldn't delete ${kept.length} file(s); kept their rows for retention to retry`, firstError);
+  }
+  return gone.length;
 }
 
 /** What a Member uploaded (forget me reads it before anonymizing). */

@@ -17,7 +17,7 @@ import { onGroupJoined } from "@/onboarding";
 import { deleteGroup, deleteGroupData, groupsWithChat, updateGroupSettings } from "./groups";
 import * as documents from "./documents";
 import { forgetMe } from "./members";
-import { logExpense } from "./money";
+import { logExpense, updateExpense } from "./money";
 import { sendNudge } from "./nudges";
 import { saveUpload } from "./receipts";
 import { setReminder } from "./reminders";
@@ -26,7 +26,17 @@ import type { Ctx } from "./types";
 import { assertNotProdDb } from "../../scripts/lib/prod-guard";
 
 const CHI = "America/Chicago";
-const blobs = new MemoryBlobStore();
+/** A MemoryBlobStore whose next `failDeletes` deletes are refused (object storage having a bad minute). */
+const blobs = new (class extends MemoryBlobStore {
+  failDeletes = 0;
+  override async delete(key: string) {
+    if (this.failDeletes > 0) {
+      this.failDeletes--;
+      throw new Error("storage 503");
+    }
+    return super.delete(key);
+  }
+})();
 setBlobStore(blobs);
 const outbox: DevOutput[] = [];
 const devChannel = new DevChannel((o) => outbox.push(o));
@@ -192,6 +202,50 @@ describe("core slots against the dev DB", () => {
     assert.deepEqual((await documents.findDocuments({ groupId }, "luigi's receipt")).map((d) => d.id), [photo.id]);
     const same = await saveUpload(`g-${groupId}`, Buffer.from("receipt jpeg"), "image/jpeg", "tg-file-1");
     assert.equal((await saveUpload(`g-${groupId}`, Buffer.from("receipt jpeg"), "image/jpeg", "tg-file-1")).id, same.id, "the same Channel file is stored once");
+  });
+
+  test("a receipt belongs to one Expense: attaching it to another moves it, and the first loses it", async () => {
+    const photo = await saveUpload({ groupId }, Buffer.from("pizza receipt"), "image/jpeg");
+    const first = await logExpense(ctxOf(m.Dev), { cents: 4500, description: "Pizza", receiptUrl: photo.path });
+    const second = await logExpense(ctxOf(m.Sam), { cents: 4500, description: "Pizza night", receiptUrl: photo.path });
+    const row = async (id: string) => (await db.select().from(schema.expenses).where(eq(schema.expenses.id, id)))[0];
+    assert.deepEqual([(await row(first.id)).receiptDocumentId, (await row(first.id)).receiptUrl], [null, null], "the first Expense lost it");
+    assert.deepEqual([(await row(second.id)).receiptDocumentId, (await row(second.id)).receiptUrl], [photo.id, photo.path]);
+    let doc = (await documents.getDocument({ groupId }, photo.id))!;
+    assert.deepEqual([doc.title, doc.source], ["Receipt: Pizza night", { table: "expenses", id: second.id }]);
+
+    await updateExpense(ctxOf(m.Dev), { expenseId: first.id, receiptUrl: photo.path });
+    assert.equal((await row(first.id)).receiptDocumentId, photo.id, "moved back by an edit");
+    assert.deepEqual([(await row(second.id)).receiptDocumentId, (await row(second.id)).receiptUrl], [null, null]);
+    doc = (await documents.getDocument({ groupId }, photo.id))!;
+    assert.deepEqual(doc.source, { table: "expenses", id: first.id });
+  });
+
+  test("the same photo sent again after it was deleted comes back as a Document", async () => {
+    const sent = await saveUpload(`g-${groupId}`, Buffer.from("fridge shelf"), "image/jpeg", "tg-file-again", { uploadedBy: m.Dev });
+    await documents.deleteDocument(ctxOf(m.Maya), sent.id);
+    assert.equal(await documents.getDocument({ groupId }, sent.id), null);
+    const again = await saveUpload(`g-${groupId}`, Buffer.from("fridge shelf, again"), "image/jpeg", "tg-file-again", { uploadedBy: m.Sam });
+    assert.equal(again.id, sent.id, "the same stable id");
+    const doc = (await documents.getDocument({ groupId }, again.id))!;
+    assert.deepEqual([doc.kind, doc.filed, doc.uploadedBy, doc.size], ["photo", false, m.Sam, "fridge shelf, again".length]);
+    assert.equal((await blobs.get(`g/${groupId}/${again.id}`))?.bytes.toString(), "fridge shelf, again");
+  });
+
+  test("a file the store won't delete keeps its row (soft-deleted) until a later delete gets it", async () => {
+    const photo = await saveUpload({ groupId }, Buffer.from("blurry selfie"), "image/jpeg");
+    const key = `g/${groupId}/${photo.id}`;
+    const rowOf = async () => (await db.select().from(schema.documents).where(eq(schema.documents.id, photo.id)))[0];
+    blobs.failDeletes = 1;
+    assert.equal(await documents.deleteUnfiledByUrl(groupId, [photo.path]), 0);
+    assert.ok((await rowOf())?.deletedAt, "the row stays, soft-deleted");
+    assert.ok(await blobs.get(key), "the file is still there");
+    assert.equal(await documents.getDocument({ groupId }, photo.id), null, "nobody sees it");
+    // Retention, once the soft delete is 30 days old.
+    await db.update(schema.documents).set({ deletedAt: new Date(Date.now() - 31 * 24 * 60 * 60 * 1000) }).where(eq(schema.documents.id, photo.id));
+    assert.ok((await documents.purgeOldDocuments()) >= 1);
+    assert.equal(await rowOf(), undefined);
+    assert.equal(await blobs.get(key), null);
   });
 
   test("keep and find: 'roomie keep this, it's the lease' files it; find returns it newest first; another Group's link is refused", async () => {

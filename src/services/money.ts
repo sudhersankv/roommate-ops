@@ -403,7 +403,7 @@ export async function updateExpense(ctx: Ctx, input: ExpensePatch): Promise<Expe
 async function linkReceipt(ctx: Ctx, expenseId: string, description: string, receiptUrl: string | null) {
   const docId = receiptUrl ? docIdFromUrl(receiptUrl) : null;
   const linked = docId ? await attachReceipt(ctx, docId, { id: expenseId, description }) : false;
-  await db.update(expenses).set({ receiptDocumentId: linked ? docId : null }).where(eq(expenses.id, expenseId));
+  if (!linked) await db.update(expenses).set({ receiptDocumentId: null }).where(eq(expenses.id, expenseId));
 }
 
 /** Soft delete, so undo can bring it back. */
