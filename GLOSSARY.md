@@ -5,7 +5,7 @@ Roomie is the roommate who actually keeps track: it lives in an apartment's grou
 ## People and groups
 
 **Roomie**:
-The agent itself, a member of the chat that people talk to by name ("roomie", or the @mention). One Roomie, one voice, not renameable (ADR 0020); it quietly picks up how the group talks. Roomie is a roommate, not a platform, a store, or an "AI".
+The agent itself, a member of the chat that people talk to by name ("roomie", or the @mention). One Roomie, one voice, not renameable (ADR 0020); it quietly picks up how the group talks. Roomie is a roommate, not a platform, a store, or an "AI". How it talks and acts, and what it won't do: ADR 0021.
 _Avoid_: Kevin, bot, assistant, AI, brain, smart (in user-facing text); pet (at most as flavour)
 
 **Group**:

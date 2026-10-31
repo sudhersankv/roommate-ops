@@ -435,6 +435,8 @@ scripts/studio-presets.ts  writes .mastra-presets.json for Studio (run by mastra
 
 ## Personality (one voice)
 
+How Roomie should talk and act, and its boundaries: [ADR 0021](docs/adr/0021-a-roommate-in-the-chat.md).
+
 [docs/personality.md](docs/personality.md), [ADR 0012](docs/adr/0012-personality-archetype-sliders-learned-style.md), [ADR 0020](docs/adr/0020-one-voice-and-private-dms.md). Roomie is the chill archetype, called Roomie, plus the Learned style. The other archetypes, the name, quirks and sliders stay in code behind a dev switch: `normalizePersonality` ignores a stored `base` / `name` / `quirks` / dials unless `ROOMIE_ARCHETYPES=1` and `NODE_ENV !== "production"` (`archetypesUnlocked`), so an old Group's "hype, Dino" is inert. Settings keeps only "Reset what it's learned" (Admins). `set_group_settings`'s `personality` fields are to be removed from the tool schema (toolkits owner).
 
 - **Instructions are composed in code** (`mastra/persona.ts`), never one free-text prompt: core rules (facts from tools, no math, brevity) first, then the voice, sliders as sentences, quirks, learned style, `/* TOOLKIT_PERSONA */` (enabled manifests' optional `persona: string`), mood, what Roomie knows about people. Jokes are a trait, not a Toolkit.
