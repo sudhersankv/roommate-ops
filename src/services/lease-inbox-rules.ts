@@ -1,7 +1,7 @@
 // Pure Lease Inbox rules (ADR 0016): the work-order state machine and when a notice is urgent (ADR 0017's urgent
 // slot). The classifier reads the landlord's reply; these decide what it does.
 import { WORK_ORDER_STATUSES, type WorkOrderStatus } from "@/db/enums";
-import { dayInZone, parseInZone, zonedTimeToUtc } from "@/lib/time";
+import { addDaysToDay, dayInZone, daysBetweenDays, parseInZone, zonedTimeToUtc } from "@/lib/time";
 
 export { WORK_ORDER_STATUSES, type WorkOrderStatus };
 
@@ -49,4 +49,63 @@ export function isUrgent(noticeDate: string, now: Date, timezone: string): boole
   const at = parseInZone(s, timezone);
   if (Number.isNaN(at.getTime())) return false;
   return at > now && at.getTime() - now.getTime() <= URGENT_WITHIN_MS;
+}
+
+/* ---------- the Toolkit's lines (pure, lease-inbox-rules.test.ts) ---------- */
+
+export type QuietOrder = { title: string; status: WorkOrderStatus; scheduledFor: string | null; lastActivityAt: Date };
+
+export const FOLLOW_UP_DAYS = 5;
+
+const visitTime = (when: string) => {
+  const t = /T(\d{2}):(\d{2})/.exec(when);
+  if (!t) return "";
+  const h = Number(t[1]);
+  return ` (${h % 12 || 12}${t[2] === "00" ? "" : `:${t[2]}`}${h < 12 ? "am" : "pm"})`;
+};
+
+/**
+ * The Lease Inbox's line in the morning Bundle: a visit tomorrow (someone be home), and the oldest work order the
+ * landlord hasn't answered for 5, 10, 15... local days (the offer to follow up, not every morning). Null when neither.
+ */
+export function leaseBundleText(orders: readonly QuietOrder[], tz: string, now: Date): string | null {
+  const today = dayInZone(tz, now);
+  const tomorrow = addDaysToDay(today, 1);
+  const lines: string[] = [];
+  const visits = orders.filter((o) => o.status === "scheduled" && o.scheduledFor?.slice(0, 10) === tomorrow);
+  for (const v of visits.slice(0, 2)) lines.push(`🔧 The landlord's coming tomorrow${visitTime(v.scheduledFor!)} about ${v.title}. Someone be home?`);
+  const quiet = orders
+    .filter((o) => (o.status === "sent" || o.status === "acknowledged") && !visits.includes(o))
+    .map((o) => ({ o, days: daysBetweenDays(dayInZone(tz, o.lastActivityAt), today) }))
+    .filter(({ days }) => days >= FOLLOW_UP_DAYS && days % FOLLOW_UP_DAYS === 0)
+    .sort((a, b) => b.days - a.days)[0];
+  if (quiet) lines.push(`📭 Nothing from the landlord about ${quiet.o.title} in ${quiet.days} days. Want me to follow up?`);
+  return lines.length ? lines.join(" ") : null;
+}
+
+/** The weekly report's part: "Lease inbox: 1 notice, 2 other emails". Null for a quiet week. */
+export function leaseReportText(notices: number, others: number): string | null {
+  if (!notices && !others) return null;
+  const n = (k: number, one: string, many: string) => `${k} ${k === 1 ? one : many}`;
+  return `Lease inbox: ${[notices ? n(notices, "notice", "notices") : null, others ? n(others, "other email", "other emails") : null].filter(Boolean).join(", ")}`;
+}
+
+/**
+ * A Member's own words confirm a send Roomie asked about ("yes", "send it", "go ahead"), and don't take it back
+ * ("no", "don't send", "wait"). The tool passes `confirmed` through only when this holds for their latest message.
+ */
+export function saysYes(latest: string | undefined | null): boolean {
+  if (!latest) return false;
+  const text = latest.toLowerCase().replace(/\broomie\b[,:]?/g, " ");
+  if (/\b(?:no|nope|don'?t|do not|wait|hold on|stop|cancel|never mind)\b/.test(text)) return false;
+  return /\b(?:yes|yep|yeah|yup|sure|ok(?:ay)?|send it|go ahead|do it|confirm(?:ed)?|that'?s right|correct)\b/.test(text);
+}
+
+/** Which kind of Document an email's attachment is (ADR 0018): a lease by its name, else by the email's class. */
+export function attachmentKind(mailClass: string | null, utility: string | null, filename: string | null): "lease" | "notice" | "bill" | "email" {
+  if (filename && /\blease\b|\brenewal\b/i.test(filename.replace(/[_-]+/g, " "))) return "lease";
+  if (mailClass === "notice") return "notice";
+  if (mailClass === "rent-lease") return "lease";
+  if (utility || (filename && /\b(?:bill|invoice|statement)\b/i.test(filename.replace(/[_-]+/g, " ")))) return "bill";
+  return "email";
 }
