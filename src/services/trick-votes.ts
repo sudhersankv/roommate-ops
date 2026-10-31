@@ -6,6 +6,7 @@ import { db, schema } from "@/db";
 import { WindowLimiter } from "@/lib/window-limit";
 import { CATALOG } from "@/toolkits/manifests";
 import { hashIp } from "./beta";
+import { mailOperator } from "./operator-mail";
 
 /** At most 12 votes an hour from one address, and one per Trick per address a day. In memory: a restart forgets. */
 export const VOTE_LIMIT = { max: 12, windowMs: 60 * 60 * 1000 };
@@ -29,6 +30,8 @@ export type VoteDeps = {
   limiter?: WindowLimiter;
   perTrick?: WindowLimiter;
   insert?: (row: typeof schema.trickVotes.$inferInsert) => Promise<void>;
+  /** Told about a counted vote (default: an email to the operator, in the background). */
+  notify?: (trickId: string) => Promise<unknown>;
 };
 
 const limiters = () => {
@@ -58,6 +61,8 @@ export async function voteForTrick(trickId: unknown, meta: { ip: string }, deps:
     return { ok: false, reason: "failed", message: "That didn't save. Try again in a minute." };
   }
   console.log(`[votes] +1 ${trickId}`);
+  // In the background: the button never waits for the email.
+  void (deps.notify ?? mailVote)(trickId).catch((e) => console.warn(`[votes] notify failed: ${e instanceof Error ? e.message : String(e)}`));
   return { ok: true, counted: true };
 }
 
@@ -78,3 +83,13 @@ export async function trickVoteCounts(): Promise<Record<string, number>> {
 
 /** The count to show, or null below SHOW_COUNT_FROM. */
 export const shownCount = (n: number | undefined): number | null => (n && n >= SHOW_COUNT_FROM ? n : null);
+
+/** What a vote is for, as people read it: the coming-soon Trick's name or the Channel's. */
+export const voteLabel = (trickId: string): string => SOON_CHANNELS.find((c) => c.id === trickId)?.name ?? CATALOG.find((m) => m.id === trickId)?.name ?? trickId;
+
+/** The operator's email about one counted vote, with that Trick's total so far. */
+export async function mailVote(trickId: string): Promise<unknown> {
+  const total = (await trickVoteCounts().catch(() => ({}) as Record<string, number>))[trickId];
+  const label = voteLabel(trickId);
+  return mailOperator(`Roomie vote: ${label}${total ? ` (${total} so far)` : ""}`, `Someone tapped "I want this" on ${label} on the landing page.${total ? ` That's ${total} vote${total === 1 ? "" : "s"} for it so far.` : ""}`);
+}
