@@ -14,6 +14,18 @@ describe("FakeMail", () => {
     assert.equal(mail.inboxes.size, 1);
   });
 
+  test("inboxes live on AGENTMAIL_DOMAIN when set (a verified domain on the AgentMail org), else agentmail.to", async () => {
+    const before = process.env.AGENTMAIL_DOMAIN;
+    process.env.AGENTMAIL_DOMAIN = "tryroomie.me";
+    try {
+      const made = await new FakeMail().createInbox(GROUP, "apt-4b-k2x9");
+      assert.equal(made.address, "apt-4b-k2x9@tryroomie.me");
+    } finally {
+      if (before === undefined) delete process.env.AGENTMAIL_DOMAIN;
+      else process.env.AGENTMAIL_DOMAIN = before;
+    }
+  });
+
   test("records sends with deterministic ids and starts a thread", async () => {
     const mail = new FakeMail();
     const { inboxId } = await mail.createInbox(GROUP, "apt-4b-k2x9");
