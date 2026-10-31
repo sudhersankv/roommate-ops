@@ -982,6 +982,19 @@ describe("Roomie tools against the dev DB", () => {
     }
   });
 
+  test("keep_document / find_documents: 'roomie keep this, it's the lease' files the photo; find gives links only when asked to open", async () => {
+    const photo = await receipts.saveUpload({ groupId }, Buffer.from("lease page 1"), "image/jpeg");
+    assert.deepEqual(await run("find_documents", { query: "lease" }), { found: [] }, "an unkept photo isn't found");
+    assert.deepEqual(await run("keep_document", { url: photo.path, title: "Lease 2026-27", kind: "lease" }), { kept: "Lease 2026-27", kind: "lease" });
+    const found = await run("find_documents", { query: "the lease" });
+    assert.deepEqual(found.found.map((d: { title: string; kind: string }) => [d.title, d.kind]), [["Lease 2026-27", "lease"]]);
+    assert.equal(found.links, undefined);
+    const open = await run("find_documents", { query: "lease", open: true });
+    if (process.env.APP_URL?.startsWith("http")) assert.ok(open.links[0].url.endsWith(`/api/docs/${photo.id}`));
+    await assert.rejects(run("keep_document", {}), /Send the photo or file/);
+    assert.equal((await lastActivity()).summary, "kept Lease 2026-27");
+  });
+
   // ---------- identity: Pending members, Admins, settings, Claim links, forget me ----------
 
   let priya: string;
