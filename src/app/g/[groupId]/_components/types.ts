@@ -25,11 +25,34 @@ export type ExpenseView = {
   recurring: Recurrence | null
   /** A copy the scheduler made of a recurring Expense. */
   repeated: boolean
+  /** The Group's rent (the recurring rent parent). */
+  rent: boolean
+  /** A bill whose amount is asked of its Payer on each due day; its own cents mean nothing. */
+  variable: boolean
   receiptUrl: string | null
   inSplitwise: boolean
   source: string
   canChange: boolean
 }
+
+/** Money's Rent card (#25): the rent, or null for the empty state that offers setup. */
+export type RentCardView = {
+  rent: {
+    cents: number
+    /** Day of the month, 1-28. */
+    dueDay: number
+    /** The next due day ("2026-11-01"). */
+    nextDue: string
+    payerId: string
+    method: SplitMethod
+    shares: { memberId: string; cents: number }[]
+  } | null
+  /** The Payer or an Admin (any active Member can set it up when there's none). */
+  canEdit: boolean
+}
+
+/** Settings' Nudges card: the private Settle nudge (Admins). */
+export type NudgeSettingsView = { thresholdCents: number; thresholdDays: number; enabled: boolean }
 
 export type SplitwiseView = {
   /** Composio works (or the fake is on); otherwise the card is disabled with `hint`. */

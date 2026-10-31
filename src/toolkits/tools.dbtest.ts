@@ -414,6 +414,39 @@ describe("Roomie tools against the dev DB", () => {
     await money.deleteExpense(ctx, { expenseId: rent.id });
   });
 
+  test("rent and bills: set_rent, rent_status (offer once, shares only in a DM), set_variable_expense, answer_amount", async () => {
+    const none = await run("rent_status", {});
+    assert.equal(none.rent, null);
+    assert.equal(none.offer, true, "offered the first time");
+    assert.equal((await run("rent_status", {})).offer, false, "never again");
+
+    const set = await run("set_rent", { amount: 2400, dueDay: 1, percents: [{ name: "Sudhersan", percent: 40 }, { name: "Ryan", percent: 30 }, { name: "Alex", percent: 30 }] });
+    assert.equal(set.rent.amount, "$2,400");
+    assert.equal(set.rent.paysLandlord, "Sudhersan");
+    assert.equal(typeof set.rent.shares, "string", "no one's share in the group");
+    const dm = contextFor(member.Sudhersan, "Sudhersan", "admin", "active");
+    dm.set("isPrivate", true);
+    assert.deepEqual((await run("rent_status", {}, dm)).rent.shares, [{ name: "Sudhersan", share: "$960" }, { name: "Alex", share: "$720" }, { name: "Ryan", share: "$720" }]);
+    const ryan = contextFor(member.Ryan, "Ryan", "member", "active");
+    const refused = await run("set_rent", { amount: 2500 }, ryan);
+    assert.equal(refused.notAllowed, true, "only the Payer or an Admin");
+
+    const bill = await run("set_variable_expense", { description: "Electric", dueDay: 20, payer: "Ryan" });
+    assert.equal(bill.paidBy, "Ryan");
+    await assert.rejects(run("answer_amount", { amount: 92 }, ryan), /No bill is waiting/);
+    const tz = (await groups.getGroup(groupId))!.timezone;
+    const [y, m, d] = (bill.firstAsk as string).split("-").map(Number);
+    await recurring.runRecurring(zonedTimeToUtc(tz, { year: y, month: m, day: d, hour: 10, minute: 0 }), { groupId });
+    const paid = await run("answer_amount", { amount: 92, bill: "electric" }, ryan);
+    assert.equal(paid.total, "$92.00");
+    assert.equal(paid.shares, undefined, "no shares in the group");
+    await assert.rejects(run("answer_amount", { amount: 92 }, ryan), /already logged/);
+
+    // Out of the way of the balance tests below.
+    const rent = await db.select({ id: schema.expenses.id }).from(schema.expenses).where(and(eq(schema.expenses.groupId, groupId), isNull(schema.expenses.deletedAt), inArray(schema.expenses.category, ["rent", "utilities"])));
+    for (const e of rent) await money.deleteExpense(ctx, { expenseId: e.id });
+  });
+
   // ---------- chores ----------
 
   type ChoreBrief = { chore: string; whoseTurn: string | null; rotation: string[] | string; status: string; due: string; lastDone: string };
@@ -633,7 +666,8 @@ describe("Roomie tools against the dev DB", () => {
   test("group_report: one ready-to-post message from every Toolkit, at most 12 lines", async () => {
     const r: { text: string } = await run("group_report", {});
     assert.match(r.text, /^📋 Group report · Test Group/);
-    assert.match(r.text, /Ryan pays Sudhersan \$16\.00/, "settle plan from the ledger (1500 + the $1 Sudhersan sent Ryan)");
+    assert.match(r.text, /💸 2 open balances\.\n/, "a count from the ledger, nobody nudged yet (too fresh), never a name (#25)");
+    assert.doesNotMatch(r.text, /\$16\.00/);
     assert.match(r.text, /Chores this week: Sudhersan 2, Alex 1, Ryan 0\./);
     assert.match(r.text, /The chart says Ryan has some catching up to do\./);
     assert.match(r.text, /Upkeep due soon: .*Test smoke alarms \(today\)/);

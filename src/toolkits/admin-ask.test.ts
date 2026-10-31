@@ -22,7 +22,21 @@ describe("which tools are admin-only (from the manifests, not a list in code)", 
       "approve_member", "decline_member", "promote_member", "toggle_toolkit", "set_group_settings",
       "set_simplify_debts", "splitwise_connect", "splitwise_import", "splitwise_export", "splitwise_mirror",
       "chore_remove", "upkeep_remove", "rotate_join_link", "set_join_policy", "revoke_seat",
+      "set_rent", "set_variable_expense",
     ]));
+  });
+});
+
+describe("rent and variable bills (#25)", () => {
+  test("set_rent: the Admin's own words about the rent", () => {
+    assert.equal(ok("set_rent", { amount: 2400, dueDay: 1 }, "roomie rent is 2400 on the 1st, I pay it"), true);
+    assert.equal(ok("set_rent", { amount: 2500 }, "roomie the rent went up to 2500"), true);
+    assert.equal(ok("set_rent", { amount: 2400 }, "roomie hi"), false);
+    assert.equal(ok("set_rent", { amount: 2400 }, "roomie don't change the rent"), false);
+  });
+  test("set_variable_expense: the bill and that it varies", () => {
+    assert.equal(ok("set_variable_expense", { description: "Electric", dueDay: 20 }, "roomie electric varies, due the 20th, Dev pays"), true);
+    assert.equal(ok("set_variable_expense", { description: "Electric", dueDay: 20 }, "roomie the water bill varies"), false, "another bill");
   });
 });
 

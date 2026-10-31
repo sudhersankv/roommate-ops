@@ -15,9 +15,10 @@ import { Amount, CategoryIcon, useFormatMoney } from "@/components/app/money-bit
 import { RoomieAvatar } from "@/components/app/roomie-avatar"
 import { ExpenseDrawer } from "../expense-drawer"
 import { useGroup } from "../group-context"
+import { RentCard } from "../../money/rent-card"
 import { SettleDrawer } from "../settle-drawer"
 import { PageHeader, TopBar } from "../shell"
-import type { ActivityView, ExpenseView, Transfer } from "../types"
+import type { ActivityView, ExpenseView, RentCardView, Transfer } from "../types"
 
 export type MoneyTab = "balances" | "expenses" | "activity"
 
@@ -28,6 +29,7 @@ export function MoneyScreen({
   plan,
   expenses,
   activity,
+  rent,
 }: {
   initialTab?: MoneyTab
   you: number
@@ -35,6 +37,7 @@ export function MoneyScreen({
   plan: Transfer[]
   expenses: ExpenseView[]
   activity: ActivityView[]
+  rent: RentCardView
 }) {
   const [tab, setTab] = useState<MoneyTab>(initialTab)
   const [adding, setAdding] = useState(false)
@@ -72,7 +75,7 @@ export function MoneyScreen({
       </div>
 
       {tab === "balances" ? (
-        <Balances balances={balances} plan={plan} />
+        <Balances balances={balances} plan={plan} rent={rent} />
       ) : tab === "expenses" ? (
         <Expenses expenses={expenses} onAdd={() => setAdding(true)} />
       ) : (
@@ -90,7 +93,7 @@ export function MoneyScreen({
   )
 }
 
-function Balances({ balances, plan }: { balances: Record<string, number>; plan: Transfer[] }) {
+function Balances({ balances, plan, rent }: { balances: Record<string, number>; plan: Transfer[]; rent: RentCardView }) {
   const { group, me, active, name } = useGroup()
   const money = useFormatMoney()
   const [settling, setSettling] = useState<Transfer | null>(null)
@@ -172,6 +175,8 @@ function Balances({ balances, plan }: { balances: Record<string, number>; plan: 
         </p>
       </section>
 
+      <RentCard view={rent} />
+
       <SettleDrawer open={settling !== null} onOpenChange={(o) => !o && setSettling(null)} plan={plan} transfer={settling} />
     </div>
   )
@@ -235,12 +240,21 @@ function ExpenseRow({ expense: e }: { expense: ExpenseView }) {
           {e.recurring || e.repeated ? <RepeatIcon aria-label="Repeats" className="size-3.5 shrink-0 text-muted-foreground" /> : null}
         </ItemTitle>
         <ItemDescription>
-          {paidBy} <Amount cents={e.cents} />
+          {e.variable ? (
+            `${payers[0]} ${payers[0] === "You" ? "pay" : "pays"} · amount asked on the due day`
+          ) : (
+            <>
+              {paidBy} <Amount cents={e.cents} />
+            </>
+          )}
+          {e.rent ? " · rent" : ""}
           {e.method !== "equal" && e.source !== "cart" ? ` · split by ${e.method === "exact" ? "amount" : e.method}` : ""}
         </ItemDescription>
       </ItemContent>
       <ItemActions className="flex-col items-end gap-0.5">
-        {inIt ? (
+        {e.variable ? (
+          <span className="type-caption text-muted-foreground">each month</span>
+        ) : inIt ? (
           <>
             <span className="type-caption text-muted-foreground">your share</span>
             <Amount cents={e.yourShare} className="type-heading" />

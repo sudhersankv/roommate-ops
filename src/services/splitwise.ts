@@ -326,7 +326,7 @@ export async function exportToSplitwise(ctx: Ctx, input: { splitwiseGroupId?: st
     .select({ id: expenses.id, description: expenses.description })
     .from(expenses)
     .leftJoin(expenseExternalRefs, and(eq(expenseExternalRefs.expenseId, expenses.id), eq(expenseExternalRefs.provider, "splitwise")))
-    .where(and(eq(expenses.groupId, ctx.groupId), isNull(expenses.deletedAt), isNull(expenseExternalRefs.externalId)));
+    .where(and(eq(expenses.groupId, ctx.groupId), isNull(expenses.deletedAt), eq(expenses.variable, false), isNull(expenseExternalRefs.externalId)));
   for (const e of todo) {
     try {
       if ((await pushExpense(ctx.groupId, e.id)) === "created") result.expenses++;

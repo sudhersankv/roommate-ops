@@ -86,7 +86,7 @@ function Detail({ expense: e }: { expense: ExpenseView }) {
       router.push(`${base}/money?tab=expenses`)
       toast.add({
         title: "Expense deleted",
-        description: `${e.description}, ${money(e.cents)}`,
+        description: e.variable ? e.description : `${e.description}, ${money(e.cents)}`,
         actionProps: {
           children: "Undo",
           onClick: async () => {
@@ -102,7 +102,7 @@ function Detail({ expense: e }: { expense: ExpenseView }) {
       <section className="flex flex-col gap-3">
         <CategoryIcon category={e.category} className="size-14 rounded-3xl" />
         <h1 className="type-title">{e.description}</h1>
-        <p className="type-display">{money(e.cents)}</p>
+        {e.variable ? <p className="type-heading text-muted-foreground">Amount asked on the due day</p> : <p className="type-display">{money(e.cents)}</p>}
         <p className="type-body text-muted-foreground">
           {e.category === "other" ? `On ${when}` : `${cat.label}, ${when}`}.{addedBy ? ` Added by ${addedBy}.` : ""}
         </p>
@@ -154,40 +154,44 @@ function Detail({ expense: e }: { expense: ExpenseView }) {
               <ItemContent>
                 <ItemTitle>{name(p.memberId)}</ItemTitle>
               </ItemContent>
-              <ItemActions>
-                <Amount cents={p.cents} className="type-heading" />
-              </ItemActions>
+              {e.variable ? null : (
+                <ItemActions>
+                  <Amount cents={p.cents} className="type-heading" />
+                </ItemActions>
+              )}
             </Item>
           ))}
         </ItemGroup>
       </section>
 
-      <section aria-labelledby="shares" className="flex flex-col gap-2">
-        <div className="flex flex-col gap-0.5">
-          <h2 id="shares" className="type-heading">
-            Shares
-          </h2>
-          <p className="type-caption text-muted-foreground">{methodText[e.source === "cart" ? "cart" : e.method]}, worked out to the cent.</p>
-        </div>
-        <ItemGroup className="gap-0 rounded-3xl bg-card py-1">
-          {e.shares.map((s) => (
-            <Item key={s.memberId} className="py-2.5">
-              <ItemMedia>
-                <MemberAvatar name={name(s.memberId)} />
-              </ItemMedia>
-              <ItemContent>
-                <ItemTitle>{name(s.memberId)}</ItemTitle>
-                {s.weight != null ? (
-                  <ItemDescription>{e.method === "percent" ? `${s.weight}%` : `${s.weight} ${s.weight === 1 ? "share" : "shares"}`}</ItemDescription>
-                ) : null}
-              </ItemContent>
-              <ItemActions>
-                <Amount cents={s.cents} className="type-heading" />
-              </ItemActions>
-            </Item>
-          ))}
-        </ItemGroup>
-      </section>
+      {e.variable ? null : (
+        <section aria-labelledby="shares" className="flex flex-col gap-2">
+          <div className="flex flex-col gap-0.5">
+            <h2 id="shares" className="type-heading">
+              Shares
+            </h2>
+            <p className="type-caption text-muted-foreground">{methodText[e.source === "cart" ? "cart" : e.method]}, worked out to the cent.</p>
+          </div>
+          <ItemGroup className="gap-0 rounded-3xl bg-card py-1">
+            {e.shares.map((s) => (
+              <Item key={s.memberId} className="py-2.5">
+                <ItemMedia>
+                  <MemberAvatar name={name(s.memberId)} />
+                </ItemMedia>
+                <ItemContent>
+                  <ItemTitle>{name(s.memberId)}</ItemTitle>
+                  {s.weight != null ? (
+                    <ItemDescription>{e.method === "percent" ? `${s.weight}%` : `${s.weight} ${s.weight === 1 ? "share" : "shares"}`}</ItemDescription>
+                  ) : null}
+                </ItemContent>
+                <ItemActions>
+                  <Amount cents={s.cents} className="type-heading" />
+                </ItemActions>
+              </Item>
+            ))}
+          </ItemGroup>
+        </section>
+      )}
 
       {e.note ? (
         <section aria-labelledby="note" className="flex flex-col gap-2">

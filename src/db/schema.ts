@@ -54,7 +54,7 @@ export const petMoments = pgTable(
   "pet_moments",
   {
     groupId: uuid("group_id").notNull().references(() => groups.id, { onDelete: "cascade" }),
-    kind: text("kind", { enum: ["greeting", "win"] }).notNull(),
+    kind: text("kind", { enum: ["greeting", "win", "rent-offer"] }).notNull(),
     key: text("key").notNull(),
     createdAt: createdAt(),
   },
@@ -211,6 +211,8 @@ export const expenses = pgTable(
     recurringParentId: uuid("recurring_parent_id").references((): AnyPgColumn => expenses.id, { onDelete: "set null" }),
     // The receipt's link as people open it (/api/docs/<id>); receipt_document_id is the Document itself (#24A).
     receiptUrl: text("receipt_url"),
+    // A recurring parent whose amount is asked of its Payer on each due day (electric) instead of copied (#25).
+    variable: boolean("variable").notNull().default(false),
     receiptDocumentId: uuid("receipt_document_id").references((): AnyPgColumn => documents.id, { onDelete: "set null" }),
     source: text("source", { enum: EXPENSE_SOURCES }).notNull().default("chat"),
     createdBy: uuid("created_by").references(() => members.id),
@@ -429,7 +431,7 @@ export const scheduledPosts = pgTable(
   "scheduled_posts",
   {
     groupId: uuid("group_id").notNull().references(() => groups.id, { onDelete: "cascade" }),
-    kind: text("kind", { enum: ["bundle", "urgent", "report.weekly"] }).notNull(),
+    kind: text("kind", { enum: ["bundle", "urgent", "report.weekly", "rent.ahead", "nudge.settle"] }).notNull(),
     // The Group's local day ("2026-10-28") for the Bundle and the urgent slot, the report's local day for the report.
     period: text("period").notNull(),
     createdAt: createdAt(),
@@ -523,6 +525,31 @@ export const maintenance = pgTable("maintenance", {
   everyDays: integer("every_days").notNull(),
   lastDone: timestamp("last_done", { withTimezone: true }),
 });
+
+// ---- rent, utilities, nudges (#25) ----
+
+/**
+ * A variable recurring Expense's amount, asked of its Payer on the due day (services/recurring.ts): one row per parent
+ * and local month ("2026-11"). `asks` counts the DMs (one re-ask the next day), `prefill_cents` is what the Lease Inbox
+ * read from the bill, `resolved_expense_id` the copy logged from the answer.
+ */
+export const pendingAmounts = pgTable(
+  "pending_amounts",
+  {
+    id: id(),
+    groupId: uuid("group_id").notNull().references(() => groups.id, { onDelete: "cascade" }),
+    expenseId: uuid("expense_id").notNull().references(() => expenses.id, { onDelete: "cascade" }),
+    period: text("period").notNull(),
+    // The due day the answer is logged on ("2026-11-20").
+    dueOn: date("due_on").notNull(),
+    askedAt: timestamp("asked_at", { withTimezone: true }).notNull().defaultNow(),
+    asks: integer("asks").notNull().default(1),
+    prefillCents: integer("prefill_cents"),
+    resolvedExpenseId: uuid("resolved_expense_id").references(() => expenses.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("pending_amounts_expense_period").on(t.expenseId, t.period), index("pending_amounts_group").on(t.groupId)],
+);
 
 // ---- documents (#24A) ----
 

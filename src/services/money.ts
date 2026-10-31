@@ -10,7 +10,7 @@ import { guessCategory, isCategory } from "./categories";
 import { attachReceipt, docIdFromUrl, receiptHref } from "./documents";
 import { listMembers } from "./members";
 import { enqueueSplitwisePush } from "./outbox";
-import { joinNames, type ReportPart } from "./report";
+import type { ReportPart } from "./report";
 import { checkPayers, computeShares, SplitError, type PayerRow, type PercentRow, type SharesRow, type SplitIntent, type SplitRow } from "./split";
 import { dollars, type Ctx, type GroupCtx } from "./types";
 
@@ -38,6 +38,8 @@ export type Expense = {
   occurredOn?: string;
   recurring?: Recurrence | null;
   recurringParentId?: string | null;
+  /** A recurring parent whose amount is asked on each due day (utilities); its own cents are 0, never owed. */
+  variable?: boolean;
   receiptUrl?: string | null;
   /** The receipt's Document (open it at receiptUrl, /api/docs/<id>). */
   receiptDocumentId?: string | null;
@@ -148,6 +150,10 @@ export type ExpenseInput = {
   /** "YYYY-MM-DD"; default today in the Group's time zone. */
   occurredOn?: string;
   recurring?: Recurrence | null;
+  /** A variable recurring parent (utilities): the amount is asked of its Payer on each due day. */
+  variable?: boolean;
+  /** The parent this Expense is a month of (a variable parent's answered amount). */
+  recurringParentId?: string;
   receiptUrl?: string | null;
   source?: ExpenseSource;
 };
@@ -191,7 +197,10 @@ export const todayIn = async (groupId: string) => localDay(new Date(), await gro
 
 /** Validates an Expense against the Group's active Members and works out every Share. */
 async function build(ctx: Ctx, input: ExpenseInput): Promise<BuiltExpense & { nameOf: (id: string) => string }> {
-  assertWholeCents(input.cents);
+  // A variable parent has no amount of its own (0 cents): each month is its own Expense. Its rows keep who's in and the weights.
+  if (input.variable) {
+    if (input.cents !== 0) throw new Error("A bill that varies has no amount of its own; each month's amount is asked on the due day.");
+  } else assertWholeCents(input.cents);
   const description = input.description?.trim();
   if (!description) throw new Error("What was it for? Give the expense a description.");
 
@@ -204,7 +213,8 @@ async function build(ctx: Ctx, input: ExpenseInput): Promise<BuiltExpense & { na
 
   const payerList = input.payers?.length ? input.payers : [{ memberId: input.payerId ?? ctx.memberId, cents: input.cents }];
   for (const p of payerList) known(p.memberId, "payer");
-  const payers = checkPayers(input.cents, payerList, nameOf);
+  if (input.variable && payerList.length > 1) throw new SplitError("A bill that varies has one payer. Who pays it?");
+  const payers = input.variable ? [{ memberId: payerList[0].memberId, cents: 0 }] : checkPayers(input.cents, payerList, nameOf);
   const tie = { payerIds: payers.map((p) => p.memberId), nameOf };
 
   const method = inferMethod(input);
@@ -248,7 +258,7 @@ async function writeShares(tx: Tx, expenseId: string, b: Pick<BuiltExpense, "pay
 export async function insertExpenseRows(
   groupId: string,
   createdBy: string | null,
-  b: Omit<BuiltExpense, "weights"> & { weights?: Map<string, number>; source: ExpenseSource; recurringParentId?: string | null; createdAt?: Date },
+  b: Omit<BuiltExpense, "weights"> & { weights?: Map<string, number>; source: ExpenseSource; recurringParentId?: string | null; variable?: boolean; createdAt?: Date },
   tx?: Tx,
 ): Promise<string | null> {
   const run = async (t: Tx) => {
@@ -265,6 +275,7 @@ export async function insertExpenseRows(
         splitMethod: b.method,
         recurring: b.recurring,
         recurringParentId: b.recurringParentId ?? null,
+        variable: b.variable ?? false,
         receiptUrl: b.receiptUrl,
         source: b.source,
         createdBy,
@@ -291,13 +302,22 @@ const howSplit = (b: Pick<BuiltExpense, "method" | "rows" | "payers">, nameOf: (
  */
 export async function logExpense(ctx: Ctx, input: ExpenseInput): Promise<Expense> {
   await requireActive(ctx);
+  if (input.variable) checkVariable(input);
   const b = await build(ctx, input);
   const source = input.source ?? (ctx.source === "ui" ? "ui" : "chat");
-  const id = (await insertExpenseRows(ctx.groupId, ctx.memberId, { ...b, source }))!;
+  const id = await insertExpenseRows(ctx.groupId, ctx.memberId, { ...b, source, variable: input.variable, recurringParentId: input.recurringParentId });
+  if (!id) throw new Error(`${b.description} for ${b.occurredOn} is already logged.`);
   if (b.receiptUrl) await linkReceipt(ctx, id, b.description, b.receiptUrl);
-  await recordFor(ctx, "expense.added", `added ${b.description}, ${dollars(b.cents)}${howSplit(b, b.nameOf)}`, { table: "expenses", id });
-  await enqueueSplitwisePush(ctx.groupId, id, "upsert");
+  const what = input.variable ? `added ${b.description} (${b.recurring}, amount asked on the due day)` : `added ${b.description}, ${dollars(b.cents)}${howSplit(b, b.nameOf)}`;
+  await recordFor(ctx, "expense.added", what, { table: "expenses", id });
+  if (!input.variable) await enqueueSplitwisePush(ctx.groupId, id, "upsert");
   return (await getExpense(ctx, id))!;
+}
+
+/** A variable Expense repeats, and its split has to work for any amount: evenly, by percent or by shares. */
+function checkVariable(input: Pick<ExpenseInput, "recurring" | "method" | "splits" | "percents" | "shares">) {
+  if (input.recurring !== "monthly") throw new Error("A bill that varies has to repeat monthly.");
+  if (inferMethod(input) === "exact") throw new SplitError("A bill that varies can't have fixed amounts per person. Split it evenly, by percent or by shares.");
 }
 
 /** The Expense plus the ownership check: added it, paid it, has a Share in it, or Admin. */
@@ -369,6 +389,7 @@ export async function updateExpense(ctx: Ctx, input: ExpensePatch): Promise<Expe
     recurring: input.recurring !== undefined ? input.recurring : before.recurring,
     receiptUrl: input.receiptUrl !== undefined ? input.receiptUrl : before.receiptUrl,
     source: before.source,
+    variable: input.variable ?? before.variable,
   });
   await db.transaction(async (tx) => {
     await tx
@@ -382,6 +403,7 @@ export async function updateExpense(ctx: Ctx, input: ExpensePatch): Promise<Expe
         occurredOn: b.occurredOn,
         splitMethod: b.method,
         recurring: b.recurring,
+        ...(input.variable !== undefined ? { variable: input.variable } : {}),
         receiptUrl: b.receiptUrl,
       })
       .where(eq(expenses.id, row.id));
@@ -389,10 +411,10 @@ export async function updateExpense(ctx: Ctx, input: ExpensePatch): Promise<Expe
     await tx.delete(expenseSplits).where(eq(expenseSplits.expenseId, row.id));
     await writeShares(tx, row.id, b);
   });
-  const what = totalChanged ? `changed ${b.description}: ${dollars(before.cents)} -> ${dollars(cents)}` : `changed ${b.description}`;
+  const what = totalChanged && !before.variable ? `changed ${b.description}: ${dollars(before.cents)} -> ${dollars(cents)}` : `changed ${b.description}`;
   if (input.receiptUrl !== undefined && input.receiptUrl !== before.receiptUrl) await linkReceipt(ctx, row.id, b.description, b.receiptUrl);
   await recordFor(ctx, "expense.changed", what, { table: "expenses", id: row.id });
-  await enqueueSplitwisePush(ctx.groupId, row.id, "upsert");
+  if (!(input.variable ?? before.variable)) await enqueueSplitwisePush(ctx.groupId, row.id, "upsert");
   return (await getExpense(ctx, row.id))!;
 }
 
@@ -452,6 +474,9 @@ export async function findExpenses(ctx: GroupCtx, query: string, opts: { deleted
 
 /* ---------- Balances and the Settle plan ---------- */
 
+/** The Expenses people owe on: live, and not a variable parent (0 cents of its own; each month is its own Expense). */
+const owedExpenses = (groupId: string) => and(eq(expenses.groupId, groupId), isNull(expenses.deletedAt), eq(expenses.variable, false));
+
 /**
  * Per Member: paid - owed + settlements sent - settlements received. Positive = is owed.
  * Active Members are always listed (zero included); anyone removed stays while they still owe or are owed, so
@@ -459,7 +484,7 @@ export async function findExpenses(ctx: GroupCtx, query: string, opts: { deleted
  */
 export async function getBalances(ctx: GroupCtx): Promise<Balance[]> {
   const gid = ctx.groupId;
-  const live = and(eq(expenses.groupId, gid), isNull(expenses.deletedAt));
+  const live = owedExpenses(gid);
   const [paid, owed, sent, received, everyone] = await Promise.all([
     db
       .select({ id: expensePayers.memberId, cents: sql<number>`coalesce(sum(${expensePayers.cents}), 0)::int` })
@@ -510,7 +535,7 @@ async function memberNames(groupId: string): Promise<(id: string) => string> {
 /** Who owes whom with "simplify debts" off: each pair's net from the Expenses they shared and their Settlements. */
 export async function pairwiseDebts(ctx: GroupCtx): Promise<Transfer[]> {
   const gid = ctx.groupId;
-  const live = and(eq(expenses.groupId, gid), isNull(expenses.deletedAt));
+  const live = owedExpenses(gid);
   const [payers, shares, paid, nameOf] = await Promise.all([
     db.select({ expenseId: expensePayers.expenseId, memberId: expensePayers.memberId, cents: expensePayers.cents }).from(expensePayers).innerJoin(expenses, eq(expensePayers.expenseId, expenses.id)).where(live),
     db.select({ expenseId: expenseSplits.expenseId, memberId: expenseSplits.memberId, cents: expenseSplits.cents }).from(expenseSplits).innerJoin(expenses, eq(expenseSplits.expenseId, expenses.id)).where(live),
@@ -530,12 +555,14 @@ export async function getSettlePlan(ctx: GroupCtx): Promise<Transfer[]> {
   return g && !g.simplify ? pairwiseDebts(ctx) : computeSettlePlan(await getBalances(ctx));
 }
 
-/** Money's section of the weekly Group Report: the Settle plan, at most three payments named. Pure. */
-export function settleReportParts(plan: readonly Transfer[]): ReportPart[] {
-  if (plan.length === 0) return [{ icon: "💸", text: "All square. Love that for us." }];
-  const shown = plan.slice(0, 3).map((t) => `${t.fromName} pays ${t.toName} ${dollars(t.cents)}`);
-  const more = plan.length - shown.length;
-  return [{ icon: "💸", text: `${joinNames(shown)}${more > 0 ? `, +${more} more` : ""}.` }];
+/**
+ * Money's section of the weekly Group Report: how many balances are open, never who or how much (the Settle nudge
+ * tells each person privately, #25). `nudged` = the Settle nudge is on for the Group. Pure.
+ */
+export function settleReportParts(plan: readonly Transfer[], opts: { nudged?: boolean } = {}): ReportPart[] {
+  if (plan.length === 0) return [{ icon: "💸", text: "All square." }];
+  const n = `${plan.length} open balance${plan.length === 1 ? "" : "s"}`;
+  return [{ icon: "💸", text: opts.nudged ? `${n}; I've DM'd everyone.` : `${n}.` }];
 }
 
 /** The Settle plan row between two Members, whichever way it goes. */
@@ -579,6 +606,7 @@ export async function listExpenses(ctx: GroupCtx, limit = 50, opts: { expenseId?
       occurredOn: expenses.occurredOn,
       recurring: expenses.recurring,
       recurringParentId: expenses.recurringParentId,
+      variable: expenses.variable,
       receiptUrl: expenses.receiptUrl,
       receiptDocumentId: expenses.receiptDocumentId,
       splitwiseId: expenseExternalRefs.externalId,
@@ -630,12 +658,12 @@ export function expenseSummary(e: Expense) {
   return {
     id: e.id,
     description: e.description,
-    total: dollars(e.cents),
+    total: e.variable ? "asked on the due day" : dollars(e.cents),
     date: e.occurredOn,
     category: e.category,
     method: e.method,
     paidBy: (e.payers ?? []).map((p) => ({ name: p.name, paid: dollars(p.cents) })),
-    shares: (e.splits ?? []).map((s) => ({ name: s.name, owes: dollars(s.cents), ...(s.weight != null ? { [e.method === "percent" ? "percent" : "shares"]: s.weight } : {}) })),
+    shares: (e.splits ?? []).map((s) => ({ name: s.name, ...(e.variable ? {} : { owes: dollars(s.cents) }), ...(s.weight != null ? { [e.method === "percent" ? "percent" : "shares"]: s.weight } : {}) })),
     ...(e.note ? { note: e.note } : {}),
     ...(e.recurring ? { repeats: e.recurring } : {}),
     ...(receiptHref(e.receiptUrl) ? { hasReceipt: true } : {}),

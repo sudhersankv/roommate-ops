@@ -15,6 +15,8 @@ import { receiptHref } from "@/services/documents"
 import type { Expense } from "@/services/money"
 import { haveNeed } from "@/services/recipe-math"
 import type { Recipe } from "@/services/recipes"
+import { getRent, rentWindows } from "@/services/rent"
+import { getNudgeSettings } from "@/services/settle-nudge"
 import { toolkitStates } from "@/toolkits/catalog"
 import { toolkitById } from "@/toolkits/registry"
 import { COMING_SOON, MANIFESTS, TOOLKIT_IDS, type ToolkitId } from "@/toolkits/manifests"
@@ -27,8 +29,10 @@ import type {
   ChoreView,
   ExpenseView,
   NarrationView,
+  NudgeSettingsView,
   RecentDocumentView,
   RecipeView,
+  RentCardView,
   ReminderView,
   ScheduleView,
   SplitwiseView,
@@ -238,12 +242,37 @@ export function expenseView(s: GroupSession, e: Expense): ExpenseView {
     note: e.note ?? null,
     recurring: e.recurring ?? null,
     repeated: !!e.recurringParentId,
+    rent: e.category === "rent" && !!e.recurring && !e.recurringParentId,
+    variable: !!e.variable,
     // Only a Document's link renders from this server, whatever APP_URL says; an old /uploads path shows no receipt.
     receiptUrl: receiptHref(e.receiptUrl),
     inSplitwise: !!e.splitwiseId,
     source: e.source ?? "chat",
     canChange: payers.some((p) => canChangeExpense(s.member, { createdBy: e.createdBy ?? null, payerId: p.memberId, participantIds })),
   }
+}
+
+/** The Rent card: the rent, who may change it, the next due day in the Group's zone. */
+export async function rentCardView(s: GroupSession): Promise<RentCardView> {
+  const rent = await getRent(s.ctx)
+  const active = s.member.status === "active"
+  if (!rent) return { rent: null, canEdit: active }
+  const due = rentWindows(rent.dueDay, s.group.timezone, new Date()).dueDay
+  return {
+    rent: {
+      cents: rent.cents,
+      dueDay: rent.dueDay,
+      nextDue: rent.startsOn > due ? rent.startsOn : due,
+      payerId: rent.payerId,
+      method: rent.method,
+      shares: rent.shares.map((x) => ({ memberId: x.memberId, cents: x.cents })),
+    },
+    canEdit: active && (s.member.role === "admin" || s.member.id === rent.payerId),
+  }
+}
+
+export async function nudgeSettingsView(s: GroupSession): Promise<NudgeSettingsView> {
+  return getNudgeSettings(s.ctx)
 }
 
 export async function splitwiseView(s: GroupSession): Promise<SplitwiseView> {
