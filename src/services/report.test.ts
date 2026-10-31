@@ -71,7 +71,7 @@ test("formatGroupReport: every section in post order, deterministic, at most 12 
   const lines = out.split("\n");
   assert.deepEqual(lines, [
     "📋 Group report · Apt 4B",
-    "💸 2 open balances; I've DM'd everyone.",
+    "💸 2 open balances; I'm nudging people privately.",
     "🧹 Chores this week: Maya 3, Dev 2, Sam 0.",
     "🔥 Dev's on a 4-turn streak (dishes).",
     "⏳ Up now: Take out the trash (Maya, 2 days late), Dishes (Dev, today).",
@@ -91,7 +91,7 @@ test("formatGroupReport: casual Groups get sentences, no list look", () => {
   assert.equal(lines[0], "Group report · Apt 4B:");
   assert.ok(lines.length <= 3);
   assert.ok(!/^\p{Extended_Pictographic}/mu.test(out), "no emoji at line starts");
-  assert.match(out, /2 open balances; I've DM'd everyone./);
+  assert.match(out, /2 open balances; I'm nudging people privately./);
   assert.match(out, /7 things in the Cart/);
 });
 
@@ -114,8 +114,8 @@ test("coreReportParts: only the next week's Reminders, at most three", () => {
 
 test("settleReportParts: a count, never a name or an amount (#25)", () => {
   const t = (i: number) => ({ fromId: `f${i}`, fromName: `P${i}`, toId: "m", toName: "Maya", cents: 100 * i });
-  assert.equal(settleReportParts([t(1), t(2), t(3)], { nudged: true })[0].text, "3 open balances; I've DM'd everyone.");
-  assert.equal(settleReportParts([t(1)], { nudged: true })[0].text, "1 open balance; I've DM'd everyone.");
+  assert.equal(settleReportParts([t(1), t(2), t(3)], { nudged: true })[0].text, "3 open balances; I'm nudging people privately.");
+  assert.equal(settleReportParts([t(1)], { nudged: true })[0].text, "1 open balance; I'm nudging people privately.");
   assert.equal(settleReportParts([t(1), t(2)])[0].text, "2 open balances.", "the nudge is off: no DM claim");
   assert.equal(settleReportParts([])[0].text, "All square.");
 });

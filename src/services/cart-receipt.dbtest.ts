@@ -12,11 +12,10 @@ import { DevChannel, devUserId } from "@/channels/dev";
 import { MemoryBlobStore, setBlobStore } from "@/integrations/blob-store";
 import { FakeInstacart, setInstacartClient } from "@/integrations/instacart";
 import { onGroupJoined } from "@/onboarding";
-import { addItems, checkout, listOpenItems, removeItemById } from "@/services/cart";
+import { addAsSaid, addItems, checkout, listOpenItems, removeItemById } from "@/services/cart";
 import { deleteGroup } from "@/services/groups";
 import * as receipts from "@/services/receipts";
 import type { Ctx } from "@/services/types";
-import { findUsual } from "@/services/usuals";
 import { cartTools } from "@/toolkits/groceries/cart";
 import { receiptTools } from "@/toolkits/splitting/receipts";
 import { assertNotProdDb } from "../../scripts/lib/prod-guard";
@@ -134,7 +133,9 @@ describe("A grocery receipt closes the Cart (dev DB)", () => {
       ["pepsi", dev.memberId, "receipt"],
       ["sourdough bread", null, "receipt"],
     ]);
-    assert.equal((await findUsual(groupId, "oat milk", sam.memberId))?.qty, "2 cartons", "usuals learn from what was bought");
+    assert.equal((await db.select().from(schema.groceryUsuals).where(eq(schema.groceryUsuals.groupId, groupId))).length, 0, "a receipt writes no usual rows");
+    assert.deepEqual((await addAsSaid(sam, { items: [{ name: "oat milk" }] })).usedUsual, [{ name: "oat milk", qty: "2 cartons" }], "what was bought is the usual (history)");
+    for (const i of (await listOpenItems({ groupId })).filter((x) => x.name === "oat milk")) await removeItemById(maya, { id: i.id });
   });
 
   test("the same receipt again closes nothing more; a receipt with nothing from the Cart is an ordinary Expense", async () => {

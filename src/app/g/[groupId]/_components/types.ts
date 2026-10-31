@@ -51,8 +51,8 @@ export type RentCardView = {
   canEdit: boolean
 }
 
-/** Settings' Nudges card: the private Settle nudge (Admins). */
-export type NudgeSettingsView = { thresholdCents: number; thresholdDays: number; enabled: boolean }
+/** Settings' Nudges card: the private Settle nudge (Admins, ADR 0021). */
+export type NudgeSettingsView = { thresholdCents: number; everyDays: number; enabled: boolean }
 
 export type SplitwiseView = {
   /** Composio works (or the fake is on); otherwise the card is disabled with `hint`. */
@@ -133,13 +133,14 @@ export type ProbablyLowView = {
   scope: "shared" | "mine"
 }
 
-/** One grocery usual on the Cart page (services/usuals.ts): the viewer's own, or the house's. */
+/** One grocery usual on the Cart page (services/cart.ts pageUsuals): the viewer's own, or the house's. */
 export type UsualView = {
-  id: string
+  /** The row someone said; null for one derived from Cart history ("From what you bought"). */
+  id: string | null
   name: string
   qty: string
-  /** "From what you bought" vs told to Roomie. */
-  learned: boolean
+  /** Said to Roomie (edit, remove) vs derived from history (edit pins it, no remove). */
+  pinned: boolean
   scope: "mine" | "shared"
 }
 

@@ -11,6 +11,7 @@ import { InstacartUnavailableError, instacartClient } from "@/integrations/insta
 import { record, sourceOf } from "./activity";
 import { NotAllowedError, requireActive } from "./authz";
 import { canRemoveItem, computeCartSplits } from "./cart-split";
+import { usualFor, type PastAdd, type UsualScope } from "./cart-usuals";
 import { listMembers } from "./members";
 import { logExpense, type Expense } from "./money";
 import { insertPurchases, localDay } from "./restock";
@@ -21,8 +22,8 @@ import type { ExpenseCategory } from "@/db/enums";
 import { normalizeItem, sameItem } from "@/lib/items";
 import { matchItem, splitReceiptLines, type ItemAssignment, type ParsedReceipt, type ReceiptItem } from "./receipts";
 import type { SplitRow } from "./split";
-import { addedLine, matchUsual, planAdd, usualOwner, type Usual, type UsualSource } from "./usual-rules";
-import { learnFromPurchases, saveUsual, touchUsual, usualsFor } from "./usuals";
+import { matchUsual, shouldRemember, type Usual } from "./usual-rules";
+import { noteAsked, saveUsual, takeAnswer, usualsFor } from "./usuals";
 
 export { canRemoveItem, computeCartSplits, type SplitItem } from "./cart-split";
 
@@ -155,50 +156,110 @@ export async function addItems(ctx: Ctx, input: { items: { name: string; qty?: s
   return rows.map((r) => toItem(r, names, new Map()));
 }
 
-/**
- * What people say, added as said: items whose quantity can't be read one way ("eggs, 12, 18") are held back with one
- * short question each (lib/units clarifyQuantities); the rest go in.
- */
-export async function addAsSaid(ctx: Ctx, input: { items: { name: string; qty?: string }[]; shared?: boolean; forMemberId?: string }): Promise<{ added: CartItem[]; needsClarification: string[] }> {
-  const { ok, questions } = clarifyQuantities(input.items);
-  const added = ok.length ? await addItems(ctx, { ...input, items: ok }) : [];
-  return { added, needsClarification: questions };
+/** The Group's Cart history (open and purchased), newest first, for the Usuals. */
+async function pastAdds(groupId: string): Promise<PastAdd[]> {
+  return db
+    .select({ name: cartItems.name, qty: cartItems.qty, addedBy: cartItems.addedBy, shared: cartItems.shared, createdAt: cartItems.createdAt })
+    .from(cartItems)
+    .where(eq(cartItems.groupId, groupId))
+    .orderBy(desc(cartItems.createdAt))
+    .limit(1000);
 }
 
-export type WishItem = { name: string; qty?: string; brand?: string; remember?: boolean };
-export type AddedItem = CartItem & { usual?: string };
+/** Whose usual: a Member's own items, or the house's shared ones. */
+export type UsualOwner = { shared: true } | { memberId: string };
 
 /**
- * The add path behind cart_add and the dashboard's Add (#36): each item against the adder's own usual (or the house's,
- * for shared items). A bare mention with a usual adds the usual ("your usual"); one of something that comes in sizes or
- * kinds with none is held back with one question (the same `needsClarification` as ambiguous quantities); a clear one
- * goes in as said and becomes the usual unless `remember` is false; a change to a usual overwrites it only with
- * `remember` true ("from now on"). `say` is the line to post ("Added your usual: Pepsi, 12 cans.").
+ * The usual for each bare name in a scope, in order (#36 + #62): first the row someone said (usuals.ts; a bare "bread"
+ * also finds the house's "Sourdough bread"), then Cart history (cart-usuals.ts usualFor), else none. addAsSaid and a
+ * Recipe's Cart items both ask here, so a thing never has two usuals.
  */
-export async function addWithUsuals(ctx: Ctx, input: { items: WishItem[]; shared?: boolean; forMemberId?: string }): Promise<{ added: AddedItem[]; needsClarification: string[]; say: string | null }> {
-  await requireActive(ctx);
-  const addedBy = input.forMemberId ?? ctx.memberId;
-  const scope = input.shared ? null : addedBy;
-  const { ok, questions } = clarifyQuantities(input.items);
-  const wishes = ok as WishItem[];
-  const known = await usualsFor(ctx.groupId, scope);
-  const plans = wishes.map((w) => ({ wish: w, plan: planAdd(w, matchUsual(known, w.name, !(w.qty ?? "").trim())) }));
-  type Going = { name: string; qty: string; usual: Usual | null; brand: string | null; write: UsualSource | null; touch: Usual | null };
-  const going = plans.flatMap(({ plan }): Going[] => {
-    if (plan.kind === "ask") return [];
-    if (plan.kind === "usual") return [{ name: plan.usual.name, qty: plan.usual.qty, usual: plan.usual, brand: plan.usual.brand, write: null, touch: plan.usual }];
-    return [{ name: plan.name, qty: plan.qty, usual: null, brand: plan.brand, write: plan.write, touch: plan.touch }];
-  });
-  const asked = plans.flatMap(({ plan }) => (plan.kind === "ask" ? [plan.question] : []));
-  const rows = going.length ? await addItems(ctx, { items: going.map((g) => ({ name: g.name, qty: g.qty })), shared: input.shared, forMemberId: input.forMemberId }) : [];
-  for (const g of going) {
-    if (g.write) await saveUsual(db, ctx.groupId, { memberId: scope, name: g.name, qty: g.qty, brand: g.brand, source: g.write });
-    else if (g.touch) await touchUsual(g.touch.id);
+export async function usualsOf(groupId: string, owner: UsualOwner, names: readonly string[]): Promise<Map<string, { name: string; qty: string; quantity: number | null; unit: string | null }>> {
+  const out = new Map<string, { name: string; qty: string; quantity: number | null; unit: string | null }>();
+  if (!names.length) return out;
+  const rows = await usualsFor(groupId, "shared" in owner ? null : owner.memberId);
+  let history: PastAdd[] | null = null;
+  for (const name of names) {
+    const row = matchUsual(rows, name, true);
+    if (row) {
+      out.set(name, { name: row.name, qty: row.qty, quantity: row.quantity, unit: row.unit });
+      continue;
+    }
+    history ??= await pastAdds(groupId);
+    const qty = usualFor(name, owner as UsualScope, history);
+    if (qty) {
+      const amount = parseAmount(qty);
+      out.set(name, { name: name.trim(), qty, quantity: amount?.quantity ?? null, unit: amount?.unit ?? null });
+    }
   }
-  const adderName = rows[0]?.addedByName ?? "";
-  const added = rows.map((r, k) => (going[k].usual ? { ...r, usual: usualOwner(!!input.shared, adderName, addedBy === ctx.memberId) } : r));
-  return { added, needsClarification: [...questions, ...asked], say: addedLine(added) };
+  return out;
 }
+
+export type PageUsual = { id: string | null; name: string; qty: string; scope: "mine" | "shared"; pinned: boolean };
+
+/**
+ * The Cart page's Usuals for the signed-in Member: their own, then the house's. Rows someone said are `pinned` (edit,
+ * remove); the rest are derived from Cart history the same way an add derives them (usualFor), one per thing.
+ */
+export async function pageUsuals(ctx: Ctx): Promise<PageUsual[]> {
+  const [mineRows, houseRows, history] = await Promise.all([usualsFor(ctx.groupId, ctx.memberId), usualsFor(ctx.groupId, null), pastAdds(ctx.groupId)]);
+  const scoped = (owner: UsualOwner, rows: Usual[], scope: PageUsual["scope"]): PageUsual[] => {
+    const pinned = rows.map((r) => ({ id: r.id, name: r.name, qty: r.qty, scope, pinned: true }));
+    const seen = new Set(rows.map((r) => r.item));
+    const derived: PageUsual[] = [];
+    for (const a of history) {
+      if (("shared" in owner ? !a.shared : a.shared || a.addedBy !== owner.memberId)) continue;
+      const item = normalizeItem(a.name);
+      if (!item || seen.has(item) || rows.some((r) => sameItem(r.item, a.name))) continue;
+      seen.add(item);
+      const qty = usualFor(a.name, owner as UsualScope, history);
+      if (qty) derived.push({ id: null, name: a.name, qty, scope, pinned: false });
+    }
+    return [...pinned, ...derived];
+  };
+  return [...scoped({ memberId: ctx.memberId }, mineRows, "mine"), ...scoped({ shared: true }, houseRows, "shared")];
+}
+
+export type AddWish = { name: string; qty?: string; remember?: boolean };
+
+/**
+ * The one add path (cart_add, the dashboard's Add, photos). A said quantity always wins; an item with none takes its
+ * usual (usualsOf: the row someone said, else history) and comes back in `usedUsual` so Roomie can say "like usual".
+ * Then items whose quantity can't be read one way ("eggs, 12, 18"), or with none for something where it matters
+ * ("eggs", "Pepsi": lib/units clarifyQuantities, the only place questions come from) are held back with one short
+ * question each, and noted as asked; the rest go in. An add with a quantity writes the row only when someone said it
+ * (usual-rules shouldRemember): the answer to that question, or `remember` true; never a plain clear add, which is
+ * history already. `kinds: false` (photos of a written list) asks only about counts, not kinds.
+ */
+export async function addAsSaid(
+  ctx: Ctx,
+  input: { items: AddWish[]; shared?: boolean; forMemberId?: string; kinds?: boolean },
+): Promise<{ added: CartItem[]; needsClarification: string[]; usedUsual: { name: string; qty: string }[] }> {
+  const addedBy = input.forMemberId ?? ctx.memberId;
+  const owner: UsualOwner = input.shared ? { shared: true } : { memberId: addedBy };
+  const rowScope = input.shared ? null : addedBy;
+  const bare = input.items.filter((i) => !(i.qty ?? "").trim()).map((i) => i.name);
+  const usuals = await usualsOf(ctx.groupId, owner, bare);
+  const filled = input.items.map((i) => {
+    const u = (i.qty ?? "").trim() ? undefined : usuals.get(i.name);
+    return { wish: i, item: u ? { name: u.name, qty: u.qty } : { name: i.name, qty: i.qty }, usual: !!u };
+  });
+  const { ok, questions } = clarifyQuantities(filled.map((f) => ({ ...f.item, f })), { kinds: input.kinds });
+  const going = ok.map((o) => o.f);
+  const held = filled.filter((f) => !going.includes(f));
+  if (held.length) noteAsked(ctx.groupId, rowScope, held.map((f) => f.wish.name));
+  const added = going.length ? await addItems(ctx, { items: going.map((g) => g.item), shared: input.shared, forMemberId: input.forMemberId }) : [];
+  const said = going.filter((g) => !g.usual && (g.wish.qty ?? "").trim());
+  if (said.length) {
+    const rows = await usualsFor(ctx.groupId, rowScope);
+    for (const g of said) {
+      const answered = takeAnswer(ctx.groupId, rowScope, g.wish.name);
+      if (shouldRemember(g.wish, matchUsual(rows, g.wish.name), answered)) await saveUsual(db, ctx.groupId, { memberId: rowScope, name: g.wish.name, qty: g.wish.qty! });
+    }
+  }
+  return { added, needsClarification: questions, usedUsual: going.filter((g) => g.usual).map((g) => ({ name: g.item.name.trim(), qty: g.item.qty! })) };
+}
+
 
 async function recordRemoved(ctx: Ctx, item: { id: string; name: string; addedBy: string }) {
   const whose = item.addedBy === ctx.memberId ? "" : ` (${(await namesFor(ctx.groupId)).get(item.addedBy) ?? "someone"}'s)`;
@@ -421,8 +482,8 @@ export function unmatchedQuestion(lines: readonly { name: string; cents: number 
  * Close the Cart with a grocery receipt, in one transaction: the matched Cart items are marked purchased FIRST (as
  * markPurchased does: the rows that come back are the only ones this receipt may close, a second click finds none),
  * then ONE Expense with exact Shares per line (planCartReceipt), the receipt Document linked through receiptUrl, the
- * newest unpaid Checkout it covers marked paid, a purchase event per line (personal = the one Member it went to) and the
- * usuals taught (usual-rules learnFromPurchase). Unanswered lines are shared. Items the receipt doesn't have stay open.
+ * newest unpaid Checkout it covers marked paid and a purchase event per line (personal = the one Member it went to);
+ * the bought items stay in Cart history, which is what the usuals are derived from. Unanswered lines are shared. Items the receipt doesn't have stay open.
  * A second click or a retry gets fewer rows back from the open-status update and throws before anything is logged; as in
  * markPurchased, logExpense commits on its own connection, so the one remaining window is the outer commit failing after
  * the Expense committed: the items stay open with an Expense logged, which is visible and fixable, never a double charge.
@@ -478,14 +539,13 @@ export async function closeCartWithReceipt(
       checkoutId = c.id;
       await tx.update(cartCheckouts).set({ expenseId: expense.id, paidAt: new Date() }).where(eq(cartCheckouts.id, c.id));
     }
-    // Restock and the usuals learn from it: the Cart's own name for a matched line, one Member's line is theirs.
+    // Restock learns from it: the Cart's own name for a matched line, one Member's line is theirs.
     const solo = (ids: string[]) => (ids.length === 1 && plan.everyone.length > 1 ? ids[0] : null);
     await insertPurchases(
       tx,
       ctx.groupId,
       plan.lines.map((l) => ({ name: l.cartItem?.name ?? l.name, memberId: solo(l.memberIds), occurredOn: expense.occurredOn ?? today, source: "receipt" as const, sourceId: expense.id })),
     );
-    await learnFromPurchases(tx, ctx.groupId, items.map((i) => ({ name: i.name, qty: i.qty, memberId: i.shared ? null : i.addedBy })));
     return expense;
   });
   const money = moneyIn(await currencyOf(ctx.groupId));
@@ -582,8 +642,6 @@ export async function markPurchased(ctx: Ctx, input: { totalCents: number; payer
       ctx.groupId,
       items.map((i) => ({ name: i.name, memberId: i.shared ? null : i.addedBy, occurredOn: today, source: "cart" as const, sourceId: i.id })),
     );
-    // And the usuals: what was bought, unless someone told Roomie otherwise (usual-rules learnFromPurchase).
-    await learnFromPurchases(tx, ctx.groupId, items.map((i) => ({ name: i.name, qty: i.qty, memberId: i.shared ? null : i.addedBy })));
     count = items.length;
     return expense;
   });

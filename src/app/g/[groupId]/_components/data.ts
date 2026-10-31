@@ -20,7 +20,6 @@ import { getRent, rentWindows } from "@/services/rent"
 import { probablyLowView } from "@/services/restock"
 import { lastBoughtText } from "@/services/restock-math"
 import { getNudgeSettings } from "@/services/settle-nudge"
-import * as usuals from "@/services/usuals"
 import { toolkitStates } from "@/toolkits/catalog"
 import { toolkitById } from "@/toolkits/registry"
 import { COMING_SOON, MANIFESTS, TOOLKIT_IDS, type ToolkitId } from "@/toolkits/manifests"
@@ -376,9 +375,7 @@ export async function cartShareText(s: Pick<GroupSession, "ctx">): Promise<strin
 
 /** The Cart page's Usuals: the viewer's own, then the house's. */
 export async function usualsView(s: GroupSession): Promise<UsualView[]> {
-  const { mine, house } = await usuals.listUsuals(s.ctx)
-  const row = (scope: UsualView["scope"]) => (u: usuals.Usual): UsualView => ({ id: u.id, name: u.name, qty: u.qty, learned: u.source === "purchase", scope })
-  return [...mine.map(row("mine")), ...house.map(row("shared"))]
+  return (await cart.pageUsuals(s.ctx)).map((u) => ({ id: u.id, name: u.name, qty: u.qty, pinned: u.pinned, scope: u.scope }))
 }
 
 export async function cartPageView(s: GroupSession): Promise<CartPageView> {

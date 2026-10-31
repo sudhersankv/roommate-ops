@@ -370,3 +370,14 @@
     transform: translateY(calc(-40px - var(--s) * 18));
   }
 }
+
+/* The giant peeking dino (peek.tsx): driven by the Web Animations API, transforms only. */
+.lp-peek {
+  will-change: transform;
+  filter: drop-shadow(0 18px 24px rgb(0 0 0 / 0.35));
+}
+@media (prefers-reduced-motion: reduce) {
+  .lp-peek {
+    display: none;
+  }
+}

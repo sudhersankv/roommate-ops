@@ -16,6 +16,7 @@ import { ChatWindow, cuesFor } from "./chat"
 import { DEMOS, HERO } from "./demos"
 import { TelegramMark, WhatsAppMark, linkClass, shareLinks, telegramAddUrl } from "./marks"
 import { CopyLink } from "./share-row"
+import { Peek } from "./peek"
 import { Stage } from "./stage"
 import { accentOf, builtTricks, comingSoonTricks } from "./tricks"
 import { VoteButton } from "./vote-button"
@@ -112,14 +113,16 @@ function Hero({ addUrl, signedIn }: { addUrl: string; signedIn: boolean }) {
         <div className="relative mx-auto w-full max-w-md lg:mx-0 lg:max-w-none">
           <Arches className="absolute -top-4 left-1/2 w-[min(130%,40rem)] max-w-none -translate-x-1/2 lg:-top-10" />
           <Stage cues={cuesFor(HERO.lines)} start="load" size={76} className="pt-12" dinoClassName="top-0 right-8 sm:right-12">
-            <ChatWindow
-              title={HERO.title}
-              people={HERO.people}
-              lines={HERO.lines}
-              motion="stage"
-              label="An example apartment chat: Sam asks if rent is this week, and Roomie says $2,400 is due Saturday and Maya pays the landlord. Dev paid $60 for internet, so Maya and Sam owe him $20 each. Maya asks about the landlord, and Roomie says a tech comes Thursday 1 to 3 and it will remind them Wednesday night."
-              className="relative -mb-24 shadow-2xl shadow-black/40"
-            />
+            <Peek free="right">
+              <ChatWindow
+                title={HERO.title}
+                people={HERO.people}
+                lines={HERO.lines}
+                motion="stage"
+                label="An example apartment chat: Sam asks if rent is this week, and Roomie says $2,400 is due Saturday and Maya pays the landlord. Dev paid $60 for internet, so Maya and Sam owe him $20 each. Maya asks about the landlord, and Roomie says a tech comes Thursday 1 to 3 and it will remind them Wednesday night."
+                className="relative -mb-24 shadow-2xl shadow-black/40"
+              />
+            </Peek>
           </Stage>
         </div>
       </section>
@@ -266,7 +269,7 @@ function Demos({ addUrl }: { addUrl: string }) {
         {DEMOS_SUBLINE}
       </SectionHead>
       <div className="mt-12 grid items-start gap-x-12 gap-y-16 md:grid-cols-2">
-        {DEMOS.map((d) => (
+        {DEMOS.map((d, i) => (
           <article key={d.id} aria-labelledby={`demo-${d.id}`} className="flex flex-col gap-4">
             <div className="flex flex-col gap-2">
               <TrickChip id={d.trick.id} name={d.trick.name} />
@@ -276,7 +279,10 @@ function Demos({ addUrl }: { addUrl: string }) {
               <p className="type-body m-0 max-w-[44ch] text-muted-foreground">{d.body}</p>
             </div>
             <Stage cues={cuesFor(d.lines)} size={52} className="pt-9" dinoClassName="top-0 right-6">
-              <ChatWindow title={d.group.title} people={d.group.people} motion="stage" label={`Example chat in ${d.group.title}: ${d.title} ${d.body}`} lines={d.lines} />
+              {/* Text sits right above each demo chat, so the dino peeks from its outer side only. */}
+              <Peek free={i % 2 ? "right" : "left"} top={false}>
+                <ChatWindow title={d.group.title} people={d.group.people} motion="stage" label={`Example chat in ${d.group.title}: ${d.title} ${d.body}`} lines={d.lines} />
+              </Peek>
             </Stage>
           </article>
         ))}

@@ -45,7 +45,8 @@ export function CartScreen({ view, openRecipeId }: { view: CartPageView; openRec
       }
       setName("")
       setQty("")
-      toast.add({ title: res.data?.say ?? `Added ${clean}`, description: shared ? "Shared, so it's split evenly." : "Personal, so it's on you." })
+      const usual = res.data?.usual
+      toast.add({ title: usual ? `${usual.name}, ${usual.qty} like usual` : `Added ${clean}`, description: shared ? "Shared, so it's split evenly." : "Personal, so it's on you." })
     })
   }
 
@@ -218,7 +219,10 @@ function ProbablyLowSection({ rows }: { rows: ProbablyLowView[] }) {
   )
 }
 
-/** What "Pepsi" means: your usuals and the house's. Edit or remove; Roomie asks again next time once one's gone. */
+/**
+ * What "Pepsi" means: your usuals and the house's. What someone told Roomie can be edited or removed; the ones from
+ * what you bought (Cart history) can be edited, which pins them, and have no remove.
+ */
 function UsualsSection({ rows }: { rows: UsualView[] }) {
   const { group } = useGroup()
   const [pending, start] = useTransition()
@@ -226,9 +230,10 @@ function UsualsSection({ rows }: { rows: UsualView[] }) {
   if (rows.length === 0) return null
   const remove = (u: UsualView) =>
     start(async () => {
+      if (!u.id) return
       const res = await removeUsual(group.id, u.id)
       if (!res.ok) return void toast.add({ title: "Couldn't remove it", description: res.error, type: "error" })
-      toast.add({ title: `Removed ${u.scope === "mine" ? "your" : "the house's"} usual ${u.name.toLowerCase()}`, description: "Roomie asks next time." })
+      toast.add({ title: `Removed ${u.scope === "mine" ? "your" : "the house's"} usual ${u.name.toLowerCase()}`, description: "Next time it goes by what you buy." })
     })
   return (
     <section aria-labelledby="cart-usuals" className="flex flex-col gap-2">
@@ -240,23 +245,27 @@ function UsualsSection({ rows }: { rows: UsualView[] }) {
       </div>
       <ItemGroup className="gap-0 rounded-3xl bg-card py-1">
         {rows.map((u) => (
-          <Item key={u.id} className="py-2 pr-1.5">
+          <Item key={`${u.scope}-${u.id ?? u.name}`} className="py-2 pr-1.5">
             <ItemContent className="min-w-0">
               <ItemTitle className="truncate">
                 {u.name}
                 <span className="font-normal text-muted-foreground">{u.qty}</span>
               </ItemTitle>
               <ItemDescription>
-                {u.scope === "mine" ? "Yours" : "The house's"} · {u.learned ? "From what you bought" : u.scope === "mine" ? "You told Roomie" : "Told Roomie"}
+                {u.scope === "mine" ? "Yours" : "The house's"} · {!u.pinned ? "From what you bought" : u.scope === "mine" ? "You told Roomie" : "Told Roomie"}
               </ItemDescription>
             </ItemContent>
             <ItemActions className="gap-1">
               <Button variant="ghost" size="icon-sm" aria-label={`Edit ${u.name}`} disabled={pending} onClick={() => setEditing(u)}>
                 <PencilIcon />
               </Button>
-              <Button variant="ghost" size="icon-sm" aria-label={`Remove ${u.name}`} disabled={pending} onClick={() => remove(u)}>
-                <XIcon />
-              </Button>
+              {u.pinned ? (
+                <Button variant="ghost" size="icon-sm" aria-label={`Remove ${u.name}`} disabled={pending} onClick={() => remove(u)}>
+                  <XIcon />
+                </Button>
+              ) : (
+                <span aria-hidden className="size-9" />
+              )}
             </ItemActions>
           </Item>
         ))}
@@ -275,7 +284,7 @@ function UsualForm({ usual, onDone }: { usual: UsualView; onDone: () => void }) 
   const [qty, setQty] = useState(usual.qty)
   const save = () =>
     start(async () => {
-      const res = await updateUsual(group.id, { id: usual.id, name: name.trim(), qty: qty.trim() })
+      const res = await updateUsual(group.id, { id: usual.id, name: name.trim(), qty: qty.trim(), scope: usual.scope })
       if (!res.ok) return void toast.add({ title: "Couldn't save it", description: res.error, type: "error" })
       toast.add({ title: `Saved: ${name.trim()}, ${qty.trim()}` })
       onDone()

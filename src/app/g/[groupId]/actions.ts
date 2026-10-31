@@ -82,13 +82,16 @@ export async function recordSettlement(groupId: string, input: { fromId: string;
 /** The Add box: the same add path as cart_add (usuals, one question for something unclear). */
 export async function addCartItem(groupId: string, input: { name: string; qty?: string; shared: boolean }) {
   return act(groupId, async (ctx) => {
-    const r = await cart.addWithUsuals(ctx, { items: [{ name: input.name, qty: input.qty }], shared: input.shared })
-    return { id: r.added[0]?.id ?? null, say: r.say, question: r.needsClarification[0] ?? null }
+    const r = await cart.addAsSaid(ctx, { items: [{ name: input.name, qty: input.qty }], shared: input.shared })
+    return { id: r.added[0]?.id ?? null, usual: r.usedUsual[0] ?? null, question: r.needsClarification[0] ?? null }
   })
 }
 
-export async function updateUsual(groupId: string, input: { id: string; name: string; qty: string }) {
-  return act(groupId, async (ctx) => (await usuals.updateUsual(ctx, input)).id)
+/** Edit a usual on the Cart page: a row is changed; one derived from history (no id) is pinned as a row. */
+export async function updateUsual(groupId: string, input: { id: string | null; name: string; qty: string; scope: "mine" | "shared" }) {
+  return act(groupId, async (ctx) =>
+    (input.id ? await usuals.updateUsual(ctx, { id: input.id, name: input.name, qty: input.qty }) : await usuals.pinUsual(ctx, { name: input.name, qty: input.qty, shared: input.scope === "shared" })).id
+  )
 }
 
 export async function removeUsual(groupId: string, id: string) {

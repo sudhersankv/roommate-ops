@@ -562,12 +562,12 @@ export async function getSettlePlan(ctx: GroupCtx): Promise<Transfer[]> {
 
 /**
  * Money's section of the weekly Group Report: how many balances are open, never who or how much (the Settle nudge
- * tells each person privately, #25). `nudged` = the Settle nudge is on for the Group. Pure.
+ * tells each person privately, ADR 0021). `nudged` = the Settle nudge covers at least one of the debts. Pure.
  */
 export function settleReportParts(plan: readonly Transfer[], opts: { nudged?: boolean } = {}): ReportPart[] {
   if (plan.length === 0) return [{ icon: "💸", text: "All square." }];
   const n = `${plan.length} open balance${plan.length === 1 ? "" : "s"}`;
-  return [{ icon: "💸", text: opts.nudged ? `${n}; I've DM'd everyone.` : `${n}.` }];
+  return [{ icon: "💸", text: opts.nudged ? `${n}; I'm nudging people privately.` : `${n}.` }];
 }
 
 /** The Settle plan row between two Members, whichever way it goes. */

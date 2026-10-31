@@ -64,8 +64,9 @@ export default function PrivacyPage() {
           </li>
           <li>
             <strong>Until you delete them:</strong> Expenses, Settlements, the Cart and Recipes, Chores, upkeep and Reminders, the Activity of who changed what, what a
-            Member asked it to remember (a diet, a Venmo handle), each Member&apos;s and the house&apos;s grocery usuals (&ldquo;Pepsi, 12 cans&rdquo;; shown and editable on the
-            Cart page), what the group bought and when, counts of how the group talks, and photos sent to it. Usuals aren&apos;t chat: they stay after the 30 days.
+            Member asked it to remember (a diet, a Venmo handle), the grocery usuals Members told it, their own or the house&apos;s (&ldquo;Pepsi, 12 cans&rdquo;; other usuals are
+            worked out from what was added to the Cart, and both are shown and editable on the Cart page), what the group bought and when, counts of how the group
+            talks, and photos sent to it. Usuals aren&apos;t chat: they stay after the 30 days.
           </li>
           <li>
             <strong>With Lease Inbox, until you delete them:</strong> the emails that reach the group&apos;s address (sender, subject, text and what Roomie made of

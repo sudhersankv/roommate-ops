@@ -1,8 +1,9 @@
 "use client"
 
+import { usePathname } from "next/navigation"
 import { useEffect, useSyncExternalStore } from "react"
 
-import { THEME_KEY as KEY } from "./theme-script"
+import { THEME_KEY as KEY, THEMED_PATHS } from "./theme-script"
 
 export type ThemePreference = "system" | "light" | "dark"
 
@@ -18,7 +19,7 @@ function read(): ThemePreference {
 }
 
 function apply(pref: ThemePreference) {
-  const dark = pref === "dark" || (pref === "system" && matchMedia("(prefers-color-scheme: dark)").matches)
+  const dark = !THEMED_PATHS.test(location.pathname) || pref === "dark" || (pref === "system" && matchMedia("(prefers-color-scheme: dark)").matches)
   const root = document.documentElement
   root.classList.toggle("dark", dark)
   root.style.colorScheme = dark ? "dark" : "light"
@@ -46,12 +47,17 @@ export function useThemePreference() {
   return [pref, setPref] as const
 }
 
-/** Keeps "system" in step when the OS switches between light and dark while the page is open. */
+/**
+ * Keeps "system" in step when the OS switches between light and dark while the page is open, and re-applies the
+ * theme on a client navigation between the always-dark public site and the dashboard.
+ */
 export function ThemeWatcher() {
+  const path = usePathname()
+  useEffect(() => apply(read()), [path])
   useEffect(() => {
     const media = matchMedia("(prefers-color-scheme: dark)")
     const onChange = () => {
-      if (read() === "system") apply("system")
+      apply(read())
     }
     media.addEventListener("change", onChange)
     return () => media.removeEventListener("change", onChange)

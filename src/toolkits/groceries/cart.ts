@@ -20,15 +20,14 @@ const itemSchema = z.object({
   remember: z
     .boolean()
     .optional()
-    .describe("true when a change is for good ('make it 24 from now on', 'always the 2-liter'); false for a one-off ('just a 2-liter this time'). Omit otherwise: an answer to your question is remembered."),
+    .describe("true when this is their answer to your needsClarification question, or a change for good ('make it 24 from now on', 'always the 2-liter'): it becomes their usual. false for a one-off ('just a 2-liter this time'). Omit for a plain add."),
 });
 
 export const cartTools = {
   cart_add: createTool({
     id: "cart_add",
     description:
-      "Add grocery items to the shared cart, attributed to the sender ('add 3 bags of chips for me' -> one item, name 'chips', qty '3 bags'), or to `for` ('oat milk for Dev'). shared=true for things the whole group uses (toilet paper, dish soap, 'for the house', 'common'). If it's unclear whether it's for them or everyone, ask first. " +
-      "A bare mention ('Pepsi') uses the person's usual (the house's for shared items); the result's `say` names it ('Added your usual: Pepsi, 12 cans.'): post `say`. If the result has `needsClarification`, those items were NOT added: ask that one short question in one line (and say what was added, if anything), then call cart_add again with only those items and their answer as qty. Quantities are stored as said. No prices: never say a price or total.",
+      "Add grocery items to the shared cart, attributed to the sender ('add 3 bags of chips for me' -> one item, name 'chips', qty '3 bags'), or to `for` ('oat milk for Dev'). shared=true for things the whole group uses (toilet paper, dish soap, 'for the house', 'common'). If it's unclear whether it's for them or everyone, ask first. Quantities are stored as said (omit qty when they didn't say one: their usual is filled in and comes back in `usedUsual`; say it, 'Eggs, 18 like usual.'); if the result has `needsClarification`, those items were NOT added: ask that one short question (and say what was added, if anything), then call cart_add again with only those items and their answer as qty, remember=true. No prices: never say a price or total.",
     inputSchema: z.object({
       items: z.array(itemSchema).min(1),
       shared: z.boolean().optional().describe("true when it's for the whole house, not one person"),
@@ -37,12 +36,12 @@ export const cartTools = {
     execute: async (input, context) => {
       const ctx = ctxOf(context);
       const forMemberId = input.for && !input.shared ? await memberIdByName(ctx, input.for) : undefined;
-      const { added, needsClarification, say } = await cart.addWithUsuals(ctx, { items: input.items, shared: input.shared, forMemberId });
+      const { added, needsClarification, usedUsual } = await cart.addAsSaid(ctx, { items: input.items, shared: input.shared, forMemberId });
       const open = await cart.listOpenItems(ctx);
       return {
-        added: added.map((i) => ({ ...said(i), ...(i.usual ? { usual: i.usual } : {}) })),
+        added: added.map(said),
         cartItemCount: open.length,
-        ...(say ? { say } : {}),
+        ...(usedUsual.length ? { usedUsual } : {}),
         ...(needsClarification.length ? { needsClarification } : {}),
       };
     },

@@ -13,8 +13,7 @@ import { requireActive } from "./authz";
 import { listMembers } from "./members";
 import { getNotKept, getPantry } from "./pantry";
 import { coveredBy, haveNeed, recipeBuyList, recipeKey, scaleIngredients } from "./recipe-math";
-import { matchUsual } from "./usual-rules";
-import { usualsFor } from "./usuals";
+import { usualsOf } from "./cart";
 import type { Ctx, GroupCtx } from "./types";
 
 const { recipes, cartItems, members } = schema;
@@ -346,15 +345,20 @@ export async function addRecipeToCart(ctx: Ctx, recipeId: string, opts: { skip?:
   const alreadyInCart = need.filter((i) => inCart(i.name)).map((i) => i.name);
   const { buy, assumed } = recipeBuyList(need.filter((i) => !inCart(i.name)), await getNotKept(ctx));
   const shared = opts.forMemberId ? false : (opts.shared ?? true);
-  // A usual (#36) wins over the default buyable size: the house's for shared items, the person's for theirs.
-  const [houseUsuals, ownUsuals] = await Promise.all([usualsFor(ctx.groupId, null), usualsFor(ctx.groupId, addedBy)]);
+  // A usual wins over the default buyable size: the house's for shared items, the person's for theirs, looked up the
+  // way every add looks it up (cart.usualsOf: the row someone said, else Cart history).
+  const sharedOf = (i: (typeof buy)[number]["ingredient"]) => (i.shared === false ? false : shared);
+  const [houseUsuals, ownUsuals] = await Promise.all([
+    usualsOf(ctx.groupId, { shared: true }, buy.filter((b) => sharedOf(b.ingredient)).map((b) => b.line.name)),
+    usualsOf(ctx.groupId, { memberId: addedBy }, buy.filter((b) => !sharedOf(b.ingredient)).map((b) => b.line.name)),
+  ]);
   const rows = buy.length
     ? await db
         .insert(cartItems)
         .values(
           buy.map(({ ingredient: i, line }) => {
-            const isShared = i.shared === false ? false : shared;
-            const usual = matchUsual(isShared ? houseUsuals : ownUsuals, line.name, true);
+            const isShared = sharedOf(i);
+            const usual = (isShared ? houseUsuals : ownUsuals).get(line.name);
             const amount = usual ? { quantity: usual.quantity, unit: usual.unit } : { quantity: line.quantity, unit: line.unit };
             const name = usual?.name ?? line.name;
             return {

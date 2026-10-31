@@ -153,7 +153,8 @@ export async function addPhotoToCart(ctx: Ctx, photo: GroceryPhoto, opts: { shar
     return { kind: "recipe", recipe: saved.title, added: r.added.map((i) => i.name), skippedHave: r.have, alreadyInCart: r.alreadyInCart, needsClarification: [] };
   }
   const wanted = photo.items.filter((i) => !skip.includes(i.name)).map((i) => ({ name: i.name, ...(i.qty ? { qty: i.qty } : {}) }));
-  const r = await addAsSaid(ctx, { items: wanted, shared: opts.shared, forMemberId: opts.forMemberId });
+  // A written list says what it says: only counts are asked about, not kinds ("bread" stays bread).
+  const r = await addAsSaid(ctx, { items: wanted, shared: opts.shared, forMemberId: opts.forMemberId, kinds: false });
   return { kind: photo.kind, added: r.added.map((i) => i.name), skippedHave: photo.items.filter((i) => skip.includes(i.name)).map((i) => i.name), alreadyInCart: [], needsClarification: r.needsClarification };
 }
 
