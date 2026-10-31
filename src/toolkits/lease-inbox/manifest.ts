@@ -17,7 +17,7 @@ export const leaseInbox = defineManifest({
   requires: { integrations: ["agentmail"] },
   status: "stable",
   gate: {
-    criterion: "The landlord or leasing office and its emails: notices, inspections, shut-offs, rent or lease changes, reporting a repair (work orders) and asking how it's going, replying to them, the group's email address, what the lease says.",
+    criterion: "The landlord or leasing office and its emails: notices, inspections, shut-offs, rent or lease changes, reporting something broken for the landlord to fix (a work order: the sink, the heat, a leak) and asking how that's going, replying to them, the group's email address, what the lease says.",
     examples: ["the sink's leaking, tell them", "what's up with the sink?", "did the landlord email about the inspection?", "ask them to move the inspection to Thursday", "what's the notice period in our lease?"],
   },
   persona: [

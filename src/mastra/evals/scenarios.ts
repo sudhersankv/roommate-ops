@@ -710,6 +710,9 @@ export const SCENARIOS: Scenario[] = [
       await internet(e);
       await chores.addChore(e.ctx, { name: "Dishes", everyDays: 1 });
       await chores.logChore(e.as("Dev"), { chore: "dishes" });
+      // Rent is set, so the report has no say-once rent offer: the text is the same when the check recomputes it.
+      const { setRent } = await import("@/services/rent");
+      await setRent(e.ctx, { cents: 240000, dueDay: 1 });
     },
     turn: { text: "roomie weekly report please" },
     expect: {
