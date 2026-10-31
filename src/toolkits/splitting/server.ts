@@ -1,6 +1,6 @@
 import { getSettlePlan, settleReportParts } from "@/services/money";
 import { rentBundleLine, rentDmJob, rentOfferReportParts } from "@/services/rent";
-import { getNudgeSettings, settleNudgeCandidates, settleNudgeJob } from "@/services/settle-nudge";
+import { nudgeableDebts, settleNudgeJob } from "@/services/settle-nudge";
 import { defineToolkit } from "../define";
 import { splitting as manifest } from "./manifest";
 import { moneyTools } from "./money";
@@ -17,16 +17,16 @@ export const splitting = defineToolkit(manifest, {
     settings: () => import("./dashboard").then((m) => m.SplittingSettings),
     mood: () => import("./dashboard").then((m) => m.splittingMood),
   },
-  // The rent line; the rent DMs go out from here too, once a month (claimed as rent.ahead, only in the Bundle's hour).
+  // The rent line. The private DMs go out from here too, only in the Bundle's hour: the rent DMs once a month
+  // (claimed as rent.ahead) and the Settle nudge per debt (claimed as nudge.settle per day and pair, ADR 0021).
   bundle: async (ctx, now) => {
     await rentDmJob(ctx, now).catch((e) => console.error("[money] rent DMs failed", e));
+    await settleNudgeJob(ctx, now).catch((e) => console.error("[money] settle nudge failed", e));
     return rentBundleLine(ctx, now);
   },
-  // The weekly report opens with the open balances as a count; the Settle nudge DMs each person from here (claimed as
-  // nudge.settle, only in the report's hour), then the rent offer once while there's no rent.
-  report: async (ctx, now) => {
-    await settleNudgeJob(ctx, now).catch((e) => console.error("[money] settle nudge failed", e));
-    const [plan, nudge, candidates] = await Promise.all([getSettlePlan(ctx), getNudgeSettings(ctx), settleNudgeCandidates(ctx, now)]);
-    return [...settleReportParts(plan, { nudged: nudge.enabled && candidates.length > 0 }), ...(await rentOfferReportParts(ctx))];
+  // The weekly report opens with the open balances as a count (never names), then the rent offer once while there's no rent.
+  report: async (ctx) => {
+    const [plan, nudgeable] = await Promise.all([getSettlePlan(ctx), nudgeableDebts(ctx)]);
+    return [...settleReportParts(plan, { nudged: nudgeable.length > 0 }), ...(await rentOfferReportParts(ctx))];
   },
 });

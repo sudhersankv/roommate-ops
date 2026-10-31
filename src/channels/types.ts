@@ -71,6 +71,9 @@ export interface Channel {
   /** Whether `Outgoing.poll` goes out as the Channel's own poll (votes come back as PollVotes). Otherwise it's sent as
    * numbered options and a bare number from a Member is the vote (the pipeline). */
   readonly nativePolls?: boolean;
+  /** Whether sendPrivate reaches any Member without them messaging Roomie first (WhatsApp, dev). Telegram can't: a
+   * Member there is reachable once they've pressed Start (a dm_context row says so). */
+  readonly messagesFirst?: boolean;
   /** Post into a Chat. */
   sendToChat(chatExternalId: string, msg: Outgoing): Promise<Sent>;
   /** A private 1:1 message (Claim links go out this way, ADR 0003). Throws CantMessagePrivatelyError when the

@@ -51,8 +51,8 @@ export type RentCardView = {
   canEdit: boolean
 }
 
-/** Settings' Nudges card: the private Settle nudge (Admins). */
-export type NudgeSettingsView = { thresholdCents: number; thresholdDays: number; enabled: boolean }
+/** Settings' Nudges card: the private Settle nudge (Admins, ADR 0021). */
+export type NudgeSettingsView = { thresholdCents: number; everyDays: number; enabled: boolean }
 
 export type SplitwiseView = {
   /** Composio works (or the fake is on); otherwise the card is disabled with `hint`. */

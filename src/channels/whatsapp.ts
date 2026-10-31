@@ -327,6 +327,8 @@ export class WhatsAppChannel implements Channel {
   }
 
   readonly nativePolls = true;
+  /** WhatsApp can DM any Member (ADR 0013). */
+  readonly messagesFirst = true;
 
   async sendToChat(chatExternalId: string, msg: Outgoing): Promise<Sent> {
     await this.flushIntro(chatExternalId);

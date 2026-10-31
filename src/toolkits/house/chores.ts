@@ -47,6 +47,16 @@ export const choreTools = {
       return chores.addChore(ctx, { name, everyDays, rotation: ids });
     },
   }),
+  chore_update: createTool({
+    id: "chore_update",
+    description:
+      "Change how often a chore on the chart comes around ('make trash every 3 days', or a yes to the weekly report's 'Trash actually goes out every 3 days. Want me to change it?'). Fuzzy-matched to the chart; the Rotation stays.",
+    inputSchema: z.object({
+      chore: z.string().min(1).describe("Which chore, as said ('trash')"),
+      everyDays: z.number().int().positive().describe("The new cycle, in days"),
+    }),
+    execute: async ({ chore, everyDays }, context) => chores.updateChore(ctxOf(context), { chore, everyDays }),
+  }),
   chore_remove: createTool({
     id: "chore_remove",
     description: "Admin only: take a chore off the chart (its history goes too).",

@@ -57,6 +57,8 @@ export type ToolkitManifest<Id extends string = string> = {
   description: string;
   /** One line for the marketplace card. */
   summary: string;
+  /** How Roomie names it mid-sentence ("what can you do?" -> "Money, groceries, chores. Just talk to me."): lowercase, a few words. */
+  spoken?: string;
   /** 2-4 sentences for the detail sheet. */
   longDescription: string;
   icon: IconName;
@@ -128,4 +130,9 @@ export type Toolkit<Id extends string = string> = Omit<ToolkitManifest<Id>, "das
   bundle?(ctx: GroupCtx, now: Date): Promise<string | null>;
   /** Its sections of the weekly Group Report, in order (none when there's nothing to report). */
   report?(ctx: GroupCtx, now: Date): Promise<ReportPart[]>;
+  /**
+   * Runs on every scheduler tick (60 s) for an unpaused Group that has it on: its own timed DMs outside the Bundle's
+   * hour (House's chore nudges at each chore's usual hour). Must be cheap and idempotent (claim in scheduled_posts).
+   */
+  tick?(ctx: GroupCtx, now: Date): Promise<void>;
 };

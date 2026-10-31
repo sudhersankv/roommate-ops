@@ -14,6 +14,7 @@ import { logMessage } from "./chatlog";
 import { askedSender, ensureInbox, inboxOf, knownSenders, NO_INBOX, sendToLandlord, trustSender, workOrderStatus, type SendApproval, type SendResult } from "./lease-inbox";
 import { leaseBundleText, leaseReportText, type QuietOrder } from "./lease-inbox-rules";
 import { admins } from "./members";
+import { noticeStatus, type Notice, type NoticeState } from "./notice-window";
 import type { ReportPart } from "./report";
 import { groupTimezone } from "./schedule";
 import type { Ctx, GroupCtx } from "./types";
@@ -147,6 +148,27 @@ export async function workOrderLine(ctx: GroupCtx, what?: string): Promise<{ fou
   const state =
     s.status === "sent" ? `sent, no answer yet (since ${when})` : s.status === "acknowledged" ? `they've seen it (${when})` : s.status === "scheduled" ? `scheduled for ${s.scheduledFor}` : "done";
   return { found: true, status: s.status, lastReply: s.lastReply, scheduledFor: s.scheduledFor, line: `${s.title}: ${state}.${s.lastReply ? ` Last word from them: ${s.lastReply}` : ""}` };
+}
+
+/* ---------- notices ---------- */
+
+/** How far back "is the water back on?" looks for a notice. */
+const NOTICE_LOOKBACK_DAYS = 60;
+
+/**
+ * "Is the water back on?": the answer from the latest relevant trusted notice's window (notice-window.ts
+ * noticeStatus). `about` is what they asked about ("water"); leave it out for any notice with a window.
+ */
+export async function noticeLine(ctx: GroupCtx, about?: string, now = new Date()): Promise<{ found: boolean; line: string; state?: NoticeState }> {
+  const since = new Date(now.getTime() - NOTICE_LOOKBACK_DAYS * 86_400_000);
+  const rows = await db
+    .select({ summary: mailMessages.summary, subject: mailMessages.subject, facts: mailMessages.facts, receivedAt: mailMessages.receivedAt })
+    .from(mailMessages)
+    .where(and(eq(mailMessages.groupId, ctx.groupId), eq(mailMessages.class, "notice"), eq(mailMessages.trusted, true), gte(mailMessages.receivedAt, since)));
+  const notices: Notice[] = rows.filter((r) => r.facts).map((r) => ({ ...r.facts!, summary: r.summary ?? r.subject, receivedAt: r.receivedAt }));
+  const s = noticeStatus(notices, now, await groupTimezone(ctx.groupId), about);
+  if (!s) return { found: false, line: about?.trim() ? `I haven't seen a notice about ${about.trim()}.` : "I haven't seen a notice with a time on it." };
+  return { found: true, state: s.state, line: s.line };
 }
 
 /* ---------- Bundle and report ---------- */

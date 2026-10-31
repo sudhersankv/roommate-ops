@@ -1,4 +1,4 @@
-import { houseBundleLine, houseReportParts, startHouse } from "@/services/house";
+import { choreDmJob, houseBundleLine, houseReportParts, startHouse } from "@/services/house";
 import { defineToolkit } from "../define";
 import { choreTools } from "./chores";
 import { house as manifest } from "./manifest";
@@ -21,4 +21,8 @@ export const house = defineToolkit(manifest, {
   },
   bundle: (ctx, now) => houseBundleLine(ctx, now),
   report: (ctx, now) => houseReportParts(ctx, now),
+  // The chore nudges: whoever's turn it is, privately, at the chore's usual hour (services/house.ts choreDmJob).
+  tick: async (ctx, now) => {
+    await choreDmJob(ctx, now);
+  },
 });

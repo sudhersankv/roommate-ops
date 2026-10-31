@@ -9,6 +9,7 @@ export type DevOutput = { to: "chat"; chatExternalId: string; msg: Outgoing } | 
 export class DevChannel implements Channel {
   readonly name = "dev" as const;
   readonly nativePolls = false;
+  readonly messagesFirst = true;
   private polls = 0;
   /** Poll ids are unique per process start, so a restarted dev-chat never reuses one (polls are keyed by them). */
   private readonly boot = Date.now().toString(36);

@@ -1,4 +1,4 @@
-// Settings' Nudges card (#25, ADR 0017/0019): the private Settle nudge's on/off, amount and days, for Admins. Reads
+// Settings' Nudges card (#25, ADR 0017/0021): the private Settle nudge's on/off, amount and spacing, for Admins. Reads
 // services/settle-nudge.ts through _components/data.ts; the form (nudges-form.tsx) saves through updateNudges.
 import type { GroupSession } from "@/lib/session"
 import { nudgeSettingsView } from "./data"

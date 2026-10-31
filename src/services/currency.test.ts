@@ -45,7 +45,7 @@ test("the DM echo and the private 'paid you' line use the Group's currency", () 
 });
 
 test("the settle nudge, the rent line and split errors say rupees in an INR Group", () => {
-  assert.match(nudgeText({ toName: "Sreyas", cents: 9500 }, true, "INR"), /you owe Sreyas ₹95\.00\./);
+  assert.match(nudgeText(1, { fromName: "Sudhersan", toName: "Sreyas", cents: 9500 }, true, "INR"), /₹95\.00 to Sreyas\./);
   assert.equal(shortMoney(2400000, "INR"), "₹24,000");
   assert.equal(shortMoney(240000), "$2,400");
   assert.throws(() => splitExact(19000, [{ memberId: "a", cents: 9000 }], { currency: "INR" }), (e: unknown) => e instanceof SplitError && /₹90\.00 but the total is ₹190\.00: ₹100\.00 left/.test(e.message));
