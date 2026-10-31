@@ -5,7 +5,7 @@
 import { RequestContext } from "@mastra/core/request-context";
 import { members } from "@/services";
 import { registerConfirmRunner, type ConfirmAbout } from "@/services/polls";
-import { allTools, callKey, groupDecisionRefusal } from "./registry";
+import { allTools, callKey, groupDecisionRefusal, toolOwner } from "./registry";
 
 /** What to say once a confirmed action ran: the tool's own ready-to-post line when it has one. */
 export function confirmedLine(result: unknown): string {
@@ -35,4 +35,4 @@ export async function runConfirmed(groupId: string, about: ConfirmAbout, voterId
   return about.who === "any-member" && !r.notAllowed && !r.refused ? `${member.displayName} said yes. ${line}` : line;
 }
 
-registerConfirmRunner({ run: runConfirmed, groupDecisionRefusal });
+registerConfirmRunner({ run: runConfirmed, groupDecisionRefusal, toolOwner });

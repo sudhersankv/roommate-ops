@@ -14,7 +14,7 @@ import { listMembers, memberByChannelUser } from "./members";
 import { logExpense } from "./money";
 import { MAX_POLL_OPTIONS, POLL_TTL_MS, pollOutcome, whoIn, type PollReason } from "./poll-rules";
 import { moneyIn, type Ctx } from "./types";
-import { currencyOf } from "./groups";
+import { currencyOf, enabledToolkits } from "./groups";
 
 export { pollMajority, pollOutcome, whoIn, numberVote, POLL_TTL_MS, MAX_POLL_OPTIONS } from "./poll-rules";
 export type { PollAbout };
@@ -42,7 +42,16 @@ type ConfirmRunner = {
   run(groupId: string, about: ConfirmAbout, voterId: string): Promise<string | null>;
   /** Why `toolId` with `input` can't be a group decision, or null when it can. */
   groupDecisionRefusal(toolId: string, input: unknown): string | null;
+  /** The Toolkit that owns `toolId` ("core" for core's tools), or null. */
+  toolOwner(toolId: string): string | null;
 };
+
+/** Whether `toolId` belongs to core or to a Toolkit this Group has learned right now. */
+async function ownerLearned(groupId: string, toolId: string): Promise<boolean> {
+  const owner = confirmRunner?.toolOwner(toolId);
+  if (!owner) return false;
+  return owner === "core" || (await enabledToolkits({ groupId })).some((id) => id === owner);
+}
 let confirmRunner: ConfirmRunner | null = null;
 export function registerConfirmRunner(r: ConfirmRunner | null) {
   confirmRunner = r;
@@ -63,6 +72,7 @@ export class GroupDecisionError extends Error {
 export async function askGroupDecision(ctx: Ctx, input: { question: string; toolId: string; input: unknown }, now = new Date()) {
   const refusal = confirmRunner ? confirmRunner.groupDecisionRefusal(input.toolId, input.input) : "Group decisions aren't available here.";
   if (refusal) throw new GroupDecisionError(refusal);
+  if (!(await ownerLearned(ctx.groupId, input.toolId))) throw new GroupDecisionError("That's a Trick this group hasn't learned, so it can't be a group decision here.");
   const about: ConfirmAbout = { kind: "confirm", toolId: input.toolId, input: input.input, memberId: ctx.memberId, who: "any-member" };
   return askPoll(ctx, { kind: "confirm", question: input.question, options: [...CONFIRM_OPTIONS], multi: false, about, ttlMs: CONFIRM_TTL_MS }, now);
 }
@@ -214,6 +224,8 @@ async function runConfirm(poll: PollRow, reason: PollReason, by?: string): Promi
   if (!confirmRunner) return "I couldn't do that from the poll. Say yes here and I will.";
   // Checked again when it runs: a row that somehow pins an admin change never runs as a group decision.
   if (group && confirmRunner.groupDecisionRefusal(about.toolId, about.input)) return "I can't do that one from a poll. Ask me in the chat.";
+  // The Trick may have been forgotten since the poll went out.
+  if (group && !(await ownerLearned(poll.groupId, about.toolId))) return "That's not something I do here anymore.";
   return confirmRunner.run(poll.groupId, about, voterId);
 }
 

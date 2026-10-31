@@ -157,6 +157,11 @@ export function groupDecisionRefusal(toolId: string, input: unknown): string | n
   return null;
 }
 
+/** Which Toolkit owns `toolId` ("core" for core's tools), or null for no tool. */
+export function toolOwner(toolId: string): string | null {
+  return [core, ...TOOLKITS].find((tk) => toolId in tk.tools)?.id ?? null;
+}
+
 /**
  * Tools for one request. `toolkit` from the Gate narrows to that Toolkit (plus core); unset or "none" gives every
  * enabled Toolkit; "core" gives core only. A disabled Toolkit is never returned.

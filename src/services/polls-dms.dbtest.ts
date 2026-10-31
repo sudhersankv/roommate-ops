@@ -17,6 +17,7 @@ import { getExpense, listExpenses, logExpense, settleUp } from "./money";
 import { nudgesOff, setNudges, setPaymentHandles, getNote, type Member } from "./members";
 import { askConfirm, askGroupDecision, askPoll, closePollsFor, expirePolls, GroupDecisionError, recordVote, resolvePoll, voteOnPoll } from "./polls";
 import { currencyOf } from "./groups";
+import { setToolkit } from "./toolkits";
 import "@/toolkits/confirm";
 import { echoAfterPrivateRun, noteDmContext, nudgeOrHint, resolveDmGroup, runMark } from "./dm";
 import { assertNotProdDb } from "../../scripts/lib/prod-guard";
@@ -294,6 +295,32 @@ describe("polls and DMs against the dev DB", () => {
       assert.ok(row.resolvedAt);
       assert.equal((await db.select().from(schema.chores).where(and(eq(schema.chores.groupId, groupId), eq(schema.chores.name, "Recycling")))).length, 0);
       assert.equal(channel.chat().length, before + 1, "just the poll, no line after it");
+    });
+
+    test("a Group without House can't pin chore_add (nothing is sent)", async () => {
+      await setToolkit(as(maya), { toolkit: "house", enabled: false });
+      try {
+        const before = channel.chat().length;
+        await assert.rejects(askGroupDecision(as(dev), { question: "Add Mopping, every 7 days?", toolId: "chore_add", input: { name: "Mopping", everyDays: 7 } }), GroupDecisionError);
+        assert.equal(channel.chat().length, before);
+      } finally {
+        await setToolkit(as(maya), { toolkit: "house", enabled: true });
+      }
+    });
+
+    test("House forgotten between the ask and the tap: ✅ adds nothing and says so in one line", async () => {
+      await askGroupDecision(as(dev), { question: "Add Mopping, every 7 days?", toolId: "chore_add", input: { name: "Mopping", everyDays: 7 } });
+      const poll = (await open())!;
+      await setToolkit(as(maya), { toolkit: "house", enabled: false });
+      try {
+        const yes = await tap(poll.externalId!, sam.channelUserId!, 0);
+        assert.equal(yes.resolved, "answered");
+        assert.equal(yes.line, "That's not something I do here anymore.");
+        assert.equal(channel.chat().at(-1)?.msg.text, yes.line);
+        assert.equal((await db.select().from(schema.chores).where(and(eq(schema.chores.groupId, groupId), eq(schema.chores.name, "Mopping")))).length, 0);
+      } finally {
+        await setToolkit(as(maya), { toolkit: "house", enabled: true });
+      }
     });
 
     test("an admin change can't be pinned as a group decision (nothing is sent)", async () => {
