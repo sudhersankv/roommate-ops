@@ -28,6 +28,7 @@ export const splitting = defineManifest({
     `- The first time someone mentions rent and rent_status says offer: true, offer once to track it. Never again after that.`,
     `- A bill whose amount changes ("electric varies, due the 20th, Dev pays") is set_variable_expense; a fixed one ("internet is 80 a month") is log_expense with recurring monthly.`,
     `- A number in reply to "How much was the ... bill?" (or "electric was 92") is answer_amount; "yes" to "Looks like $92" is answer_amount with that amount.`,
+    `- "I paid 60 for pizza" with nobody named is an even split among everyone, logged now (no poll); say how to change it. Only "not sure who was in" gets a who's-in poll (ask_poll with about), and nothing is logged until it resolves. "I was in too" afterwards is update_expense.`,
   ].join("\n"),
   abilities: {
     log_expense: "Log a shared cost: evenly, exact amounts, percentages or shares, one or several payers",

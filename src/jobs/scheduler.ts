@@ -1,13 +1,15 @@
 // Started once from instrumentation.ts (one long-running process; DISABLE_SCHEDULER=1 skips it).
-// Every 60 s: due reminders (the whole Group's in the Chat, a Member's privately), then per Group the morning Bundle
+// Every 60 s: due reminders (the whole Group's in the Chat, a Member's privately), the posts and DMs quiet hours held
+// back (pending_posts, services/urgent.ts), then per Group the morning Bundle
 // and the weekly Group Report at their local hours (services/schedule.ts), the Group style refresh
 // (jobs/style-note.ts, posts nothing), recurring Expenses, Splitwise mirror pushes and the daily chat retention sweep.
 // Posts Roomie makes on its own are claimed in scheduled_posts first, so each goes out once per day / week even across
 // restarts (ADR 0001: at most one Bundle per Group per day, nothing when no Toolkit has anything to say). The tick
 // never rejects. ROOMIE_PAUSED=1 skips the whole tick; a paused Group (groups.paused_at) gets no reminders or posts
 // until resumed.
-import { deliver, deliverPrivate } from "@/channels";
-import { CantMessagePrivatelyError } from "@/channels/types";
+import { deliver } from "@/channels";
+import { nudgeOrHint } from "@/services/dm";
+import { expirePolls } from "@/services/polls";
 import { groupBundle } from "@/services/bundle";
 import { groupsWithChat } from "@/services/groups";
 import { claimReminder, dueReminders, releaseReminder, reminderLine, scheduleNext, type Reminder } from "@/services/reminders";
@@ -15,6 +17,8 @@ import { bundleWindow, claimPost, getSchedule, releasePost, weeklyReportWindow, 
 import { runRecurring } from "@/services/recurring";
 import { runSplitwiseOutbox } from "@/services/splitwise";
 import { pausedGroupIds } from "@/services/operator-groups";
+import { flushPendingPosts } from "@/services/urgent";
+import { daytimeHour } from "@/lib/quiet-hours";
 import { logPaused, roomiePaused } from "@/lib/kill-switch";
 import { pruneRateCounters } from "@/lib/rate-counters";
 import { groupReportText } from "./report-text";
@@ -30,10 +34,13 @@ type State = {
   reminderFailures: Map<string, number>; // reminderId -> failed send attempts
   retentionDay?: string; // UTC day of the last retention sweep
   recurringHour?: string; // UTC hour of the last recurring-expense check
+  clampedNudge: Set<string>; // Groups whose quiet-hours nudge hour was already logged
 };
 function state(): State {
   const g = globalThis as { __roomieSchedulerState?: State };
-  return (g.__roomieSchedulerState ??= { reminderFailures: new Map() });
+  const s = (g.__roomieSchedulerState ??= { reminderFailures: new Map(), clampedNudge: new Set() });
+  s.clampedNudge ??= new Set();
+  return s;
 }
 
 type GroupRow = Awaited<ReturnType<typeof groupsWithChat>>[number];
@@ -42,7 +49,7 @@ type GroupRow = Awaited<ReturnType<typeof groupsWithChat>>[number];
 
 /**
  * One reminder: the whole Group's into the Chat, a Member's privately, never both. When Roomie can't DM that Member
- * yet (they never pressed Start), it goes to the Chat instead, addressed to them, with the one-line fix.
+ * yet (they never pressed Start), the Chat gets the neutral Start hint instead, at most weekly (services/dm.ts).
  */
 export async function deliverReminder(r: Reminder): Promise<"chat" | "private"> {
   const text = reminderLine(r);
@@ -50,14 +57,7 @@ export async function deliverReminder(r: Reminder): Promise<"chat" | "private"> 
     await deliver(r.groupId, { text });
     return "chat";
   }
-  try {
-    await deliverPrivate(r.memberId, { text });
-    return "private";
-  } catch (err) {
-    if (!(err instanceof CantMessagePrivatelyError)) throw err;
-    await deliver(r.groupId, { text: `${text} (for ${r.memberName ?? "you"}. ${err.message.replace(/, then ask me again\.?$/, ".")})` });
-    return "chat";
-  }
+  return (await nudgeOrHint(r.memberId, r.groupId, { text })) === "private" ? "private" : "chat";
 }
 
 export async function sendDueReminders(now: Date, groupId?: string, paused: ReadonlySet<string> = new Set()): Promise<number> {
@@ -115,16 +115,22 @@ async function postOnce(g: GroupRow, kind: PostKind, period: string, text: strin
 }
 
 /**
- * The morning Bundle (ADR 0017), in the Group's nudge hour: the enabled Toolkits' lines, only when one has something
- * to say. Claimed under the chores nudge's kind, the post it grew out of. Returns the text posted.
+ * The morning Bundle (ADR 0017), in the Group's nudge hour: the enabled Toolkits' lines and core's Reminders line,
+ * only when one has something to say. Claimed as "bundle" for the local day. A stored nudge hour inside quiet hours
+ * goes out at 08:00 (logged once per Group). Returns the text posted.
  */
 export async function bundleJob(g: GroupRow, now: Date): Promise<string | null> {
   const { nudgeHour } = await getSchedule({ groupId: g.id });
-  const w = bundleWindow(now, g.timezone, nudgeHour);
+  const hour = nudgeHour === null ? null : daytimeHour(nudgeHour);
+  if (hour !== nudgeHour && !state().clampedNudge.has(g.id)) {
+    state().clampedNudge.add(g.id);
+    console.warn(`scheduler: ${g.name}'s nudge hour ${nudgeHour}:00 is inside quiet hours; the Bundle goes out at ${hour}:00`);
+  }
+  const w = bundleWindow(now, g.timezone, hour);
   if (!w.open) return null;
   const text = await groupBundle({ groupId: g.id }, now);
   if (!text) return null;
-  return (await postOnce(g, "chores.nudge", w.period, text)) ? text : null;
+  return (await postOnce(g, "bundle", w.period, text)) ? text : null;
 }
 
 /** The weekly Group Report, on the Group's report day and hour. Returns the text posted. */
@@ -222,7 +228,9 @@ export async function tick(now = new Date()): Promise<void> {
     });
     if (paused) {
       await sendDueReminders(now, undefined, paused);
+      await flushPendingPosts(now, paused).catch((e) => console.error("scheduler: held posts failed", e));
       await runGroupJobs(now, paused);
+      await expirePolls(now, paused).catch((e) => console.error("scheduler: poll expiry failed", e));
     }
     await recurringExpenses(now);
     await splitwiseOutbox(now);

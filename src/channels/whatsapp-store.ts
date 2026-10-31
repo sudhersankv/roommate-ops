@@ -79,3 +79,9 @@ export async function pruneNonMemberContacts(opts: { dryRun?: boolean } = {}): P
   const gone = await db.delete(waContacts).where(notMember).returning({ lid: waContacts.lid });
   return { total, stale, deleted: gone.length };
 }
+
+/** The messageSecret and options of a Poll Roomie sent on WhatsApp (by its message id), from the polls table. */
+export async function pollSecretFor(pollExternalId: string): Promise<{ secret: Uint8Array; options: string[] } | null> {
+  const { pollSecret } = await import("@/services/polls");
+  return pollSecret(pollExternalId);
+}

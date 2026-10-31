@@ -1,6 +1,6 @@
 // Activity: the Group's record of who added, changed or deleted what, and where (the chat or the dashboard).
 // Services write it; the Money page reads it, and Roomie reads what changed since it last spoke (recentChanges).
-import { and, desc, eq, gt } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { lastRoomieReplyAt } from "./chatlog";
 import type { Ctx, GroupCtx } from "./types";
@@ -8,10 +8,10 @@ import type { Ctx, GroupCtx } from "./types";
 const { activity, members } = schema;
 
 /** Where a change was made. Null for Roomie's own work (onboarding, the scheduler) and old rows. */
-export type ActivitySource = "chat" | "dashboard";
+export type ActivitySource = "chat" | "dashboard" | "dm";
 
 /** A Ctx's source as it's stored: the dashboard (session actions and Ask Roomie) is "ui" in a Ctx. */
-export const sourceOf = (ctx: Pick<Ctx, "source">): ActivitySource | null => (ctx.source === "ui" ? "dashboard" : ctx.source === "chat" ? "chat" : null);
+export const sourceOf = (ctx: Pick<Ctx, "source">): ActivitySource | null => (ctx.source === "ui" ? "dashboard" : ctx.source === "dm" ? "dm" : ctx.source === "chat" ? "chat" : null);
 
 export type ActivityEntry = {
   id: string;
@@ -60,7 +60,7 @@ type Row = { actorMemberId: string | null; actorName: string | null; source: str
 const named = <T extends Row>(r: T) => ({
   ...r,
   actorName: r.actorMemberId ? (r.actorName ?? "Someone") : "Roomie",
-  source: r.source === "chat" || r.source === "dashboard" ? r.source : null,
+  source: r.source === "chat" || r.source === "dashboard" || r.source === "dm" ? r.source : null,
 });
 
 export async function listActivity(ctx: GroupCtx, limit = 50): Promise<ActivityEntry[]> {
@@ -90,7 +90,7 @@ export function agoLabel(at: Date, now: Date): string {
 
 /** "Ryan took eggs off the Cart (dashboard, 2 min ago)". Pure. */
 export function changeLine(e: Pick<ActivityEntry, "actorName" | "summary" | "source" | "createdAt">, now = new Date()): string {
-  const where = e.source === "dashboard" ? "dashboard, " : e.source === "chat" ? "in the chat, " : "";
+  const where = e.source === "dashboard" ? "dashboard, " : e.source === "chat" ? "in the chat, " : e.source === "dm" ? "privately, " : "";
   return `${e.actorName} ${e.summary} (${where}${agoLabel(e.createdAt, now)})`;
 }
 
@@ -103,7 +103,8 @@ export async function recentChanges(groupId: string, since: Date, now = new Date
     .select(select)
     .from(activity)
     .leftJoin(members, eq(activity.actorMemberId, members.id))
-    .where(and(eq(activity.groupId, groupId), gt(activity.createdAt, since)))
+    // A Settlement made in a DM stays between the two people (ADR 0020): never a fact for the group.
+    .where(and(eq(activity.groupId, groupId), gt(activity.createdAt, since), sql`not (coalesce(${activity.source}, '') = 'dm' and ${activity.kind} like 'settlement.%')`))
     .orderBy(desc(activity.createdAt), desc(activity.id))
     .limit(MAX_CHANGES);
   return rows.map(named).reverse().map((e) => changeLine(e, now));
@@ -121,4 +122,24 @@ export async function changesSinceRoomieSpoke(groupId: string, now = new Date(),
   let since = last ?? new Date(now.getTime() - 60 * 60_000);
   if (opts.ui) since = new Date(Math.max(since.getTime(), now.getTime() - DASHBOARD_CHANGES_MS));
   return recentChanges(groupId, since, now);
+}
+
+/**
+ * What one Member changed since `since` (the DB clock at the start of their run), made from `sources`: the Echo rule
+ * reads a DM or dashboard run's own rows this way. Oldest first.
+ */
+export async function runChanges(groupId: string, opts: { since: Date; actorMemberId: string; sources: ActivitySource[] }): Promise<ActivityEntry[]> {
+  const rows = await db
+    .select(select)
+    .from(activity)
+    .leftJoin(members, eq(activity.actorMemberId, members.id))
+    .where(and(eq(activity.groupId, groupId), eq(activity.actorMemberId, opts.actorMemberId), gt(activity.createdAt, opts.since), inArray(activity.source, opts.sources)))
+    .orderBy(activity.createdAt, activity.id);
+  return rows.map(named);
+}
+
+/** The DB's clock: a run's Activity rows are stamped by it, so "since the run began" is measured on it too. */
+export async function dbNow(): Promise<Date> {
+  const { rows } = await db.execute(sql`select now() as now`);
+  return new Date((rows[0] as { now: string | Date }).now);
 }

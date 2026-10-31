@@ -42,7 +42,8 @@ export const groceries = defineManifest({
   // Groceries' lines come after money, the landlord and the house (ADR 0017).
   postOrder: 40,
   dashboard: {
-    nav: { label: "Cart", href: (g) => `/g/${g}/cart`, icon: "ShoppingCart", order: 20 },
+    // After Money (10) and House (30) in the dock's order: the Cart's writes happen in the chat (ADR 0015).
+    nav: { label: "Cart", href: (g) => `/g/${g}/cart`, icon: "ShoppingCart", order: 40 },
     pages: ["cart"],
   },
 });

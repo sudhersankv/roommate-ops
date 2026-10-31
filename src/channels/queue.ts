@@ -6,8 +6,11 @@ export class KeyedQueue {
 
   constructor(private readonly label = "channel") {}
 
-  push(key: string, task: () => Promise<void>) {
-    const p = (this.tails.get(key) ?? Promise.resolve()).then(task).catch((err) => console.error(`[${this.label}] chat ${key}`, err));
+  push(key: string, task: () => Promise<unknown>) {
+    const p = (this.tails.get(key) ?? Promise.resolve())
+      .then(task)
+      .then(() => {})
+      .catch((err) => console.error(`[${this.label}] chat ${key}`, err));
     this.tails.set(key, p);
     this.live.add(p);
     void p.finally(() => {

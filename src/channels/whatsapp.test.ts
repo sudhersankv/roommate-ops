@@ -4,13 +4,16 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import type { GroupMetadata, WAMessage } from "baileys";
+import { aesEncryptGCM, hmacSign, proto, sha256, type GroupMetadata, type WAMessage } from "baileys";
 import type { IncomingMessage } from "./types";
 import { helpText, NO_GROUP, NO_VOICE } from "./text";
 import { makeAuthState, type AuthRows } from "./whatsapp-auth";
 import {
   backoffMs,
   createWhatsApp,
+  decryptWaVote,
+  optionIdsFromHashes,
+  pollOptionHash,
   placeholderName,
   readWaMessage,
   waLogger,
@@ -30,6 +33,8 @@ const SAM = { pn: "15551110002@s.whatsapp.net", lid: "880000000000002@lid" };
 const DEV = { pn: "15551110003@s.whatsapp.net", lid: "880000000000003@lid" };
 
 const NOW = 1_800_000_000_000;
+/** A fixed messageSecret, so the vote vectors below are the same every run. */
+const POLL_SECRET = Uint8Array.from({ length: 32 }, (_, i) => (i * 37 + 11) % 256);
 
 class FakeSocket implements WaSocket {
   readonly emitter = new EventEmitter();
@@ -48,7 +53,14 @@ class FakeSocket implements WaSocket {
   emit(event: string, arg: unknown) {
     this.emitter.emit(event, arg);
   }
-  async sendMessage(jid: string, content: { text: string }) {
+  polls: { jid: string; name: string; values: string[]; selectableCount: number }[] = [];
+  async sendMessage(jid: string, content: { text: string } | { poll: { name: string; values: string[]; selectableCount: number } }) {
+    if ("poll" in content) {
+      // What Baileys' generateWAMessageContent does: a random 32-byte messageSecret rides on the poll.
+      this.polls.push({ jid, ...content.poll });
+      const id = `poll${this.polls.length}`;
+      return { key: { id, remoteJid: jid, fromMe: true }, message: { pollCreationMessageV3: { name: content.poll.name, options: content.poll.values.map((optionName) => ({ optionName })) }, messageContextInfo: { messageSecret: POLL_SECRET } } } as WAMessage;
+    }
     this.sent.push({ jid, text: content.text });
     return { key: { id: `out${this.sent.length}`, remoteJid: jid, fromMe: true }, message: { conversation: content.text } } as WAMessage;
   }
@@ -870,5 +882,79 @@ describe("connection", () => {
     assert.equal(h.sock().loggedOut, true);
     assert.equal(h.auth.rows.size, 0);
     assert.equal(h.wa.status().state, "logged_out");
+  });
+});
+
+/* ---------- polls (ADR 0018) ---------- */
+
+/**
+ * A vote as a WhatsApp phone encrypts it: the inverse of Baileys' decryptPollVote (process-message.js), with the
+ * library's own hmacSign / aesEncryptGCM / sha256 and the PollVoteMessage proto.
+ */
+function encryptVote(o: { pollMsgId: string; creatorJid: string; voterJid: string; options: string[]; secret?: Uint8Array }) {
+  const secret = o.secret ?? POLL_SECRET;
+  const sign = Buffer.concat([Buffer.from(o.pollMsgId), Buffer.from(o.creatorJid), Buffer.from(o.voterJid), Buffer.from("Poll Vote"), new Uint8Array([1])]);
+  const key = hmacSign(sign, hmacSign(secret, new Uint8Array(32), "sha256"), "sha256");
+  const iv = Buffer.alloc(12, 3);
+  const payload = proto.Message.PollVoteMessage.encode({ selectedOptions: o.options.map((x) => sha256(Buffer.from(x))) }).finish();
+  return { encPayload: aesEncryptGCM(payload, key, iv, Buffer.from(`${o.pollMsgId}\u0000${o.voterJid}`)), encIv: iv };
+}
+
+const voteMsg = (pollId: string, vote: ReturnType<typeof encryptVote>, voter = MAYA) =>
+  msg({ key: { participant: voter.lid, participantAlt: voter.pn }, message: { pollUpdateMessage: { pollCreationMessageKey: { id: pollId, remoteJid: GROUP, fromMe: true }, vote, senderTimestampMs: NOW } } });
+
+describe("polls", () => {
+  const OPTIONS = ["I'm in", "Not me"];
+
+  test("option hashes: a vote decrypts with the poll's secret and its SHA-256 hashes map to option indexes", () => {
+    const vote = encryptVote({ pollMsgId: "poll1", creatorJid: ROOMIE_PN, voterJid: SAM.pn, options: ["Not me"] });
+    const selected = decryptWaVote(vote, { pollMsgId: "poll1", secret: POLL_SECRET, creatorJids: [ROOMIE_PN], voterJids: [SAM.pn] });
+    assert.ok(selected);
+    assert.deepEqual(optionIdsFromHashes(selected, OPTIONS), [1]);
+    assert.deepEqual(optionIdsFromHashes([pollOptionHash("Maya"), pollOptionHash("Sam")], ["Maya", "Dev", "Sam"]), [0, 2]);
+    assert.deepEqual(optionIdsFromHashes([pollOptionHash("someone else")], OPTIONS), [], "an unknown hash is dropped");
+    assert.equal(decryptWaVote(vote, { pollMsgId: "poll1", secret: new Uint8Array(32), creatorJids: [ROOMIE_PN], voterJids: [SAM.pn] }), null, "the wrong secret reads nothing");
+    // A LID-addressed group: the phone used Roomie's and the voter's LIDs. Every pair is tried.
+    const lidVote = encryptVote({ pollMsgId: "poll1", creatorJid: ROOMIE_LID, voterJid: SAM.lid, options: ["I'm in"] });
+    const lidSelected = decryptWaVote(lidVote, { pollMsgId: "poll1", secret: POLL_SECRET, creatorJids: [ROOMIE_PN, ROOMIE_LID], voterJids: [SAM.pn, SAM.lid] });
+    assert.deepEqual(optionIdsFromHashes(lidSelected!, OPTIONS), [0]);
+  });
+
+  test("a Poll goes out as WhatsApp's own (single choice = 1, several = 0) and returns its id and messageSecret", async () => {
+    const h = harness();
+    h.markKnown();
+    await h.open();
+    const sent = await h.wa.channel.sendToChat(GROUP, { text: "Who's in on the $60 pizza?", poll: { question: "Who's in on the $60 pizza?", options: OPTIONS, multi: false } });
+    assert.deepEqual(h.sock().polls, [{ jid: GROUP, name: "Who's in on the $60 pizza?", values: OPTIONS, selectableCount: 1 }]);
+    assert.equal(h.sock().sent.length, 0, "no text alongside the poll");
+    assert.equal(sent.externalId, "poll1");
+    assert.deepEqual([...sent.secret!], [...POLL_SECRET], "the secret goes to the polls row");
+    await h.wa.channel.sendToChat(GROUP, { text: "Who had pizza?", poll: { question: "Who had pizza?", options: ["Maya", "Dev", "Sam"], multi: true } });
+    assert.equal(h.sock().polls[1].selectableCount, 0);
+  });
+
+  test("a vote after a restart: the secret comes from the app (the polls row), not memory; taking it back is an empty vote", async () => {
+    const stored = new Map<string, { secret: Uint8Array; options: string[] }>();
+    const first = harness();
+    first.markKnown();
+    await first.open();
+    const sent = await first.wa.channel.sendToChat(GROUP, { text: "q", poll: { question: "Who's in on the $60 pizza?", options: OPTIONS, multi: false } });
+    stored.set(sent.externalId!, { secret: sent.secret!, options: OPTIONS }); // what services/polls.ts askPoll stores
+
+    const votes: unknown[] = [];
+    const h = harness({ deps: { pollSecret: async (id) => stored.get(id) ?? null, onPollVote: async (v) => void votes.push(v) } });
+    h.markKnown();
+    await h.open(); // a new process: nothing in its sent-message cache
+    await h.feed([voteMsg("poll1", encryptVote({ pollMsgId: "poll1", creatorJid: ROOMIE_PN, voterJid: MAYA.lid, options: ["I'm in"] }))]);
+    await h.feed([voteMsg("poll1", encryptVote({ pollMsgId: "poll1", creatorJid: ROOMIE_PN, voterJid: SAM.pn, options: ["Not me"] }), SAM)]);
+    await h.feed([voteMsg("poll1", encryptVote({ pollMsgId: "poll1", creatorJid: ROOMIE_PN, voterJid: MAYA.lid, options: [] }))]);
+    assert.deepEqual(votes, [
+      { channel: "whatsapp", chatExternalId: GROUP, pollExternalId: "poll1", userExternalId: MAYA.pn, optionIds: [0] },
+      { channel: "whatsapp", chatExternalId: GROUP, pollExternalId: "poll1", userExternalId: SAM.pn, optionIds: [1] },
+      { channel: "whatsapp", chatExternalId: GROUP, pollExternalId: "poll1", userExternalId: MAYA.pn, optionIds: [] },
+    ]);
+    assert.equal(h.seen.incoming.length, 0, "a vote isn't a chat message");
+    await h.feed([voteMsg("poll9", encryptVote({ pollMsgId: "poll9", creatorJid: ROOMIE_PN, voterJid: MAYA.lid, options: ["I'm in"] }))]);
+    assert.equal(votes.length, 3, "not one of Roomie's polls: ignored");
   });
 });

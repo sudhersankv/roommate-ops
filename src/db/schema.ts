@@ -180,8 +180,9 @@ export const activity = pgTable(
     summary: text("summary").notNull(),
     refTable: text("ref_table"),
     refId: text("ref_id"),
-    /** Where it happened: "chat" | "dashboard"; null for Roomie's own work and rows from before migration 0010. */
-    source: text("source", { enum: ["chat", "dashboard"] }),
+    /** Where it happened: "chat" | "dashboard" | "dm" (a Member's DM, #24B); null for Roomie's own work and rows from
+     * before migration 0010. */
+    source: text("source", { enum: ["chat", "dashboard", "dm"] }),
     createdAt: createdAt(),
   },
   (t) => [index("activity_group_created_at").on(t.groupId, t.createdAt)],
@@ -208,9 +209,11 @@ export const expenses = pgTable(
     recurring: text("recurring", { enum: RECURRENCES }),
     // Set on the copies the scheduler makes of a recurring Expense; unique per (parent, day) so a copy is made once.
     recurringParentId: uuid("recurring_parent_id").references((): AnyPgColumn => expenses.id, { onDelete: "set null" }),
+    // The receipt's link as people open it (/api/docs/<id>); receipt_document_id is the Document itself (#24A).
     receiptUrl: text("receipt_url"),
     // A recurring parent whose amount is asked of its Payer on each due day (electric) instead of copied (#25).
     variable: boolean("variable").notNull().default(false),
+    receiptDocumentId: uuid("receipt_document_id").references((): AnyPgColumn => documents.id, { onDelete: "set null" }),
     source: text("source", { enum: EXPENSE_SOURCES }).notNull().default("chat"),
     createdBy: uuid("created_by").references(() => members.id),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
@@ -420,15 +423,16 @@ export const reminders = pgTable("reminders", {
 });
 
 /**
- * What the scheduler posted on its own (the daily chores nudge, the weekly Group Report), one row per Group, kind and
- * local period. The row is claimed before sending, so a restart or a second process can't post it twice (ADR 0001).
+ * What Roomie posted on its own (the morning Bundle, the urgent slot, the weekly Group Report), one row per Group, kind
+ * and local period. The row is claimed before sending, so a restart or a second process can't post it twice (ADR 0001,
+ * 0017). "bundle" was "chores.nudge" until migration 0015.
  */
 export const scheduledPosts = pgTable(
   "scheduled_posts",
   {
     groupId: uuid("group_id").notNull().references(() => groups.id, { onDelete: "cascade" }),
-    kind: text("kind", { enum: ["chores.nudge", "report.weekly", "rent.ahead", "nudge.settle"] }).notNull(),
-    // The Group's local day ("2026-10-28") for the nudge, the report's local day for the report.
+    kind: text("kind", { enum: ["bundle", "urgent", "report.weekly", "rent.ahead", "nudge.settle"] }).notNull(),
+    // The Group's local day ("2026-10-28") for the Bundle and the urgent slot, the report's local day for the report.
     period: text("period").notNull(),
     createdAt: createdAt(),
   },
@@ -545,4 +549,116 @@ export const pendingAmounts = pgTable(
     createdAt: createdAt(),
   },
   (t) => [uniqueIndex("pending_amounts_expense_period").on(t.expenseId, t.period), index("pending_amounts_group").on(t.groupId)],
+);
+
+// ---- documents (#24A) ----
+
+export const DOCUMENT_KINDS = ["receipt", "lease", "notice", "bill", "email", "photo", "other"] as const;
+export type DocumentKind = (typeof DOCUMENT_KINDS)[number];
+
+/**
+ * A file the Group keeps (ADR 0018, services/documents.ts): the row here, the bytes in the BlobStore under
+ * `storage_key` ("g/<groupId>/<id>"). `filed_at` null = a photo sent in the Chat, held so Roomie can read it but not on
+ * the Docs list; it's set when someone keeps it, it becomes an Expense's receipt, or a Trick files it. `source` is what
+ * it came from ({ table: "expenses", id }).
+ */
+export const documents = pgTable(
+  "documents",
+  {
+    id: id(),
+    groupId: uuid("group_id").notNull().references(() => groups.id, { onDelete: "cascade" }),
+    kind: text("kind", { enum: DOCUMENT_KINDS }).notNull(),
+    title: text("title").notNull(),
+    contentType: text("content_type").notNull(),
+    size: integer("size").notNull(),
+    storageKey: text("storage_key").notNull(),
+    source: jsonb("source").$type<{ table: string; id: string }>(),
+    uploadedBy: uuid("uploaded_by").references(() => members.id, { onDelete: "set null" }),
+    filedAt: timestamp("filed_at", { withTimezone: true }),
+    createdAt: createdAt(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  },
+  (t) => [index("documents_group_created_at").on(t.groupId, t.createdAt)],
+);
+
+/**
+ * Something Roomie would have said during quiet hours, waiting for 08:00 local (services/urgent.ts, nudges.ts): an
+ * urgent post for the Chat, or a DM (`member_id` set). The scheduler claims a due row by deleting it.
+ */
+export const pendingPosts = pgTable(
+  "pending_posts",
+  {
+    id: id(),
+    groupId: uuid("group_id").notNull().references(() => groups.id, { onDelete: "cascade" }),
+    kind: text("kind", { enum: ["urgent", "dm"] }).notNull(),
+    memberId: uuid("member_id").references(() => members.id, { onDelete: "cascade" }),
+    text: text("text").notNull(),
+    buttons: jsonb("buttons").$type<{ text: string; url: string }[]>(),
+    dueAt: timestamp("due_at", { withTimezone: true }).notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [index("pending_posts_due_at").on(t.dueAt)],
+);
+
+// ---- polls and DMs (#24B) ----
+
+// Its own import, so this section merges without touching the header. (Imports are hoisted.)
+import { customType } from "drizzle-orm/pg-core";
+
+const bytea = customType<{ data: Buffer; driverData: Buffer }>({ dataType: () => "bytea" });
+
+/** What a Poll is about, run through the owning service when it resolves (services/polls.ts). */
+export type PollAbout = { kind: "who-in"; payerId: string; cents: number; description: string; category?: string; inOption?: number } | { kind: string; [key: string]: unknown };
+
+/**
+ * A Poll Roomie asked in a Group's Chat (ADR 0018). `external_id` is the Channel's message id (votes point at it);
+ * `secret` is WhatsApp's messageSecret (votes are encrypted with it), kept here so votes after a restart decrypt.
+ * Resolves on a majority of active Members, at `resolves_at` (2 h), or when the asker's own text closes it.
+ */
+export const polls = pgTable(
+  "polls",
+  {
+    id: id(),
+    groupId: uuid("group_id").notNull().references(() => groups.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    channel: text("channel", { enum: CHANNELS }).notNull(),
+    externalId: text("external_id"),
+    question: text("question").notNull(),
+    options: jsonb("options").$type<string[]>().notNull(),
+    multi: boolean("multi").notNull().default(false),
+    about: jsonb("about").$type<PollAbout>().notNull(),
+    secret: bytea("secret"),
+    resolvesAt: timestamp("resolves_at", { withTimezone: true }).notNull(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    createdBy: uuid("created_by").references(() => members.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("polls_channel_external_id").on(t.channel, t.externalId), index("polls_open").on(t.groupId, t.createdAt).where(sql`${t.resolvedAt} is null`)],
+);
+
+/** One Member's current answer to a Poll (a retracted vote deletes the row). */
+export const pollVotes = pgTable(
+  "poll_votes",
+  {
+    pollId: uuid("poll_id").notNull().references(() => polls.id, { onDelete: "cascade" }),
+    memberId: uuid("member_id").notNull().references(() => members.id, { onDelete: "cascade" }),
+    optionIds: jsonb("option_ids").$type<number[]>().notNull(),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.pollId, t.memberId] })],
+);
+
+/**
+ * Which Group a person's DM is about (ADR 0020): "nudge" = Roomie last DM'd this Member (good for 24 h), "dm" = the
+ * Group they last DM'd Roomie about. One row per Member (a person in two Groups has two Members) and kind.
+ */
+export const dmContext = pgTable(
+  "dm_context",
+  {
+    memberId: uuid("member_id").notNull().references(() => members.id, { onDelete: "cascade" }),
+    groupId: uuid("group_id").notNull().references(() => groups.id, { onDelete: "cascade" }),
+    kind: text("kind", { enum: ["nudge", "dm"] }).notNull(),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.memberId, t.kind] })],
 );

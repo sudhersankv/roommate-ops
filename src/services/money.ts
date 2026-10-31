@@ -7,6 +7,7 @@ import { localDay } from "@/lib/dates";
 import { recordFor } from "./activity";
 import { canChangeExpense, NotAllowedError, requireActive } from "./authz";
 import { guessCategory, isCategory } from "./categories";
+import { attachReceipt, docIdFromUrl } from "./documents";
 import { listMembers } from "./members";
 import { enqueueSplitwisePush } from "./outbox";
 import type { ReportPart } from "./report";
@@ -40,6 +41,8 @@ export type Expense = {
   /** A recurring parent whose amount is asked on each due day (utilities); its own cents are a placeholder, never owed. */
   variable?: boolean;
   receiptUrl?: string | null;
+  /** The receipt's Document (open it at receiptUrl, /api/docs/<id>). */
+  receiptDocumentId?: string | null;
   splitwiseId?: string | null;
   deletedAt?: Date | null;
 };
@@ -300,6 +303,7 @@ export async function logExpense(ctx: Ctx, input: ExpenseInput): Promise<Expense
   const source = input.source ?? (ctx.source === "ui" ? "ui" : "chat");
   const id = await insertExpenseRows(ctx.groupId, ctx.memberId, { ...b, source, variable: input.variable, recurringParentId: input.recurringParentId });
   if (!id) throw new Error(`${b.description} for ${b.occurredOn} is already logged.`);
+  if (b.receiptUrl) await linkReceipt(ctx, id, b.description, b.receiptUrl);
   const what = input.variable ? `added ${b.description} (${b.recurring}, amount asked on the due day)` : `added ${b.description}, ${dollars(b.cents)}${howSplit(b, b.nameOf)}`;
   await recordFor(ctx, "expense.added", what, { table: "expenses", id });
   if (!input.variable) await enqueueSplitwisePush(ctx.groupId, id, "upsert");
@@ -403,9 +407,20 @@ export async function updateExpense(ctx: Ctx, input: ExpensePatch): Promise<Expe
     await writeShares(tx, row.id, b);
   });
   const what = totalChanged && !before.variable ? `changed ${b.description}: ${dollars(before.cents)} -> ${dollars(cents)}` : `changed ${b.description}`;
+  if (input.receiptUrl !== undefined && input.receiptUrl !== before.receiptUrl) await linkReceipt(ctx, row.id, b.description, b.receiptUrl);
   await recordFor(ctx, "expense.changed", what, { table: "expenses", id: row.id });
   if (!(input.variable ?? before.variable)) await enqueueSplitwisePush(ctx.groupId, row.id, "upsert");
   return (await getExpense(ctx, row.id))!;
+}
+
+/**
+ * The receipt's Document (ADR 0018): a /api/docs link of this Group's becomes expenses.receipt_document_id, and the
+ * Document a filed receipt pointing at the Expense. Anything else (an old /uploads path) keeps no Document.
+ */
+async function linkReceipt(ctx: Ctx, expenseId: string, description: string, receiptUrl: string | null) {
+  const docId = receiptUrl ? docIdFromUrl(receiptUrl) : null;
+  const linked = docId ? await attachReceipt(ctx, docId, { id: expenseId, description }) : false;
+  await db.update(expenses).set({ receiptDocumentId: linked ? docId : null }).where(eq(expenses.id, expenseId));
 }
 
 /** Soft delete, so undo can bring it back. */
@@ -588,6 +603,7 @@ export async function listExpenses(ctx: GroupCtx, limit = 50, opts: { expenseId?
       recurringParentId: expenses.recurringParentId,
       variable: expenses.variable,
       receiptUrl: expenses.receiptUrl,
+      receiptDocumentId: expenses.receiptDocumentId,
       splitwiseId: expenseExternalRefs.externalId,
       deletedAt: expenses.deletedAt,
     })

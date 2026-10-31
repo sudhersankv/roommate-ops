@@ -222,7 +222,7 @@ export const SCENARIOS: Scenario[] = [
     id: "receipt-photo",
     area: "splitting",
     seed: async (e) => {
-      e.photo = (await receipts.saveUpload("evals", Buffer.from("fake receipt"), "image/jpeg")).path;
+      e.photo = (await receipts.saveUpload(e.ctx, Buffer.from("fake receipt"), "image/jpeg")).path;
     },
     turn: { text: "roomie log this receipt, I paid. The steak was Dev's, the rest we all shared", photo: true },
     expect: {
@@ -347,7 +347,7 @@ export const SCENARIOS: Scenario[] = [
     id: "photo-list-all-common",
     area: "groceries",
     seed: async (e) => {
-      e.photo = (await receipts.saveUpload("evals", Buffer.from("a shopping list"), "image/jpeg")).path;
+      e.photo = (await receipts.saveUpload(e.ctx, Buffer.from("a shopping list"), "image/jpeg")).path;
     },
     turn: { text: "roomie all common", photo: true },
     // Either it asks once with the list in one line, or (the caption said "all common") it adds them as shared.
@@ -361,7 +361,7 @@ export const SCENARIOS: Scenario[] = [
     seed: async (e) => {
       await toolkits.setToolkit(e.ctx, { toolkit: "groceries", enabled: false });
       await toolkits.setToolkit(e.ctx, { toolkit: "splitting", enabled: false });
-      e.photo = (await receipts.saveUpload("evals", Buffer.from("a receipt"), "image/jpeg")).path;
+      e.photo = (await receipts.saveUpload(e.ctx, Buffer.from("a receipt"), "image/jpeg")).path;
     },
     turn: { text: "roomie split this", photo: true },
     // "I haven't learned Money here ... say 'roomie, learn money'".
@@ -817,7 +817,7 @@ export const SCENARIOS: Scenario[] = [
     id: "what-can-you-do",
     area: "core",
     turn: { text: "roomie what can you do?", from: "Sam" },
-    expect: { tools: ["list_toolkits"], noTools: "actions", replyIncludes: [/split|expense|cost/i], excludes: TOOLKIT_WORDS },
+    expect: { tools: ["list_toolkits"], noTools: "actions", replyIncludes: [/money|split|expense|cost|paid/i], excludes: TOOLKIT_WORDS },
   },
   {
     id: "what-tricks-brief",
@@ -896,35 +896,36 @@ export const SCENARIOS: Scenario[] = [
     alt: { speaks: false },
   },
 
-  /* ---------- personality (ADR 0012) ---------- */
-  // The same message under three archetypes: brevity and the emoji policy follow the vibe.
+  /* ---------- personality (ADR 0012, one voice since ADR 0020) ---------- */
+  // The same message in the one voice: brief, at most one emoji, whatever a Group stored before.
   {
-    id: "vibe-chill",
+    id: "one-voice-chill",
     area: "personality",
     turn: { text: "roomie I paid $60 for internet" },
     expect: { tools: ["log_expense"], replyIncludes: ["60"], maxLines: 2, emoji: { max: 1 } },
   },
   {
-    id: "vibe-hype",
+    id: "one-voice-ignores-stored-hype",
     area: "personality",
-    seed: async (e) => void (await personality.updatePersonality(e.ctx, { base: "hype" })),
+    seed: async (e) => void (await personality.updatePersonality(e.ctx, { base: "hype", name: "Dino", quirks: ["loves confetti"] })),
     turn: { text: "roomie I paid $60 for internet" },
-    expect: { tools: ["log_expense"], replyIncludes: ["60"], emoji: { min: 1 } },
+    expect: { tools: ["log_expense"], replyIncludes: ["60"], maxLines: 2, emoji: { max: 1 }, excludes: [/!!|🎉|🥳|let'?s go/i] },
   },
   {
-    id: "vibe-deadpan",
+    id: "one-voice-ignores-stored-deadpan",
     area: "personality",
     seed: async (e) => void (await personality.updatePersonality(e.ctx, { base: "deadpan" })),
     turn: { text: "roomie I paid $60 for internet" },
-    expect: { tools: ["log_expense"], replyIncludes: ["60"], maxLines: 1, emoji: { max: 0 } },
+    expect: { tools: ["log_expense"], replyIncludes: ["60"], maxLines: 2, emoji: { max: 1 } },
   },
+  // A stored pet name is no longer a trigger word (ADR 0020): "dino ..." is an ordinary line for the Gate.
   {
-    id: "name-dino-triggers",
+    id: "name-dino-is-not-a-trigger",
     area: "personality",
     seed: async (e) => void (await personality.updatePersonality(e.ctx, { name: "Dino" })),
     turn: { text: "dino add oat milk for me", from: "Dev" },
-    expect: { gateReason: "hard-trigger", tools: ["cart_add"], check: async (e) => fail((await cart.listOpenItems(e.ctx)).some((i) => /oat milk/i.test(i.name)), "oat milk in the cart") },
-    alt: { gateReason: "hard-trigger", asks: true, noTools: "actions" },
+    expect: { gateReason: "jev-act", tools: ["cart_add"] },
+    alt: { speaks: false },
   },
   {
     id: "nickname-not-before-3",
@@ -1011,6 +1012,63 @@ export const SCENARIOS: Scenario[] = [
     seed: async (e) => void (await members.rememberAboutMe(e.as("Dev"), { diet: "vegan", allergies: "peanuts" })),
     turn: { text: "roomie what do you know about Dev?", from: "Sam" },
     expect: { excludes: [/vegan/i, /peanut/i] },
+  },
+
+  /* ---------- polls and DMs (#24B, ADR 0018, ADR 0020) ---------- */
+  {
+    id: "pizza-no-poll",
+    area: "splitting",
+    turn: { text: "roomie I paid 60 for pizza" },
+    expect: {
+      tools: ["log_expense"],
+      noTools: ["ask_poll"],
+      check: async (e) => fail((await balanceOf(e, "Dev")) === -2000 && (await balanceOf(e, "Sam")) === -2000, "an even split at once, no poll"),
+    },
+  },
+  {
+    id: "pizza-not-sure-who-polls",
+    area: "splitting",
+    turn: { text: "roomie I paid 60 for pizza, not sure who was in though" },
+    expect: {
+      tools: ["ask_poll"],
+      noTools: ["log_expense"],
+      check: async (e) => {
+        const open = await db.select().from(schema.polls).where(eq(schema.polls.groupId, e.ctx.groupId));
+        const about = open[0]?.about as { kind?: string; cents?: number } | undefined;
+        return fail(open.length === 1 && about?.kind === "who-in" && about.cents === 6000 && open[0].options.length <= 4 && (await expenseCount(e)) === 0, "one who's-in poll about $60, nothing logged yet");
+      },
+    },
+  },
+  {
+    id: "dm-paid-maya",
+    area: "splitting",
+    seed: async (e) => void (await money.logExpense(e.as("Maya"), { cents: 6000, description: "internet", category: "utilities" })),
+    turn: { text: "paid Maya", from: "Dev", private: true },
+    expect: {
+      tools: ["settle_up"],
+      check: async (e) => {
+        const posted = (await chatlog.roomieLines(e.ctx.groupId, 10)).map((l) => l.text);
+        return fail((await balanceOf(e, "Dev")) === 0 && !posted.some((t) => /paid|\$20/i.test(t)), `a Settlement, and nothing in the group; group lines: ${posted.join(" | ")}`);
+      },
+    },
+  },
+  {
+    id: "dm-pizza-echoes",
+    area: "splitting",
+    turn: { text: "I paid 40 for pizza", from: "Dev", private: true },
+    expect: {
+      tools: ["log_expense"],
+      check: async (e) => {
+        const posted = (await chatlog.roomieLines(e.ctx.groupId, 10)).map((l) => l.text);
+        return fail(posted.filter((t) => /^Dev logged \$40\.00 pizza, split 3 ways\.$/.test(t)).length === 1, `one group line; got ${posted.join(" | ")}`);
+      },
+    },
+  },
+  {
+    id: "stop-nudging-me",
+    area: "core",
+    turn: { text: "roomie stop nudging me", from: "Sam" },
+    expect: { tools: ["set_nudges"], maxLines: 1, check: async (e) => fail(await members.nudgesOff(e.member.Sam), "Sam's nudges are off") },
   },
   // ---------- rent and bills (#25) ----------
   {

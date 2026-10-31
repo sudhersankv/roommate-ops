@@ -22,8 +22,10 @@
 // Anti-ban (ADR 0001): the intro waits JOIN_DELAY_MS after joining; every send shows "composing", waits a human-ish
 // moment (REPLY_DELAY_MS overrides) and goes through token buckets per Chat and overall. Links go as trailing
 // "text — url" lines (unofficial clients have no reliable URL buttons), never with previews.
+import { createHash } from "node:crypto";
 import makeWASocket, {
   Browsers,
+  decryptPollVote,
   DisconnectReason,
   downloadMediaMessage,
   fetchLatestBaileysVersion,
@@ -54,7 +56,7 @@ import { envMs, SendLimiter, sleep as realSleep } from "./rate-limit";
 import { BAD_VOICE, chunkText, commandOf, helpText, MANY_GROUPS, NO_GROUP, NO_VOICE, OOPS, startReply, wasAddressed } from "./text";
 import { logPaused, roomiePaused } from "@/lib/kill-switch";
 import { mediaWanted } from "@/mastra/gate/policy";
-import type { Channel, ChannelUser, IncomingMessage, MediaQuestion, Outgoing } from "./types";
+import type { Channel, ChannelUser, IncomingMessage, MediaQuestion, Outgoing, PollVote, Sent } from "./types";
 import type { StoredAuth } from "./whatsapp-auth";
 import type { WaContact } from "./whatsapp-store";
 
@@ -103,13 +105,18 @@ export type WhatsAppDeps = {
   admission?: (adder: ChannelUser) => Promise<{ ok: true } | { ok: false; say: string }>;
   /** An operator paused this Chat's Group (/admin/groups): Roomie answers nothing there, /help included. */
   chatPaused?: (chatExternalId: string) => Promise<boolean>;
+  /** A Poll Roomie sent, by its message id: the messageSecret its votes are encrypted with and its options, from the
+   * polls table (the in-memory sent cache doesn't survive a restart). Absent or null: the vote can't be read. */
+  pollSecret?: (pollExternalId: string) => Promise<{ secret: Uint8Array; options: string[] } | null>;
+  /** Someone answered (or took back) a Poll Roomie asked (the pipeline's handlePollVote). */
+  onPollVote?: (vote: PollVote) => Promise<void>;
 };
 
 /** The part of a Baileys socket the adapter uses (the tests' fake implements just this). */
 export type WaSocket = {
   ev: { on<E extends keyof BaileysEventMap>(event: E, listener: (arg: BaileysEventMap[E]) => void): void };
   user?: { id: string; lid?: string; name?: string };
-  sendMessage(jid: string, content: { text: string }): Promise<WAMessage | undefined>;
+  sendMessage(jid: string, content: { text: string } | { poll: { name: string; values: string[]; selectableCount: number } }): Promise<WAMessage | undefined>;
   sendPresenceUpdate(type: "composing" | "paused" | "available" | "unavailable", jid?: string): Promise<void>;
   readMessages(keys: WAMessageKey[]): Promise<void>;
   groupMetadata(jid: string): Promise<GroupMetadata>;
@@ -216,6 +223,41 @@ export function readWaMessage(message: proto.IMessage | null | undefined, me: Me
   return text ? { ...base, kind: "text" } : null;
 }
 
+/** A WhatsApp vote names options by SHA-256 of their text (as Baileys' getAggregateVotesInPollMessage hashes them). */
+export const pollOptionHash = (option: string) => createHash("sha256").update(Buffer.from(option)).digest();
+
+/** The selected option hashes of a decrypted vote -> 0-based indexes into `options` (unknown hashes dropped). */
+export function optionIdsFromHashes(selected: readonly Uint8Array[], options: readonly string[]): number[] {
+  const hashes = options.map(pollOptionHash);
+  const ids = new Set<number>();
+  for (const s of selected) {
+    const i = hashes.findIndex((h) => h.equals(Buffer.from(s)));
+    if (i >= 0) ids.add(i);
+  }
+  return [...ids].sort((a, b) => a - b);
+}
+
+/**
+ * Baileys 7.0.0-rc14 doesn't decrypt votes itself (process-message.js has it commented out): a pollUpdateMessage's
+ * vote is AES-GCM under a key derived from the poll's messageSecret, its message id, the creator's and the voter's
+ * jids. Which jid form WhatsApp used (phone or LID) isn't on the message, so every pair is tried; GCM rejects the
+ * wrong ones. Returns the selected option hashes, or null when nothing decrypts.
+ */
+export function decryptWaVote(vote: proto.Message.IPollEncValue, ctx: { pollMsgId: string; secret: Uint8Array; creatorJids: (string | undefined)[]; voterJids: (string | null | undefined)[] }): Uint8Array[] | null {
+  const creators = [...new Set(ctx.creatorJids.map(norm).filter((j): j is string => !!j))];
+  const voters = [...new Set(ctx.voterJids.map(norm).filter((j): j is string => !!j))];
+  for (const pollCreatorJid of creators)
+    for (const voterJid of voters) {
+      try {
+        const res = decryptPollVote(vote, { pollCreatorJid, pollMsgId: ctx.pollMsgId, pollEncKey: ctx.secret, voterJid });
+        return (res.selectedOptions ?? []).map((o) => new Uint8Array(o));
+      } catch {
+        // not this pair
+      }
+    }
+  return null;
+}
+
 /** Remembers the last `size` keys. */
 export class BoundedSet {
   private readonly items = new Set<string>();
@@ -278,15 +320,35 @@ export class WhatsAppChannel implements Channel {
     this.replyDelayMs = opts.replyDelayMs ?? envMs("REPLY_DELAY_MS");
   }
 
-  async sendToChat(chatExternalId: string, msg: Outgoing) {
+  readonly nativePolls = true;
+
+  async sendToChat(chatExternalId: string, msg: Outgoing): Promise<Sent> {
     await this.flushIntro(chatExternalId);
-    await this.send(chatExternalId, msg);
+    return this.send(chatExternalId, msg);
   }
 
   /** WhatsApp lets Roomie message anyone first, so there's no "message me first" path here. */
-  async sendPrivate(userExternalId: string, msg: Outgoing) {
+  async sendPrivate(userExternalId: string, msg: Outgoing): Promise<Sent> {
     const to = isLidUser(userExternalId) && this.opts.recipientOf ? await this.opts.recipientOf(userExternalId) : userExternalId;
-    await this.send(to, msg);
+    return this.send(to, msg);
+  }
+
+  /** A native poll (single choice = selectableCount 1, multi = 0). Its id and messageSecret come back so the polls row
+   * can decrypt votes after a restart. */
+  private async sendPoll(jid: string, poll: NonNullable<Outgoing["poll"]>): Promise<Sent> {
+    const sock = this.socket();
+    if (!sock) throw new WhatsAppNotConnectedError();
+    await sock.sendPresenceUpdate("composing", jid).catch(() => {});
+    await this.sleep(this.replyDelayMs ?? 1_500);
+    await this.limiter.acquire(jid);
+    const live = this.socket();
+    if (!live) throw new WhatsAppNotConnectedError();
+    const sent = await live.sendMessage(jid, { poll: { name: poll.question, values: poll.options, selectableCount: poll.multi ? 0 : 1 } });
+    await sock.sendPresenceUpdate("paused", jid).catch(() => {});
+    if (!sent) return {};
+    this.opts.onSent?.(sent);
+    const secret = sent.message?.messageContextInfo?.messageSecret;
+    return { ...(sent.key.id ? { externalId: sent.key.id } : {}), ...(secret ? { secret: new Uint8Array(secret) } : {}) };
   }
 
   /** Post the intro `ms` from now, or right before anything else Roomie says in that Chat. */
@@ -347,7 +409,8 @@ export class WhatsAppChannel implements Channel {
   }
 
   /** Typed like a person (humanize.ts): "typing…", a pause sized to the text, then the bubble; longer replies in 2-3 bubbles. */
-  private async send(jid: string, msg: Outgoing) {
+  private async send(jid: string, msg: Outgoing): Promise<Sent> {
+    if (msg.poll) return this.sendPoll(jid, msg.poll);
     const sock = this.socket();
     if (!sock) throw new WhatsAppNotConnectedError();
     for (const bubble of planDelivery(withButtonLines(msg))) {
@@ -362,6 +425,7 @@ export class WhatsAppChannel implements Channel {
       }
     }
     await sock.sendPresenceUpdate("paused", jid).catch(() => {});
+    return {};
   }
 }
 
@@ -719,7 +783,7 @@ export function createWhatsApp(opts: WhatsAppOptions): WhatsApp {
   /* ----- messages ----- */
 
   /** The pipeline, with failures logged and, when Roomie was clearly being talked to, one friendly line instead. */
-  async function pipeline(msg: IncomingMessage, presenceJid: string, reply: (out: Outgoing) => Promise<void>) {
+  async function pipeline(msg: IncomingMessage, presenceJid: string, reply: (out: Outgoing) => Promise<unknown>) {
     const addressed = wasAddressed(msg);
     if (addressed) await sock?.sendPresenceUpdate("composing", presenceJid).catch(() => {});
     let out: Outgoing | null = null;
@@ -746,7 +810,7 @@ export function createWhatsApp(opts: WhatsAppOptions): WhatsApp {
     }) ?? Promise.resolve(false);
 
   /** Text, voice transcript or photo -> what the pipeline gets; null = nothing to pass on. */
-  async function content(m: WAMessage, read: ReadMessage, replyTo: (out: Outgoing) => Promise<void>, toldKey: string, folderChat: string, from: ChannelUser, isPrivate = false) {
+  async function content(m: WAMessage, read: ReadMessage, replyTo: (out: Outgoing) => Promise<unknown>, toldKey: string, folderChat: string, from: ChannelUser, isPrivate = false) {
     const base = { text: read.text, mentionsRoomie: read.mentionsRoomie, isReplyToRoomie: read.isReplyToRoomie };
     if (read.kind === "voice" || read.kind === "image") {
       const kind: "voice" | "photo" = read.kind === "voice" ? "voice" : "photo";
@@ -831,8 +895,8 @@ export function createWhatsApp(opts: WhatsAppOptions): WhatsApp {
     if ((command === "help" || command === "start") && chats.length === 1 && (await paused(chats[0]))) return;
     if (command === "help") return say({ text: chats.length === 1 ? await helpFor(chats[0]) : helpText() });
     if (command === "start") return say({ text: startReply(from.name.split(" ")[0], chats.length, "whatsapp") });
-    if (chats.length !== 1) {
-      if (chats.length) return say({ text: MANY_GROUPS });
+    // In several Groups: the pipeline works out which one this DM is about (ADR 0020), `chatExternalId` is a hint.
+    if (!chats.length) {
       if (toldNoGroup.has(from.userExternalId)) return;
       toldNoGroup.add(from.userExternalId);
       return say({ text: NO_GROUP });
@@ -840,6 +904,30 @@ export function createWhatsApp(opts: WhatsAppOptions): WhatsApp {
     const got = await content(m, read, say, `dm:${from.userExternalId}`, chats[0], from, true);
     if (!got) return;
     await pipeline({ channel: "whatsapp", chatExternalId: chats[0], userExternalId: from.userExternalId, userName: from.name, ...got, isPrivate: true }, jid, say);
+  }
+
+  /**
+   * A vote on one of Roomie's Polls: the poll's secret and options come from the app (deps.pollSecret: the polls
+   * row), the vote is decrypted here and its option hashes matched to the options. An empty selection = taken back.
+   */
+  async function pollVote(m: WAMessage, update: proto.Message.IPollUpdateMessage) {
+    const pollId = update.pollCreationMessageKey?.id;
+    if (!pollId || !update.vote || !deps.pollSecret || !deps.onPollVote) return;
+    const poll = await deps.pollSecret(pollId).catch((err) => {
+      console.error(`[whatsapp] couldn't load poll ${pollId}`, err);
+      return null;
+    });
+    if (!poll) return; // not one of Roomie's polls (or long gone)
+    const jid = m.key.remoteJid!;
+    const voterIds = isGroupJid(jid) ? [m.key.participant, m.key.participantAlt, (m.key as { participantPn?: string }).participantPn] : [jid, m.key.remoteJidAlt];
+    const { pn, lid } = me();
+    const selected = decryptWaVote(update.vote, { pollMsgId: pollId, secret: poll.secret, creatorJids: [pn, lid], voterJids: voterIds });
+    if (!selected) return console.warn(`[whatsapp] couldn't decrypt a vote on poll ${pollId}`);
+    const voter = await member(voterIds, m.pushName);
+    if (!voter) return;
+    await deps
+      .onPollVote({ channel: "whatsapp", chatExternalId: jid, pollExternalId: pollId, userExternalId: voter.userExternalId, optionIds: optionIdsFromHashes(selected, poll.options) })
+      .catch((err) => console.error(`[whatsapp] poll vote on ${pollId} failed`, err));
   }
 
   /** Whether a live message is new: not ours, not a replay, not seen. */
@@ -861,6 +949,12 @@ export function createWhatsApp(opts: WhatsAppOptions): WhatsApp {
     if (roomiePaused()) return logPaused("WhatsApp messages"); // the kill switch: not even a read receipt
     for (const m of messages) {
       if (!fresh(m)) continue;
+      const pollUpdate = normalizeMessageContent(m.message)?.pollUpdateMessage;
+      if (pollUpdate) {
+        const pollId = pollUpdate.pollCreationMessageKey?.id;
+        if (pollId) queue.push(`poll:${pollId}`, () => pollVote(m, pollUpdate));
+        continue;
+      }
       const read = readWaMessage(m.message, me());
       if (!read) continue;
       const jid = m.key.remoteJid!;

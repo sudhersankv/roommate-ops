@@ -83,7 +83,7 @@ const limiter = (): WindowLimiter => {
 
 export type SubmitMeta = { ip: string; userAgent?: string | null };
 /** Sends a private message on Telegram (the registered Channel); null when Telegram isn't configured. */
-export type TelegramSend = ((userId: string, out: Outgoing) => Promise<void>) | null;
+export type TelegramSend = ((userId: string, out: Outgoing) => Promise<unknown>) | null;
 
 export type SubmitDeps = {
   limiter?: WindowLimiter;

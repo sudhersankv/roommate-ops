@@ -28,7 +28,8 @@ import { activity, cart, chatlog, chores, groups, members, money, personality as
 import { composioHealth } from "@/integrations/composio";
 import { FakeSplitwise, setSplitwiseClient } from "@/integrations/splitwise";
 import { ComposioInstacart, FakeInstacart, setInstacartClient } from "@/integrations/instacart";
-import { readFile, rm } from "node:fs/promises";
+import { MemoryBlobStore, setBlobStore } from "@/integrations/blob-store";
+import { readFile } from "node:fs/promises";
 import { runRetention } from "@/jobs/retention";
 import { expenseSummary } from "@/services/money";
 import { allTools } from "./registry";
@@ -74,6 +75,11 @@ async function run<K extends ToolId>(id: K, input: ToolInput<K>, rc = requestCon
   return out;
 }
 
+// Documents' files go to an in-memory store (no object storage in tests).
+const blobs = new MemoryBlobStore();
+setBlobStore(blobs);
+const docExists = async (id: string) => (await db.select({ id: schema.documents.id }).from(schema.documents).where(eq(schema.documents.id, id))).length > 0;
+
 type GroupTable = PgTable & { groupId: PgColumn };
 const count = async (table: GroupTable) =>
   Number((await db.select({ n: sql<number>`count(*)::int` }).from(table).where(eq(table.groupId, groupId)))[0].n);
@@ -104,10 +110,12 @@ describe("Roomie tools against the dev DB", () => {
         sql`insert into mastra_scorers (id, "scorerId", "runId", scorer, score, input, output, source, "createdAt", "updatedAt", "resourceId") values (${`s-group-${groupId}`}, 'x', 'r', '{}'::jsonb, 1, '{}'::jsonb, '{}'::jsonb, 'LIVE', ${at}, ${at}, ${groupId})`,
       );
       const scan = await receipts.saveUpload(`g-${groupId}`, Buffer.from("a scan"), "image/jpeg");
+      assert.ok(await docExists(scan.id));
       await deleteGroup(groupId);
       assert.equal((await db.execute(sql`select 1 from mastra_ai_spans where "traceId" = ${trace}`)).rows.length, 0, "the Group's traces");
       assert.equal((await db.execute(sql`select 1 from mastra_scorers where id = ${`s-group-${groupId}`}`)).rows.length, 0, "the Group's scores");
-      await assert.rejects(readFile(scan.file), "the Group's uploads");
+      assert.equal(await docExists(scan.id), false, "the Group's Documents");
+      assert.equal(await blobs.get(`g/${groupId}/${scan.id}`), null, "and their files");
       // Verify nothing is left behind.
       const tables: [string, GroupTable][] = [
         ["expenses", schema.expenses],
@@ -124,6 +132,8 @@ describe("Roomie tools against the dev DB", () => {
         ["chats", schema.chats],
         ["group_toolkits", schema.groupToolkits],
         ["pet_moments", schema.petMoments],
+        ["documents", schema.documents],
+        ["pending_posts", schema.pendingPosts],
       ];
       for (const [name, t] of tables) assert.equal(await count(t), 0, `leftover rows in ${name}`);
       const [orphans] = await db
@@ -359,7 +369,7 @@ describe("Roomie tools against the dev DB", () => {
 
   test("expense_from_receipt: reads (fake reader), asks first, then logs exact per-item shares that add up", async () => {
     receipts.setReceiptReader({ read: async () => receipts.SAMPLE_RECEIPT });
-    const photo = await receipts.saveUpload("test", Buffer.from("not really a jpeg"), "image/jpeg");
+    const photo = await receipts.saveUpload({ groupId }, Buffer.from("not really a jpeg"), "image/jpeg");
     try {
       const before = await count(schema.expenses);
       const draft = await run("expense_from_receipt", { receipt_url: photo.url || photo.path, assignments: [{ item: "steak", who: ["Ryan"] }, { item: "wine", who: ["everyone"] }] });
@@ -374,20 +384,17 @@ describe("Roomie tools against the dev DB", () => {
       assert.ok(shares.Ryan > shares.Sudhersan, "the steak is Ryan's");
       const [row] = await db.select().from(schema.expenses).where(eq(schema.expenses.id, done.id));
       assert.ok(row.receiptUrl?.endsWith(photo.path));
+      assert.equal(row.receiptDocumentId, photo.id, "the Expense points at the receipt's Document");
       await money.deleteExpense(ctx, { expenseId: done.id });
       // A printed total that disagrees with the items is never logged without asking, even with confirm.
       receipts.setReceiptReader({ read: async () => ({ ...receipts.SAMPLE_RECEIPT, total: "150.00" }) });
-      const blurry = await receipts.saveUpload("test", Buffer.from("another photo"), "image/jpeg");
-      try {
-        const odd = await run("expense_from_receipt", { receipt_url: blurry.url || blurry.path, confirm: true });
-        assert.equal(odd.logged, false);
-        assert.match(odd.warning, /says \$150\.00.*add up to \$137\.97/);
-        assert.equal(await count(schema.expenses), before + 1);
-      } finally {
-        await rm(blurry.file, { force: true });
-      }
+      const blurry = await receipts.saveUpload({ groupId }, Buffer.from("another photo"), "image/jpeg");
+      const odd = await run("expense_from_receipt", { receipt_url: blurry.url || blurry.path, confirm: true });
+      assert.equal(odd.logged, false);
+      assert.match(odd.warning, /says \$150\.00.*add up to \$137\.97/);
+      assert.equal(await count(schema.expenses), before + 1);
     } finally {
-      await rm(photo.file, { force: true });
+      receipts.setReceiptReader(null);
     }
   });
 
@@ -680,8 +687,8 @@ describe("Roomie tools against the dev DB", () => {
     assert.match(text ?? "", /^🧹 On the chart today: .*mop the floor/);
     assert.equal(await bundleJob(g, at(9)), null, "once per local day");
     assert.equal(outbox.filter((o) => o.to === "chat").length, 1);
-    const [claim] = await db.select().from(schema.scheduledPosts).where(and(eq(schema.scheduledPosts.groupId, groupId), eq(schema.scheduledPosts.kind, "chores.nudge")));
-    assert.equal(claim?.period, dayInZone(CHI, at(9)), "claimed under the nudge's kind and local day");
+    const [claim] = await db.select().from(schema.scheduledPosts).where(and(eq(schema.scheduledPosts.groupId, groupId), eq(schema.scheduledPosts.kind, "bundle")));
+    assert.equal(claim?.period, dayInZone(CHI, at(9)), "claimed as the Bundle for the local day");
 
     await run("set_group_settings", { choresNudgeHour: null, reportDay: "Wednesday", reportHour: 7 });
     assert.equal(await bundleJob(g, at(9, 1)), null, "nudge switched off");
@@ -980,8 +987,8 @@ describe("Roomie tools against the dev DB", () => {
 
   test("cart_from_photo: a list photo is read (fake vision), summarized, added as shared only on confirm; a receipt points at Money's tool", async () => {
     const photos = await import("@/services/grocery-photos");
-    const list = await receipts.saveUpload("test", Buffer.from("a shopping list"), "image/jpeg");
-    const bill = await receipts.saveUpload("test", Buffer.from("a receipt"), "image/jpeg");
+    const list = await receipts.saveUpload({ groupId }, Buffer.from("a shopping list"), "image/jpeg");
+    const bill = await receipts.saveUpload({ groupId }, Buffer.from("a receipt"), "image/jpeg");
     photos.setPhotoReader({ read: async ({ dataUrl }) => (Buffer.from(dataUrl.split(",")[1], "base64").toString().includes("receipt") ? JSON.stringify({ kind: "receipt" }) : photos.SAMPLE_LIST_JSON) });
     try {
       const read = await run("cart_from_photo", { photo_url: list.path, shared: true });
@@ -998,20 +1005,28 @@ describe("Roomie tools against the dev DB", () => {
       assert.equal((await lastActivity()).summary, "put eggs, milk, bread and 1 more on the Cart for everyone");
       const r = await run("cart_from_photo", { photo_url: bill.path });
       assert.deepEqual(r, { kind: "receipt", next: "expense_from_receipt" }, "no Money check: Groceries requires it");
-      const theirs = await receipts.saveUpload("g-00000000-0000-4000-8000-000000000000", Buffer.from("their list"), "image/jpeg");
-      try {
-        await assert.rejects(run("cart_from_photo", { photo_url: theirs.path }), /only read photos sent in this group's chat/);
-        await assert.rejects(run("expense_from_receipt", { receipt_url: theirs.path }), /only read photos sent in this group's chat/);
-      } finally {
-        await rm(theirs.file, { force: true });
-      }
+      // Another Group's Document is in core-slots.dbtest.ts; here a link to none at all.
+      const theirs = `/api/docs/${crypto.randomUUID()}`;
+      await assert.rejects(run("cart_from_photo", { photo_url: theirs }), /only read photos sent in this group's chat/);
+      await assert.rejects(run("expense_from_receipt", { receipt_url: theirs }), /only read photos sent in this group's chat/);
       for (const i of open) await cart.removeItemById(ctx, { id: i.id });
     } finally {
       photos.setPhotoReader(null);
       photos.clearPhotoCache();
-      await rm(list.file, { force: true });
-      await rm(bill.file, { force: true });
     }
+  });
+
+  test("keep_document / find_documents: 'roomie keep this, it's the lease' files the photo; find gives links only when asked to open", async () => {
+    const photo = await receipts.saveUpload({ groupId }, Buffer.from("lease page 1"), "image/jpeg");
+    assert.deepEqual(await run("find_documents", { query: "lease" }), { found: [] }, "an unkept photo isn't found");
+    assert.deepEqual(await run("keep_document", { url: photo.path, title: "Lease 2026-27", kind: "lease" }), { kept: "Lease 2026-27", kind: "lease" });
+    const found = await run("find_documents", { query: "the lease" });
+    assert.deepEqual(found.found.map((d: { title: string; kind: string }) => [d.title, d.kind]), [["Lease 2026-27", "lease"]]);
+    assert.equal(found.links, undefined);
+    const open = await run("find_documents", { query: "lease", open: true });
+    if (process.env.APP_URL?.startsWith("http")) assert.ok(open.links[0].url.endsWith(`/api/docs/${photo.id}`));
+    await assert.rejects(run("keep_document", {}), /Send the photo or file/);
+    assert.equal((await lastActivity()).summary, "kept Lease 2026-27");
   });
 
   // ---------- identity: Pending members, Admins, settings, Claim links, forget me ----------
@@ -1328,7 +1343,7 @@ describe("Roomie tools against the dev DB", () => {
       { groupId, memberId: member.Alex, text: "remember me?" },
     ]);
     await db.insert(schema.activity).values({ groupId, actorMemberId: member.Alex, kind: "test.forget", summary: `Alex added rent for ${number}` });
-    const photo = await receipts.saveUpload("test", Buffer.from("a photo"), "image/jpeg", `forget-${ts}`);
+    const photo = await receipts.saveUpload({ groupId }, Buffer.from("a photo"), "image/jpeg", `forget-${ts}`);
 
     // Roomie's memory thread, written the way Mastra stores it.
     const thread = `group-${groupId}`;
@@ -1382,7 +1397,7 @@ describe("Roomie tools against the dev DB", () => {
       assert.deepEqual([me.displayName, me.channelUserId, me.accountId, me.status], ["Former member", null, null, "removed"]);
       const left = (await db.execute(sql`select id from mastra_messages where thread_id = ${thread} and id like ${`forget-${ts}-%`} order by id`)).rows.map((x) => (x as { id: string }).id);
       assert.deepEqual(left, [mid(4), mid(6)], "Ryan's line with the same text and the reply that doesn't name Alex stay");
-      await assert.rejects(readFile(photo.file), "the photo in a forgotten line is deleted");
+      assert.equal(await docExists(photo.id), false, "the photo in a forgotten line is deleted");
       const spans = (await db.execute(sql`select "traceId" from mastra_ai_spans where "traceId" like ${`t-forget-${ts}%`}`)).rows.map((x) => (x as { traceId: string }).traceId);
       assert.deepEqual(spans, [t2], "Alex's trace, its whole scorer run and Ryan's trace quoting Alex's line are gone; Ryan's own stays");
       assert.equal((await db.select().from(schema.reminders).where(eq(schema.reminders.id, reminder.id))).length, 0, "reminders set for them");
@@ -1792,6 +1807,43 @@ describe("Join links and seats", () => {
     joins.setJoinLimits(new MemoryCounters());
     for (let i = 0; i < 10; i++) await assert.rejects(joins.claimSeat(code, bogus, fakeSeat, { ip: `198.51.100.${i}` }), (e: unknown) => e instanceof joins.JoinError && e.code === "seat");
     await assert.rejects(joins.claimSeat(code, bogus, fakeSeat, { ip: "198.51.100.99" }), (e: unknown) => e instanceof joins.JoinError && e.code === "rate_limited", "per Account too");
+  });
+});
+
+describe("polls and nudges (#24B)", () => {
+  let pgid: string;
+  let people: Record<string, string>;
+  const posted: DevOutput[] = [];
+  const rc = (name: string) => new RequestContext<unknown>([["groupId", pgid], ["memberId", people[name]], ["memberName", name], ["role", name === "Maya" ? "admin" : "member"], ["status", "active"], ["source", "chat"]]);
+
+  before(async () => {
+    registerChannel(new DevChannel((o) => posted.push(o)));
+    const stamp = Date.now();
+    const list = ["Maya", "Dev", "Sam"].map((name) => ({ userExternalId: devUserId(`polls-${name}-${stamp}`), name }));
+    const joined = await onGroupJoined({ channel: "dev", externalId: `polls-${stamp}`, title: `Polls ${stamp}` }, list, list[0]);
+    pgid = joined.group.id;
+    people = Object.fromEntries(joined.members.map((m) => [m.displayName, m.id]));
+  });
+  after(async () => {
+    if (pgid) await deleteGroup(pgid);
+  });
+
+  test("ask_poll: a who's-in poll about $60 pizza goes to the chat and nothing is logged", async () => {
+    const r = await run("ask_poll", { question: "Who's in on the $60 pizza?", options: ["I'm in", "Not me"], multi: false, about: { amount: 60, description: "pizza", category: "food" } }, rc("Maya"));
+    assert.equal(r.asked, true);
+    assert.equal(r.answerWith, "a number", "dev-chat has no native polls");
+    assert.match(posted.at(-1)?.msg.text ?? "", /^\(poll \d+\) Who's in on the \$60 pizza\?\n1\. I'm in\n2\. Not me/);
+    const [p] = await db.select().from(schema.polls).where(eq(schema.polls.groupId, pgid));
+    assert.deepEqual(p.about, { kind: "who-in", payerId: people.Maya, cents: 6000, description: "pizza", category: "food" });
+    assert.equal((await money.listExpenses({ groupId: pgid })).length, 0);
+    await assert.rejects(run("ask_poll", { question: "Which?", options: ["a", "b", "c", "d", "e"], multi: false } as never, rc("Maya")));
+  });
+
+  test("set_nudges: off, then on again", async () => {
+    assert.equal((await run("set_nudges", { on: false }, rc("Sam"))).nudges, "off");
+    assert.equal(await members.nudgesOff(people.Sam), true);
+    assert.equal((await run("set_nudges", { on: true }, rc("Sam"))).nudges, "on");
+    assert.equal(await members.nudgesOff(people.Sam), false);
   });
 });
 
