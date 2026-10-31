@@ -222,7 +222,7 @@ export const SCENARIOS: Scenario[] = [
     id: "receipt-photo",
     area: "splitting",
     seed: async (e) => {
-      e.photo = (await receipts.saveUpload("evals", Buffer.from("fake receipt"), "image/jpeg")).path;
+      e.photo = (await receipts.saveUpload(e.ctx, Buffer.from("fake receipt"), "image/jpeg")).path;
     },
     turn: { text: "roomie log this receipt, I paid. The steak was Dev's, the rest we all shared", photo: true },
     expect: {
@@ -347,7 +347,7 @@ export const SCENARIOS: Scenario[] = [
     id: "photo-list-all-common",
     area: "groceries",
     seed: async (e) => {
-      e.photo = (await receipts.saveUpload("evals", Buffer.from("a shopping list"), "image/jpeg")).path;
+      e.photo = (await receipts.saveUpload(e.ctx, Buffer.from("a shopping list"), "image/jpeg")).path;
     },
     turn: { text: "roomie all common", photo: true },
     // Either it asks once with the list in one line, or (the caption said "all common") it adds them as shared.
@@ -361,7 +361,7 @@ export const SCENARIOS: Scenario[] = [
     seed: async (e) => {
       await toolkits.setToolkit(e.ctx, { toolkit: "groceries", enabled: false });
       await toolkits.setToolkit(e.ctx, { toolkit: "splitting", enabled: false });
-      e.photo = (await receipts.saveUpload("evals", Buffer.from("a receipt"), "image/jpeg")).path;
+      e.photo = (await receipts.saveUpload(e.ctx, Buffer.from("a receipt"), "image/jpeg")).path;
     },
     turn: { text: "roomie split this", photo: true },
     // "I haven't learned Money here ... say 'roomie, learn money'".

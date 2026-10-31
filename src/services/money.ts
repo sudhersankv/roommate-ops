@@ -7,6 +7,7 @@ import { localDay } from "@/lib/dates";
 import { recordFor } from "./activity";
 import { canChangeExpense, NotAllowedError, requireActive } from "./authz";
 import { guessCategory, isCategory } from "./categories";
+import { attachReceipt, docIdFromUrl } from "./documents";
 import { listMembers } from "./members";
 import { enqueueSplitwisePush } from "./outbox";
 import { joinNames, type ReportPart } from "./report";
@@ -38,6 +39,8 @@ export type Expense = {
   recurring?: Recurrence | null;
   recurringParentId?: string | null;
   receiptUrl?: string | null;
+  /** The receipt's Document (open it at receiptUrl, /api/docs/<id>). */
+  receiptDocumentId?: string | null;
   splitwiseId?: string | null;
   deletedAt?: Date | null;
 };
@@ -291,6 +294,7 @@ export async function logExpense(ctx: Ctx, input: ExpenseInput): Promise<Expense
   const b = await build(ctx, input);
   const source = input.source ?? (ctx.source === "ui" ? "ui" : "chat");
   const id = (await insertExpenseRows(ctx.groupId, ctx.memberId, { ...b, source }))!;
+  if (b.receiptUrl) await linkReceipt(ctx, id, b.description, b.receiptUrl);
   await recordFor(ctx, "expense.added", `added ${b.description}, ${dollars(b.cents)}${howSplit(b, b.nameOf)}`, { table: "expenses", id });
   await enqueueSplitwisePush(ctx.groupId, id, "upsert");
   return (await getExpense(ctx, id))!;
@@ -386,9 +390,20 @@ export async function updateExpense(ctx: Ctx, input: ExpensePatch): Promise<Expe
     await writeShares(tx, row.id, b);
   });
   const what = totalChanged ? `changed ${b.description}: ${dollars(before.cents)} -> ${dollars(cents)}` : `changed ${b.description}`;
+  if (input.receiptUrl !== undefined && input.receiptUrl !== before.receiptUrl) await linkReceipt(ctx, row.id, b.description, b.receiptUrl);
   await recordFor(ctx, "expense.changed", what, { table: "expenses", id: row.id });
   await enqueueSplitwisePush(ctx.groupId, row.id, "upsert");
   return (await getExpense(ctx, row.id))!;
+}
+
+/**
+ * The receipt's Document (ADR 0018): a /api/docs link of this Group's becomes expenses.receipt_document_id, and the
+ * Document a filed receipt pointing at the Expense. Anything else (an old /uploads path) keeps no Document.
+ */
+async function linkReceipt(ctx: Ctx, expenseId: string, description: string, receiptUrl: string | null) {
+  const docId = receiptUrl ? docIdFromUrl(receiptUrl) : null;
+  const linked = docId ? await attachReceipt(ctx, docId, { id: expenseId, description }) : false;
+  await db.update(expenses).set({ receiptDocumentId: linked ? docId : null }).where(eq(expenses.id, expenseId));
 }
 
 /** Soft delete, so undo can bring it back. */
@@ -565,6 +580,7 @@ export async function listExpenses(ctx: GroupCtx, limit = 50, opts: { expenseId?
       recurring: expenses.recurring,
       recurringParentId: expenses.recurringParentId,
       receiptUrl: expenses.receiptUrl,
+      receiptDocumentId: expenses.receiptDocumentId,
       splitwiseId: expenseExternalRefs.externalId,
       deletedAt: expenses.deletedAt,
     })

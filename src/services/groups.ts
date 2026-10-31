@@ -180,11 +180,12 @@ export async function setSimplifyDebts(ctx: Ctx, input: { on: boolean }): Promis
   return input.on;
 }
 
-const DATA_TABLES = [schema.outboxJobs, schema.splitwiseLinks, schema.cartCheckouts, schema.expenses, schema.settlements, schema.cartItems, schema.recipes, schema.chores, schema.reminders, schema.maintenance, schema.chatMessages, schema.activity, schema.petMoments] as const;
+const DATA_TABLES = [schema.outboxJobs, schema.splitwiseLinks, schema.cartCheckouts, schema.expenses, schema.settlements, schema.cartItems, schema.recipes, schema.chores, schema.reminders, schema.maintenance, schema.chatMessages, schema.activity, schema.petMoments, schema.pendingPosts] as const;
 
 /**
  * Admin "delete group data" (ADR 0006): every Expense, Settlement, Cart item, chore, reminder, upkeep item, chat
- * line, Activity row, Member note, Splitwise link, uploaded photo, trace and score, and Roomie's memory for the Group.
+ * line, Activity row, Member note, Splitwise link, Document (and its file), held quiet-hours post, trace and score, and
+ * Roomie's memory for the Group.
  * The Group, its Chat, Members and settings stay, so Roomie keeps working from the next message.
  */
 export async function deleteGroupData(ctx: Ctx): Promise<void> {
@@ -193,15 +194,14 @@ export async function deleteGroupData(ctx: Ctx): Promise<void> {
   await recordFor(ctx, "group.data_deleted", "deleted the group's data");
 }
 
-/** Rows, then what lives outside the app's tables: memory, traces and scores, uploaded photos. */
+/** Rows, then what lives outside the app's tables: memory, traces and scores, Documents (rows and their files). */
 async function wipeGroupData(groupId: string) {
-  const chat = await chatOfGroup(groupId);
   await wipeGroupRows(groupId);
   const { forgetGroupInMemory, forgetGroupTraces } = await import("@/mastra/forget");
   await forgetGroupInMemory(groupId);
   await forgetGroupTraces(groupId);
-  const { removeUploadFolder, uploadFoldersFor } = await import("./receipts");
-  for (const folder of uploadFoldersFor(groupId, chat)) await removeUploadFolder(folder);
+  const { deleteGroupDocuments } = await import("./documents");
+  await deleteGroupDocuments(groupId);
 }
 
 async function wipeGroupRows(groupId: string) {

@@ -102,12 +102,13 @@ async function run(line: string) {
       return send(unquote(name), unquote(tail.slice(name.length)));
     }
     case "photo": {
-      // photo <name> <path-or-url> [caption]: the file goes to public/uploads/dev/ like a Channel adapter would store it.
+      // photo <name> <path-or-url> [caption]: kept as one of the Group's Documents, like a Channel adapter would store it.
       const [name, src, ...words] = rest.map(unquote);
       if (!name || !src) throw new Error("photo <name> <path-or-url> [caption]");
       const bytes = /^https?:\/\//i.test(src) ? Buffer.from(await (await fetch(src)).arrayBuffer()) : await readFile(src);
       const mime = /\.png$/i.test(src) ? "image/png" : /\.webp$/i.test(src) ? "image/webp" : "image/jpeg";
-      const saved = await receipts.saveUpload("dev", bytes, mime);
+      const who = await memberNamed(name);
+      const saved = await receipts.saveUpload({ groupId: who.gid }, bytes, mime, undefined, { uploadedBy: who.m.id });
       const imageUrl = saved.url || saved.path;
       return send(name, unquote(words.join(" ")), imageUrl);
     }
