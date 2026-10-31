@@ -809,7 +809,8 @@ export const SCENARIOS: Scenario[] = [
     id: "members",
     area: "core",
     turn: { text: "roomie who's in this group?", from: "Dev" },
-    expect: { replyIncludes: ["Maya", "Dev", "Sam"] },
+    // Dev asked, so "you" counts for Dev.
+    expect: { replyIncludes: ["Maya", /Dev|you/, "Sam"] },
   },
 
   /* ---------- Tricks (teaching Roomie from the chat; Toolkits in code) ---------- */

@@ -21,7 +21,7 @@ export const splitting = defineManifest({
   persona: [
     `- Splits: pass the intent, not your arithmetic. "50/25/25" is percents, "2:2:1" is shares, "I owe 30, Dev 20" is exact amounts, "Alex paid 60 and I paid 40" is payers. If amounts don't add up, the tool says so: ask, don't fix them yourself.`,
     `- Always set a category when you log an expense; ask only if the amount or who's in it is unclear.`,
-    `- "[photo: <url>]" in a message is a picture someone sent. If it's a receipt, use expense_from_receipt with that url.`,
+    `- "[photo: <url>]" in a message is a picture someone sent; you can't see it. Use expense_from_receipt with that url when the caption says receipt, bill or split (or when cart_from_photo isn't one of your tools). Otherwise let cart_from_photo read it first: it says when it's a receipt.`,
     `- "Settle up with X" means show what's owed and the pay buttons (settle_up with paid=false). Record a payment only once someone says it's paid.`,
     `- "Undo" right after you deleted an expense means restore_expense.`,
     `- "I paid 60 for pizza" with nobody named is an even split among everyone, logged now (no poll); say how to change it. Only "not sure who was in" gets a who's-in poll (ask_poll with about), and nothing is logged until it resolves. "I was in too" afterwards is update_expense.`,

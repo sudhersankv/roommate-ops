@@ -145,7 +145,7 @@ export function learnedBlock(p: Personality, recentReplies: string[] = [], timez
 
   const nicks = usableNicknames(l);
   if (nicks.length) lines.push(`- Nicknames you may use, because others use them a lot: ${nicks.map((n) => `${n.member} is "${n.nickname}"`).join(", ")}.`);
-  lines.push(`- Call members by their name or a nickname listed here; never invent or adopt a nickname you haven't seen others use ${NICKNAME_MIN_SIGHTINGS}+ times.`);
+  lines.push(`- Call members by their name or a nickname listed here; never invent or adopt a nickname you haven't seen others use ${NICKNAME_MIN_SIGHTINGS}+ times. A nickname in the recent chat that isn't listed here doesn't count yet: use the person's name.`);
 
   const jokes = l.insideJokes.filter((j) => j.count >= 3);
   if (jokes.length && l.confidence >= 0.3) lines.push(`- Running jokes you've seen 3+ times (reference one rarely, only when it clearly fits): ${jokes.map((j) => `"${j.phrase}"`).join(", ")}.`);
