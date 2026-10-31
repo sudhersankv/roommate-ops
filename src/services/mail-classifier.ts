@@ -12,6 +12,7 @@ const CLASSES = ["notice", "rent-lease", "work-order", "other"] as const;
 const REPLIES = ["acknowledged", "scheduled", "done", "other"] as const;
 
 const LOCAL_DATE = /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2})?$/;
+const LOCAL_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/;
 const blankToUndefined = (v: unknown) => (v === null || v === "" ? undefined : v);
 
 /** What the model must answer. Loose where it can be (a bad date or amount is dropped), strict on class and summary. */
@@ -21,6 +22,11 @@ export const ModelAnswerSchema = z.object({
   amount: z.preprocess(blankToUndefined, z.union([z.string(), z.number()]).optional()),
   utility: z.preprocess(blankToUndefined, z.string().max(60).optional()),
   reply: z.preprocess(blankToUndefined, z.enum(REPLIES).optional().catch(undefined)),
+  // A notice's window (#63): local wall-clock, both with a time; a bad one is dropped.
+  start: z.preprocess(blankToUndefined, z.string().regex(LOCAL_TIME).optional().catch(undefined)),
+  end: z.preprocess(blankToUndefined, z.string().regex(LOCAL_TIME).optional().catch(undefined)),
+  what: z.preprocess(blankToUndefined, z.string().trim().min(1).max(40).optional().catch(undefined)),
+  off: z.preprocess(blankToUndefined, z.boolean().optional().catch(undefined)),
   summary: z.string().trim().min(1).max(200),
 });
 
@@ -49,10 +55,17 @@ export function parseClassification(text: string): Classification {
   if (!parsed.success) throw new ClassifierFormatError(parsed.error.issues.map((i) => `${i.path.join(".") || "answer"}: ${i.message}`).join("; "));
   const a = parsed.data;
   const amountCents = toCents(a.amount);
+  // An end before its start is no end; a start without a date fills the date in.
+  const until = a.start && a.end && a.end > a.start ? a.end : undefined;
+  const date = a.date ?? a.start;
   return {
     class: a.class,
     summary: a.summary.replace(/\s+/g, " "),
-    ...(a.date ? { date: a.date } : {}),
+    ...(date ? { date } : {}),
+    ...(a.start ? { start: a.start } : {}),
+    ...(until ? { end: until } : {}),
+    ...(a.what ? { what: a.what.toLowerCase().replace(/\s+/g, " ") } : {}),
+    ...(a.off !== undefined ? { off: a.off } : {}),
     ...(amountCents !== undefined ? { amountCents } : {}),
     ...(a.utility?.trim() ? { utility: a.utility.trim() } : {}),
     ...(a.reply ? { reply: a.reply } : {}),
@@ -73,8 +86,8 @@ export function classifierPrompt(input: ClassifyInput, feedback?: string): strin
     `- work-order: a reply about the repair request above (only when there is one).`,
     `- other: everything else (newsletters, events, promotions, digests, receipts, a utility bill).`,
     `Reply with JSON only, no prose, no code fence:`,
-    `{"class": "notice" | "rent-lease" | "work-order" | "other", "date": "YYYY-MM-DD" or "YYYY-MM-DDTHH:mm" (local time, only if the email gives the day it happens or the visit's day), "amount": the money amount exactly as written (the new rent, or a bill's amount due), "utility": the utility's name for a utility bill (electric, gas, water, internet), "reply": for work-order only, "acknowledged" | "scheduled" | "done" | "other", "summary": one short line for the group chat, lower case start, no greeting (e.g. "smoke detector inspection Tuesday Nov 3, 9am-noon")}`,
-    `Leave out keys you don't know. Never guess a date or an amount.`,
+    `{"class": "notice" | "rent-lease" | "work-order" | "other", "date": "YYYY-MM-DD" or "YYYY-MM-DDTHH:mm" (local time, only if the email gives the day it happens or the visit's day), "amount": the money amount exactly as written (the new rent, or a bill's amount due), "utility": the utility's name for a utility bill (electric, gas, water, internet), "reply": for work-order only, "acknowledged" | "scheduled" | "done" | "other", "start": for a notice with a time window, when it starts, "YYYY-MM-DDTHH:mm" local, "end": when it ends, same format, "what": for a notice, the thing in 1-3 words, lower case ("water", "power", "elevator", "smoke detector inspection", "pest control"), "off": true when the notice says that thing will be off or out (a shut-off or outage), false for a visit or work, "summary": one short line for the group chat, lower case start, no greeting (e.g. "water's off Tue, 9 to 11 AM" or "smoke detector inspection Tuesday Nov 3, 9am-noon")}`,
+    `Leave out keys you don't know. Never guess a date, a time or an amount.`,
     feedback ? `Your last answer was rejected: ${feedback}. Answer again with JSON only.` : "",
     ``,
     `From: ${input.from}`,
@@ -132,6 +145,39 @@ export async function classifyWith(generate: (prompt: string) => Promise<string>
   return FALLBACK(input);
 }
 
+const MERIDIEM = String.raw`(a\.?m\.?|p\.?m\.?)`;
+const CLOCK = String.raw`(\d{1,2})(?::(\d{2}))?\s*${MERIDIEM}?`;
+const WINDOW = new RegExp(String.raw`\b${CLOCK}\s*(?:-|–|—|to|and|until|till)\s*(?:${CLOCK}|(noon))`, "i");
+const hhmm = (h: number, m: number) => `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+const to24 = (h: number, mer: string | undefined) => (mer ? (/^p/i.test(mer) ? (h % 12) + 12 : h % 12) : h);
+
+/**
+ * The fake's window on a known day: "between 9:00 AM and 11:00 AM", "9am-11am", "9 to 11 AM", "9am to noon". A
+ * start without its own AM / PM takes the end's (unless that puts it after the end). Null without one.
+ */
+export function windowFromText(text: string, day: string): { start: string; end: string } | null {
+  // "11-03" (a date) has no AM / PM: skip to a real window.
+  const m = [...text.matchAll(new RegExp(WINDOW.source, "gi"))].find((x) => x[3] || x[6] || x[7]);
+  if (!m) return null;
+  const [, sh, sm, smer, eh, em, emer, noon] = m;
+  const endH = noon ? 12 : to24(Number(eh), emer ?? smer);
+  const endM = noon ? 0 : Number(em ?? 0);
+  let startH = to24(Number(sh), smer ?? emer);
+  if (!smer && startH * 60 + Number(sm ?? 0) > endH * 60 + endM) startH = Number(sh) % 12;
+  if (startH > 23 || endH > 23) return null;
+  return { start: `${day}T${hhmm(startH, Number(sm ?? 0))}`, end: `${day}T${hhmm(endH, endM)}` };
+}
+
+/** The fake's `what` and `off`: a shut-off of water / power / gas / the elevator, else the kind of visit. */
+export function noticeWhatFromText(text: string): { what?: string; off?: boolean } {
+  const off = /\b(?:shut-?off|shut off|turned off|will be (?:off|out|unavailable|out of service)|outage|interruption)\b/i.test(text);
+  const thing = /\b(hot water|water|power|electricity|gas|elevators?)\b/i.exec(text)?.[1]?.toLowerCase();
+  if (thing && off) return { what: thing === "electricity" ? "power" : thing, off: true };
+  // The most specific kind the email names anywhere (the subject may only say "inspection").
+  const visit = ["smoke detector inspection", "pest control", "inspection", "maintenance", "painting"].find((k) => new RegExp(String.raw`\b${k}\b`, "i").test(text));
+  return visit ? { what: visit, off: false } : {};
+}
+
 /** Evals (MAIL_CLASSIFIER_FAKE=1): keywords, no model. */
 export const keywordClassifier: MailClassifier = {
   async classify(input) {
@@ -144,7 +190,10 @@ export const keywordClassifier: MailClassifier = {
       return { class: "work-order", summary, reply, ...(iso ? { date: iso } : {}) };
     }
     if (/\b(?:rent|renewal|lease)\b/i.test(text)) return { class: "rent-lease", summary, ...(amount ? { amountCents: parseMoney(amount)! } : {}) };
-    if (/\b(?:inspection|shut-?off|maintenance|pest|water will be|power will be)\b/i.test(text)) return { class: "notice", summary, ...(iso ? { date: iso } : {}) };
+    if (/\b(?:inspection|shut-?off|maintenance|pest|water will be|power will be)\b/i.test(text)) {
+      const window = iso ? windowFromText(text, iso) : null;
+      return { class: "notice", summary, ...(iso ? { date: window?.start ?? iso } : {}), ...(window ?? {}), ...noticeWhatFromText(text) };
+    }
     const utility = /\b(electric|gas|water|internet)\b.*\bbill\b/i.exec(text)?.[1]?.toLowerCase();
     return { class: "other", summary, ...(utility ? { utility } : {}), ...(utility && amount ? { amountCents: parseMoney(amount)! } : {}) };
   },

@@ -202,7 +202,7 @@ describe("Lease Inbox services against the dev DB", () => {
 
   test("a dated notice: one line, the evening-before Reminder time, urgent inside 72 hours, hooks called", async () => {
     const { result } = await deliver({ from: LANDLORD, subject: "Water shut-off Monday", text: "Water will be off Monday, November 2, 10am to 2pm." });
-    nextClassifications.push({ class: "notice", date: "2026-11-02T10:00", summary: "water off Monday Nov 2, 10am-2pm" });
+    nextClassifications.push({ class: "notice", date: "2026-11-02T10:00", start: "2026-11-02T10:00", end: "2026-11-02T14:00", what: "water", off: true, summary: "water off Monday Nov 2, 10am-2pm" });
     const calls: string[] = [];
     const out = await leaseInbox.classifyInbound(groupId, result.id!, {
       now: new Date("2026-10-30T17:00:00Z"), // Fri noon CDT: Mon 10:00 CST is 71 h away
@@ -214,11 +214,15 @@ describe("Lease Inbox services against the dev DB", () => {
     assert.equal(out.class, "notice");
     assert.equal(out.line, "📬 Brookfield Residential Leasing: water off Monday Nov 2, 10am-2pm");
     assert.equal(out.urgent, true);
-    // 18:00 Chicago on Sunday Nov 1, after the switch back to CST: 00:00Z on Nov 2.
-    assert.equal(out.reminderAt?.toISOString(), "2026-11-02T00:00:00.000Z");
-    assert.deepEqual(calls, ["remind 2026-11-02T00:00:00.000Z Water off Monday Nov 2, 10am-2pm", "urgent 📬 Brookfield Residential Leasing: water off Monday Nov 2, 10am-2pm"]);
+    // 20:00 Chicago on Sunday Nov 1, after the switch back to CST: 02:00Z on Nov 2.
+    assert.equal(out.reminderAt?.toISOString(), "2026-11-02T02:00:00.000Z");
+    assert.deepEqual(calls, [
+      "remind 2026-11-02T02:00:00.000Z Reminder: water's off tomorrow, 10 AM to 2 PM. Shower tonight.",
+      "urgent 📬 Brookfield Residential Leasing: water off Monday Nov 2, 10am-2pm",
+    ]);
     const [row] = await db.select().from(schema.mailMessages).where(eq(schema.mailMessages.id, result.id!));
     assert.deepEqual([row.class, row.noticeDate], ["notice", "2026-11-02T10:00"]);
+    assert.deepEqual(row.facts, { start: "2026-11-02T10:00", end: "2026-11-02T14:00", what: "water", off: true });
   });
 
   test("everything else from the landlord is one line too, like a notification (#45), and filed", async () => {

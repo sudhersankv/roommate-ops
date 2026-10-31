@@ -1,7 +1,7 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { reportIssue, sendIntro, type SendApproval } from "@/services/lease-inbox";
-import { inboxStatus, releaseInbox, sendForMember, trustAsked, workOrderLine } from "@/services/lease-inbox-toolkit";
+import { inboxStatus, noticeLine, releaseInbox, sendForMember, trustAsked, workOrderLine } from "@/services/lease-inbox-toolkit";
 import { askLease } from "@/services/lease-text";
 import { ctxOf } from "../util";
 
@@ -90,6 +90,13 @@ export const leaseInboxTools = {
       const { address } = await inboxStatus(ctx);
       return askLease(ctx, { question }, { address });
     },
+  }),
+  notice_status: createTool({
+    id: "notice_status",
+    description:
+      "\"Is the water back on?\", \"when's the power back?\", \"is the inspection today?\": answered from the landlord's latest notice about it and its time window. `about` = the thing they asked about ('water', 'power', 'elevator', 'inspection'). Say `line` as it is.",
+    inputSchema: z.object({ about: z.string().optional().describe("What they asked about, in a word or two: 'water'") }),
+    execute: async ({ about }, context) => noticeLine(ctxOf(context), about),
   }),
   inbox_status: createTool({
     id: "inbox_status",

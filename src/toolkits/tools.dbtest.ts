@@ -1974,6 +1974,29 @@ describe("Lease Inbox tools (#27, FakeMail)", () => {
     assert.match(r.line, /^No lease filed yet\. Forward the lease PDF to lease-\d+-[a-z0-9]{4}@agentmail\.to/);
   });
 
+  test("notice_status: a filed water shut-off that ended an hour ago -> Yep, since ...; nothing about the pool", async () => {
+    const [g] = await db.select({ tz: schema.groups.timezone }).from(schema.groups).where(eq(schema.groups.id, lgid));
+    const wall = (d: Date) => {
+      const p = zonedParts(g.tz, d);
+      return `${dayInZone(g.tz, d)}T${String(p.hour).padStart(2, "0")}:${String(p.minute).padStart(2, "0")}`;
+    };
+    const now = Date.now();
+    const start = wall(new Date(now - 3 * 3_600_000));
+    const end = wall(new Date(now - 3_600_000));
+    leaseInbox.setClassifier({ classify: async (i) => ({ class: "notice", date: start, start, end, what: "water", off: true, summary: i.subject }) });
+    try {
+      await processInbound(lgid, mail.receive(inboxId, { from: "Brookfield Residential Leasing <leasing@brookfieldresidential.com>", subject: "water's off today", text: "NOTICE TO ALL RESIDENTS: water will be shut off." }));
+    } finally {
+      leaseInbox.setClassifier({ classify: async (i) => (i.workOrderTitle ? { class: "work-order", reply: "acknowledged", summary: "they'll send someone" } : { class: "other", summary: i.subject }) });
+    }
+    const r = await run("notice_status", { about: "water" }, rc("Sam", "is the water back on?"));
+    assert.equal(r.found, true);
+    assert.equal(r.state, "after");
+    assert.match(r.line, /^Yep, since /);
+    const none = await run("notice_status", { about: "the pool" }, rc("Sam"));
+    assert.deepEqual([none.found, none.line], [false, "I haven't seen a notice about the pool."]);
+  });
+
   test("release_inbox: Admins only; the address goes", async () => {
     assert.equal((await run("release_inbox", {}, rc("Dev", "release the inbox"))).notAllowed, true);
     const r = await run("release_inbox", {}, rc("Maya", "roomie release the inbox"));

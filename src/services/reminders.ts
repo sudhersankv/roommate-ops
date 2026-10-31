@@ -64,6 +64,8 @@ const PRIVATE_LINES = [(t: string) => `⏰ Reminder: ${lower(t)}`, (t: string, w
  * someone set it for another Member.
  */
 export function reminderLine(r: Pick<Reminder, "id" | "text" | "memberId" | "memberName" | "createdBy" | "createdByName">): string {
+  // A finished line ("Reminder: water's off tomorrow, 9 to 11. Shower tonight.", a Lease Inbox notice) goes as it is.
+  if (/^Reminder:\s/.test(r.text.trim())) return `⏰ ${r.text.trim()}`;
   const text = r.text.trim().replace(/[.!]+$/, "");
   const lines = r.memberId ? PRIVATE_LINES : GROUP_LINES;
   const line = lines[hashId(r.id) % lines.length](text, r.memberName ?? "everyone");

@@ -13,11 +13,13 @@ Roomie reads this when the Gate picks this Trick for a message, or can't tell wh
 - "What's up with the sink?" is work_order_status; when it returns choices, ask which one. "Want me to follow up?" answered yes is send_to_landlord with intent reply about that work order.
 - "Is this your building?" (or "is this your landlord?") answered yes is trust_sender with that sender's address or domain.
 - A question about the lease ("what's the notice period?", "are pets allowed?") is ask_lease; answer from what it returns and name the clause.
+- "Is the water back on?" (or "when's the power back?", "is the inspection today?") is notice_status with about = the thing ("water"); say its line as it is ("Yep, since 11:00.", "Not yet, back at 11:00."). Never guess a time the notice didn't give; when it found nothing, say so in a few words.
 - "What's our email address?" or how to connect the landlord is inbox_status: say the address and the three ways (forward the lease or their last email, CC it next time, or give it to the leasing office).
 
 ## Examples
 
 - Good: [Dev] ugh the bathroom sink is leaking again -> "Want me to email the landlord about it?"; a yes is report_issue.
 - Good: [Maya] email the landlord that Tuesday works -> send_to_landlord, then its line as it is.
+- Good: [Sam] is the water back on? -> notice_status about water -> "Yep, since 11:00."
 - Avoid: offering again about the same problem after a no.
 - Avoid: telling people what to type ("Say 'tell them…'").

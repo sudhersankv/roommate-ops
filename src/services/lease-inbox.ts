@@ -15,11 +15,11 @@ import { db, schema } from "@/db";
 import { MAIL_CLASSES } from "@/db/enums";
 import { mailClient, type MailMessage } from "@/integrations/mail";
 import { addressOf, domainOf, parseForwarded } from "@/lib/forwarded";
-import { addDaysToDay, zonedTimeToUtc } from "@/lib/time";
 import { recordFor } from "./activity";
 import { NotAllowedError, requireActive, requireAdmin } from "./authz";
 import { isUrgent, mailLine, nextStatus, pickWorkOrder, saysYes, senderName, type WorkOrderReply, type WorkOrderState } from "./lease-inbox-rules";
 import { keywordClassifier, smallModelClassifier } from "./mail-classifier";
+import { eveningBefore, noticeReminderText, type NoticeFacts } from "./notice-window";
 import { CONFLICT_WINDOW_MS, sendRule, signature, type OtherInstruction, type SendIntent } from "./send-rule";
 import type { Ctx, GroupCtx } from "./types";
 
@@ -264,6 +264,12 @@ export const ClassificationSchema = z.object({
   utility: z.string().optional(),
   /** For a work-order reply: how far it says the repair got. */
   reply: z.enum(["acknowledged", "scheduled", "done", "other"]).optional(),
+  /** A notice's window (#63): local "YYYY-MM-DDTHH:mm" in the Group's zone. */
+  start: z.string().optional(),
+  end: z.string().optional(),
+  /** A notice's thing in a few words ("water"), and whether it's a shut-off. */
+  what: z.string().optional(),
+  off: z.boolean().optional(),
   summary: z.string().min(1),
   /** The classifier failed and this is the fallback: filed, never posted (its summary is just the subject). */
   uncertain: z.boolean().optional(),
@@ -291,7 +297,7 @@ export function setClassifier(c: MailClassifier | null) {
  * processInbound wires them.
  */
 export type InboundHooks = {
-  /** A whole-group Reminder (services/reminders.ts) at `at`. */
+  /** A whole-group Reminder (services/reminders.ts) at `at`, saying `text` as it is. */
   remind?(groupId: string, at: Date, text: string): Promise<void>;
   /** The day's urgent slot (services/urgent.ts) for `line`. */
   urgent?(groupId: string, line: string): Promise<void>;
@@ -316,14 +322,18 @@ export type ClassifyResult = {
   workOrderId: string | null;
 };
 
-const capitalized = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+/** A notice's Reminder: 20:00 local the evening before its day (notice-window.ts). */
+export { eveningBefore };
 
-/** A notice's Reminder: 18:00 local on the day before its date. */
-export function eveningBefore(noticeDate: string, timezone: string): Date | null {
-  const day = /^(\d{4}-\d{2}-\d{2})/.exec(noticeDate.trim())?.[1];
-  if (!day) return null;
-  const [y, m, d] = addDaysToDay(day, -1).split("-").map(Number);
-  return zonedTimeToUtc(timezone, { year: y, month: m, day: d, hour: 18, minute: 0, second: 0 });
+/** What's kept about a notice on its mail row (mail_messages.facts): the window, the thing, a shut-off or not. */
+export function noticeFactsOf(c: Classification): NoticeFacts | null {
+  const facts: NoticeFacts = {
+    ...(c.start ? { start: c.start } : {}),
+    ...(c.end ? { end: c.end } : {}),
+    ...(c.what ? { what: c.what } : {}),
+    ...(c.off !== undefined ? { off: c.off } : {}),
+  };
+  return Object.keys(facts).length ? facts : null;
 }
 
 /** Read one stored email and do what its class says. Untrusted mail is never classified: the Admin is asked. */
@@ -349,7 +359,7 @@ export async function classifyInbound(groupId: string, mailId: string, opts: { n
 
   await db
     .update(mailMessages)
-    .set({ class: c.class, summary: c.summary, noticeDate: c.date ?? null, amountCents: c.amountCents ?? null, utility: c.utility ?? null })
+    .set({ class: c.class, summary: c.summary, noticeDate: c.date ?? c.start ?? null, facts: c.class === "notice" ? noticeFactsOf(c) : null, amountCents: c.amountCents ?? null, utility: c.utility ?? null })
     .where(eq(mailMessages.id, m.id));
   await hooks.fileDocuments?.(groupId, m.id);
   if (c.utility && c.amountCents !== undefined) await hooks.prefillUtility?.(groupId, c.utility, c.amountCents);
@@ -358,9 +368,10 @@ export async function classifyInbound(groupId: string, mailId: string, opts: { n
   const sender = senderName(m.originalFrom ? null : m.fromHeader);
   if (c.class === "notice") {
     const line = mailLine({ class: "notice", sender, summary: c.summary });
-    const reminderAt = c.date ? eveningBefore(c.date, timezone) : null;
-    if (reminderAt && reminderAt > now) await hooks.remind?.(groupId, reminderAt, capitalized(c.summary));
-    const urgent = !!c.date && isUrgent(c.date, now, timezone);
+    const day = c.start ?? c.date;
+    const reminderAt = day ? eveningBefore(day, timezone) : null;
+    if (reminderAt && reminderAt > now) await hooks.remind?.(groupId, reminderAt, noticeReminderText(noticeFactsOf(c) ?? {}, c.summary, timezone));
+    const urgent = !!day && isUrgent(day, now, timezone);
     if (urgent) await hooks.urgent?.(groupId, line);
     return { ...none, class: "notice", line, urgent, reminderAt };
   }
