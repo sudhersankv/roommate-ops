@@ -6,7 +6,8 @@
 // email); a sender on a public mail domain (gmail.com, outlook.com...) is trusted by exact address, never its domain.
 //
 // What a class *does* beyond this module (a Reminder row, the urgent slot, Documents, the Admin's DM, the rent
-// proposal, a utility prefill) goes through `InboundHooks`, no-ops until #24 (core slots) and #25 (Money) land.
+// proposal, a utility prefill) goes through `InboundHooks`; lease-inbox-inbound.ts processInbound wires each one to
+// its slot (reminders, urgent, documents, nudges, rent, recurring). Unset here, a hook is a no-op.
 import { createHash, randomBytes } from "node:crypto";
 import { and, asc, desc, eq, gte, inArray, like, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -18,6 +19,7 @@ import { addDaysToDay, zonedTimeToUtc } from "@/lib/time";
 import { recordFor } from "./activity";
 import { requireActive, requireAdmin } from "./authz";
 import { isUrgent, nextStatus, type WorkOrderReply, type WorkOrderState } from "./lease-inbox-rules";
+import { keywordClassifier, smallModelClassifier } from "./mail-classifier";
 import { CONFLICT_WINDOW_MS, sendRule, signature, type OtherInstruction, type SendIntent } from "./send-rule";
 import type { Ctx, GroupCtx } from "./types";
 
@@ -107,6 +109,24 @@ export async function trustSender(ctx: Ctx, addressOrDomain: string, source: Sen
   const widest = trusted.at(-1)!;
   await recordFor(ctx, "lease.trust", `marked ${widest} as the landlord`);
   return { trusted, line: `I'll treat ${widest} as the landlord from now on.` };
+}
+
+/** What trusting this sender would trust at its widest: the domain, or the address on a public mail provider. */
+export const widestTrust = (addressOrDomain: string): string | null => trustRows(addressOrDomain).at(-1) ?? null;
+
+/** The newest sender filed as new-sender that isn't trusted yet: who "is this your building?" asked about. */
+export async function askedSender(groupId: string): Promise<string | null> {
+  const rows = await db
+    .select({ original: mailMessages.originalFrom, address: mailMessages.fromAddress })
+    .from(mailMessages)
+    .where(and(eq(mailMessages.groupId, groupId), eq(mailMessages.class, "new-sender")))
+    .orderBy(desc(mailMessages.receivedAt))
+    .limit(20);
+  for (const r of rows) {
+    const sender = r.original ?? r.address;
+    if (!(await isTrusted(groupId, sender))) return sender;
+  }
+  return null;
 }
 
 export async function knownSenders(groupId: string): Promise<string[]> {
@@ -204,11 +224,9 @@ export interface MailClassifier {
   classify(input: ClassifyInput): Promise<Classification>;
 }
 
-// TODO(lease-inbox toolkit pass): the Haiku call on the gateway (strict JSON, one retry, as recipes.ts does).
+/** The small model on the gateway (mail-classifier.ts: strict JSON, one retry, `other` on failure); keywords with MAIL_CLASSIFIER_FAKE=1. */
 export const gatewayClassifier: MailClassifier = {
-  async classify() {
-    throw new Error("classifier not wired");
-  },
+  classify: (input) => (process.env.MAIL_CLASSIFIER_FAKE === "1" ? keywordClassifier : smallModelClassifier).classify(input),
 };
 
 let classifier: MailClassifier | null = null;
@@ -217,19 +235,22 @@ export function setClassifier(c: MailClassifier | null) {
   classifier = c;
 }
 
-/** Side effects of a class that belong to other Tricks and slots. Every one defaults to a no-op. */
+/**
+ * Side effects of a class that belong to other Tricks and slots. Every one defaults to a no-op; lease-inbox-inbound.ts
+ * processInbound wires them.
+ */
 export type InboundHooks = {
-  // TODO(#24): a whole-group Reminder (services/reminders.ts) at `at`.
+  /** A whole-group Reminder (services/reminders.ts) at `at`. */
   remind?(groupId: string, at: Date, text: string): Promise<void>;
-  // TODO(#24): claim the day's urgent slot and post `line` now.
+  /** The day's urgent slot (services/urgent.ts) for `line`. */
   urgent?(groupId: string, line: string): Promise<void>;
-  // TODO(#24): Documents from the attachments, ids into mail_messages.document_ids.
+  /** Documents from the attachments, ids into mail_messages.document_ids. */
   fileDocuments?(groupId: string, mailId: string): Promise<void>;
-  // TODO(#24): DM the Admin (once per domain: pet_moments "new-sender:<domain>"); "yes" -> trustSender(..., "admin").
+  /** A private question to the Admins, once per domain (pet_moments "new-sender"); "yes" -> trust_sender. */
   askAdmin?(groupId: string, text: string): Promise<void>;
-  // TODO(#25): DM the Admin the proposed set_rent intent; nothing changes until they say yes.
+  /** The Admins privately: the words that run set_rent; nothing changes until they say them. */
   proposeRent?(groupId: string, mailId: string, amountCents: number | null): Promise<void>;
-  // TODO(#25): pending_amounts.prefill for the matching variable Expense.
+  /** pending_amounts.prefill for the matching variable Expense (recurring.prefillAmount). */
   prefillUtility?(groupId: string, utility: string, amountCents: number): Promise<void>;
 };
 
@@ -347,8 +368,8 @@ export type SendInput = {
   /** The gist for the chat line: "asked them to move the inspection to Thursday". */
   summary: string;
   /**
-   * The Member answered Roomie's questions. TODO(lease-inbox toolkit pass): the tool sets this only when the
-   * Member's own latest message confirms (as admin-ask.ts checks), never on the model's say-so.
+   * The Member answered Roomie's questions. The tools set this only when the Member's own latest message says yes
+   * (lease-inbox-rules.ts saysYes), never on the model's say-so; the dashboard's "Send anyway" is the Member's click.
    */
   confirmed?: boolean;
   workOrderId?: string;
@@ -442,12 +463,13 @@ export async function sendToLandlord(ctx: Ctx, input: SendInput, now = new Date(
 }
 
 /** "The sink's leaking, tell them": a work order emailed to the landlord, and followed from then on. */
-export async function reportIssue(ctx: Ctx, input: { what: string; instruction: string; confirmed?: boolean }): Promise<SendResult & { workOrderId?: string }> {
+export async function reportIssue(ctx: Ctx, input: { what: string; details?: string; instruction: string; confirmed?: boolean }): Promise<SendResult & { workOrderId?: string }> {
   await requireActive(ctx);
   const [group] = await db.select({ name: groups.name }).from(groups).where(eq(groups.id, ctx.groupId));
   const what = input.what.trim();
-  // TODO(lease-inbox toolkit pass): the body drafted by the model from the Member's words; this is the plain fallback.
-  const body = `Hi,\n\nWe'd like to put in a work order for ${group?.name ?? "our apartment"}: ${what}.\nCould someone take a look?\n\nThanks.`;
+  // The model's part is `details` (what the Member said about it, in their words); the send rule reads it like any body.
+  const details = input.details?.trim() ? `\n\n${input.details.trim()}` : "";
+  const body = `Hi,\n\nWe'd like to put in a work order for ${group?.name ?? "our apartment"}: ${what}.${details}\nCould someone take a look?\n\nThanks.`;
   const r = await sendToLandlord(ctx, { intent: "maintenance", subject: `Work order: ${what}`, body, instruction: input.instruction, summary: `reported ${what}`, confirmed: input.confirmed });
   if (!r.sent) return r;
   const order = await createWorkOrder(ctx, { title: what, threadId: r.threadId });
@@ -459,7 +481,7 @@ const joinNames = (n: string[]) => (n.length <= 1 ? n.join("") : `${n.slice(0, -
 
 /**
  * The one-time intro email to the landlord, signed with every active Member's first name. Once per landlord domain.
- * TODO(#24): offered once (pet_moments) when a landlord address becomes known.
+ * Offered to the Admins once (pet_moments "lease-intro") when a forward teaches the landlord (lease-inbox-inbound.ts).
  */
 export async function sendIntro(ctx: Ctx): Promise<{ sent: true; line: string } | { sent: false; reason: "no-landlord" | "already-sent" }> {
   await requireActive(ctx);

@@ -383,6 +383,8 @@ export async function forgetMe(ctx: Ctx): Promise<{ chatLines: number; memoryMes
   const traces = () => forget.forgetMemberTraces(me.id, { groupId: ctx.groupId, names: own }).catch((e) => console.warn("[forget-me] trace cleanup failed", e));
   await traces();
   await removePhotos(ctx.groupId, me.id, photos);
+  // Lease Inbox: their name comes off work orders, sent-mail records and forwards (the emails were sent and stay).
+  await (await import("./lease-inbox-toolkit")).anonymizeMailMember(ctx.groupId, me.id);
   // Reminders addressed to them privately (nobody to send them to now).
   await db.delete(schema.reminders).where(and(eq(schema.reminders.groupId, ctx.groupId), eq(schema.reminders.memberId, me.id)));
 

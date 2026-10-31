@@ -4,13 +4,14 @@ import { COMING_SOON } from "./coming-soon";
 import { core } from "./core/manifest";
 import { groceries } from "./groceries/manifest";
 import { house } from "./house/manifest";
+import { leaseInbox } from "./lease-inbox/manifest";
 import { splitting } from "./splitting/manifest";
 import type { ToolkitManifest } from "./types";
 
 export { core as CORE_MANIFEST, COMING_SOON };
 
 /** The switchable Toolkits that exist, in marketplace order. Core is always on and isn't listed. */
-export const MANIFESTS = [splitting, groceries, house] as const;
+export const MANIFESTS = [splitting, groceries, house, leaseInbox] as const;
 
 export type ToolkitId = (typeof MANIFESTS)[number]["id"];
 export const TOOLKIT_IDS = MANIFESTS.map((m) => m.id) as unknown as readonly [ToolkitId, ...ToolkitId[]];

@@ -58,8 +58,8 @@ describe("resolveToolkitSet", () => {
   });
 });
 
-test("byPostOrder: money, then the house, then groceries (ADR 0017), whatever the nav says; no postOrder = nav order, then last", () => {
-  assert.deepEqual(byPostOrder(MANIFESTS).map((m) => m.name), ["Money", "House", "Groceries"]);
+test("byPostOrder: money, the landlord, the house, then groceries (ADR 0017), whatever the nav says; no postOrder = nav order, then last", () => {
+  assert.deepEqual(byPostOrder(MANIFESTS).map((m) => m.name), ["Money", "Lease Inbox", "House", "Groceries"]);
   type Entry = { id: string; postOrder?: number; dashboard?: { nav: { label: string; href: () => string; icon: "Wallet"; order: number } } };
   const nav = (order: number): Entry["dashboard"] => ({ nav: { label: "x", href: () => "/", icon: "Wallet", order } });
   const sorted = byPostOrder<Entry>([{ id: "late" }, { id: "nav", dashboard: nav(5) }, { id: "post", postOrder: 20, dashboard: nav(1) }]);

@@ -12,6 +12,9 @@ import path from "node:path";
 process.env.RECEIPT_FAKE = "1";
 process.env.SPLITWISE_FAKE = "1";
 process.env.INSTACART_FAKE = "1";
+// Lease Inbox: FakeMail (no AgentMail inbox per scenario), keyword classification and lease answers (no small model).
+process.env.MAIL_FAKE = "1";
+process.env.MAIL_CLASSIFIER_FAKE = "1";
 
 import { db, schema } from "../src/db";
 import { respond, type PipelineResult } from "../src/pipeline";

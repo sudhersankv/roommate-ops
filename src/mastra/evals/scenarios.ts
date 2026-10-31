@@ -52,7 +52,7 @@ export type Expect = {
 
 export type Scenario = {
   id: string;
-  area: "splitting" | "groceries" | "house" | "reminders" | "core" | "gate" | "personality";
+  area: "splitting" | "groceries" | "house" | "reminders" | "core" | "gate" | "personality" | "lease";
   /** Leave the day's greeting unclaimed (the runner claims it for every other scenario so it doesn't add a line). */
   greet?: boolean;
   /** Rows to create with services before the turn (no LLM). */
@@ -79,6 +79,9 @@ export const READ_ONLY_TOOLS = new Set([
   "group_report",
   "splitwise_status",
   "list_toolkits",
+  "work_order_status",
+  "ask_lease",
+  "inbox_status",
   "what_do_you_know_about_me",
   "updateWorkingMemory",
 ]);
@@ -297,7 +300,7 @@ export const SCENARIOS: Scenario[] = [
   {
     id: "spanish",
     area: "splitting",
-    turn: { text: "roomie pagué 30 por el uber" },
+    turn: { text: "roomie pagu+� 30 por el uber" },
     expect: { tools: ["log_expense"], replyIncludes: [/(listo|anotad|registr|pagaste|cada un|dividid|hecho|apuntad)/i], check: async (e) => fail((await balanceOf(e, "Maya")) === 2000, "Maya +$20.00") },
   },
 
@@ -925,7 +928,7 @@ export const SCENARIOS: Scenario[] = [
     area: "personality",
     seed: async (e) => void (await personality.updatePersonality(e.ctx, { base: "hype", name: "Dino", quirks: ["loves confetti"] })),
     turn: { text: "roomie I paid $60 for internet" },
-    expect: { tools: ["log_expense"], replyIncludes: ["60"], maxLines: 2, emoji: { max: 1 }, excludes: [/!!|🎉|🥳|let'?s go/i] },
+    expect: { tools: ["log_expense"], replyIncludes: ["60"], maxLines: 2, emoji: { max: 1 }, excludes: [/!!|=���|=�Ѧ|let'?s go/i] },
   },
   {
     id: "one-voice-ignores-stored-deadpan",
@@ -1211,4 +1214,83 @@ export const SCENARIOS: Scenario[] = [
       check: async (e) => fail(!!(await cart.lastUnpaidCheckout(e.ctx)), "a Checkout, no question"),
     },
   },
+  // ---------- Lease Inbox (#27; MAIL_FAKE=1, MAIL_CLASSIFIER_FAKE=1) ----------
+  {
+    id: "lease-learn",
+    area: "lease",
+    turn: { text: "roomie learn lease inbox" },
+    expect: {
+      tools: ["toggle_toolkit"],
+      excludes: TOOLKIT_WORDS,
+      check: async (e) => {
+        const { inboxOf } = await import("@/services/lease-inbox");
+        const inbox = await inboxOf(e.ctx.groupId);
+        if (!inbox) return "no address made";
+        const said = (await chatlog.roomieLines(e.ctx.groupId, 10)).some((l) => l.text.includes(inbox.address));
+        return fail(said, `the address ${inbox.address} wasn't said in the chat`);
+      },
+    },
+  },
+  {
+    id: "lease-report-issue",
+    area: "lease",
+    seed: async (e) => void (await landlordKnown(e)),
+    turn: { text: "roomie the sink's leaking, tell them", from: "Dev" },
+    expect: {
+      tools: ["report_issue"],
+      replyIncludes: [/sent/i],
+      maxLines: 2,
+      check: async (e) => {
+        const rows = await db.select().from(schema.workOrders).where(eq(schema.workOrders.groupId, e.ctx.groupId));
+        return fail(rows.length === 1 && rows[0].reportedBy === e.member.Dev && /sink/i.test(rows[0].title), `one work order about the sink by Dev, got ${rows.map((r) => r.title).join(", ") || "none"}`);
+      },
+    },
+  },
+  {
+    id: "lease-not-renewing-asks",
+    area: "lease",
+    seed: async (e) => void (await landlordKnown(e)),
+    turn: { text: "roomie tell them we're not renewing" },
+    expect: {
+      asks: true,
+      check: async (e) => {
+        const rows = await db.select().from(schema.sentMail).where(eq(schema.sentMail.groupId, e.ctx.groupId));
+        return fail(rows.length === 0, `nothing should be sent before the questions are answered, got ${rows.length}`);
+      },
+    },
+  },
+  {
+    id: "lease-work-order-status",
+    area: "lease",
+    seed: async (e) => {
+      await landlordKnown(e);
+      const { reportIssue } = await import("@/services/lease-inbox");
+      await reportIssue(e.as("Dev"), { what: "the leaking kitchen sink", instruction: "roomie the sink's leaking, tell them" });
+    },
+    turn: { text: "roomie what's up with the sink?", from: "Sam" },
+    expect: { tools: ["work_order_status"], noTools: "actions", replyIncludes: [/sink/i], maxLines: 2 },
+  },
+  {
+    id: "lease-notice-period",
+    area: "lease",
+    seed: async (e) => {
+      await landlordKnown(e);
+      const { fileDocument } = await import("@/services/documents");
+      const doc = await fileDocument(e.ctx, { kind: "lease", title: "Lease Agreement Apt 4B 2026", bytes: Buffer.from("%PDF lease"), contentType: "application/pdf" });
+      await db
+        .update(schema.documents)
+        .set({ text: "Section 14.2 Notice to Vacate. Resident shall give Landlord not less than sixty (60) days' written notice before vacating.\n\nSection 9 Pets. No pets without written consent." })
+        .where(eq(schema.documents.id, doc.id));
+    },
+    turn: { text: "roomie what's the notice period in our lease?", from: "Sam" },
+    expect: { tools: ["ask_lease"], noTools: "actions", replyIncludes: [/60|sixty/i] },
+  },
 ];
+
+
+/** Lease Inbox taught and the landlord known (Apt 4B's leasing office), without the model. */
+async function landlordKnown(e: EvalEnv) {
+  await toolkits.setToolkit(e.ctx, { toolkit: "lease inbox", enabled: true });
+  const { trustSender } = await import("@/services/lease-inbox");
+  await trustSender(e.ctx, "leasing@brookfieldresidential.com", "admin");
+}

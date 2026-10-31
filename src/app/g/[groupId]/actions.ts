@@ -10,6 +10,7 @@ import { memberSession } from "@/lib/session"
 import { parseInZone } from "@/lib/time"
 import { cart, chores, groups, isNotAllowed, joins, members, money, pantry, recipes, reminders, schedule, splitwise, toolkits, upkeep, type Ctx } from "@/services"
 import type { SettingsPatch } from "@/services/groups"
+import { releaseInbox, removeSender, sendForMember } from "@/services/lease-inbox-toolkit"
 import { setRent, type RentInput } from "@/services/rent"
 import { mute as muteRestock, restockAddListed } from "@/services/restock"
 import { updateNudgeSettings, type NudgeSettings } from "@/services/settle-nudge"
@@ -301,4 +302,28 @@ export async function saveRent(groupId: string, input: RentForm) {
 
 export async function updateNudges(groupId: string, patch: Partial<NudgeSettings>) {
   return act(groupId, (ctx) => updateNudgeSettings(ctx, patch))
+}
+
+/* ---------- Lease Inbox (#27) ---------- */
+
+/**
+ * The Inbox page's reply box: the same send rule and signature as the chat (sendForMember). A complex draft comes back
+ * as `{ sent: false, ask }` and the screen shows the questions as a confirm step; "Send anyway" there is the Member's
+ * own yes (`confirmed`).
+ */
+export async function replyToLandlord(groupId: string, input: { threadId: string; body: string; confirmed?: boolean }) {
+  return act(groupId, async (ctx) => {
+    const body = input.body.trim()
+    if (!body) throw new Error("Write something to send.")
+    const r = await sendForMember({ ...ctx, source: "ui" }, { intent: "reply", threadId: input.threadId, body, instruction: body, summary: `replied: ${body.length > 60 ? `${body.slice(0, 57)}...` : body}`, confirmed: input.confirmed === true })
+    return r.sent ? { sent: true as const, line: r.line } : { sent: false as const, ask: r.ask }
+  })
+}
+
+export async function removeLandlordSender(groupId: string, value: string) {
+  return act(groupId, (ctx) => removeSender(ctx, value))
+}
+
+export async function releaseLeaseInbox(groupId: string) {
+  return act(groupId, (ctx) => releaseInbox(ctx))
 }

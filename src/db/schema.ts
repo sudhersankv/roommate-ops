@@ -66,7 +66,7 @@ export const petMoments = pgTable(
   "pet_moments",
   {
     groupId: uuid("group_id").notNull().references(() => groups.id, { onDelete: "cascade" }),
-    kind: text("kind", { enum: ["greeting", "win", "rent-offer"] }).notNull(),
+    kind: text("kind", { enum: ["greeting", "win", "rent-offer", "new-sender", "lease-intro"] }).notNull(),
     key: text("key").notNull(),
     createdAt: createdAt(),
   },
@@ -588,6 +588,8 @@ export const documents = pgTable(
     source: jsonb("source").$type<{ table: string; id: string }>(),
     uploadedBy: uuid("uploaded_by").references(() => members.id, { onDelete: "set null" }),
     filedAt: timestamp("filed_at", { withTimezone: true }),
+    // A lease or notice's text (AgentMail's textUrl, else read by the model), so ask_lease answers from it (#27).
+    text: text("text"),
     createdAt: createdAt(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
   },
@@ -603,7 +605,7 @@ export const pendingPosts = pgTable(
   {
     id: id(),
     groupId: uuid("group_id").notNull().references(() => groups.id, { onDelete: "cascade" }),
-    kind: text("kind", { enum: ["urgent", "dm"] }).notNull(),
+    kind: text("kind", { enum: ["urgent", "dm", "line"] }).notNull(),
     memberId: uuid("member_id").references(() => members.id, { onDelete: "cascade" }),
     text: text("text").notNull(),
     buttons: jsonb("buttons").$type<{ text: string; url: string }[]>(),
