@@ -47,9 +47,11 @@ const GROUP = "11111111-1111-4111-8111-111111111111";
 test("readGroceryPhoto: never a URL someone typed (only this Group's own Documents)", async () => {
   setPhotoReader({ read: async () => SAMPLE_LIST_JSON });
   try {
-    for (const url of ["https://169.254.169.254/latest/meta-data.jpg", "http://127.0.0.9:1/uploads/x/a.jpg", "file:///etc/passwd", "/uploads/../../.env", "/uploads/other/a.jpg", "/api/docs/not-an-id"]) {
+    for (const url of ["https://169.254.169.254/latest/meta-data.jpg", "http://127.0.0.9:1/uploads/x/a.jpg", "file:///etc/passwd", "/uploads/../../.env", "/api/docs/not-an-id"]) {
       await assert.rejects(readGroceryPhoto(url, GROUP), /only read photos sent in this group's chat/, url);
     }
+    // An old pre-Documents path: that disk is gone.
+    await assert.rejects(readGroceryPhoto("/uploads/other/a.jpg", GROUP), /That photo isn't here anymore\./);
   } finally {
     setPhotoReader(null);
   }
