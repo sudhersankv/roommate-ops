@@ -379,6 +379,14 @@ describe("mediaWanted (photos and voice notes are only fetched when Roomie is ta
     assert.equal(mediaWanted({ kind: "photo", setupPending: true }), false, "setup answers are words, not pictures");
   });
 
+  test("a skipped photo whose caption the Gate answers is wanted; one nobody acts on stays unfetched (#40)", () => {
+    const bill = { kind: "photo" as const, caption: "Your bill sreyas, you owe" };
+    assert.equal(mediaWanted(bill), false, "first ask: nobody addressed Roomie");
+    assert.equal(mediaWanted({ ...bill, gateActed: true }), true, "the Gate answers the caption: Roomie looks at the bill");
+    assert.equal(mediaWanted({ ...bill, gateActed: false }), false, "the Gate stayed quiet: still not fetched");
+    assert.equal(mediaWanted({ kind: "voice", gateActed: true }), false, "voice notes keep their own rule");
+  });
+
   test("voice: a reply to Roomie, an @mention, the window, setup waiting on this Admin, a DM; nothing else", () => {
     assert.equal(mediaWanted({ kind: "voice" }), false);
     assert.equal(mediaWanted({ kind: "voice", isReplyToRoomie: true }), true);

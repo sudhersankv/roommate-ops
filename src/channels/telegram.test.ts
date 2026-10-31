@@ -261,6 +261,30 @@ describe("incoming messages", () => {
     assert.deepEqual(asked[0], { channel: "telegram", chatExternalId: "-1001", userExternalId: "12", kind: "photo", caption: "look at this sunset", isPrivate: false, mentionsRoomie: false, isReplyToRoomie: false });
   });
 
+  test("a skipped photo is fetched later only when the pipeline asks again with gateActed and gets a yes (#40)", async () => {
+    const asked: { gateActed?: boolean }[] = [];
+    const h = harness({
+      deps: {
+        mediaWanted: async (q) => {
+          asked.push(q);
+          return !!q.gateActed;
+        },
+      },
+    });
+    await h.feed(message(SAM, { caption: "Your bill sreyas, you owe", photo: PHOTO }));
+    const skipped = h.seen.incoming[0];
+    assert.equal(skipped.skippedMedia, "photo");
+    assert.deepEqual(h.seen.saved, [], "nothing fetched before the Gate answers");
+    assert.equal(await skipped.fetchSkippedPhoto?.(), "/uploads/tg/-1001/b1.jpg");
+    assert.deepEqual(h.seen.saved, ["b1"]);
+    assert.deepEqual(asked.map((q) => !!q.gateActed), [false, true]);
+
+    const no = harness({ deps: { mediaWanted: async () => false } });
+    await no.feed(message(SAM, { caption: "Your bill sreyas, you owe", photo: PHOTO }));
+    assert.equal(await no.seen.incoming[0].fetchSkippedPhoto?.(), null, "a paused Group still says no");
+    assert.deepEqual(no.seen.saved, []);
+  });
+
   test("with the pipeline wired in, its answer wins even for an addressed photo (a paused Group fetches nothing)", async () => {
     const h = harness({ deps: { mediaWanted: async () => false } });
     await h.feed(message(SAM, { caption: "roomie split this", photo: PHOTO }));

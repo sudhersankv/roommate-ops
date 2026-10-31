@@ -348,6 +348,27 @@ describe("incoming messages", () => {
     assert.deepEqual(asked[0], { channel: "whatsapp", chatExternalId: GROUP, userExternalId: MAYA.pn, kind: "voice", caption: "", isPrivate: false, mentionsRoomie: false, isReplyToRoomie: false });
   });
 
+  test("a skipped photo is fetched later only when the pipeline asks again with gateActed and gets a yes (#40)", async () => {
+    const asked: { gateActed?: boolean }[] = [];
+    const h = harness({
+      deps: {
+        mediaWanted: async (q) => {
+          asked.push(q);
+          return !!q.gateActed;
+        },
+      },
+    });
+    h.markKnown();
+    await h.open();
+    await h.feed([msg({ key: { id: "BILL1" }, message: { imageMessage: { caption: "Your bill sreyas, you owe", mimetype: "image/jpeg" } } })]);
+    const skipped = h.seen.incoming[0];
+    assert.equal(skipped.skippedMedia, "photo");
+    assert.deepEqual(h.seen.images, [], "nothing downloaded before the Gate answers");
+    assert.equal(await skipped.fetchSkippedPhoto?.(), "/uploads/wa/BILL1.jpg");
+    assert.deepEqual(h.seen.images, ["BILL1"]);
+    assert.deepEqual(asked.map((q) => !!q.gateActed), [false, true]);
+  });
+
   test("in the follow-up window or during setup (the pipeline says so), media is handled", async () => {
     const h = harness({ deps: { mediaWanted: async () => true } });
     h.markKnown();

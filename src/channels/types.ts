@@ -18,6 +18,10 @@ export type IncomingMessage = {
   /** A photo or voice note nobody addressed to Roomie: not downloaded, not transcribed (`text` is the caption, or
    * empty). The pipeline logs "(photo) ..." / "(voice note)" and, with no caption, goes no further. */
   skippedMedia?: "photo" | "voice";
+  /** With a skipped photo: the adapter fetches and stores it after all (asking mediaWanted again with `gateActed`),
+   * returning its link, or null when it's still not wanted or the download failed. The pipeline calls it only when the
+   * Gate decided to answer the caption. */
+  fetchSkippedPhoto?: () => Promise<string | null>;
   isReplyToRoomie?: boolean;
   mentionsRoomie?: boolean; // @-mention (the pipeline also checks the word "roomie")
   /** A 1:1 message to Roomie from a Member of the Group (`chatExternalId` is still the Group's Chat): always
@@ -76,7 +80,8 @@ export interface Channel {
 }
 
 /** What the adapters ask before downloading a photo or transcribing a voice note (the pipeline's mediaWantedFor: a
- * paused Group never; otherwise addressed, the follow-up window, setup pending for this Admin, the pet's name). */
+ * paused Group never; otherwise addressed, the follow-up window, setup pending for this Admin, the pet's name, or the
+ * Gate answering a skipped photo's caption). */
 export type MediaQuestion = {
   channel: ChannelName;
   chatExternalId: string;
@@ -87,4 +92,6 @@ export type MediaQuestion = {
   isPrivate?: boolean;
   mentionsRoomie?: boolean;
   isReplyToRoomie?: boolean;
+  /** Asked again for a skipped photo: the Gate decided to answer its caption. */
+  gateActed?: boolean;
 };

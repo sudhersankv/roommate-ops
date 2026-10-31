@@ -812,18 +812,33 @@ export function createWhatsApp(opts: WhatsAppOptions): WhatsApp {
   /** Text, voice transcript or photo -> what the pipeline gets; null = nothing to pass on. */
   async function content(m: WAMessage, read: ReadMessage, replyTo: (out: Outgoing) => Promise<unknown>, toldKey: string, folderChat: string, from: ChannelUser, isPrivate = false) {
     const base = { text: read.text, mentionsRoomie: read.mentionsRoomie, isReplyToRoomie: read.isReplyToRoomie };
+    const savePhoto = async () => deps.saveImage(folderChat, m.key.id ?? String(clock()), await download(m, sock!), read.mime ?? "image/jpeg");
     if (read.kind === "voice" || read.kind === "image") {
       const kind: "voice" | "photo" = read.kind === "voice" ? "voice" : "photo";
       const flags = { kind, isPrivate, mentionsRoomie: read.mentionsRoomie, isReplyToRoomie: read.isReplyToRoomie, caption: read.text };
       // The pipeline's answer wins when it's wired in: it also knows about paused Groups.
-      const want = deps.mediaWanted
-        ? await deps.mediaWanted({ channel: "whatsapp", chatExternalId: folderChat, userExternalId: from.userExternalId, ...flags }).catch((err) => {
-            console.error("[whatsapp] media check failed", err);
-            return false;
-          })
-        : mediaWanted(flags);
-      // Not for Roomie: logged as "(voice note)" / "(photo) caption", never downloaded, stored or transcribed.
-      if (!want) return kind === "voice" ? { ...base, text: "", skippedMedia: "voice" as const } : { ...base, skippedMedia: "photo" as const };
+      const ask = async (gateActed?: boolean) => {
+        const q = { ...flags, ...(gateActed ? { gateActed } : {}) };
+        return deps.mediaWanted
+          ? deps.mediaWanted({ channel: "whatsapp", chatExternalId: folderChat, userExternalId: from.userExternalId, ...q }).catch((err) => {
+              console.error("[whatsapp] media check failed", err);
+              return false;
+            })
+          : mediaWanted(q);
+      };
+      // Not for Roomie: logged as "(voice note)" / "(photo) caption", never downloaded, stored or transcribed; a photo
+      // is fetched after all only if the Gate answers its caption.
+      if (!(await ask())) {
+        if (kind === "voice") return { ...base, text: "", skippedMedia: "voice" as const };
+        const fetchSkippedPhoto = async () =>
+          (await ask(true))
+            ? savePhoto().catch((err) => {
+                console.error("[whatsapp] photo", err);
+                return null;
+              })
+            : null;
+        return { ...base, skippedMedia: "photo" as const, fetchSkippedPhoto };
+      }
     }
     if (read.kind === "voice") {
       if (!deps.transcribe) {
@@ -844,10 +859,7 @@ export function createWhatsApp(opts: WhatsAppOptions): WhatsApp {
         return null;
       }
     }
-    if (read.kind === "image") {
-      const bytes = await download(m, sock!);
-      return { ...base, imageUrl: await deps.saveImage(folderChat, m.key.id ?? String(clock()), bytes, read.mime ?? "image/jpeg") };
-    }
+    if (read.kind === "image") return { ...base, imageUrl: await savePhoto() };
     return base;
   }
 
