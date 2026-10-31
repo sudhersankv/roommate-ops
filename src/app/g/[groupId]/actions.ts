@@ -47,8 +47,8 @@ const clean = (input: ExpenseForm): ExpenseForm => ({
   note: input.note ?? null,
   occurredOn: input.occurredOn,
   recurring: input.recurring ?? null,
-  // Only our own uploads can be attached from the dashboard.
-  receiptUrl: input.receiptUrl && /^\/uploads\/[a-z0-9-]+\/[a-z0-9-]+\.[a-z]+$/i.test(input.receiptUrl) ? input.receiptUrl : null,
+  // Only our own Documents can be attached from the dashboard (/api/docs/<id>, ADR 0018); the service checks the Group.
+  receiptUrl: input.receiptUrl && /^\/api\/docs\/[0-9a-f-]{36}$/i.test(input.receiptUrl) ? input.receiptUrl : null,
 })
 
 export async function addExpense(groupId: string, input: ExpenseForm) {
