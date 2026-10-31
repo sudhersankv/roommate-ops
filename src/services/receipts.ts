@@ -36,14 +36,46 @@ export const RawReceiptSchema = z.object({
 });
 export type RawReceipt = z.infer<typeof RawReceiptSchema>;
 
-/** "12.50", "$12.50", 12.5 -> 1250. Null for anything else. Plain string parsing, no float math. */
-export function priceToCents(p: string | number | null | undefined): number | null {
+/** Currencies usually written with "." between thousands ("1.234,50", "Rp 190.000"); the rest use ",". */
+const DOT_THOUSANDS = new Set(["EUR", "IDR", "VND", "BRL", "ARS", "CLP", "COP", "PYG", "UYU", "TRY", "DKK", "NOK", "ISK", "RSD", "BAM", "MKD"]);
+
+/**
+ * A printed price -> cents (the amount x 100, whatever the currency). Plain string parsing, no float math; null for
+ * anything that isn't one amount. Symbols and codes around it ("Rp", "Rs.", "₹", "€") are ignored. Which mark is the
+ * decimal point: with both "." and ",", the last one; a mark that repeats ("1,20,000") or an apostrophe or space
+ * separates thousands; one or two digits after a single mark are decimals. Exactly three digits after a single mark
+ * is the receipt being ambiguous, and the Group's `currency` decides: thousands when it's that currency's usual
+ * thousands mark (IDR "60.000" = 60,000), decimals otherwise (INR "60.000" = 60, a third decimal rounds to the cent).
+ */
+export function priceToCents(p: string | number | null | undefined, currency = "USD"): number | null {
   if (p === null || p === undefined) return null;
-  const s = String(p).replace(/[$€£₹,\s]/g, "");
-  const m = /^(-?)(\d+)(?:\.(\d{1,2}))?$/.exec(s);
-  if (!m) return null;
-  const cents = Number(m[2]) * 100 + Number((m[3] ?? "0").padEnd(2, "0"));
-  return m[1] ? -cents : cents;
+  if (typeof p === "number" && !Number.isFinite(p)) return null;
+  const found = /-?\d(?:[\d.,'\s]*\d)?/u.exec(String(p));
+  if (!found) return null;
+  const neg = found[0].startsWith("-");
+  const body = found[0].replace(/^-/, "").replace(/[\s']/gu, "");
+  const decimal = decimalMark(body, currency);
+  const cut = decimal ? body.lastIndexOf(decimal) : -1;
+  const whole = (cut === -1 ? body : body.slice(0, cut)).replace(/[.,]/g, "");
+  const frac = cut === -1 ? "" : body.slice(cut + 1);
+  if (!/^\d*$/.test(whole) || !/^\d{0,3}$/.test(frac) || whole + frac === "") return null;
+  const round = frac.length === 3 && Number(frac[2]) >= 5 ? 1 : 0;
+  const cents = Number(whole || "0") * 100 + Number(frac.slice(0, 2).padEnd(2, "0")) + round;
+  return neg ? -cents : cents;
+}
+
+/** The decimal mark in a run of digits, "." and ",", or null when every mark separates thousands. */
+function decimalMark(body: string, currency: string): "." | "," | null {
+  const dot = body.lastIndexOf(".");
+  const comma = body.lastIndexOf(",");
+  if (dot !== -1 && comma !== -1) return dot > comma ? "." : ",";
+  if (dot === -1 && comma === -1) return null;
+  const mark = dot !== -1 ? "." : ",";
+  if (body.split(mark).length > 2) return null;
+  const after = body.length - body.lastIndexOf(mark) - 1;
+  if (after !== 3) return mark;
+  const thousands = DOT_THOUSANDS.has(currency.toUpperCase()) ? "." : ",";
+  return mark === thousands ? null : mark;
 }
 
 function toDay(s: string | null | undefined): string | null {
@@ -58,16 +90,17 @@ function toDay(s: string | null | undefined): string | null {
   return null;
 }
 
-/** Validate and recompute: the sum comes from the items, never from the model. */
-export function checkReceipt(raw: RawReceipt): ParsedReceipt {
+/** Validate and recompute: the sum comes from the items, never from the model. Prices read in the Group's currency. */
+export function checkReceipt(raw: RawReceipt, currency = "USD"): ParsedReceipt {
+  const cents = (p: string | number | null | undefined) => priceToCents(p, currency);
   const items = raw.items
-    .map((i) => ({ name: i.name.trim(), cents: priceToCents(i.price) }))
+    .map((i) => ({ name: i.name.trim(), cents: cents(i.price) }))
     .filter((i): i is ReceiptItem => !!i.name && i.cents !== null && i.cents > 0);
-  const taxCents = Math.max(0, priceToCents(raw.tax) ?? 0);
-  const tipCents = Math.max(0, priceToCents(raw.tip) ?? 0);
+  const taxCents = Math.max(0, cents(raw.tax) ?? 0);
+  const tipCents = Math.max(0, cents(raw.tip) ?? 0);
   const itemsCents = items.reduce((s, i) => s + i.cents, 0);
   const totalCents = itemsCents + taxCents + tipCents;
-  const printedTotalCents = priceToCents(raw.total);
+  const printedTotalCents = cents(raw.total);
   const mismatch = printedTotalCents !== null && printedTotalCents !== totalCents;
   return {
     merchant: raw.merchant?.trim() || "Receipt",
@@ -308,12 +341,15 @@ export async function imageDataUrl(url: string, opts: { ownOnly?: boolean } = {}
 
 const cache = new Map<string, ParsedReceipt>();
 
-/** Read a receipt photo (by URL, or bytes from an upload). Results are cached per URL, so confirming doesn't re-read. */
-export async function parseReceipt(input: { url: string } | { bytes: Buffer; mime: string }): Promise<ParsedReceipt> {
-  const key = "url" in input ? input.url : null;
+/**
+ * Read a receipt photo (by URL, or bytes from an upload), its prices in the Group's `currency` (see priceToCents).
+ * Results are cached per URL and currency, so confirming doesn't re-read.
+ */
+export async function parseReceipt(input: { url: string } | { bytes: Buffer; mime: string }, currency = "USD"): Promise<ParsedReceipt> {
+  const key = "url" in input ? `${currency}:${input.url}` : null;
   if (key && cache.has(key)) return cache.get(key)!;
   const dataUrl = "url" in input ? await imageDataUrl(input.url) : `data:${input.mime};base64,${input.bytes.toString("base64")}`;
-  const parsed = checkReceipt(await currentReader().read({ dataUrl }));
+  const parsed = checkReceipt(await currentReader().read({ dataUrl }), currency);
   if (parsed.items.length === 0) throw new Error("I couldn't find any items on that receipt. Try a sharper photo?");
   if (key) {
     if (cache.size > 200) cache.delete(cache.keys().next().value!);

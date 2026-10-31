@@ -18,6 +18,7 @@ import { getExpense, logExpense, updateExpense, type ExpenseInput } from "./mone
 import { joinNames, type ReportPart } from "./report";
 import { bundleWindow, claimPost, getSchedule, groupTimezone } from "./schedule";
 import type { Ctx, GroupCtx } from "./types";
+import { currencyOf } from "./groups";
 
 const { expenses, groups, petMoments, settlements } = schema;
 
@@ -34,6 +35,8 @@ export type Rent = {
   payerName: string;
   method: SplitMethod;
   shares: RentShare[];
+  /** The Group's, for saying the amounts (USD when left out). */
+  currency?: string;
 };
 
 /* ---------- pure ---------- */
@@ -41,7 +44,7 @@ export type Rent = {
 export const clampDueDay = (day: number) => Math.min(Math.max(Math.trunc(day), 1), 28);
 
 /** "$2,400", "$800.50". */
-export const shortMoney = (cents: number) => formatMoney(cents).replace(/\.00$/, "");
+export const shortMoney = (cents: number, currency = "USD") => formatMoney(cents, currency).replace(/\.00$/, "");
 
 const weekdayOf = (day: string) => new Intl.DateTimeFormat("en-US", { weekday: "long", timeZone: "UTC" }).format(new Date(`${day}T12:00:00Z`));
 
@@ -65,8 +68,8 @@ export function rentWindows(dueDay: number, tz: string, now: Date): { aheadDay: 
 }
 
 /** The group's line three days before. Who pays the landlord, never anyone's share. */
-export function rentGroupLine(rent: Pick<Rent, "cents" | "payerName">, dueOn: string): string {
-  return `🏠 Rent ${shortMoney(rent.cents)} is due ${weekdayOf(dueOn)}. ${rent.payerName} pays the landlord.`;
+export function rentGroupLine(rent: Pick<Rent, "cents" | "payerName" | "currency">, dueOn: string): string {
+  return `🏠 Rent ${shortMoney(rent.cents, rent.currency)} is due ${weekdayOf(dueOn)}. ${rent.payerName} pays the landlord.`;
 }
 
 /** The due day's line, only while someone still owes the Payer: names, never amounts. */
@@ -77,7 +80,7 @@ export function rentDueLine(rent: Pick<Rent, "payerName">, stillOwing: string[])
 export type RentDm = { memberId: string; cents: number; text: string; buttons: Button[] };
 
 /** One private message per Share except the Payer's: their own amount and pay links to the Payer's handles. */
-export function rentDmsFor(rent: Pick<Rent, "payerId" | "payerName" | "shares">, payerHandles: Parameters<typeof payLinks>[0], dueOn: string): RentDm[] {
+export function rentDmsFor(rent: Pick<Rent, "payerId" | "payerName" | "shares" | "currency">, payerHandles: Parameters<typeof payLinks>[0], dueOn: string): RentDm[] {
   return rent.shares
     .filter((s) => s.memberId !== rent.payerId && s.cents > 0)
     .map((s) => {
@@ -85,7 +88,7 @@ export function rentDmsFor(rent: Pick<Rent, "payerId" | "payerName" | "shares">,
       const how = buttons.length
         ? `${rent.payerName} pays the landlord, so pay ${rent.payerName}.`
         : `${rent.payerName} pays the landlord; no pay link yet: ${rent.payerName} can tell me their Venmo, PayPal or Cash App.`;
-      return { memberId: s.memberId, cents: s.cents, text: `Rent's due ${weekdayOf(dueOn)}: your share is ${shortMoney(s.cents)}. ${how}`, buttons };
+      return { memberId: s.memberId, cents: s.cents, text: `Rent's due ${weekdayOf(dueOn)}: your share is ${shortMoney(s.cents, rent.currency)}. ${how}`, buttons };
     });
 }
 
@@ -125,6 +128,7 @@ export async function getRent(ctx: GroupCtx): Promise<Rent | null> {
     payerName: e.payers[0].name,
     method: e.method ?? "equal",
     shares: (e.splits ?? []).map((s) => ({ memberId: s.memberId, name: s.name, cents: s.cents })).sort((a, b) => b.cents - a.cents || a.name.localeCompare(b.name)),
+    currency: await currencyOf(ctx.groupId),
   };
 }
 
@@ -219,13 +223,13 @@ export function rentSummary(rent: Rent, tz: string, now = new Date()) {
   const w = rentWindows(rent.dueDay, tz, now);
   const next = rent.startsOn > w.dueDay ? rent.startsOn : w.dueDay;
   return {
-    amount: shortMoney(rent.cents),
+    amount: shortMoney(rent.cents, rent.currency),
     dueDay: rent.dueDay,
     nextDue: next,
     nextDueWeekday: weekdayOf(next),
     paysLandlord: rent.payerName,
     method: rent.method,
-    shares: rent.shares.map((s) => ({ name: s.name, share: shortMoney(s.cents) })),
+    shares: rent.shares.map((s) => ({ name: s.name, share: shortMoney(s.cents, rent.currency) })),
   };
 }
 

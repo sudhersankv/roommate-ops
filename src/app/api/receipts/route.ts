@@ -16,7 +16,7 @@ export async function POST(req: Request) {
   if (!(file instanceof File) || file.size === 0) return Response.json({ error: "Pick a photo of the receipt." }, { status: 400 })
   try {
     const saved = await receipts.saveUpload(`g-${session.group.id}`, Buffer.from(await file.arrayBuffer()), file.type || "image/jpeg")
-    const r = await receipts.parseReceipt({ url: saved.path })
+    const r = await receipts.parseReceipt({ url: saved.path }, session.group.currency)
     const draft: ReceiptDraft = {
       receiptUrl: saved.path,
       merchant: r.merchant,

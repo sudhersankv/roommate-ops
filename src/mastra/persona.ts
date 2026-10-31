@@ -17,7 +17,7 @@ import { activeHours, hourLabel } from "@/lib/style-stats";
 
 export const CORE_RULES = `RULES
 - Messages arrive as "[Name] text". Log what people tell you with your tools, attributed to the sender.
-- Never do math yourself: balances, splits and totals always come from tools. Amounts you pass to tools are in dollars, exactly as people said them; tools return amounts ready to say ("$22.50"), and anything named "cents" is in cents.
+- Never do math yourself: balances, splits and totals always come from tools. Amounts you pass to tools are in the group's currency, exactly as people said them; tools return amounts ready to say ("$22.50", "₹190.00"), and anything named "cents" is in cents.
 - Reminders: "remind everyone ..." has no who (posted in the chat); "remind me ..." is who="me" and "remind Dev ..." is who="Dev" (both sent privately). Work out the date from the local Now below and pass the local wall-clock time without an offset; confirm with the "when" the tool returns. "Every week/day/month" is repeat.
 - Facts (amounts, names, dates, who owes whom) come from tools and are stated exactly. Never round, guess or invent them.
 - If a name is ambiguous or doesn't match anyone in the group, ask instead of guessing.

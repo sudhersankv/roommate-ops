@@ -160,6 +160,37 @@ describe("polls and DMs against the dev DB", () => {
     const explicit = await resolveDmGroup({ channel: "telegram", userExternalId: tg, text: "for Lisbon: what do I owe" });
     assert.equal(explicit.kind === "group" && explicit.groupId, lis.group.id);
     assert.equal(explicit.kind === "group" && explicit.text, "what do I owe");
+    const afterPrefix = await resolveDmGroup({ channel: "telegram", userExternalId: tg, text: "and Sam?" });
+    assert.equal(afterPrefix.kind === "group" && afterPrefix.groupId, lis.group.id, "an explicit choice beats the earlier nudge");
+  });
+
+  test("a DM that says which Group it means switches there (issue #9: 'actually 564', 'no wait 4107, that's the group')", async () => {
+    const tg = `tg-sw-${ts}`;
+    const allowed = { newGroupAllowed: async () => true };
+    const join = (title: string) => onGroupJoined({ channel: "telegram", externalId: `-sw-${title}-${ts}`.replace(/\s+/g, ""), title }, [{ userExternalId: tg, name: "Sudhersan" }], { userExternalId: tg, name: "Sudhersan" }, allowed);
+    const test1 = await join("Roomietest");
+    const a564 = await join("Apt 564");
+    const a4107 = await join("Apt 4107");
+    made.push(test1.group.id, a564.group.id, a4107.group.id);
+
+    await resolveDmGroup({ channel: "telegram", userExternalId: tg, text: "Yooo" });
+    const picked = await resolveDmGroup({ channel: "telegram", userExternalId: tg, text: "roomietest" });
+    assert.equal(picked.kind === "group" && picked.groupId, test1.group.id);
+
+    const to564 = await resolveDmGroup({ channel: "telegram", userExternalId: tg, text: "actually,564" });
+    assert.deepEqual(to564, { kind: "say", text: "Got it, Apt 564. What's up?" });
+    const in564 = await resolveDmGroup({ channel: "telegram", userExternalId: tg, text: "what do I owe?" });
+    assert.equal(in564.kind === "group" && in564.groupId, a564.group.id, "the switch sticks");
+
+    await noteDmContext(a564.members[0].id, a564.group.id, "nudge");
+    const to4107 = await resolveDmGroup({ channel: "telegram", userExternalId: tg, text: "No wait 4107, that's the group" });
+    assert.deepEqual(to4107, { kind: "say", text: "Got it, Apt 4107. What's up?" });
+    const in4107 = await resolveDmGroup({ channel: "telegram", userExternalId: tg, text: "what do I owe?" });
+    assert.equal(in4107.kind === "group" && in4107.groupId, a4107.group.id, "a switch beats an earlier nudge from another Group");
+
+    const amount = await resolveDmGroup({ channel: "telegram", userExternalId: tg, text: "564" });
+    assert.equal(amount.kind === "group" && amount.groupId, a4107.group.id, "a bare number stays where it is (it may be an amount)");
+    assert.equal(amount.kind === "group" && amount.text, "564");
   });
 
   test("set_nudges flips the note and keeps the rest of it", async () => {

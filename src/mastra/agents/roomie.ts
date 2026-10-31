@@ -39,6 +39,8 @@ export const roomie = new Agent({
     ]);
     return roomieInstructions(ctx, describeMembers(people), new Date(), group?.timezone ?? DEFAULT_TIMEZONE, {
       onboarding: !!group && !group.onboardedAt,
+      currency: group?.currency,
+      groupName: group?.name,
       toolkits,
       personality,
       mood,

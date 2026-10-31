@@ -14,7 +14,8 @@ import { record } from "./activity";
 import { NotAllowedError, requireActive } from "./authz";
 import { getExpense, insertExpenseRows, listExpenses, logExpense, todayIn, type Expense, type ExpenseInput } from "./money";
 import { mayPost, nextDueOnOrAfter, sendDms, shortMoney, type DmOutcome } from "./rent";
-import { dollars, type Ctx } from "./types";
+import { moneyIn, type Ctx } from "./types";
+import { currencyOf } from "./groups";
 
 const { expenses, groups, pendingAmounts } = schema;
 
@@ -70,9 +71,9 @@ export function variableAsk(start: string, today: string, row: AskRow | null): {
 const billName = (description: string) => description.trim().replace(/\s+bill$/i, "").toLowerCase();
 
 /** The DM to the Payer. With a prefill: the amount from the bill, to confirm. */
-export function amountAskText(description: string, prefillCents: number | null): string {
+export function amountAskText(description: string, prefillCents: number | null, currency = "USD"): string {
   const ask = `How much was the ${billName(description)} bill?`;
-  return prefillCents ? `${ask} Looks like ${shortMoney(prefillCents)} (from the bill). Right?` : ask;
+  return prefillCents ? `${ask} Looks like ${shortMoney(prefillCents, currency)} (from the bill). Right?` : ask;
 }
 
 /* ---------- variable Expenses: DB ---------- */
@@ -129,7 +130,7 @@ async function askVariable(p: Parent, now: Date): Promise<DmOutcome | null> {
           .where(and(eq(pendingAmounts.id, row!.id), eq(pendingAmounts.asks, 1), isNull(pendingAmounts.resolvedExpenseId)))
           .returning({ prefill: pendingAmounts.prefillCents });
   if (!claimed.length) return null;
-  const [sent] = await sendDms(p.groupId, [{ memberId: payer.memberId, text: amountAskText(e.description, claimed[0].prefill), buttons: [] }], now);
+  const [sent] = await sendDms(p.groupId, [{ memberId: payer.memberId, text: amountAskText(e.description, claimed[0].prefill, await currencyOf(p.groupId)), buttons: [] }], now);
   return sent;
 }
 
@@ -160,7 +161,7 @@ export async function answerAmount(ctx: Ctx, input: { expenseId?: string; cents:
     const done = rows.find((r) => r.row.resolvedExpenseId);
     if (done) {
       const logged = await getExpense(ctx, done.row.resolvedExpenseId!);
-      throw new Error(`The ${billName(done.description)} bill for ${done.row.period} is already logged${logged ? ` (${dollars(logged.cents)})` : ""}.`);
+      throw new Error(`The ${billName(done.description)} bill for ${done.row.period} is already logged${logged ? ` (${moneyIn(await currencyOf(ctx.groupId))(logged.cents)})` : ""}.`);
     }
     throw new Error("No bill is waiting for an amount right now.");
   }
@@ -283,7 +284,7 @@ export async function runRecurring(now = new Date(), opts: { groupId?: string; a
     });
     if (!id) continue;
     made++;
-    await record(p.groupId, null, "expense.repeated", `added ${e.description}, ${dollars(e.cents)} (repeats ${p.recurring})`, { table: "expenses", id });
+    await record(p.groupId, null, "expense.repeated", `added ${e.description}, ${moneyIn(await currencyOf(p.groupId))(e.cents)} (repeats ${p.recurring})`, { table: "expenses", id });
     const { enqueueSplitwisePush } = await import("./outbox");
     await enqueueSplitwisePush(p.groupId, id, "upsert");
   }

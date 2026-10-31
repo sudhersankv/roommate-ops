@@ -14,6 +14,41 @@ test("priceToCents parses printed prices without float math", () => {
   assert.equal(priceToCents("abc"), null);
 });
 
+test("priceToCents reads the receipt the way the Group's currency writes numbers (the live ₹ receipt)", () => {
+  // An INR Group: "60.000" is ₹60 with three printed decimals, not sixty thousand.
+  assert.equal(priceToCents("60.000", "INR"), 6000);
+  assert.equal(priceToCents("Rp 190.000", "INR"), 19000);
+  assert.equal(priceToCents("₹1,20,000", "INR"), 12000000, "Indian grouping");
+  assert.equal(priceToCents("Rs. 1,200.50", "INR"), 120050);
+  // An IDR Group: the same digits are sixty thousand rupiah.
+  assert.equal(priceToCents("60.000", "IDR"), 6000000);
+  assert.equal(priceToCents("Rp 190.000", "IDR"), 19000000);
+  // A EUR Group: comma decimals, dot or space thousands.
+  assert.equal(priceToCents("12,50", "EUR"), 1250);
+  assert.equal(priceToCents("1.234,50 €", "EUR"), 123450);
+  assert.equal(priceToCents("1 234,50", "EUR"), 123450);
+  // Unambiguous shapes read the same in any currency.
+  for (const c of ["USD", "INR", "IDR", "EUR"]) {
+    assert.equal(priceToCents("1,234.56", c), 123456, c);
+    assert.equal(priceToCents("1.234,56", c), 123456, c);
+    assert.equal(priceToCents("12.5", c), 1250, c);
+  }
+  // A third decimal that isn't 0 rounds to the cent; four or more decimals aren't a printed price.
+  assert.equal(priceToCents("2.345", "INR"), 235);
+  assert.equal(priceToCents("1.2345", "INR"), null);
+  assert.equal(priceToCents("Rp", "IDR"), null);
+});
+
+test("checkReceipt keeps every item of the live ₹ receipt in an INR Group", () => {
+  const raw = { readable: true, items: [{ name: "Daal Makhni", price: "60.000" }, { name: "Plain Chapati", price: "80.000" }, { name: "Curd Rice", price: "50.000" }], total: "Rp 190.000" };
+  const inr = checkReceipt(raw, "INR");
+  assert.equal(inr.items.length, 3);
+  assert.equal(inr.totalCents, 19000);
+  assert.equal(inr.mismatch, false);
+  assert.equal(inr.confidence, "high");
+  assert.equal(checkReceipt(raw, "IDR").totalCents, 19000000);
+});
+
 test("checkReceipt recomputes the total from items + tax + tip", () => {
   const r = checkReceipt(SAMPLE_RECEIPT);
   assert.equal(r.itemsCents, 10700);

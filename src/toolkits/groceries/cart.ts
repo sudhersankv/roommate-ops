@@ -3,7 +3,7 @@
 // Instacart list on checkout.
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
-import { cart } from "@/services";
+import { cart, groups } from "@/services";
 import { addPhotoToCart, photoSummary, readGroceryPhoto } from "@/services/grocery-photos";
 import { expenseSummary } from "@/services/money";
 import { checkoutSuggestions } from "@/services/restock";
@@ -122,13 +122,13 @@ export const cartTools = {
     description:
       "Someone bought the cart for a total ('I paid 84 for groceries', 'I bought the groceries, $84'), including after a checkout. Use this, not log_expense, for the grocery run. Creates one expense split by who added what (each item counts the same; shared items split evenly) and clears the cart. Default payer = sender. Returns `shares`: each person's part as ready-to-say amounts.",
     inputSchema: z.object({
-      total: z.number().positive().describe("Dollars, e.g. 84.2"),
+      total: z.number().positive().describe("In the group's currency, e.g. 84.2"),
       payer: z.string().optional().describe("Who paid, by first name. Omit for the sender."),
     }),
     execute: async ({ total, payer }, context) => {
       const ctx = ctxOf(context);
       const e = await cart.markPurchased(ctx, { totalCents: toCents(total), payerId: payer ? await memberIdByName(ctx, payer) : undefined });
-      return { ...expenseSummary(e), cents: e.cents, payerName: e.payerName, splits: e.splits };
+      return { ...expenseSummary(e, await groups.currencyOf(ctx.groupId)), cents: e.cents, payerName: e.payerName, splits: e.splits };
     },
   }),
 };

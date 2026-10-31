@@ -2,7 +2,7 @@
 // Run: npx tsx --test src/services/dm-rules.test.ts
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { afterPrivateRun, groupPrefix, matchGroupName, NUDGE_CONTEXT_MS, pickDmGroup, startHint, startHintDue, START_HINT_MS, type RunChange } from "./dm-rules";
+import { afterPrivateRun, groupPrefix, matchGroupName, NUDGE_CONTEXT_MS, pickDmGroup, startHint, startHintDue, START_HINT_MS, switchLine, switchTo, type RunChange } from "./dm-rules";
 
 const APT = { groupId: "apt", name: "Apt 4B", memberId: "dev-apt" };
 const LISBON = { groupId: "lis", name: "Lisbon trip", memberId: "dev-lis" };
@@ -54,4 +54,42 @@ test("the Echo rule: shared Expense -> one group line; Settlement -> a private l
   assert.equal(afterPrivateRun([pizza, fixed, oatMilk]).echo, "Dev logged $40.00 pizza, split 3 ways; changed pizza: $40.00 -> $45.00.", "one line for the run");
   const mayaNotes: RunChange = { actorId: "maya", actorName: "Maya", kind: "settlement.added", summary: "recorded Dev paying Maya $20.00", settlement: { fromId: "dev", fromName: "Dev", toId: "maya", toName: "Maya", cents: 2000 } };
   assert.deepEqual(afterPrivateRun([mayaNotes]).privately, [{ memberId: "dev", text: "Maya noted you paid them $20.00." }]);
+});
+
+test("switchTo: a DM that points at another of their Groups switches to it (the live chat, issue #9)", () => {
+  const groups = [
+    { groupId: "test", name: "Roomietest", memberId: "m1" },
+    { groupId: "564", name: "Apt 564", memberId: "m2" },
+    { groupId: "4107", name: "Apt 4107", memberId: "m3" },
+  ];
+  const to = (text: string) => switchTo(text, groups)?.groupId ?? null;
+  // What was said live, in a DM stuck on Roomietest.
+  assert.equal(to("actually,564"), "564");
+  assert.equal(to("No wait 4107, that's the group"), "4107");
+  // Other ways of saying it.
+  assert.equal(to("I meant Apt 564"), "564");
+  assert.equal(to("switch to 4107"), "4107");
+  assert.equal(to("sorry, apt 4107"), "4107");
+  assert.equal(to("it's about 564"), "564");
+  assert.equal(to("this is for the 4107 group"), "4107");
+  assert.equal(to("Apt 4107"), "4107", "the name alone");
+  assert.equal(to("4107"), null, "a bare number may be an amount Roomie asked for: it needs a correction word");
+  assert.equal(to("Roomietest"), "test");
+  // Not a switch: an amount, or a name inside a request.
+  assert.equal(to("split 564 with Sam"), null);
+  assert.equal(to("actually 564 for the pizza"), null);
+  assert.equal(to("I paid 4107 for rent"), null);
+  assert.equal(to("apt"), null, "ambiguous: two Groups start with it");
+  assert.equal(to("what do I owe?"), null);
+  assert.equal(switchTo("4107", [groups[2]]), null, "one Group: nothing to switch");
+});
+
+test("switchLine names the Group it's on now", () => {
+  assert.equal(switchLine("Apt 4107"), "Got it, Apt 4107. What's up?");
+});
+
+test("a DM's instructions name the Group it's about, so Roomie can say which one", async () => {
+  const { roomieInstructions } = await import("@/mastra/agents/instructions");
+  const text = roomieInstructions({ memberName: "Sudhersan", isPrivate: true } as never, "Sudhersan", new Date(0), "Asia/Kolkata", { groupName: "Apt 4107" });
+  assert.match(text, /private DM with Sudhersan, about Apt 4107/);
 });

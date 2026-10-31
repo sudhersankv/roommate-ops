@@ -62,6 +62,12 @@ export async function getGroup(groupId: string): Promise<Group | undefined> {
   return g;
 }
 
+/** The Group's currency (USD when unknown), for saying amounts (types.moneyIn). */
+export async function currencyOf(groupId: string): Promise<string> {
+  const [row] = await db.select({ currency: schema.groups.currency }).from(schema.groups).where(eq(schema.groups.id, groupId)).limit(1);
+  return row?.currency ?? "USD";
+}
+
 export async function chatFor(channel: ChannelName, externalId: string): Promise<{ group: Group; chat: Chat } | undefined> {
   const [row] = await db
     .select({ group: groups, chat: chats })
