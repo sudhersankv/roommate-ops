@@ -1888,6 +1888,24 @@ describe("polls and nudges (#24B)", () => {
     await assert.rejects(run("ask_poll", { question: "Which?", options: ["a", "b", "c", "d", "e"], multi: false } as never, rc("Maya")));
   });
 
+  test("group_decision: a pinned chore goes to the chat as ✅ / ❌; an admin change or a DM is refused, nothing sent", async () => {
+    const before = posted.length;
+    const r = await run("group_decision", { question: "Add Trash run, every 3 days, Dev first?", tool: "chore_add", input: { name: "Trash run", everyDays: 3, rotation: ["Dev", "Sam", "Maya"] } }, rc("Sam"));
+    assert.equal(r.asked, true);
+    assert.match(posted.at(-1)?.msg.text ?? "", /Add Trash run, every 3 days, Dev first\?\n1\. ✅ Yes\n2\. ❌ No/);
+    const [p] = await db.select().from(schema.polls).where(and(eq(schema.polls.groupId, pgid), eq(schema.polls.kind, "confirm")));
+    assert.deepEqual(p.about, { kind: "confirm", toolId: "chore_add", input: { name: "Trash run", everyDays: 3, rotation: ["Dev", "Sam", "Maya"] }, memberId: people.Sam, who: "any-member" });
+    assert.equal((await chores.choreStatus({ groupId: pgid })).some((c) => c.name === "Trash run"), false, "nothing until a ✅");
+
+    const admin = await run("group_decision", { question: "Take the dishes off the chart?", tool: "chore_remove", input: { chore: "dishes" } }, rc("Maya"));
+    assert.equal(admin.asked, false);
+    assert.match(admin.refused, /admin/);
+    const dmRc = rc("Sam");
+    dmRc.set("isPrivate", true);
+    assert.equal((await run("group_decision", { question: "Split the $60 internet?", tool: "log_expense", input: { amount: 60, description: "internet", category: "utilities" } }, dmRc)).asked, false);
+    assert.equal(posted.length, before + 1, "only the one poll");
+  });
+
   test("set_nudges: off, then on again", async () => {
     assert.equal((await run("set_nudges", { on: false }, rc("Sam"))).nudges, "off");
     assert.equal(await members.nudgesOff(people.Sam), true);

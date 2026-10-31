@@ -28,8 +28,10 @@ export const core = defineManifest({
     keep_document: "Keep a photo or file someone sent: the lease, a bill, a notice",
     find_documents: "Find a kept document by name or kind",
     ask_poll: "Ask the chat a quick poll for who-questions (who was in, who's shopping)",
+    group_decision: "Put a decision the whole group cares about to the chat as a ✅ / ❌ poll",
     set_nudges: "Stop or restart your private nudges",
   },
+  groupDecisions: ["set_reminder"],
   adminOnly: {
     approve_member: { action: String.raw`\b(?:approve|accept|admit)|\blet\b.*\bin\b`, target: "name", ask: `Approve {target}?` },
     decline_member: { action: String.raw`\b(?:decline|reject|deny|refuse|not approve|don'?t approve)`, target: "name", ask: `Decline {target}?` },

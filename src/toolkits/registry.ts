@@ -143,6 +143,21 @@ for (const tk of [core, ...TOOLKITS]) for (const [id, t] of Object.entries(tk.to
 export const adminOnlyTools = () => [core, ...TOOLKITS].flatMap((tk) => Object.keys(tk.adminOnly ?? {}));
 
 /**
+ * Why `toolId` with `input` can't be put to the chat as a group decision (#42), or null when it can: it must be one of
+ * its Toolkit's `groupDecisions` (a change to shared state any active Member may make), never an admin-only tool in
+ * any manifest, and the input must be one the tool accepts (it runs later, when someone taps ✅).
+ */
+export function groupDecisionRefusal(toolId: string, input: unknown): string | null {
+  if (adminOnlyTools().includes(toolId)) return "That's an admin change: ask the admin, it isn't a group decision.";
+  const owner = [core, ...TOOLKITS].find((tk) => tk.groupDecisions?.includes(toolId) && toolId in tk.tools);
+  if (!owner) return "That isn't something the group decides with a poll: just do it, or ask the person.";
+  const schema = (owner.tools as Record<string, AnyTool>)[toolId].inputSchema as { safeParse?: (v: unknown) => { success: boolean; error?: { message: string } } } | undefined;
+  const parsed = schema?.safeParse?.(input);
+  if (parsed && !parsed.success) return `That call isn't complete yet (${parsed.error?.message.slice(0, 200) ?? "bad input"}): fix it before asking.`;
+  return null;
+}
+
+/**
  * Tools for one request. `toolkit` from the Gate narrows to that Toolkit (plus core); unset or "none" gives every
  * enabled Toolkit; "core" gives core only. A disabled Toolkit is never returned.
  */

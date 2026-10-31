@@ -82,6 +82,12 @@ export type ToolkitManifest<Id extends string = string> = {
    */
   adminOnly?: Record<string, AdminAsk>;
   /**
+   * Tools Roomie may put to the whole chat as a group decision (#42): a ✅ / ❌ poll where the first ✅ from any active
+   * Member runs the pinned call as them. Only changes to shared state that any active Member may make; the registry
+   * refuses an adminOnly tool here whatever the list says (groupDecisionRefusal).
+   */
+  groupDecisions?: string[];
+  /**
    * Where its lines sit in Roomie's own posts, the morning Bundle and the weekly report (ADR 0017: money 10, the
    * landlord 20, the house 30, groceries 40). Default: its nav order, then last.
    */

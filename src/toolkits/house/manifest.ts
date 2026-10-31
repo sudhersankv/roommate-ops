@@ -38,6 +38,7 @@ export const house = defineManifest({
     chore_remove: { action: String.raw`remove|delete|drop|take\b.*\boff|get rid|no more|stop`, target: "chore", ask: `Take {target} off the chart (its history goes too)?` },
     upkeep_remove: { action: String.raw`remove|delete|drop|stop|untrack|get rid|no more`, target: "item", ask: `Stop tracking {target}?` },
   },
+  groupDecisions: ["chore_add", "upkeep_add"],
   // Money, the landlord, then the house in the Bundle and the report (ADR 0017).
   postOrder: 30,
   dashboard: {

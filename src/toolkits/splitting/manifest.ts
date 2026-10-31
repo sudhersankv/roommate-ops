@@ -61,6 +61,7 @@ export const splitting = defineManifest({
     splitwise_export: { action: String.raw`^(?=.*\bsplitwise\b)(?=.*\b(?:export\w*|copy|push|send\b.*\bto)\b)`, ask: `Copy this group's expenses to Splitwise?` },
     splitwise_mirror: { action: String.raw`^(?=.*\bsplitwise\b)(?=.*\b(?:mirror\w*|sync\w*|keep\b.*\bin sync)\b)`, ask: `Change the Splitwise mirror?` },
   },
+  groupDecisions: ["log_expense"],
   // Money leads the Bundle and the report (ADR 0017).
   postOrder: 10,
   dashboard: {
