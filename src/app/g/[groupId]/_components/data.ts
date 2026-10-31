@@ -8,7 +8,7 @@ import { localDay } from "@/lib/dates"
 import { formatInZone } from "@/lib/time"
 import type { GroupSession } from "@/lib/session"
 import { instacartAvailability } from "@/integrations/instacart"
-import { activity, cart, chatlog, chores, groups, joins, members, money, pantry, recipes, reminders, schedule, splitwise, toolkits, upkeep } from "@/services"
+import { activity, cart, chores, groups, joins, members, money, pantry, recipes, reminders, schedule, splitwise, toolkits, upkeep } from "@/services"
 import { canChangeExpense } from "@/services/authz"
 import { guessCategory } from "@/services/categories"
 import { docPath, receiptHref } from "@/services/documents"
@@ -36,7 +36,6 @@ import type {
   InboxTab,
   InboxThreadView,
   InboxView,
-  NarrationView,
   NudgeSettingsView,
   ProbablyLowView,
   RecentDocumentView,
@@ -325,9 +324,19 @@ export async function activityView(s: GroupSession): Promise<ActivityView[]> {
   }))
 }
 
-/** What Roomie said in the Chat lately, for Home. */
-export async function narrationView(s: GroupSession): Promise<NarrationView[]> {
-  return (await chatlog.roomieLines(s.group.id, 6)).map((l) => ({ id: l.id, date: localDay(l.createdAt, s.group.timezone), text: l.text }))
+/** Home's Recent card: the newest few Activity rows (what, who, and the local day and time). */
+export async function recentView(s: GroupSession, limit = 5): Promise<ActivityView[]> {
+  const base = `/g/${s.group.id}`
+  const tz = s.group.timezone
+  return (await activity.listActivity(s.ctx, limit)).map((a) => ({
+    id: a.id,
+    date: localDay(a.createdAt, tz),
+    time: formatInZone(a.createdAt, tz, { hour: "numeric", minute: "2-digit" }),
+    actor: a.actorMemberId ?? "roomie",
+    actorName: a.actorName,
+    text: a.summary,
+    href: refHref(base, a.refTable, a.refId),
+  }))
 }
 
 export async function cartView(s: GroupSession): Promise<CartItemView[]> {

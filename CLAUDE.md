@@ -332,7 +332,8 @@ src/
                         nav, overflow and owned pages from the enabled manifests once), Home (doorway + Today = the Bundle
                         on a page: todayView = each enabled Toolkit's bundle() line in post order with its accent dot +
                         your Reminders due today, "Nothing due today." otherwise; RecentDocuments (empty until core's
-                        Documents: recentDocumentsView) + Toolkits' Home sections + Reminders coming up + narration), money
+                        Documents: recentDocumentsView) + Toolkits' Home sections + Reminders coming up + Recent (one card:
+                        recentView = the newest 5 Activity rows, who / what / when, "All activity")), money
                         (+ ?tab=, [expenseId]), cart (+ ?recipe=; Recipes and Pantry in _components/recipes.tsx), house
                         (Chores and Upkeep tabs; /chores redirects there, ?tab=reminders to /reminders), inbox (Lease
                         Inbox, screens/inbox.tsx: filter chips by class, the thread list (sender, subject, one line, time,
