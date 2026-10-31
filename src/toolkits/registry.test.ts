@@ -10,6 +10,8 @@ import { TOOLKIT_CATEGORIES } from "./types";
 
 const ids = (tools: Record<string, unknown>) => Object.keys(tools).sort();
 const coreIds = ids(core.tools);
+/** Core without group_decision: what a run gets when no picked Trick has anything the group can decide. */
+const coreAlone = coreIds.filter((id) => id !== "group_decision");
 
 describe("toolsFor", () => {
   test("no toolkit or 'none' gives core + every enabled Toolkit", () => {
@@ -19,18 +21,23 @@ describe("toolsFor", () => {
 
   test("a Gate toolkit narrows to core + that Toolkit", () => {
     const t = toolsFor("groceries");
-    assert.ok(coreIds.every((id) => id in t), "core is always on");
+    assert.ok(coreAlone.every((id) => id in t), "core is always on");
     assert.ok("cart_add" in t);
     assert.ok(!("log_expense" in t) && !("log_chore" in t) && !("upkeep_add" in t));
   });
 
+  test("group_decision comes only with a Trick the group can decide something in (House, Money), never alone", () => {
+    assert.ok("group_decision" in toolsFor("house") && "group_decision" in toolsFor("splitting") && "group_decision" in toolsFor());
+    for (const narrow of ["lease-inbox", "groceries", "core"] as const) assert.ok(!("group_decision" in toolsFor(narrow)), narrow);
+  });
+
   test("'core' (reminders, members, settings): core tools only", () => {
-    assert.deepEqual(ids(toolsFor("core")), coreIds);
+    assert.deepEqual(ids(toolsFor("core")), coreAlone);
     assert.ok("list_toolkits" in core.tools && "toggle_toolkit" in core.tools);
   });
 
   test("disabled Toolkits are never returned, even when the Gate picks them", () => {
-    assert.deepEqual(ids(toolsFor("splitting", ["groceries"])), coreIds);
+    assert.deepEqual(ids(toolsFor("splitting", ["groceries"])), coreAlone);
     const t = toolsFor(undefined, ["groceries"]);
     assert.ok("cart_add" in t && !("log_expense" in t));
   });

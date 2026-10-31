@@ -47,9 +47,8 @@ export const pollTools = {
   group_decision: createTool({
     id: "group_decision",
     description:
-      "Put ONE action to the whole chat as a ✅ / ❌ poll when it's a decision several people care about and someone suggested it without the others agreeing yet: a new shared chore with a rotation ('add Trash run every 3 days, Sreyas first?'), splitting a shared bill everyone pays ('split the $60 internet three ways?'), a reminder for everyone. " +
-      "Not for routine adds or anything the sender clearly asked you to just do (then do it), never for admin changes. " +
-      "Pin the exact call: `tool` is the tool you'd call and `input` its full input, with every person named (payer, rotation): it runs later as whoever taps ✅ first, so defaults like 'the sender' or 'me' would mean them. The first ✅ from any approved Member does it once, ❌ drops it, and after 30 minutes it lapses. Nothing happens until then.",
+      "Only for a suggestion the whole group shares that the others haven't agreed to yet (a new shared chore, splitting a bill everyone pays): puts that one action to the chat as a ✅ / ❌ poll, and the first ✅ does it. Never for routine adds, something the sender asked you to just do, or admin changes. " +
+      "`tool` and `input` are the exact call, with every person named, since it runs as whoever taps ✅.",
     inputSchema: z.object({
       question: z.string().describe(`Short, as a roommate would ask: "Add Trash run, every 3 days, Sreyas first?"`),
       tool: z.string().describe("The tool id to run on ✅, e.g. chore_add or log_expense"),

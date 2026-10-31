@@ -172,7 +172,11 @@ export function toolOwner(toolId: string): string | null {
 export function toolsFor(toolkit?: GateToolkit, enabled: readonly ToolkitId[] = ALL_TOOLKIT_IDS): Record<string, AnyTool> {
   const on = TOOLKITS.filter((t) => enabled.includes(t.id));
   const picked = !toolkit || toolkit === "none" ? on : on.filter((t) => t.id === toolkit);
-  return Object.assign({}, core.tools, ...picked.map((t) => t.tools));
+  // group_decision only where a picked Trick has something the group can decide (#42): a Lease Inbox run that sees it
+  // starts writing its own questions as numbered lists, and there's nothing there to put to a poll anyway.
+  const { group_decision, ...always } = core.tools as Record<string, AnyTool>;
+  const decidable = picked.some((t) => t.groupDecisions?.length);
+  return Object.assign({}, always, decidable ? { group_decision } : {}, ...picked.map((t) => t.tools));
 }
 
 /** Every tool in the registry, keyed by id, with each tool's own types. Used by tests. */
