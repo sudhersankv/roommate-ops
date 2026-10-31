@@ -31,6 +31,7 @@ import { ComposioInstacart, FakeInstacart, setInstacartClient } from "@/integrat
 import { readFile, rm } from "node:fs/promises";
 import { runRetention } from "@/jobs/retention";
 import { expenseSummary } from "@/services/money";
+import * as restock from "@/services/restock";
 import { allTools } from "./registry";
 import { assertNotProdDb } from "../../scripts/lib/prod-guard";
 
@@ -846,6 +847,20 @@ describe("Roomie tools against the dev DB", () => {
     assert.deepEqual((await run("pantry_set", { remove: ["Rice"] }, ryanRc())).pantry, ["oil", "salt"], "any active Member can edit it");
     assert.deepEqual((await run("pantry_list", {})).pantry, ["oil", "salt"]);
     await assert.rejects(run("pantry_set", {}), /What should go in/);
+  });
+
+  test("restock_status / restock_mute / restock_unmute: a habit seen three times is probably low until muted", async () => {
+    const today = await restock.localDay(groupId);
+    const days = [8, 17, 26].map((ago) => addDaysToDay(today, -ago)); // every 9 days, last 8 days ago
+    await restock.recordPurchases(ctx, days.map((occurredOn) => ({ name: "Sparkling water", memberId: null, occurredOn, source: "cart" as const, sourceId: null })));
+    const low = await run("restock_status", {});
+    assert.ok(low.items.includes("sparkling water"), JSON.stringify(low));
+    assert.match(low.say, /^Probably low: .*sparkling water/);
+    assert.doesNotMatch(low.say, /\$/);
+    assert.equal((await run("restock_mute", { item: "sparkling water" }, ryanRc())).say, "Got it, I'll stop mentioning sparkling water.");
+    assert.ok(!(await run("restock_status", {})).items.includes("sparkling water"));
+    assert.equal((await run("restock_unmute", { item: "Sparkling Water" })).say, "OK, I'll mention sparkling water again.");
+    assert.ok((await run("restock_status", {})).items.includes("sparkling water"));
   });
 
   let tacosId: string;
