@@ -6,6 +6,7 @@
 import { and, desc, eq, isNotNull, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { db, schema } from "@/db";
+import { documentBytes } from "./documents";
 import { smallModelText } from "./mail-classifier";
 import type { GroupCtx } from "./types";
 
@@ -120,26 +121,41 @@ export function setLeaseAnswerer(a: LeaseAnswerer | null) {
   answerer = a;
 }
 
-/** The newest filed lease with its text read, or null. */
-export async function currentLease(ctx: GroupCtx) {
+/**
+ * The newest filed lease, or null. Its text is read now, from the stored file, when it wasn't when it was filed (the
+ * read failed then; AgentMail's textUrl has expired, so the bytes and the vision model): kept on success, null text
+ * when it still can't be read.
+ */
+export async function currentLease(ctx: GroupCtx): Promise<{ id: string; title: string; text: string | null; createdAt: Date } | null> {
   const [doc] = await db
     .select({ id: documents.id, title: documents.title, text: documents.text, createdAt: documents.createdAt })
     .from(documents)
-    .where(and(eq(documents.groupId, ctx.groupId), eq(documents.kind, "lease"), isNotNull(documents.text), isNotNull(documents.filedAt), isNull(documents.deletedAt)))
+    .where(and(eq(documents.groupId, ctx.groupId), eq(documents.kind, "lease"), isNotNull(documents.filedAt), isNull(documents.deletedAt)))
     .orderBy(desc(documents.createdAt))
     .limit(1);
-  return doc ?? null;
+  if (!doc || doc.text) return doc ?? null;
+  const text = await documentBytes(ctx.groupId, doc.id)
+    .then((file) => (file ? extractDocumentText({ textUrl: null, bytes: file.bytes, contentType: file.contentType, filename: doc.title }) : null))
+    .catch((e) => {
+      console.warn(`[lease] couldn't read ${doc.title} (${doc.id}) again:`, e instanceof Error ? e.message : e);
+      return null;
+    });
+  if (text) await db.update(documents).set({ text }).where(eq(documents.id, doc.id));
+  return { ...doc, text };
 }
 
 export type AskLeaseResult = { found: false; line: string } | ({ found: true; document: string } & LeaseAnswer);
 
+export const LEASE_UNREAD = "I couldn't read the lease yet. Try me again in a bit.";
+
 /** "What's the notice period in our lease?": from the stored text, citing the clause; "no lease filed yet" without one. */
 export async function askLease(ctx: GroupCtx, input: { question: string }, opts: { address?: string | null } = {}): Promise<AskLeaseResult> {
   const lease = await currentLease(ctx);
-  if (!lease?.text) {
+  if (!lease) {
     const how = opts.address ? ` Forward the lease PDF to ${opts.address} and I'll read it.` : "";
     return { found: false, line: `No lease filed yet.${how}` };
   }
+  if (!lease.text) return { found: false, line: LEASE_UNREAD };
   const pick = answerer ?? (process.env.MAIL_CLASSIFIER_FAKE === "1" ? keywordLeaseAnswerer : gatewayLeaseAnswerer);
   const a = await pick({ question: input.question.trim(), text: lease.text });
   return { found: true, document: lease.title, ...a };

@@ -108,14 +108,14 @@ export function InboxScreen({ view }: { view: InboxView }) {
 function ThreadScreen({ thread, onBack }: { thread: InboxThreadView; onBack: () => void }) {
   const { group } = useGroup()
   const [body, setBody] = useState("")
-  const [ask, setAsk] = useState<string[] | null>(null)
+  const [ask, setAsk] = useState<{ questions: string[]; token: string | null } | null>(null)
   const [pending, start] = useTransition()
 
-  const send = (confirmed: boolean) =>
+  const send = (confirmToken?: string) =>
     start(async () => {
-      const res = await replyToLandlord(group.id, { threadId: thread.threadId, body, confirmed })
+      const res = await replyToLandlord(group.id, { threadId: thread.threadId, body, confirmToken })
       if (!res.ok) return void toast.add({ title: "Couldn't send it", description: res.error, type: "error" })
-      if (res.data && !res.data.sent) return void setAsk(res.data.ask)
+      if (res.data && !res.data.sent) return void setAsk({ questions: res.data.ask, token: res.data.confirmToken })
       setAsk(null)
       setBody("")
       toast.add({ title: "Sent", description: res.data?.sent ? res.data.line : undefined, type: "success" })
@@ -168,7 +168,7 @@ function ThreadScreen({ thread, onBack }: { thread: InboxThreadView; onBack: () 
                 <AlertTitle>Before it goes</AlertTitle>
                 <AlertDescription>
                   <ul className="list-disc pl-4">
-                    {ask.map((q) => (
+                    {ask.questions.map((q) => (
                       <li key={q}>{q}</li>
                     ))}
                   </ul>
@@ -178,7 +178,7 @@ function ThreadScreen({ thread, onBack }: { thread: InboxThreadView; onBack: () 
             <div className="flex gap-2">
               {ask ? (
                 <>
-                  <Button disabled={pending || !body.trim()} onClick={() => send(true)}>
+                  <Button disabled={pending || !body.trim() || !ask.token} onClick={() => send(ask.token ?? undefined)}>
                     {pending ? <Spinner data-icon="inline-start" /> : null}
                     Send anyway
                   </Button>
@@ -187,7 +187,7 @@ function ThreadScreen({ thread, onBack }: { thread: InboxThreadView; onBack: () 
                   </Button>
                 </>
               ) : (
-                <Button disabled={pending || !body.trim()} onClick={() => send(false)}>
+                <Button disabled={pending || !body.trim()} onClick={() => send()}>
                   {pending ? <Spinner data-icon="inline-start" /> : null}
                   Send
                 </Button>

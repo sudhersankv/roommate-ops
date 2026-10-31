@@ -180,13 +180,13 @@ export async function setSimplifyDebts(ctx: Ctx, input: { on: boolean }): Promis
 }
 
 // The Lease Inbox's mail rows, work orders and landlord senders go too (sent_mail first: it points at work_orders);
-// the address itself (group_inboxes) stays with the Group, like its Chat.
-const DATA_TABLES = [schema.outboxJobs, schema.splitwiseLinks, schema.cartCheckouts, schema.expenses, schema.settlements, schema.cartItems, schema.recipes, schema.chores, schema.reminders, schema.maintenance, schema.chatMessages, schema.activity, schema.petMoments, schema.pendingPosts, schema.sentMail, schema.workOrders, schema.mailMessages, schema.mailEvents, schema.landlordSenders] as const;
+// its address is released separately (wipeGroupData: AgentMail, then group_inboxes). Restock's purchase history too.
+const DATA_TABLES = [schema.outboxJobs, schema.splitwiseLinks, schema.cartCheckouts, schema.expenses, schema.settlements, schema.cartItems, schema.purchaseEvents, schema.recipes, schema.chores, schema.reminders, schema.maintenance, schema.chatMessages, schema.activity, schema.petMoments, schema.pendingPosts, schema.sentMail, schema.workOrders, schema.mailMessages, schema.mailEvents, schema.landlordSenders] as const;
 
 /**
  * Admin "delete group data" (ADR 0006): every Expense, Settlement, Cart item, chore, reminder, upkeep item, chat
- * line, Activity row, Member note, Splitwise link, Document (and its file), held quiet-hours post, trace and score, and
- * Roomie's memory for the Group.
+ * line, Activity row, Member note, Splitwise link, Document (and its file), held quiet-hours post, trace and score,
+ * purchase event, the Lease Inbox's mail and its address (released), and Roomie's memory for the Group.
  * The Group, its Chat, Members and settings stay, so Roomie keeps working from the next message.
  */
 export async function deleteGroupData(ctx: Ctx): Promise<void> {
@@ -195,8 +195,13 @@ export async function deleteGroupData(ctx: Ctx): Promise<void> {
   await recordFor(ctx, "group.data_deleted", "deleted the group's data");
 }
 
-/** Rows, then what lives outside the app's tables: memory, traces and scores, Documents (rows and their files). */
+/**
+ * The email address first (best-effort: a mail-service failure is logged and never stops the deletion), then rows,
+ * then what lives outside the app's tables: memory, traces and scores, Documents (rows and their files).
+ */
 async function wipeGroupData(groupId: string) {
+  const { releaseGroupInbox } = await import("./lease-inbox");
+  await releaseGroupInbox(groupId);
   await wipeGroupRows(groupId);
   const { forgetGroupInMemory, forgetGroupTraces } = await import("@/mastra/forget");
   await forgetGroupInMemory(groupId);

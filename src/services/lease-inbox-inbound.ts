@@ -1,5 +1,5 @@
-// What arrives in a Group's Lease Inbox, end to end (ADR 0016 decision 4): the webhook's event -> the stored email
-// (lease-inbox.ts storeInbound, deduped on event_id) -> its attachments as Documents -> classifyInbound with the
+// What arrives in a Group's Lease Inbox, end to end (ADR 0016 decision 4): the webhook's event (received, then
+// processed: claimMailEvent / finishMailEvent) -> the stored email (lease-inbox.ts storeInbound, once per message id) -> its attachments as Documents -> classifyInbound with the
 // hooks wired to the core slots and Money -> the one chat line. Each hook is a thin call; what a class does is still
 // decided in lease-inbox.ts. Webhook JSON is snake_case and parsed here (parseMailEvent, pure).
 import { and, eq } from "drizzle-orm";
@@ -16,7 +16,7 @@ import { logMessage } from "./chatlog";
 import { fileDocument, stableDocId } from "./documents";
 import { postStartHint } from "./dm";
 import { enabledToolkits } from "./groups";
-import { classifyInbound, knownSenders, storeInbound, widestTrust, type ClassifyResult, type InboundHooks } from "./lease-inbox";
+import { claimMailEvent, classifyInbound, finishMailEvent, knownSenders, storeInbound, widestTrust, type ClassifyResult, type InboundHooks } from "./lease-inbox";
 import { attachmentKind } from "./lease-inbox-rules";
 import { extractDocumentText } from "./lease-text";
 import { admins } from "./members";
@@ -28,7 +28,7 @@ import { getRent } from "./rent";
 import { DEFAULT_TIMEZONE } from "./schedule";
 import { postUrgent } from "./urgent";
 
-const { groups, groupInboxes, mailMessages, documents, pendingPosts } = schema;
+const { groups, groupInboxes, mailMessages, documents, pendingPosts, reminders } = schema;
 
 /* ---------- the webhook's event (pure) ---------- */
 
@@ -135,7 +135,8 @@ async function tellAdmins(groupId: string, text: string, now: Date): Promise<num
 
 /**
  * The email's attachments as Documents (kind from its class: lease / notice / bill / email), linked back to the email
- * (source mail_messages) and listed on it (document_ids). A lease or notice gets its text read for ask_lease. One
+ * (source mail_messages) and listed on it (document_ids). A lease or notice gets its text read for ask_lease (a failed
+ * read is tried again when someone asks: lease-text.ts currentLease). One
  * attachment failing doesn't stop the rest. The same attachment delivered twice is one Document (stableDocId).
  */
 export async function fileAttachments(groupId: string, mailId: string, attachments: readonly MailAttachment[]): Promise<string[]> {
@@ -200,9 +201,16 @@ export type InboundResult = (ClassifyResult & { mailId: string; duplicate: false
  */
 export async function processInbound(groupId: string, message: MailMessage, opts: { eventId?: string; now?: Date } = {}): Promise<InboundResult> {
   const now = opts.now ?? new Date();
+  // Received, then processed (mail_events): a delivery whose run failed or died is processed again by a later one.
+  const claim = opts.eventId ? await claimMailEvent(groupId, opts.eventId, now) : "fresh";
+  if (claim === "done" || claim === "busy") return { duplicate: true };
   const before = new Set(await knownSenders(groupId));
-  const stored = await storeInbound(groupId, message, { eventId: opts.eventId });
-  if (!stored.stored || !stored.id) return { duplicate: true };
+  const stored = await storeInbound(groupId, message);
+  // The same email under another event id is a duplicate; under a retried event, it's this email's unfinished run.
+  if (!stored.id || (stored.duplicate && claim !== "retry")) {
+    if (opts.eventId) await finishMailEvent(opts.eventId, now);
+    return { duplicate: true };
+  }
   const mailId = stored.id;
   const learned = (await knownSenders(groupId)).filter((v) => !before.has(v));
   const state: { posted: Posted } = { posted: null };
@@ -212,7 +220,11 @@ export async function processInbound(groupId: string, message: MailMessage, opts
       const [m] = await db.select({ by: mailMessages.forwardedBy }).from(mailMessages).where(eq(mailMessages.id, mailId));
       const actor = m?.by ?? (await admins({ groupId: gid }))[0]?.id;
       if (!actor) return;
-      await setReminder({ groupId: gid, memberId: actor, source: "chat" }, { text: `Tomorrow: ${text.charAt(0).toLowerCase()}${text.slice(1)}`, dueAt: at }, now);
+      const line = `Tomorrow: ${text.charAt(0).toLowerCase()}${text.slice(1)}`;
+      // A retried run (mail_events) finds the one it already set.
+      const [have] = await db.select({ id: reminders.id }).from(reminders).where(and(eq(reminders.groupId, gid), eq(reminders.text, line), eq(reminders.dueAt, at)));
+      if (have) return;
+      await setReminder({ groupId: gid, memberId: actor, source: "chat" }, { text: line, dueAt: at }, now);
     },
     async urgent(gid, line) {
       const r = await postUrgent(gid, line, now);
@@ -236,13 +248,14 @@ export async function processInbound(groupId: string, message: MailMessage, opts
       await tellAdmins(gid, rentProposalText(m?.summary ?? m?.subject ?? "a change", amountCents, rent?.cents ?? null), now);
     },
     async prefillUtility(gid, utility, cents) {
-      await prefillAmount(gid, utility, cents);
+      await prefillAmount(gid, utility, cents, now);
     },
   };
 
   const result = await classifyInbound(groupId, mailId, { now, hooks });
   if (result.line && !state.posted) state.posted = await postLine(groupId, result.line, now);
   if (learned.length) await offerIntro(groupId, learned, now).catch((e) => console.warn("[mail] intro offer failed", e));
+  if (opts.eventId) await finishMailEvent(opts.eventId, now);
   return { ...result, mailId, duplicate: false, posted: state.posted };
 }
 
