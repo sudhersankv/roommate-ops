@@ -30,7 +30,7 @@ function useToggle() {
         cheer()
         toast.add({
           title: `Roomie learned ${t.name}`,
-          description: res.data?.tryThis ? `Roomie told the chat. Try: "roomie, ${res.data.tryThis}"` : "Roomie can use it in the chat now.",
+          description: "Roomie told the chat.",
           type: "success",
         })
       } else toast.add({ title: `Roomie forgot ${t.name}`, description: "Nothing is deleted. Teach it again any time." })
