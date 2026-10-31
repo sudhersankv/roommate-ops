@@ -3,6 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { approvalPrompt, introMessage, learnedLine, rosterStillOpen, setupDmText } from "./onboarding";
 import { defaultToolkitsFor, validateSettings } from "./services/groups";
+import type { ToolkitManifest } from "./toolkits/types";
 
 const BANNED = /toolkit|capabilit|module|plugin|enable|feature|\bpet\b|slang|how you (all )?talk|adapt|\bvibe\b|\bAI\b|\bbot\b|assistant|brain|smart/i;
 
@@ -46,20 +47,35 @@ test("the Admin's setup DM (ADR 0014): who they are to the group, then the setup
   assert.match(setupDmText("+15551110001", "Apt 4B"), /^Hi 👋 You added me/, "never reads a number out as a name");
 });
 
+const OFFER = `Want me to handle the landlord's emails too? Say "roomie, learn lease inbox".`;
+
 test("the setup line names the Tricks Roomie learned and what to say next", () => {
-  assert.equal(learnedLine(defaultToolkitsFor("trip")), `Learned Money and Groceries. Say "roomie, learn house" any time.`);
-  assert.equal(learnedLine(defaultToolkitsFor("friends")), `Learned Money. Say "roomie, learn groceries" any time.`);
-  assert.equal(learnedLine(defaultToolkitsFor("roommates")), `Learned Money, Groceries and House. Say "roomie, what can you do?" any time.`);
+  assert.equal(learnedLine(defaultToolkitsFor("trip")), `Learned Money and Groceries. Say "roomie, learn house" any time. ${OFFER}`);
+  assert.equal(learnedLine(defaultToolkitsFor("friends")), `Learned Money. Say "roomie, learn groceries" any time. ${OFFER}`);
+  assert.equal(learnedLine(defaultToolkitsFor("roommates")), `Learned Money, Groceries and House. Say "roomie, what can you do?" any time. ${OFFER}`);
   assert.equal(
     learnedLine(defaultToolkitsFor(null), { defaulted: true }),
-    `You didn't say what this group is for, so I kept the roommates set: learned Money, Groceries and House. Say "roomie, what can you do?" any time.`,
+    `You didn't say what this group is for, so I kept the roommates set: learned Money, Groceries and House. Say "roomie, what can you do?" any time. ${OFFER}`,
   );
-  assert.equal(learnedLine([]), `No Tricks yet. Say "roomie, learn money" any time.`);
+  assert.equal(learnedLine([]), `No Tricks yet. Say "roomie, learn money" any time. ${OFFER}`);
+  assert.equal(learnedLine([...defaultToolkitsFor("roommates"), "lease-inbox"]), `Learned Money, Groceries, House and Lease Inbox. Say "roomie, what can you do?" any time.`, "taught already: no offer");
   for (const p of ["roommates", "trip", "friends", "family", "work", "other"] as const) {
     const line = learnedLine(defaultToolkitsFor(p));
     assert.equal(line.split("\n").length, 1);
     assert.ok(!BANNED.test(line));
   }
+});
+
+test("offerLine: the first off-by-default Trick with one adds its sentence while it's off; never a coming-soon one", () => {
+  const m = (id: string, defaultOn: boolean, extra: Partial<ToolkitManifest> = {}): ToolkitManifest => ({
+    id, name: id[0].toUpperCase() + id.slice(1), description: "", summary: "", longDescription: "", icon: "Mail", category: "home", tags: [], defaultOn, status: "stable", gate: { criterion: "", examples: [] }, ...extra,
+  });
+  const list = [m("money", true), m("inbox", false, { offerLine: "Want the inbox too?" }), m("pager", false, { offerLine: "Want a pager?" }), m("soon", false, { status: "coming-soon", offerLine: "Not this." })];
+  assert.equal(learnedLine(["money"], {}, list), `Learned Money. Say "roomie, what can you do?" any time. Want the inbox too?`);
+  assert.equal(learnedLine(["money", "inbox"], {}, list), `Learned Money and Inbox. Say "roomie, what can you do?" any time. Want a pager?`);
+  assert.equal(learnedLine(["money", "inbox", "pager"], {}, list), `Learned Money, Inbox and Pager. Say "roomie, what can you do?" any time.`);
+  // On by default with an offerLine: it's an ordinary "learn X" tip, not an offer.
+  assert.equal(learnedLine([], {}, [m("money", true, { offerLine: "Never said." })]), `No Tricks yet. Say "roomie, learn money" any time.`);
 });
 
 test("roster grace (ADR 0010): Telegram first-time senders count as already there for 24 hours; other Channels never", () => {

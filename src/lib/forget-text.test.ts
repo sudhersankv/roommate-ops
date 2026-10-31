@@ -20,7 +20,7 @@ test("lineBody makes a memory line and its chat log row compare equal", () => {
 });
 
 test("photoUrls finds every photo tag", () => {
-  assert.deepEqual(photoUrls("[Maya] [photo: https://roomie.fly.dev/uploads/wa/123/x.jpg] look"), ["https://roomie.fly.dev/uploads/wa/123/x.jpg"]);
+  assert.deepEqual(photoUrls("[Maya] [photo: https://tryroomie.me/uploads/wa/123/x.jpg] look"), ["https://tryroomie.me/uploads/wa/123/x.jpg"]);
   assert.deepEqual(photoUrls("[Maya] nothing"), []);
 });
 

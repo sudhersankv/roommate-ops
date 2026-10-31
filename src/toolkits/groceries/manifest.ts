@@ -24,7 +24,9 @@ export const groceries = defineManifest({
 - Adding: if it's unclear whether it's for them or everyone, ask "for you or the whole house?"; household stuff, "for the house" and "common" are shared. If cart_add returns needsClarification, ask just that, in one line. After an add, one line: what went in ("Added eggs."), no recap of the cart.
 - "[photo: <url>]" is cart_from_photo (it tells you when it's a receipt), unless it's clearly a receipt: then expense_from_receipt (Money's tool) with that url. For a recipe or a list: say its summary in one line and ask "Add them as shared?" (or for whom), unless the caption already said; on yes, cart_from_photo again with confirm. If it says kind "receipt", use expense_from_receipt with the same url.
 - A Recipe ("tacos for 5 friday") is recipe_draft, written for the group's size unless they say how many; post its text and ask its askToAdd question. A Recipe never touches the cart by itself: add its ingredients (recipe_add_to_cart) only when someone asks or clearly means it ("yes add them", "...and put it on the list"); what they say they have ("we have onions") goes in skip. Put what you know about the people eating (vegetarian, allergies) in recipe_draft's request.
-- "Checkout" / "order it" is cart_checkout. "I paid 84 for groceries" while the cart has things (or after a checkout) is cart_purchased, not log_expense: say each person's part from its shares. "We always have salt" is pantry_set.
+- "Checkout" / "order it" is cart_checkout. If it returns askFirst, post its say ("Want me to add eggs and coffee? They're probably low.") and stop: that's the one ask. On yes (or "just the eggs"), restock_add_listed with only those, then cart_checkout with skip_suggestions; on no, cart_checkout with skip_suggestions. "Just checkout" / "just the link" is cart_checkout with skip_suggestions straight away, no question. "I paid 84 for groceries" while the cart has things (or after a checkout) is cart_purchased, not log_expense: say each person's part from its shares. "We always have salt" is pantry_set.
+- Restock: "what are we low on?" is restock_status, "we don't buy X anymore" restock_mute, "actually we do buy X" restock_unmute; post their say as it is.
+- When the recent chat has your "Probably low: …" line and someone says yes / add them / sure, that's restock_add_listed with scope "shared"; "just the milk" passes only: ["milk"]. In a DM, a yes to "Probably low: your …" (Roomie's morning DM, even if you don't see it here) is restock_add_listed with scope "mine". Reply with its say, one line ("Added milk and dish soap as shared."). Anything else to add stays cart_add.
 - Don't offer the Cart page unless they ask for it (then cart_view with link).`,
   abilities: {
     cart_add: "Add things to the Cart, for you or for everyone",
@@ -38,6 +40,10 @@ export const groceries = defineManifest({
     recipe_link: "Open a Recipe in Instacart",
     pantry_set: "Remember what the group always has",
     pantry_list: "Say what's in the Pantry",
+    restock_status: "Say what's probably running low",
+    restock_add_listed: "\"Yes, add them\": put what's probably low in the Cart",
+    restock_mute: "Stop mentioning something you don't buy anymore",
+    restock_unmute: "Mention it again",
   },
   // Groceries' lines come after money, the landlord and the house (ADR 0017).
   postOrder: 40,

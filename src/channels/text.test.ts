@@ -21,11 +21,11 @@ test("/help for a group: the Tricks it taught Roomie, one line each, and how to 
 });
 
 test("/help with every Trick learned: at most 8 lines, no 'learn' suggestion for something it knows", () => {
-  const text = helpText(["splitting", "groceries", "house"]);
+  const text = helpText(["splitting", "groceries", "house", "lease-inbox"]);
   assert.ok(text.split("\n").length <= 8);
-  assert.match(text, /Tricks I know here: Money, Groceries and House\./);
+  assert.match(text, /Tricks I know here: Money, Groceries, House and Lease Inbox\./);
   assert.ok(!/roomie, learn/.test(text));
-  assert.match(text, /Drop one any time: "roomie, forget house"\. Lease Inbox and more are on the way\./);
+  assert.match(text, /Drop one any time: "roomie, forget lease inbox"\. Outings and more are on the way\./);
 });
 
 test("/help with nothing learned, and without a group (a DM): still short and in Tricks words", () => {
@@ -33,7 +33,7 @@ test("/help with nothing learned, and without a group (a DM): still short and in
   assert.match(helpText([]), /Teach me more: "roomie, learn money"\.$/);
   const dm = helpText();
   assert.ok(dm.split("\n").length <= 8);
-  assert.match(dm, /Tricks I can learn: Money, Groceries and House, more on the way\./);
+  assert.match(dm, /Tricks I can learn: Money, Groceries, House and Lease Inbox, more on the way\./);
   assert.ok(!BANNED.test(dm));
 });
 

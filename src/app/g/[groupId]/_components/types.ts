@@ -25,11 +25,34 @@ export type ExpenseView = {
   recurring: Recurrence | null
   /** A copy the scheduler made of a recurring Expense. */
   repeated: boolean
+  /** The Group's rent (the recurring rent parent). */
+  rent: boolean
+  /** A bill whose amount is asked of its Payer on each due day; its own cents mean nothing. */
+  variable: boolean
   receiptUrl: string | null
   inSplitwise: boolean
   source: string
   canChange: boolean
 }
+
+/** Money's Rent card (#25): the rent, or null for the empty state that offers setup. */
+export type RentCardView = {
+  rent: {
+    cents: number
+    /** Day of the month, 1-28. */
+    dueDay: number
+    /** The next due day ("2026-11-01"). */
+    nextDue: string
+    payerId: string
+    method: SplitMethod
+    shares: { memberId: string; cents: number }[]
+  } | null
+  /** The Payer or an Admin (any active Member can set it up when there's none). */
+  canEdit: boolean
+}
+
+/** Settings' Nudges card: the private Settle nudge (Admins). */
+export type NudgeSettingsView = { thresholdCents: number; thresholdDays: number; enabled: boolean }
 
 export type SplitwiseView = {
   /** Composio works (or the fake is on); otherwise the card is disabled with `hint`. */
@@ -102,8 +125,18 @@ export type RecipeDraftView = {
   need: string[]
 }
 
+/** One "Probably low" row on the Cart page (services/restock.ts probablyLowView): shared, or the viewer's own. */
+export type ProbablyLowView = {
+  item: string
+  /** "last bought 9 days ago" */
+  when: string
+  scope: "shared" | "mine"
+}
+
 export type CartPageView = {
   items: CartItemView[]
+  /** Empty: the section is hidden. */
+  probablyLow: ProbablyLowView[]
   recipes: RecipeView[]
   pantry: string[]
   /** Active Members in the order services/cart.ts splits with, so the "I paid" preview matches to the cent. */
@@ -187,4 +220,42 @@ export type ToolkitCardView = {
   href: string | null
   /** Unmet requirements that keep it from going on. */
   blocked: string[]
+}
+
+/* ---------- Lease Inbox (#27) ---------- */
+
+export type InboxTab = "notices" | "rent" | "work-orders" | "other" | "new-senders"
+
+/** One email or one thing Roomie sent, in a thread on the Inbox page. */
+export type InboxItemView = {
+  id: string
+  direction: "in" | "out"
+  from: string
+  subject: string
+  summary: string | null
+  text: string
+  at: string
+  when: string
+  documents: { id: string; href: string }[]
+}
+
+/** A thread on the Inbox page: its newest email decides the tab; `canReply` = the landlord wrote in it. */
+export type InboxThreadView = {
+  threadId: string
+  tab: InboxTab
+  subject: string
+  from: string
+  summary: string | null
+  when: string
+  at: string
+  canReply: boolean
+  workOrder: { title: string; status: string; scheduledFor: string | null; reportedBy: string | null } | null
+  items: InboxItemView[]
+}
+
+export type InboxView = {
+  address: string | null
+  senders: { value: string; source: string }[]
+  threads: InboxThreadView[]
+  counts: Record<InboxTab, number>
 }

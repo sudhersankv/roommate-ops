@@ -10,6 +10,10 @@ import { memberSession } from "@/lib/session"
 import { parseInZone } from "@/lib/time"
 import { cart, chores, groups, isNotAllowed, joins, members, money, pantry, recipes, reminders, schedule, splitwise, toolkits, upkeep, type Ctx } from "@/services"
 import type { SettingsPatch } from "@/services/groups"
+import { releaseInbox, removeSender, sendForMember } from "@/services/lease-inbox-toolkit"
+import { setRent, type RentInput } from "@/services/rent"
+import { mute as muteRestock, restockAddListed } from "@/services/restock"
+import { updateNudgeSettings, type NudgeSettings } from "@/services/settle-nudge"
 import type { ToolkitId } from "@/toolkits/types"
 import type { ActionResult } from "./_components/group-context"
 import type { RecipeDraftView } from "./_components/types"
@@ -80,6 +84,16 @@ export async function addCartItem(groupId: string, input: { name: string; qty?: 
 
 export async function removeCartItem(groupId: string, itemId: string) {
   return act(groupId, (ctx) => cart.removeItemById(ctx, { id: itemId }))
+}
+
+/** "Probably low" -> Add: that one item into the Cart, shared or as the viewer's own (what restock listed). */
+export async function addProbablyLow(groupId: string, item: string, scope: "shared" | "mine") {
+  return act(groupId, (ctx) => restockAddListed(ctx, scope === "mine" ? "mine" : "shared", { only: [item] }))
+}
+
+/** "Probably low" -> Mute: "we don't buy that anymore". */
+export async function muteProbablyLow(groupId: string, item: string) {
+  return act(groupId, async (ctx) => (await muteRestock(ctx, item)).item)
 }
 
 export async function purchaseCart(groupId: string, totalCents: number) {
@@ -268,4 +282,49 @@ export async function setSplitwiseMirror(groupId: string, on: boolean, splitwise
 
 export async function disconnectSplitwise(groupId: string) {
   return sw(groupId, (ctx) => splitwise.disconnectSplitwise(ctx))
+}
+
+/** The Rent card's form: the amount, the due day, who pays the landlord, and evenly or per-person amounts (as typed). */
+export type RentForm = Pick<RentInput, "cents" | "dueDay" | "payerId"> & { method: "equal" | "exact"; splits?: { memberId: string; cents: number }[] }
+
+export async function saveRent(groupId: string, input: RentForm) {
+  return act(groupId, async (ctx) => {
+    const rent = await setRent(ctx, {
+      cents: input.cents,
+      dueDay: input.dueDay,
+      payerId: input.payerId,
+      method: input.method,
+      ...(input.method === "exact" ? { splits: input.splits } : {}),
+    })
+    return rent.expenseId
+  })
+}
+
+export async function updateNudges(groupId: string, patch: Partial<NudgeSettings>) {
+  return act(groupId, (ctx) => updateNudgeSettings(ctx, patch))
+}
+
+/* ---------- Lease Inbox (#27) ---------- */
+
+/**
+ * The Inbox page's reply box: the same send rule and signature as the chat (sendForMember). A complex draft comes back
+ * as `{ sent: false, ask, confirmToken }` and the screen shows the questions as a confirm step; "Send anyway" sends
+ * the token back, which releases only the send the service held for this Member and this exact draft.
+ */
+export async function replyToLandlord(groupId: string, input: { threadId: string; body: string; confirmToken?: string }) {
+  return act(groupId, async (ctx) => {
+    const body = input.body.trim()
+    if (!body) throw new Error("Write something to send.")
+    const approval = typeof input.confirmToken === "string" && input.confirmToken ? { token: input.confirmToken } : undefined
+    const r = await sendForMember({ ...ctx, source: "ui" }, { intent: "reply", threadId: input.threadId, body, instruction: body, summary: `replied: ${body.length > 60 ? `${body.slice(0, 57)}...` : body}`, approval })
+    return r.sent ? { sent: true as const, line: r.line } : { sent: false as const, ask: r.ask, confirmToken: r.confirmToken ?? null }
+  })
+}
+
+export async function removeLandlordSender(groupId: string, value: string) {
+  return act(groupId, (ctx) => removeSender(ctx, value))
+}
+
+export async function releaseLeaseInbox(groupId: string) {
+  return act(groupId, (ctx) => releaseInbox(ctx))
 }

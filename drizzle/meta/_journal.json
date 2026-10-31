@@ -120,6 +120,41 @@
       "when": 1793441000000,
       "tag": "0019_old_receipt_urls",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1793442000000,
+      "tag": "0020_rent_utilities_nudges",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1793443000000,
+      "tag": "0021_purchase_events",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1793444000000,
+      "tag": "0022_lease_inbox",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1793445000000,
+      "tag": "0023_lease_inbox_toolkit",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1793446000000,
+      "tag": "0024_lease_restock_fixes",
+      "breakpoints": true
     }
   ]
 }

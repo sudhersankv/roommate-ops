@@ -13,7 +13,9 @@ import { CantMessagePrivatelyError, type Outgoing, type Sent } from "@/channels/
 import { MemoryBlobStore, setBlobStore } from "@/integrations/blob-store";
 import { bundleJob } from "@/jobs/scheduler";
 import { zonedParts, zonedTimeToUtc } from "@/lib/time";
+import { inFollowUpWindow } from "@/mastra/gate/policy";
 import { onGroupJoined } from "@/onboarding";
+import { lastRoomieReplyAt, recentChatter, roomieLines } from "./chatlog";
 import { deleteGroup, deleteGroupData, groupsWithChat, updateGroupSettings } from "./groups";
 import * as documents from "./documents";
 import { forgetMe } from "./members";
@@ -112,6 +114,21 @@ describe("core slots against the dev DB", () => {
     assert.equal(chatPosts().length, 1);
     const claims = await db.select().from(schema.scheduledPosts).where(and(eq(schema.scheduledPosts.groupId, groupId), eq(schema.scheduledPosts.kind, "bundle")));
     assert.equal(claims.length, 1);
+  });
+
+  test("the Bundle is logged as Roomie's chat line, so a 'yes' right after it is in the follow-up window", async () => {
+    await db.delete(schema.scheduledPosts).where(and(eq(schema.scheduledPosts.groupId, groupId), eq(schema.scheduledPosts.kind, "bundle")));
+    await db.delete(schema.chatMessages).where(eq(schema.chatMessages.groupId, groupId));
+    assert.equal(await lastRoomieReplyAt(groupId), null);
+    const [g] = await groupsWithChat(groupId);
+    const text = await bundleJob(g, at(9, 2));
+    assert.ok(text, "the Bundle went out");
+    const last = await lastRoomieReplyAt(groupId);
+    assert.ok(last, "Roomie's line is logged");
+    assert.equal(inFollowUpWindow({ lastRoomieAt: last, humanSinceRoomie: 1 }), true);
+    assert.equal((await recentChatter(groupId)).at(-1), `[Roomie] ${text}`, "the agent sees it in the earlier chat");
+    assert.equal(await bundleJob(g, at(9, 30)), null);
+    assert.equal((await roomieLines(groupId)).length, 1, "logged once, with the post");
   });
 
   /* ---------- the urgent slot and quiet hours ---------- */

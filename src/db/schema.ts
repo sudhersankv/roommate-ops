@@ -2,7 +2,19 @@
 // Money is always integer cents. Accounts point at Neon Auth users (schema neon_auth) by id, as text; we never
 // write to neon_auth.
 import { sql } from "drizzle-orm";
-import { BETA_GROUP_SIZES, BETA_STATUSES, EXPENSE_CATEGORIES, EXPENSE_SOURCES, GROUP_PURPOSES, RECURRENCES, SPLIT_METHODS } from "./enums";
+import {
+  BETA_GROUP_SIZES,
+  BETA_STATUSES,
+  EXPENSE_CATEGORIES,
+  EXPENSE_SOURCES,
+  GROUP_PURPOSES,
+  LANDLORD_SENDER_SOURCES,
+  MAIL_CLASSES,
+  RECURRENCES,
+  SEND_INTENTS,
+  SPLIT_METHODS,
+  WORK_ORDER_STATUSES,
+} from "./enums";
 import { boolean, char, date, index, integer, jsonb, numeric, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid, type AnyPgColumn } from "drizzle-orm/pg-core";
 
 const id = () => uuid("id").primaryKey().defaultRandom();
@@ -54,7 +66,7 @@ export const petMoments = pgTable(
   "pet_moments",
   {
     groupId: uuid("group_id").notNull().references(() => groups.id, { onDelete: "cascade" }),
-    kind: text("kind", { enum: ["greeting", "win"] }).notNull(),
+    kind: text("kind", { enum: ["greeting", "win", "rent-offer", "new-sender", "lease-intro"] }).notNull(),
     key: text("key").notNull(),
     createdAt: createdAt(),
   },
@@ -211,6 +223,8 @@ export const expenses = pgTable(
     recurringParentId: uuid("recurring_parent_id").references((): AnyPgColumn => expenses.id, { onDelete: "set null" }),
     // The receipt's link as people open it (/api/docs/<id>); receipt_document_id is the Document itself (#24A).
     receiptUrl: text("receipt_url"),
+    // A recurring parent whose amount is asked of its Payer on each due day (electric) instead of copied (#25).
+    variable: boolean("variable").notNull().default(false),
     receiptDocumentId: uuid("receipt_document_id").references((): AnyPgColumn => documents.id, { onDelete: "set null" }),
     source: text("source", { enum: EXPENSE_SOURCES }).notNull().default("chat"),
     createdBy: uuid("created_by").references(() => members.id),
@@ -429,8 +443,9 @@ export const scheduledPosts = pgTable(
   "scheduled_posts",
   {
     groupId: uuid("group_id").notNull().references(() => groups.id, { onDelete: "cascade" }),
-    kind: text("kind", { enum: ["bundle", "urgent", "report.weekly"] }).notNull(),
-    // The Group's local day ("2026-10-28") for the Bundle and the urgent slot, the report's local day for the report.
+    kind: text("kind", { enum: ["bundle", "urgent", "report.weekly", "rent.ahead", "nudge.settle", "restock.dm"] }).notNull(),
+    // The Group's local day ("2026-10-28") for the Bundle and the urgent slot, the report's local day for the report;
+    // "<day>:<memberId>" for a personal restock DM (one per Member per day).
     period: text("period").notNull(),
     createdAt: createdAt(),
   },
@@ -524,6 +539,31 @@ export const maintenance = pgTable("maintenance", {
   lastDone: timestamp("last_done", { withTimezone: true }),
 });
 
+// ---- rent, utilities, nudges (#25) ----
+
+/**
+ * A variable recurring Expense's amount, asked of its Payer on the due day (services/recurring.ts): one row per parent
+ * and local month ("2026-11"). `asks` counts the DMs (one re-ask the next day), `prefill_cents` is what the Lease Inbox
+ * read from the bill, `resolved_expense_id` the copy logged from the answer.
+ */
+export const pendingAmounts = pgTable(
+  "pending_amounts",
+  {
+    id: id(),
+    groupId: uuid("group_id").notNull().references(() => groups.id, { onDelete: "cascade" }),
+    expenseId: uuid("expense_id").notNull().references(() => expenses.id, { onDelete: "cascade" }),
+    period: text("period").notNull(),
+    // The due day the answer is logged on ("2026-11-20").
+    dueOn: date("due_on").notNull(),
+    askedAt: timestamp("asked_at", { withTimezone: true }).notNull().defaultNow(),
+    asks: integer("asks").notNull().default(1),
+    prefillCents: integer("prefill_cents"),
+    resolvedExpenseId: uuid("resolved_expense_id").references(() => expenses.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("pending_amounts_expense_period").on(t.expenseId, t.period), index("pending_amounts_group").on(t.groupId)],
+);
+
 // ---- documents (#24A) ----
 
 export const DOCUMENT_KINDS = ["receipt", "lease", "notice", "bill", "email", "photo", "other"] as const;
@@ -548,6 +588,8 @@ export const documents = pgTable(
     source: jsonb("source").$type<{ table: string; id: string }>(),
     uploadedBy: uuid("uploaded_by").references(() => members.id, { onDelete: "set null" }),
     filedAt: timestamp("filed_at", { withTimezone: true }),
+    // A lease or notice's text (AgentMail's textUrl, else read by the model), so ask_lease answers from it (#27).
+    text: text("text"),
     createdAt: createdAt(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
   },
@@ -563,7 +605,7 @@ export const pendingPosts = pgTable(
   {
     id: id(),
     groupId: uuid("group_id").notNull().references(() => groups.id, { onDelete: "cascade" }),
-    kind: text("kind", { enum: ["urgent", "dm"] }).notNull(),
+    kind: text("kind", { enum: ["urgent", "dm", "line"] }).notNull(),
     memberId: uuid("member_id").references(() => members.id, { onDelete: "cascade" }),
     text: text("text").notNull(),
     buttons: jsonb("buttons").$type<{ text: string; url: string }[]>(),
@@ -634,4 +676,150 @@ export const dmContext = pgTable(
     at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [primaryKey({ columns: [t.memberId, t.kind] })],
+);
+
+// ---- purchase events (#26) ----
+
+/**
+ * One thing bought, for Restock (services/restock.ts): written when the Cart is marked bought (one per item) and when
+ * a receipt is logged (one per line). `item` is normalizeItem's name; member_id = a personal purchase, null = shared.
+ * Derived from the Cart and receipts, never a second ledger: no money here.
+ */
+export const purchaseEvents = pgTable(
+  "purchase_events",
+  {
+    id: id(),
+    groupId: uuid("group_id").notNull().references(() => groups.id, { onDelete: "cascade" }),
+    item: text("item").notNull(),
+    memberId: uuid("member_id").references(() => members.id, { onDelete: "cascade" }),
+    // The Group's local day it was bought.
+    occurredOn: date("occurred_on").notNull(),
+    source: text("source", { enum: ["cart", "receipt"] }).notNull(),
+    // The cart_items row or the Expense it came from (the backfill skips what it already wrote).
+    sourceId: uuid("source_id"),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("purchase_events_group_item_day").on(t.groupId, t.item, t.occurredOn),
+    index("purchase_events_source").on(t.sourceId),
+    // One event per source row, item and scope: a retried or concurrent receipt write adds nothing (migration 0024).
+    uniqueIndex("purchase_events_once").on(t.source, t.sourceId, t.item, sql`coalesce(${t.memberId}, '00000000-0000-0000-0000-000000000000'::uuid)`),
+  ],
+);
+
+/* ---------- Lease Inbox (services/lease-inbox.ts, ADR 0016) ---------- */
+
+/**
+ * The Group's own email address (one AgentMail inbox per Group). Its own table rather than columns on groups: the
+ * webhook finds the Group by inbox id, releasing the address deletes one row, and "delete group data" keeps the Group.
+ */
+export const groupInboxes = pgTable("group_inboxes", {
+  groupId: uuid("group_id")
+    .primaryKey()
+    .references(() => groups.id, { onDelete: "cascade" }),
+  inboxId: text("inbox_id").notNull().unique(),
+  address: text("address").notNull().unique(),
+  createdAt: createdAt(),
+});
+
+/**
+ * Webhook deliveries by AgentMail's event_id (retried for ~27 h, out of order). Received = the row (created_at = when
+ * it was last taken); processed_at is set once the email was handled end to end. One taken over 10 minutes ago and
+ * never processed is taken again by the next delivery (migration 0024).
+ */
+export const mailEvents = pgTable("mail_events", {
+  eventId: text("event_id").primaryKey(),
+  groupId: uuid("group_id").references(() => groups.id, { onDelete: "cascade" }),
+  createdAt: createdAt(),
+  processedAt: timestamp("processed_at", { withTimezone: true }),
+});
+
+/** Every email that reached a Group's inbox, with what Roomie made of it. */
+export const mailMessages = pgTable(
+  "mail_messages",
+  {
+    id: id(),
+    groupId: uuid("group_id").notNull().references(() => groups.id, { onDelete: "cascade" }),
+    inboxId: text("inbox_id").notNull(),
+    messageId: text("message_id").notNull(),
+    threadId: text("thread_id").notNull(),
+    // The envelope sender as written, and its bare address.
+    fromHeader: text("from_header").notNull(),
+    fromAddress: text("from_address").notNull(),
+    // A forward: the original sender from the quoted header block (lib/forwarded.ts) and the Member who forwarded it.
+    originalFrom: text("original_from"),
+    forwardedBy: uuid("forwarded_by").references(() => members.id, { onDelete: "set null" }),
+    // Where a reply goes: a forward's original sender (set on insert; migration 0024 backfilled it from original_from).
+    replyTo: text("reply_to"),
+    to: jsonb("to").$type<string[]>().notNull().default([]),
+    subject: text("subject").notNull().default(""),
+    text: text("text").notNull().default(""),
+    html: text("html"),
+    receivedAt: timestamp("received_at", { withTimezone: true }).notNull(),
+    // Null until classified; "new-sender" when the sender isn't a trusted landlord sender.
+    class: text("class", { enum: MAIL_CLASSES }),
+    trusted: boolean("trusted").notNull().default(false),
+    summary: text("summary"),
+    // From the classifier: the notice's date (local "YYYY-MM-DD" or wall-clock), an amount, a utility's name.
+    noticeDate: text("notice_date"),
+    amountCents: integer("amount_cents"),
+    utility: text("utility"),
+    // Documents filed from its attachments (ADR 0018); filled once Documents exist.
+    documentIds: jsonb("document_ids").$type<string[]>().notNull().default([]),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("mail_messages_group_message").on(t.groupId, t.messageId), index("mail_messages_group_thread").on(t.groupId, t.threadId)],
+);
+
+/** Who counts as the landlord: an address or a whole domain, learned from a forward, the intro email or an Admin's yes. */
+export const landlordSenders = pgTable(
+  "landlord_senders",
+  {
+    groupId: uuid("group_id").notNull().references(() => groups.id, { onDelete: "cascade" }),
+    // Lowercased "leasing@brookfield.com" or "brookfield.com".
+    value: text("value").notNull(),
+    source: text("source", { enum: LANDLORD_SENDER_SOURCES }).notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [primaryKey({ columns: [t.groupId, t.value] })],
+);
+
+/** A work order emailed to the landlord, and how far it got (sent -> acknowledged -> scheduled -> done). */
+export const workOrders = pgTable(
+  "work_orders",
+  {
+    id: id(),
+    groupId: uuid("group_id").notNull().references(() => groups.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    reportedBy: uuid("reported_by").references(() => members.id, { onDelete: "set null" }),
+    threadId: text("thread_id").notNull(),
+    status: text("status", { enum: WORK_ORDER_STATUSES }).notNull().default("sent"),
+    // The visit as the landlord gave it: local "YYYY-MM-DD" or "YYYY-MM-DDTHH:mm" in the Group's zone.
+    scheduledFor: text("scheduled_for"),
+    lastReply: text("last_reply"),
+    lastActivityAt: timestamp("last_activity_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: createdAt(),
+  },
+  (t) => [index("work_orders_group_thread").on(t.groupId, t.threadId)],
+);
+
+/** Every email Roomie sent, who asked for it and in their words (the send rule reads the last hour's). */
+export const sentMail = pgTable(
+  "sent_mail",
+  {
+    id: id(),
+    groupId: uuid("group_id").notNull().references(() => groups.id, { onDelete: "cascade" }),
+    memberId: uuid("member_id").references(() => members.id, { onDelete: "set null" }),
+    intent: text("intent", { enum: SEND_INTENTS }).notNull(),
+    to: text("to").notNull(),
+    subject: text("subject").notNull(),
+    // What the Member said, and the one line Roomie posts ("Sent: reported the leaking kitchen sink").
+    instruction: text("instruction").notNull(),
+    summary: text("summary").notNull(),
+    messageId: text("message_id").notNull(),
+    threadId: text("thread_id").notNull(),
+    workOrderId: uuid("work_order_id").references(() => workOrders.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+  },
+  (t) => [index("sent_mail_group_thread").on(t.groupId, t.threadId)],
 );

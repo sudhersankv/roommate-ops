@@ -52,7 +52,7 @@ export type Expect = {
 
 export type Scenario = {
   id: string;
-  area: "splitting" | "groceries" | "house" | "reminders" | "core" | "gate" | "personality";
+  area: "splitting" | "groceries" | "house" | "reminders" | "core" | "gate" | "personality" | "lease";
   /** Leave the day's greeting unclaimed (the runner claims it for every other scenario so it doesn't add a line). */
   greet?: boolean;
   /** Rows to create with services before the turn (no LLM). */
@@ -79,6 +79,9 @@ export const READ_ONLY_TOOLS = new Set([
   "group_report",
   "splitwise_status",
   "list_toolkits",
+  "work_order_status",
+  "ask_lease",
+  "inbox_status",
   "what_do_you_know_about_me",
   "updateWorkingMemory",
 ]);
@@ -107,6 +110,21 @@ const fail = (ok: boolean, msg: string) => (ok ? null : msg);
 let joinCodeBefore = "";
 /** Groceries has no prices: a "$4.29" in a cart reply is made up. */
 const NO_PRICE: RegExp[] = [/\$\d/];
+/**
+ * ~90 days of purchases ending so that milk (every 9 days) and dish soap (every 14) are probably low today and eggs
+ * aren't; with `bundle`, the morning Bundle's "Probably low: milk, dish soap. Add them?" logged as Roomie's line, as
+ * the scheduler does, so the next message is in the follow-up window.
+ */
+const restockHistory = async (env: EvalEnv, opts: { bundle?: boolean } = {}) => {
+  const restock = await import("@/services/restock");
+  const { addDaysToDay } = await import("@/lib/time");
+  const today = await restock.localDay(env.ctx.groupId);
+  const habit = (name: string, gap: number, lastAgo: number) =>
+    Array.from({ length: Math.floor((90 - lastAgo) / gap) + 1 }, (_, k) => ({ name, memberId: null, occurredOn: addDaysToDay(today, -(lastAgo + k * gap)), source: "cart" as const, sourceId: null }));
+  await restock.recordPurchases(env.ctx, [...habit("milk", 9, 8), ...habit("dish soap", 14, 12), ...habit("eggs", 10, 3)]);
+  const line = await restock.restockBundleLine(env.ctx);
+  if (opts.bundle && line) await chatlog.logMessage(env.ctx.groupId, null, line);
+};
 
 export const SCENARIOS: Scenario[] = [
   /* ---------- splitting ---------- */
@@ -282,7 +300,7 @@ export const SCENARIOS: Scenario[] = [
   {
     id: "spanish",
     area: "splitting",
-    turn: { text: "roomie pagué 30 por el uber" },
+    turn: { text: "roomie pagu+� 30 por el uber" },
     expect: { tools: ["log_expense"], replyIncludes: [/(listo|anotad|registr|pagaste|cada un|dividid|hecho|apuntad)/i], check: async (e) => fail((await balanceOf(e, "Maya")) === 2000, "Maya +$20.00") },
   },
 
@@ -692,6 +710,9 @@ export const SCENARIOS: Scenario[] = [
       await internet(e);
       await chores.addChore(e.ctx, { name: "Dishes", everyDays: 1 });
       await chores.logChore(e.as("Dev"), { chore: "dishes" });
+      // Rent is set, so the report has no say-once rent offer: the text is the same when the check recomputes it.
+      const { setRent } = await import("@/services/rent");
+      await setRent(e.ctx, { cents: 240000, dueDay: 1 });
     },
     turn: { text: "roomie weekly report please" },
     expect: {
@@ -910,7 +931,7 @@ export const SCENARIOS: Scenario[] = [
     area: "personality",
     seed: async (e) => void (await personality.updatePersonality(e.ctx, { base: "hype", name: "Dino", quirks: ["loves confetti"] })),
     turn: { text: "roomie I paid $60 for internet" },
-    expect: { tools: ["log_expense"], replyIncludes: ["60"], maxLines: 2, emoji: { max: 1 }, excludes: [/!!|🎉|🥳|let'?s go/i] },
+    expect: { tools: ["log_expense"], replyIncludes: ["60"], maxLines: 2, emoji: { max: 1 }, excludes: [/!!|=���|=�Ѧ|let'?s go/i] },
   },
   {
     id: "one-voice-ignores-stored-deadpan",
@@ -1071,4 +1092,208 @@ export const SCENARIOS: Scenario[] = [
     turn: { text: "roomie stop nudging me", from: "Sam" },
     expect: { tools: ["set_nudges"], maxLines: 1, check: async (e) => fail(await members.nudgesOff(e.member.Sam), "Sam's nudges are off") },
   },
+  // ---------- rent and bills (#25) ----------
+  {
+    id: "set-rent",
+    area: "splitting",
+    turn: { text: "roomie rent is 2400 on the 1st, I pay it" },
+    expect: {
+      tools: ["set_rent"],
+      maxLines: 2,
+      check: async (e) => {
+        const { getRent } = await import("@/services/rent");
+        const r = await getRent(e.ctx);
+        return fail(!!r && r.cents === 240000 && r.dueDay === 1 && r.payerId === e.member.Maya, `rent $2,400 on the 1st paid by Maya, got ${r ? `${r.cents} on ${r.dueDay}` : "none"}`);
+      },
+    },
+  },
+  {
+    id: "rent-status",
+    area: "splitting",
+    seed: async (e) => {
+      const { setRent } = await import("@/services/rent");
+      await setRent(e.ctx, { cents: 240000, dueDay: 1 });
+    },
+    turn: { text: "roomie what's our rent?", from: "Sam" },
+    expect: { tools: ["rent_status"], replyIncludes: ["2,400"], maxLines: 2 },
+  },
+  {
+    id: "answer-amount",
+    area: "splitting",
+    seed: async (e) => {
+      const { runRecurring, setVariableExpense } = await import("@/services/recurring");
+      const { zonedTimeToUtc } = await import("@/lib/time");
+      const bill = await setVariableExpense(e.as("Dev"), { description: "Electric", dueDay: 20 });
+      const [year, month, day] = bill.occurredOn!.split("-").map(Number);
+      await runRecurring(zonedTimeToUtc("America/Chicago", { year, month, day, hour: 10, minute: 0 }), { groupId: e.ctx.groupId });
+    },
+    turn: { text: "roomie electric was 92", from: "Dev" },
+    expect: { tools: ["answer_amount"], replyIncludes: ["92"] },
+  },
+  // ---------- restock (#26) ----------
+  {
+    id: "restock-yes-adds-listed",
+    area: "groceries",
+    seed: async (e) => void (await restockHistory(e, { bundle: true })),
+    turn: { text: "yes add them", from: "Dev" },
+    expect: {
+      tools: ["restock_add_listed"],
+      excludes: NO_PRICE,
+      maxLines: 2,
+      noButtons: true,
+      check: async (e) => {
+        const open = await cart.listOpenItems(e.ctx);
+        return fail(["milk", "dish soap"].every((n) => open.some((i) => i.name === n && i.shared)), `milk and dish soap, shared, got ${open.map((i) => i.name).join(", ")}`);
+      },
+    },
+  },
+  {
+    id: "restock-just-the-milk",
+    area: "groceries",
+    seed: async (e) => void (await restockHistory(e, { bundle: true })),
+    turn: { text: "just the milk", from: "Sam" },
+    expect: {
+      tools: ["restock_add_listed"],
+      excludes: NO_PRICE,
+      maxLines: 2,
+      check: async (e) => {
+        const names = (await cart.listOpenItems(e.ctx)).map((i) => i.name);
+        return fail(names.includes("milk") && !names.includes("dish soap"), `only milk, got ${names.join(", ")}`);
+      },
+    },
+  },
+  {
+    id: "restock-mute-dish-soap",
+    area: "groceries",
+    seed: async (e) => void (await restockHistory(e, { bundle: true })),
+    turn: { text: "roomie we don't buy dish soap anymore" },
+    expect: {
+      tools: ["restock_mute"],
+      noTools: ["restock_add_listed", "cart_add"],
+      excludes: NO_PRICE,
+      maxLines: 2,
+      check: async (e) => {
+        const { getMutes } = await import("@/services/restock");
+        return fail((await getMutes(e.ctx)).includes("dish soap"), "dish soap muted");
+      },
+    },
+  },
+  {
+    id: "restock-status",
+    area: "groceries",
+    seed: async (e) => void (await restockHistory(e)),
+    turn: { text: "roomie what are we low on?", from: "Dev" },
+    expect: { tools: ["restock_status"], replyIncludes: ["milk", "dish soap"], excludes: NO_PRICE, maxLines: 2 },
+  },
+  {
+    id: "checkout-asks-about-low",
+    area: "groceries",
+    seed: async (e) => {
+      await restockHistory(e);
+      await cart.addItems(e.ctx, { items: [{ name: "bread" }], shared: true });
+    },
+    turn: { text: "roomie checkout" },
+    expect: {
+      tools: ["cart_checkout"],
+      asks: true,
+      replyIncludes: ["milk", /probably low/i],
+      excludes: NO_PRICE,
+      noButtons: true,
+      maxLines: 2,
+      check: async (e) => fail(!(await cart.lastUnpaidCheckout(e.ctx)), "no Instacart list before they answer"),
+    },
+  },
+  {
+    id: "checkout-just-checkout",
+    area: "groceries",
+    seed: async (e) => {
+      await restockHistory(e);
+      await cart.addItems(e.ctx, { items: [{ name: "bread" }], shared: true });
+    },
+    turn: { text: "roomie just checkout" },
+    expect: {
+      tools: ["cart_checkout"],
+      excludes: [...NO_PRICE, /probably low/i, /want me to add/i],
+      check: async (e) => fail(!!(await cart.lastUnpaidCheckout(e.ctx)), "a Checkout, no question"),
+    },
+  },
+  // ---------- Lease Inbox (#27; MAIL_FAKE=1, MAIL_CLASSIFIER_FAKE=1) ----------
+  {
+    id: "lease-learn",
+    area: "lease",
+    turn: { text: "roomie learn lease inbox" },
+    expect: {
+      tools: ["toggle_toolkit"],
+      excludes: TOOLKIT_WORDS,
+      check: async (e) => {
+        const { inboxOf } = await import("@/services/lease-inbox");
+        const inbox = await inboxOf(e.ctx.groupId);
+        if (!inbox) return "no address made";
+        const said = (await chatlog.roomieLines(e.ctx.groupId, 10)).some((l) => l.text.includes(inbox.address));
+        return fail(said, `the address ${inbox.address} wasn't said in the chat`);
+      },
+    },
+  },
+  {
+    id: "lease-report-issue",
+    area: "lease",
+    seed: async (e) => void (await landlordKnown(e)),
+    turn: { text: "roomie the sink's leaking, tell them", from: "Dev" },
+    expect: {
+      tools: ["report_issue"],
+      replyIncludes: [/sent/i],
+      maxLines: 2,
+      check: async (e) => {
+        const rows = await db.select().from(schema.workOrders).where(eq(schema.workOrders.groupId, e.ctx.groupId));
+        return fail(rows.length === 1 && rows[0].reportedBy === e.member.Dev && /sink/i.test(rows[0].title), `one work order about the sink by Dev, got ${rows.map((r) => r.title).join(", ") || "none"}`);
+      },
+    },
+  },
+  {
+    id: "lease-not-renewing-asks",
+    area: "lease",
+    seed: async (e) => void (await landlordKnown(e)),
+    turn: { text: "roomie tell them we're not renewing" },
+    expect: {
+      asks: true,
+      check: async (e) => {
+        const rows = await db.select().from(schema.sentMail).where(eq(schema.sentMail.groupId, e.ctx.groupId));
+        return fail(rows.length === 0, `nothing should be sent before the questions are answered, got ${rows.length}`);
+      },
+    },
+  },
+  {
+    id: "lease-work-order-status",
+    area: "lease",
+    seed: async (e) => {
+      await landlordKnown(e);
+      const { reportIssue } = await import("@/services/lease-inbox");
+      await reportIssue(e.as("Dev"), { what: "the leaking kitchen sink", instruction: "roomie the sink's leaking, tell them" });
+    },
+    turn: { text: "roomie what's up with the sink?", from: "Sam" },
+    expect: { tools: ["work_order_status"], noTools: "actions", replyIncludes: [/sink/i], maxLines: 2 },
+  },
+  {
+    id: "lease-notice-period",
+    area: "lease",
+    seed: async (e) => {
+      await landlordKnown(e);
+      const { fileDocument } = await import("@/services/documents");
+      const doc = await fileDocument(e.ctx, { kind: "lease", title: "Lease Agreement Apt 4B 2026", bytes: Buffer.from("%PDF lease"), contentType: "application/pdf" });
+      await db
+        .update(schema.documents)
+        .set({ text: "Section 14.2 Notice to Vacate. Resident shall give Landlord not less than sixty (60) days' written notice before vacating.\n\nSection 9 Pets. No pets without written consent." })
+        .where(eq(schema.documents.id, doc.id));
+    },
+    turn: { text: "roomie what's the notice period in our lease?", from: "Sam" },
+    expect: { tools: ["ask_lease"], noTools: "actions", replyIncludes: [/60|sixty/i] },
+  },
 ];
+
+
+/** Lease Inbox taught and the landlord known (Apt 4B's leasing office), without the model. */
+async function landlordKnown(e: EvalEnv) {
+  await toolkits.setToolkit(e.ctx, { toolkit: "lease inbox", enabled: true });
+  const { trustSender } = await import("@/services/lease-inbox");
+  await trustSender(e.ctx, "leasing@brookfieldresidential.com", "admin");
+}

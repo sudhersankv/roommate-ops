@@ -11,10 +11,15 @@ import { instacartAvailability } from "@/integrations/instacart"
 import { activity, cart, chatlog, chores, groups, joins, members, money, pantry, recipes, reminders, schedule, splitwise, toolkits, upkeep } from "@/services"
 import { canChangeExpense } from "@/services/authz"
 import { guessCategory } from "@/services/categories"
-import { receiptHref } from "@/services/documents"
+import { docPath, receiptHref } from "@/services/documents"
+import { inboxData, type InboxData } from "@/services/lease-inbox-toolkit"
 import type { Expense } from "@/services/money"
 import { haveNeed } from "@/services/recipe-math"
 import type { Recipe } from "@/services/recipes"
+import { getRent, rentWindows } from "@/services/rent"
+import { probablyLowView } from "@/services/restock"
+import { lastBoughtText } from "@/services/restock-math"
+import { getNudgeSettings } from "@/services/settle-nudge"
 import { toolkitStates } from "@/toolkits/catalog"
 import { toolkitById } from "@/toolkits/registry"
 import { COMING_SOON, MANIFESTS, TOOLKIT_IDS, type ToolkitId } from "@/toolkits/manifests"
@@ -26,9 +31,16 @@ import type {
   CartPageView,
   ChoreView,
   ExpenseView,
+  InboxItemView,
+  InboxTab,
+  InboxThreadView,
+  InboxView,
   NarrationView,
+  NudgeSettingsView,
+  ProbablyLowView,
   RecentDocumentView,
   RecipeView,
+  RentCardView,
   ReminderView,
   ScheduleView,
   SplitwiseView,
@@ -238,12 +250,37 @@ export function expenseView(s: GroupSession, e: Expense): ExpenseView {
     note: e.note ?? null,
     recurring: e.recurring ?? null,
     repeated: !!e.recurringParentId,
+    rent: e.category === "rent" && !!e.recurring && !e.recurringParentId,
+    variable: !!e.variable,
     // Only a Document's link renders from this server, whatever APP_URL says; an old /uploads path shows no receipt.
     receiptUrl: receiptHref(e.receiptUrl),
     inSplitwise: !!e.splitwiseId,
     source: e.source ?? "chat",
     canChange: payers.some((p) => canChangeExpense(s.member, { createdBy: e.createdBy ?? null, payerId: p.memberId, participantIds })),
   }
+}
+
+/** The Rent card: the rent, who may change it, the next due day in the Group's zone. */
+export async function rentCardView(s: GroupSession): Promise<RentCardView> {
+  const rent = await getRent(s.ctx)
+  const active = s.member.status === "active"
+  if (!rent) return { rent: null, canEdit: active }
+  const due = rentWindows(rent.dueDay, s.group.timezone, new Date()).dueDay
+  return {
+    rent: {
+      cents: rent.cents,
+      dueDay: rent.dueDay,
+      nextDue: rent.startsOn > due ? rent.startsOn : due,
+      payerId: rent.payerId,
+      method: rent.method,
+      shares: rent.shares.map((x) => ({ memberId: x.memberId, cents: x.cents })),
+    },
+    canEdit: active && (s.member.role === "admin" || s.member.id === rent.payerId),
+  }
+}
+
+export async function nudgeSettingsView(s: GroupSession): Promise<NudgeSettingsView> {
+  return getNudgeSettings(s.ctx)
 }
 
 export async function splitwiseView(s: GroupSession): Promise<SplitwiseView> {
@@ -326,10 +363,24 @@ function recipeView(r: Recipe, pantryList: string[], items: CartItemView[]): Rec
   }
 }
 
+/** The Cart page's "Probably low" rows from probablyLowView, with "last bought N days ago" for the Group's local today. */
+export function probablyLowRows(rows: readonly { item: string; lastBought: string; scope: "shared" | "mine" }[], today: string): ProbablyLowView[] {
+  return rows.map((r) => ({ item: r.item, when: lastBoughtText(r.lastBought, today), scope: r.scope }))
+}
+
 export async function cartPageView(s: GroupSession): Promise<CartPageView> {
-  const [items, list, pantryList, people, ic] = await Promise.all([cartView(s), recipes.listRecipes(s.ctx, 12), pantry.getPantry(s.ctx), members.listMembers(s.ctx), instacartAvailability()])
+  const now = new Date()
+  const [items, list, pantryList, people, ic, low] = await Promise.all([
+    cartView(s),
+    recipes.listRecipes(s.ctx, 12),
+    pantry.getPantry(s.ctx),
+    members.listMembers(s.ctx),
+    instacartAvailability(),
+    probablyLowView(s.ctx, now),
+  ])
   return {
     items,
+    probablyLow: probablyLowRows(low, localDay(now, s.group.timezone)),
     recipes: list.map((r) => recipeView(r, pantryList, items)),
     pantry: pantryList,
     splitMemberIds: people.map((m) => m.id),
@@ -440,4 +491,55 @@ export async function todayView(s: GroupSession, upcoming?: ReminderView[]): Pro
  */
 export async function recentDocumentsView(_s: GroupSession): Promise<RecentDocumentView[]> {
   return []
+}
+
+/* ---------- Lease Inbox (#27) ---------- */
+
+const INBOX_TAB: Record<string, InboxTab> = { notice: "notices", "rent-lease": "rent", "work-order": "work-orders", "new-sender": "new-senders", other: "other" }
+
+/**
+ * The Inbox page's threads from the Trick's data: every email and every email Roomie sent, grouped by thread, newest
+ * first. A thread's tab is its newest email's class (a work order Roomie sent and nobody answered yet is Work
+ * orders); unclassified mail is Everything else. Pure (data.test.ts).
+ */
+export function inboxThreads(data: InboxData, tz: string): Pick<InboxView, "threads" | "counts"> {
+  const fmt = (d: Date) => formatInZone(d, tz, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
+  const byThread = new Map<string, InboxItemView[]>()
+  const push = (threadId: string, item: InboxItemView) => byThread.set(threadId, [...(byThread.get(threadId) ?? []), item])
+  for (const m of data.mail) {
+    push(m.threadId, { id: m.id, direction: "in", from: m.from, subject: m.subject, summary: m.summary, text: m.text, at: m.receivedAt.toISOString(), when: fmt(m.receivedAt), documents: m.documentIds.map((id) => ({ id, href: docPath(id) })) })
+  }
+  for (const s of data.sent) {
+    push(s.threadId, { id: s.id, direction: "out", from: s.by ? `Roomie for ${s.by}` : "Roomie", subject: "", summary: s.summary, text: `Sent: ${s.summary}.`, at: s.at.toISOString(), when: fmt(s.at), documents: [] })
+  }
+  const threads: InboxThreadView[] = [...byThread.entries()].map(([threadId, raw]) => {
+    const items = raw.sort((a, b) => a.at.localeCompare(b.at))
+    const order = data.workOrders.find((w) => w.threadId === threadId) ?? null
+    const inbound = data.mail.filter((m) => m.threadId === threadId).sort((a, b) => b.receivedAt.getTime() - a.receivedAt.getTime())
+    const newest = inbound[0]
+    const tab: InboxTab = newest ? (INBOX_TAB[newest.class ?? "other"] ?? "other") : order ? "work-orders" : "other"
+    const last = items[items.length - 1]
+    return {
+      threadId,
+      tab: order && tab !== "new-senders" ? "work-orders" : tab,
+      subject: newest?.subject || order?.title || last.summary || "(no subject)",
+      from: newest?.from ?? "Roomie",
+      summary: newest?.summary ?? last.summary,
+      when: last.when,
+      at: last.at,
+      canReply: inbound.some((m) => m.trusted),
+      workOrder: order ? { title: order.title, status: order.status, scheduledFor: order.scheduledFor, reportedBy: order.reportedBy } : null,
+      items,
+    }
+  })
+  threads.sort((a, b) => b.at.localeCompare(a.at))
+  const counts = { notices: 0, rent: 0, "work-orders": 0, other: 0, "new-senders": 0 } satisfies Record<InboxTab, number>
+  for (const t of threads) counts[t.tab]++
+  return { threads, counts }
+}
+
+/** The Inbox page and Settings' Lease Inbox section. */
+export async function inboxView(s: GroupSession): Promise<InboxView> {
+  const data = await inboxData(s.ctx)
+  return { address: data.address, senders: data.senders, ...inboxThreads(data, s.group.timezone) }
 }

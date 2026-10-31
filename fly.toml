@@ -10,7 +10,7 @@ primary_region = "iad"
 
 [env]
   PORT = "3000"
-  APP_URL = "https://roomie.fly.dev"
+  APP_URL = "https://tryroomie.me"
   NODE_ENV = "production"
 
 [http_service]

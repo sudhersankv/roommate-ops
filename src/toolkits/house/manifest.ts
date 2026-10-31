@@ -15,7 +15,7 @@ export const house = defineManifest({
   defaultOn: true,
   status: "stable",
   gate: {
-    criterion: "The house: chores (dishes, trash, cleaning, whose turn it is, passing a turn, who's slacking on the chart) and home maintenance on a schedule (filters, smoke alarms, gutters, repairs).",
+    criterion: "The house's own routine: chores (dishes, trash, cleaning, whose turn it is, passing a turn, who's slacking on the chart) and the upkeep the group does itself on a schedule (filters, smoke alarms, gutters). Not something broken that the landlord has to fix.",
     examples: ["I did the dishes", "whose turn is trash?", "skip my turn on trash", "who's slacking?", "changed the air filter", "track the AC filter every 90 days", "what upkeep is due?"],
   },
   persona: [

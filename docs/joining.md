@@ -20,7 +20,7 @@ How people get from the group chat to the dashboard ([ADR 0014](./adr/0014-joini
    they are:
 
    > Learned Splitting, Groceries, Chores and Upkeep. Say "roomie, what can you do?" any time.
-   > Everyone: your dashboard is at https://roomie.fly.dev/j/qk3dcb5btz. Sign in with Google and pick your name.
+   > Everyone: your dashboard is at https://tryroomie.me/j/qk3dcb5btz. Sign in with Google and pick your name.
 
    Answered in a DM, the same two lines also go to the group chat (`postedInGroup: true`), since that's where everyone
    needs the link. This supersedes ADR 0001's "never post links in the group" for this one link: it binds nobody.

@@ -14,3 +14,11 @@ export const BETA_GROUP_SIZES = ["2", "3-4", "5-8", "9-15", "16+"] as const;
 export type BetaGroupSize = (typeof BETA_GROUP_SIZES)[number];
 export const BETA_STATUSES = ["new", "contacted", "onboarded", "declined"] as const;
 export type BetaStatus = (typeof BETA_STATUSES)[number];
+/** Lease Inbox (ADR 0016): what an inbound email is, a work order's status, how a landlord sender became known, why Roomie sent mail. */
+export const MAIL_CLASSES = ["notice", "rent-lease", "work-order", "other", "new-sender"] as const;
+export type MailClass = (typeof MAIL_CLASSES)[number];
+export const WORK_ORDER_STATUSES = ["sent", "acknowledged", "scheduled", "done"] as const;
+export type WorkOrderStatus = (typeof WORK_ORDER_STATUSES)[number];
+export const LANDLORD_SENDER_SOURCES = ["forward", "intro", "admin"] as const;
+export type LandlordSenderSource = (typeof LANDLORD_SENDER_SOURCES)[number];
+export const SEND_INTENTS = ["reply", "maintenance", "other", "intro"] as const;

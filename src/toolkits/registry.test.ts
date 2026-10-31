@@ -55,7 +55,21 @@ describe("the manifest contract", () => {
       assert.equal(m.status, "coming-soon");
       assert.ok(!TOOLKITS.some((t) => (t.id as string) === m.id), `${m.id} is a stub`);
     }
-    assert.deepEqual(COMING_SOON.map((m) => m.id), ["lease-inbox", "outings", "cooking", "trips", "stickers", "guests", "move-out"]);
+    assert.deepEqual(COMING_SOON.map((m) => m.id), ["outings", "cooking", "trips", "stickers", "guests", "move-out"]);
+  });
+
+  test("Lease Inbox (#27): built, off by default, its own tab and page, the email service required, offered at setup", () => {
+    const lease = TOOLKITS.find((t) => t.id === "lease-inbox")!;
+    assert.equal(lease.status, "stable");
+    assert.equal(lease.defaultOn, false);
+    assert.deepEqual(lease.requires, { integrations: ["agentmail"] });
+    assert.deepEqual([lease.dashboard?.nav?.label, lease.dashboard?.nav?.href("g1"), lease.dashboard?.nav?.order], ["Inbox", "/g/g1/inbox", 35]);
+    assert.deepEqual(lease.dashboard?.pages, ["inbox"]);
+    assert.equal(lease.postOrder, 20);
+    assert.match(lease.offerLine ?? "", /roomie, learn lease inbox/);
+    for (const id of ["report_issue", "send_to_landlord", "work_order_status", "trust_sender", "send_intro", "ask_lease", "inbox_status", "release_inbox"]) assert.ok(id in lease.tools, id);
+    assert.deepEqual(Object.keys(lease.adminOnly ?? {}).sort(), ["release_inbox", "send_intro", "trust_sender"]);
+    assert.ok(lease.bundle && lease.report && lease.onEnable && lease.dashboard?.settings, "it speaks in the Bundle and the report, sets itself up, and has a Settings section");
   });
 
   test("every catalog entry is complete", () => {

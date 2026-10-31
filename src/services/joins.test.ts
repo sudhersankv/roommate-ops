@@ -46,8 +46,8 @@ test("the free-seat rule: unclaimed, active, not an Admin, policy free, roster k
 });
 
 test("the chat lines: one Join link line; the approval ask names the seat (masked) and how to approve", () => {
-  const line = joinLine("https://roomie.fly.dev/j/abcdefghij");
-  assert.equal(line, "Everyone: your dashboard is at https://roomie.fly.dev/j/abcdefghij. Sign in with Google and pick your name.");
+  const line = joinLine("https://tryroomie.me/j/abcdefghij");
+  assert.equal(line, "Everyone: your dashboard is at https://tryroomie.me/j/abcdefghij. Sign in with Google and pick your name.");
   assert.equal(line.split("\n").length, 1);
   assert.equal(
     joinApprovalPrompt("Sam Kim", "Sam", ["Maya"]),

@@ -13,6 +13,7 @@ import { NotAllowedError, requireActive } from "./authz";
 import { canRemoveItem, computeCartSplits } from "./cart-split";
 import { listMembers } from "./members";
 import { logExpense, type Expense } from "./money";
+import { insertPurchases, localDay } from "./restock";
 import type { ReportPart } from "./report";
 import { dollars, type Ctx, type GroupCtx } from "./types";
 
@@ -309,6 +310,7 @@ export async function markPurchased(ctx: Ctx, input: { totalCents: number; payer
     only = c.itemsSnapshot.map((i) => i.id);
   }
   let count = 0;
+  const today = await localDay(ctx.groupId);
   const expense = await db.transaction(async (tx) => {
     const items = await tx
       .update(cartItems)
@@ -346,6 +348,12 @@ export async function markPurchased(ctx: Ctx, input: { totalCents: number; payer
       if (c && c.snap.some((s) => bought.has(s.id))) checkoutId = c.id;
     }
     if (checkoutId) await tx.update(cartCheckouts).set({ expenseId: expense.id, paidAt: new Date() }).where(eq(cartCheckouts.id, checkoutId));
+    // Restock learns from it: one purchase per item, personal to whoever added it unless shared.
+    await insertPurchases(
+      tx,
+      ctx.groupId,
+      items.map((i) => ({ name: i.name, memberId: i.shared ? null : i.addedBy, occurredOn: today, source: "cart" as const, sourceId: i.id })),
+    );
     count = items.length;
     return expense;
   });

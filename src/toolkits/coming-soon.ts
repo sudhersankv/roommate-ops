@@ -4,21 +4,8 @@ import { defineManifest } from "./define";
 
 const soon = { defaultOn: false, status: "coming-soon" as const };
 
-// Tricks page and landing order (ADR 0015): the ones we lead with first. Lease Inbox is a stub here until #27 builds it.
+// Tricks page and landing order (ADR 0015): the ones we lead with first. (Lease Inbox was the first stub; #27 built it.)
 export const COMING_SOON = [
-  defineManifest({
-    ...soon,
-    id: "lease-inbox",
-    name: "Lease Inbox",
-    description: "The Group's own email address for the landlord: notices to the chat, work orders from the chat, the rest filed.",
-    summary: "Your group's own email address for the landlord.",
-    longDescription: "Roomie gets an email address you give the landlord or leasing office. Notices (an inspection, a water shut-off) become one line in the chat and a reminder the evening before; \"the sink's leaking, tell them\" sends a work order with your name on it and tracks the reply; everything else is filed where you can find it.",
-    icon: "Mail",
-    category: "home",
-    tags: ["lease", "landlord", "email", "notices", "work orders", "leasing office"],
-    requires: { env: ["AGENTMAIL_API_KEY"] },
-    gate: { criterion: "The landlord or leasing office and its emails: notices, inspections, rent changes, work orders, replying to them, the lease.", examples: ["did the landlord email about the inspection?", "the sink's leaking, tell them", "what's up with the sink?"] },
-  }),
   defineManifest({
     ...soon,
     id: "outings",

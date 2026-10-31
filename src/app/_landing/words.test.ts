@@ -109,14 +109,17 @@ test("the Onboarding copy", () => {
     learnedLine(MANIFESTS.map((m) => m.id)),
     learnedLine(["splitting"], { defaulted: true }),
     learnedLine([]),
+    // With Lease Inbox off, the wrap-up offers it in one sentence.
+    learnedLine(["splitting", "groceries", "house"]),
     approvalPrompt("Priya", ["Maya"]),
   ];
   for (const line of lines) assert.deepEqual(hits(line), [], line);
+  assert.match(learnedLine(["splitting", "groceries", "house"]), /Want me to handle the landlord's emails too\? Say "roomie, learn lease inbox"\.$/);
 });
 
-test("every manifest's name, summary, long description and persona", () => {
+test("every manifest's name, summary, long description, persona and offer", () => {
   for (const m of [CORE_MANIFEST, ...CATALOG]) {
-    for (const [field, value] of Object.entries({ name: m.name, summary: m.summary, longDescription: m.longDescription, persona: m.persona ?? "" })) {
+    for (const [field, value] of Object.entries({ name: m.name, summary: m.summary, longDescription: m.longDescription, persona: m.persona ?? "", offerLine: m.offerLine ?? "" })) {
       assert.deepEqual(hits(value), [], `${m.id}.${field}`);
     }
   }
@@ -126,7 +129,7 @@ test("the Channels' shared lines (/help, /start, the failure line)", () => {
   const lines = [
     helpText(),
     helpText(["splitting", "chores"]),
-    helpText([], { dashboard: "https://roomie.fly.dev/j/abc" }),
+    helpText([], { dashboard: "https://tryroomie.me/j/abc" }),
     startReply("Maya", 1, "telegram"),
     startReply("Maya", 1, "whatsapp"),
     startReply("Maya", 0),
