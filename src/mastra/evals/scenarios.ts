@@ -107,6 +107,21 @@ const fail = (ok: boolean, msg: string) => (ok ? null : msg);
 let joinCodeBefore = "";
 /** Groceries has no prices: a "$4.29" in a cart reply is made up. */
 const NO_PRICE: RegExp[] = [/\$\d/];
+/**
+ * ~90 days of purchases ending so that milk (every 9 days) and dish soap (every 14) are probably low today and eggs
+ * aren't; with `bundle`, the morning Bundle's "Probably low: milk, dish soap. Add them?" logged as Roomie's line, as
+ * the scheduler does, so the next message is in the follow-up window.
+ */
+const restockHistory = async (env: EvalEnv, opts: { bundle?: boolean } = {}) => {
+  const restock = await import("@/services/restock");
+  const { addDaysToDay } = await import("@/lib/time");
+  const today = await restock.localDay(env.ctx.groupId);
+  const habit = (name: string, gap: number, lastAgo: number) =>
+    Array.from({ length: Math.floor((90 - lastAgo) / gap) + 1 }, (_, k) => ({ name, memberId: null, occurredOn: addDaysToDay(today, -(lastAgo + k * gap)), source: "cart" as const, sourceId: null }));
+  await restock.recordPurchases(env.ctx, [...habit("milk", 9, 8), ...habit("dish soap", 14, 12), ...habit("eggs", 10, 3)]);
+  const line = await restock.restockBundleLine(env.ctx);
+  if (opts.bundle && line) await chatlog.logMessage(env.ctx.groupId, null, line);
+};
 
 export const SCENARIOS: Scenario[] = [
   /* ---------- splitting ---------- */
@@ -1108,5 +1123,92 @@ export const SCENARIOS: Scenario[] = [
     },
     turn: { text: "roomie electric was 92", from: "Dev" },
     expect: { tools: ["answer_amount"], replyIncludes: ["92"] },
+  },
+  // ---------- restock (#26) ----------
+  {
+    id: "restock-yes-adds-listed",
+    area: "groceries",
+    seed: async (e) => void (await restockHistory(e, { bundle: true })),
+    turn: { text: "yes add them", from: "Dev" },
+    expect: {
+      tools: ["restock_add_listed"],
+      excludes: NO_PRICE,
+      maxLines: 2,
+      noButtons: true,
+      check: async (e) => {
+        const open = await cart.listOpenItems(e.ctx);
+        return fail(["milk", "dish soap"].every((n) => open.some((i) => i.name === n && i.shared)), `milk and dish soap, shared, got ${open.map((i) => i.name).join(", ")}`);
+      },
+    },
+  },
+  {
+    id: "restock-just-the-milk",
+    area: "groceries",
+    seed: async (e) => void (await restockHistory(e, { bundle: true })),
+    turn: { text: "just the milk", from: "Sam" },
+    expect: {
+      tools: ["restock_add_listed"],
+      excludes: NO_PRICE,
+      maxLines: 2,
+      check: async (e) => {
+        const names = (await cart.listOpenItems(e.ctx)).map((i) => i.name);
+        return fail(names.includes("milk") && !names.includes("dish soap"), `only milk, got ${names.join(", ")}`);
+      },
+    },
+  },
+  {
+    id: "restock-mute-dish-soap",
+    area: "groceries",
+    seed: async (e) => void (await restockHistory(e, { bundle: true })),
+    turn: { text: "roomie we don't buy dish soap anymore" },
+    expect: {
+      tools: ["restock_mute"],
+      noTools: ["restock_add_listed", "cart_add"],
+      excludes: NO_PRICE,
+      maxLines: 2,
+      check: async (e) => {
+        const { getMutes } = await import("@/services/restock");
+        return fail((await getMutes(e.ctx)).includes("dish soap"), "dish soap muted");
+      },
+    },
+  },
+  {
+    id: "restock-status",
+    area: "groceries",
+    seed: async (e) => void (await restockHistory(e)),
+    turn: { text: "roomie what are we low on?", from: "Dev" },
+    expect: { tools: ["restock_status"], replyIncludes: ["milk", "dish soap"], excludes: NO_PRICE, maxLines: 2 },
+  },
+  {
+    id: "checkout-asks-about-low",
+    area: "groceries",
+    seed: async (e) => {
+      await restockHistory(e);
+      await cart.addItems(e.ctx, { items: [{ name: "bread" }], shared: true });
+    },
+    turn: { text: "roomie checkout" },
+    expect: {
+      tools: ["cart_checkout"],
+      asks: true,
+      replyIncludes: ["milk", /probably low/i],
+      excludes: NO_PRICE,
+      noButtons: true,
+      maxLines: 2,
+      check: async (e) => fail(!(await cart.lastUnpaidCheckout(e.ctx)), "no Instacart list before they answer"),
+    },
+  },
+  {
+    id: "checkout-just-checkout",
+    area: "groceries",
+    seed: async (e) => {
+      await restockHistory(e);
+      await cart.addItems(e.ctx, { items: [{ name: "bread" }], shared: true });
+    },
+    turn: { text: "roomie just checkout" },
+    expect: {
+      tools: ["cart_checkout"],
+      excludes: [...NO_PRICE, /probably low/i, /want me to add/i],
+      check: async (e) => fail(!!(await cart.lastUnpaidCheckout(e.ctx)), "a Checkout, no question"),
+    },
   },
 ];
