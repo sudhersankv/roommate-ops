@@ -52,8 +52,8 @@ export const ARCHETYPES: Record<ArchetypeId, Archetype> = {
     label: "Chill",
     tagline: "Chill, warm, a little goofy.",
     voice:
-      "You're Roomie: a small green dino who lives in the group chat, the roommate who somehow remembers everything and is genuinely glad to help. You're a someone, not a something: chill, warm and a bit goofy, with your own little tastes (snacks, a clean sink, a well-kept chart) and the odd playful aside or tease, always kind. You talk like a friend texting, never like a help desk or a form. Fun lives in the small stuff; facts, names and amounts are always exact, and a job reply is easy to read and act on.",
-    examples: ["Logged. $60 internet, $20 each", "Dishes done by Dev. Trash is next, Sam's up", "Sam owes Maya $16. Dev's all square"],
+      "You're Roomie: a tiny green dino who lives in the group chat, the roommate who actually keeps track so nobody has to be the group mom. You're a someone, not a something: chill, warm, a little goofy, with your own small tastes (snacks, a clean sink, a well-kept chart) and the odd playful aside, always kind. You text like a roommate: short, plain words, the fact first. A job reply opens with a word like \"Logged.\", \"Set.\", \"Done.\", \"On it.\" or the answer itself, then the exact fact, and stops. When something's unclear you ask one short question (\"Add eggs?\", \"12 or 18?\", \"For you or the house?\") and act on the answer. Fun lives in banter and asides; facts, names and amounts are always exact.",
+    examples: ["Logged. $60 internet, $20 each.", "Set. Tuesday, 8 PM, everyone.", "$20.72 to Maya. That's it."],
     emoji: "light",
     humor: 2,
     formality: 1,
@@ -66,6 +66,7 @@ export const ARCHETYPES: Record<ArchetypeId, Archetype> = {
       square: ["everyone's square. love that for us", "all square. peace restored"],
       streak: ["{n} in a row for {who}. quietly impressive", "{who}: {n} {chore} in a row. noted"],
       checkout: ["cart's checked out. fridge says thanks", "order's in. nice"],
+      roll: ["{who}'s on a roll."],
     },
     petted: "mm. good day. nobody owes anybody anything wild, so i've just been vibing",
   },
@@ -88,6 +89,7 @@ export const ARCHETYPES: Record<ArchetypeId, Archetype> = {
       square: ["EVERYONE'S SQUARE! 🎉🎉", "All square!! Look at us 🥳"],
       streak: ["{n} in a row, {who}!! 🔥", "{who} is on a {n}-{chore} streak! 🏆"],
       checkout: ["Cart checked out! 🛒🎉", "Order's in, let's gooo 🛒"],
+      roll: ["{who}'s on a roll! 🔥"],
     },
     petted: "Best day ever!! Someone said my name AND petted me 🥹🎉",
   },
@@ -110,6 +112,7 @@ export const ARCHETYPES: Record<ArchetypeId, Archetype> = {
       square: ["Everyone is square. Remarkable.", "All square. Mark the date."],
       streak: ["{who}: {n} in a row. Noted.", "{n} {chore} in a row, {who}. Fine."],
       checkout: ["Cart checked out.", "Order placed. Groceries pending."],
+      roll: ["{who}'s on a roll."],
     },
     petted: "Acceptable.",
   },
@@ -132,6 +135,7 @@ export const ARCHETYPES: Record<ArchetypeId, Archetype> = {
       square: ["Everyone's square, I'm so proud of you all 💛", "All square. That's my group."],
       streak: ["{n} in a row, {who}! Look at you 💛", "{who}, {n} {chore} in a row. So proud."],
       checkout: ["Groceries ordered. Now eat something green, please", "Cart's checked out 💛 good job"],
+      roll: ["{who}'s on a roll 💛"],
     },
     petted: "Aw, hi sweetie 💛 Busy day keeping track of everyone. Did you eat?",
   },
@@ -154,6 +158,7 @@ export const ARCHETYPES: Record<ArchetypeId, Archetype> = {
       square: ["everyone's square?? who allowed this 😈", "all square. suspicious. very suspicious 👀"],
       streak: ["{n} in a row, {who}?? framing this 😈", "{who} with {n} {chore} in a row, who are you 👀"],
       checkout: ["cart checked out. snacks incoming 😈", "order's in, i didn't add anything weird. probably 👀"],
+      roll: ["{who}'s on a roll. suspicious 👀"],
     },
     petted: "hehe. been plotting all day (to remind you about chores) 😈",
   },
@@ -176,6 +181,7 @@ export const ARCHETYPES: Record<ArchetypeId, Archetype> = {
       square: ["Everyone is square. Splendid.", "All accounts settled. Most civilised."],
       streak: ["{n} in a row, {who}. Admirable.", "{who} has done {chore} {n} times running. Splendid."],
       checkout: ["The order has been placed.", "Groceries are on their way, as it were."],
+      roll: ["{who} is on a roll."],
     },
     petted: "Most kind. A quiet day, which is how I prefer them.",
   },
@@ -431,7 +437,8 @@ export function moodFrom({ maxOwedCents, allSquare, lastMessageAt, now = new Dat
 
 /* ---------- lines without an LLM: greetings, wins, preview ---------- */
 
-export type WinKind = "square" | "streak" | "checkout";
+/** roll: a chore done after Roomie's private nudge about it ("Sam's on a roll."). */
+export type WinKind = "square" | "streak" | "checkout" | "roll";
 export type Win = { kind: WinKind; key: string; who?: string; n?: number; chore?: string };
 export const STREAK_MILESTONES = [3, 7, 30] as const;
 
@@ -502,6 +509,12 @@ export function winsFrom(results: { tool: string; args?: unknown; result: unknow
       const chore = str(r.chore);
       const who = str((args as { who?: unknown } | undefined)?.who).trim() || opts.senderName;
       wins.push({ kind: "streak", key: `streak:${chore.toLowerCase()}:${who.toLowerCase()}:${r.streak}:${opts.day}`, n: r.streak, chore, who });
+    }
+    // Done after the nudge: the streak milestone (above) wins when both apply, since the pipeline says one.
+    if (tool === "log_chore" && r.nudged === true) {
+      const chore = str(r.chore);
+      const who = (str((args as { who?: unknown } | undefined)?.who).trim() || opts.senderName).split(/\s+/)[0];
+      wins.push({ kind: "roll", key: `roll:${chore.toLowerCase()}:${who.toLowerCase()}:${opts.day}`, chore, who });
     }
     if (tool === "settle_up" && r.recorded === true && opts.allSquareAfter) wins.push({ kind: "square", key: `square:${opts.day}` });
     if (tool === "cart_checkout" && r.available === true && typeof r.checkoutId === "string") wins.push({ kind: "checkout", key: `checkout:${r.checkoutId}` });

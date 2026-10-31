@@ -6,16 +6,16 @@
 // and the chore stays due.
 // Streak: how many of a Member's own most recent turns on a chore they did on time, in a row. A pass or a late done
 // ends it.
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, like } from "drizzle-orm";
 import { db, schema } from "@/db";
-import { addDaysInZone, addDaysToDay, dayInZone, daysBetweenDays, startOfDay } from "@/lib/time";
+import { addDaysInZone, addDaysToDay, dayInZone, daysBetweenDays, startOfDay, zonedParts } from "@/lib/time";
 import { record, sourceOf } from "./activity";
 import { NotAllowedError, requireActive, requireAdmin } from "./authz";
 import { listMembers } from "./members";
 import { groupTimezone } from "./schedule";
 import type { Ctx, GroupCtx } from "./types";
 
-const { chores, choreLogs, members } = schema;
+const { chores, choreLogs, members, scheduledPosts } = schema;
 
 export type ChoreState = "overdue" | "due" | "ok";
 
@@ -189,6 +189,115 @@ export function chartLine(rows: ShameRow[]): string {
   return `The chart this week: ${parts.join(", ")}.`;
 }
 
+// ---------- nudges and the learned rhythm (pure, chore-nudge.test.ts) ----------
+//
+// A chore with a history gets a private nudge to whoever's turn it is (#60): on the due day at the chore's usual local
+// hour, then while it's late a shorter follow-up every max(1, round(everyDays / 2)) days, at most three. A done ends
+// it; a pass moves it to the next person, who starts again at the first nudge on the day of the pass. A chore nobody
+// has ever done has no rhythm yet: it stays on the Bundle's group line instead.
+
+/** At most this many follow-ups after the due day's nudge. */
+export const MAX_FOLLOW_UPS = 3;
+/** The usual hour needs this many dones; with fewer the Bundle's hour is used. */
+export const USUAL_HOUR_MIN_DONES = 3;
+/** The usual hour reads the last 10 dones; the rhythm too. */
+const RECENT_DONES = 10;
+/** observedEvery needs this many done days. */
+export const RHYTHM_MIN_DONES = 4;
+/** Nudges go out between 08:00 and 21:00 local (quiet hours start at 22). */
+const EARLIEST = 8;
+const LATEST = 21;
+
+const median = (xs: readonly number[]): number => {
+  const s = [...xs].sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 ? s[mid] : Math.round((s[mid - 1] + s[mid]) / 2);
+};
+
+/** Days between follow-ups: half the cycle, at least a day (every 1 or 2 days -> daily, weekly -> every 4 days). */
+export const followUpEvery = (everyDays: number) => Math.max(1, Math.round(everyDays / 2));
+
+/**
+ * The chore's usual local hour: the median hour of its last 10 dones (passes don't count), clamped to 08-21. Fewer than
+ * three dones: `fallback` (the Bundle's hour), clamped the same way. `entries` newest first.
+ */
+export function usualHour(entries: readonly TurnEntry[], tz: string, fallback: number): number {
+  const hours = entries.filter((e) => !e.skipped).slice(0, RECENT_DONES).map((e) => zonedParts(tz, e.at).hour);
+  const h = hours.length >= USUAL_HOUR_MIN_DONES ? median(hours) : fallback;
+  return Math.min(LATEST, Math.max(EARLIEST, h));
+}
+
+/** The chore as people say it: "Take out the trash" -> "Trash", "Clean the bathroom" -> "Bathroom"; else the chart's name, sentence case. */
+export function choreLabel(name: string): string {
+  const short = name.trim().replace(/^(?:take|taking)\s+out\s+(?:the\s+)?/i, "").replace(/^(?:do|clean)\s+the\s+/i, "") || name.trim();
+  return short.charAt(0).toUpperCase() + short.slice(1);
+}
+
+/** Shorter each time: "Morning Sam! Trash is yours today." (Hey after noon) -> "Trash, Sam." -> "Sam. Trash." */
+export function choreNudgeText(step: number, chore: string, firstName: string, localHour: number): string {
+  const label = choreLabel(chore);
+  if (step === 0) return `${localHour < 12 ? "Morning" : "Hey"} ${firstName}! ${label} is yours today.`;
+  if (step === 1) return `${label}, ${firstName}.`;
+  return `${firstName}. ${label}.`;
+}
+
+export type NudgeChore = { name: string; everyDays: number; rotation: readonly string[] | null };
+export type ChoreNudge = { memberId: string; name: string; step: number; hour: number; dueDay: string; text: string };
+
+/**
+ * Today's private nudge for one chore, or null. `entries` newest first; `people` the active Members (the turn order is
+ * turnFor's). `defaultHour` is the Bundle's hour, used until the chore has a usual hour. The caller sends it once the
+ * local hour reaches `hour`.
+ */
+export function choreNudgePlan(
+  chore: NudgeChore,
+  entries: readonly TurnEntry[],
+  now: Date,
+  tz: string,
+  opts: { people: readonly { id: string; name: string }[]; defaultHour: number },
+): ChoreNudge | null {
+  const lastDone = entries.find((e) => !e.skipped);
+  if (!lastDone) return null;
+  const { dueDay, dueIn } = choreSchedule(lastDone.at, chore.everyDays, tz, now);
+  if (dueIn > 0) return null;
+  const person = turnFor(chore.rotation, [...opts.people], [...entries]);
+  if (!person) return null;
+  // A pass on or after the due day: the next person starts at the first nudge, that day.
+  const pass = entries.find((e) => e.skipped && e.at.getTime() > lastDone.at.getTime());
+  const passDay = pass ? dayInZone(tz, pass.at) : null;
+  const start = passDay && passDay > dueDay ? passDay : dueDay;
+  const late = daysBetweenDays(start, dayInZone(tz, now));
+  const every = followUpEvery(chore.everyDays);
+  if (late < 0 || late % every !== 0 || late / every > MAX_FOLLOW_UPS) return null;
+  const step = late / every;
+  const hour = usualHour(entries, tz, opts.defaultHour);
+  const firstName = person.name.trim().split(/\s+/)[0] || person.name;
+  return { memberId: person.id, name: person.name, step, hour, dueDay, text: choreNudgeText(step, chore.name, firstName, Math.max(hour, zonedParts(tz, now).hour)) };
+}
+
+/**
+ * How often the group really does a chore: the median gap in local days between its last 10 done days (passes left
+ * out, two dones on one day count once). Null with fewer than four done days.
+ */
+export function observedEvery(entries: readonly TurnEntry[], tz: string): number | null {
+  const days = [...new Set(entries.filter((e) => !e.skipped).map((e) => dayInZone(tz, e.at)))].sort().reverse().slice(0, RECENT_DONES);
+  if (days.length < RHYTHM_MIN_DONES) return null;
+  const gaps = days.slice(1).map((d, i) => daysBetweenDays(d, days[i]));
+  return Math.max(1, median(gaps));
+}
+
+/** Worth offering a change: off by at least a day and at least 30% of the chart's cycle. */
+export const rhythmDiffers = (observed: number, everyDays: number) => Math.abs(observed - everyDays) >= 1 && Math.abs(observed - everyDays) >= 0.3 * everyDays;
+
+const everyWords = (n: number) => (n === 1 ? "every day" : `every ${n} days`);
+
+/** The report's offer: "Trash actually goes out every 3 days. Want me to change it?" */
+export function rhythmOfferText(chore: string, observed: number): string {
+  const label = choreLabel(chore);
+  const said = /\b(trash|garbage|rubbish|recycling|bins?)\b/i.test(chore) ? `${label} actually goes out ${everyWords(observed)}.` : `You actually do ${label.toLowerCase()} ${everyWords(observed)}.`;
+  return `${said} Want me to change it?`;
+}
+
 // ---------- DB ----------
 
 type ChoreRow = typeof chores.$inferSelect;
@@ -284,7 +393,7 @@ const unknownChore = async (ctx: GroupCtx, query: string) => {
 export async function logChore(
   ctx: Ctx,
   input: { chore?: string; choreId?: string; memberId?: string; at?: Date },
-): Promise<{ chore: string; choreId: string; doneBy: string; streak: number; nextUp: string | null; added: boolean }> {
+): Promise<{ chore: string; choreId: string; doneBy: string; streak: number; nextUp: string | null; added: boolean; nudged: boolean }> {
   await requireActive(ctx);
   const memberId = input.memberId ?? ctx.memberId;
   const people = await listMembers(ctx);
@@ -298,10 +407,65 @@ export async function logChore(
     [chore] = await db.insert(chores).values({ groupId: ctx.groupId, name, everyDays: 7 }).returning();
     added = true;
   }
+  const nudged = !added && (await nudgedSinceLastDone(ctx.groupId, chore.id));
   await db.insert(choreLogs).values({ choreId: chore.id, memberId, ...(input.at ? { doneAt: input.at } : {}) });
   await record(ctx.groupId, ctx.memberId, "chore.done", memberId === ctx.memberId ? `marked ${chore.name} done` : `marked ${chore.name} done for ${doer.displayName}`, { table: "chores", id: chore.id }, sourceOf(ctx));
   const status = (await choreStatus(ctx)).find((c) => c.choreId === chore.id)!;
-  return { chore: chore.name, choreId: chore.id, doneBy: doer.displayName, streak: Math.max(1, status.streaks[memberId] ?? 1), nextUp: status.whoseTurn, added };
+  return { chore: chore.name, choreId: chore.id, doneBy: doer.displayName, streak: Math.max(1, status.streaks[memberId] ?? 1), nextUp: status.whoseTurn, added, nudged };
+}
+
+/** Whether Roomie DM'd someone about this chore (scheduled_posts "chore.dm") since it was last done. */
+async function nudgedSinceLastDone(groupId: string, choreId: string): Promise<boolean> {
+  const [last] = await db
+    .select({ at: choreLogs.doneAt })
+    .from(choreLogs)
+    .where(and(eq(choreLogs.choreId, choreId), eq(choreLogs.skipped, false)))
+    .orderBy(desc(choreLogs.doneAt))
+    .limit(1);
+  const rows = await db
+    .select({ period: scheduledPosts.period })
+    .from(scheduledPosts)
+    .where(and(eq(scheduledPosts.groupId, groupId), eq(scheduledPosts.kind, "chore.dm"), like(scheduledPosts.period, `%:${choreId}:%`), ...(last ? [gt(scheduledPosts.createdAt, last.at)] : [])))
+    .limit(1);
+  return rows.length > 0;
+}
+
+/**
+ * Change a chore's cycle ("make trash every 3 days", a yes to the report's rhythm offer). Fuzzy by name like log_chore;
+ * any active Member, as adding one is. The Rotation and history stay.
+ */
+export async function updateChore(ctx: Ctx, input: { chore?: string; choreId?: string; everyDays: number }): Promise<{ choreId: string; name: string; everyDays: number; before: number }> {
+  await requireActive(ctx);
+  const c = await findChore(ctx, input);
+  if (!c) throw await unknownChore(ctx, input.chore ?? "");
+  const everyDays = Math.min(365, Math.max(1, Math.round(Number(input.everyDays) || c.everyDays)));
+  if (everyDays !== c.everyDays) {
+    await db.update(chores).set({ everyDays }).where(and(eq(chores.id, c.id), eq(chores.groupId, ctx.groupId)));
+    await record(ctx.groupId, ctx.memberId, "chore.changed", `changed ${c.name} to ${everyDays === 1 ? "every day" : `every ${everyDays} days`}`, { table: "chores", id: c.id }, sourceOf(ctx));
+  }
+  return { choreId: c.id, name: c.name, everyDays, before: c.everyDays };
+}
+
+const entriesOf = (logs: Awaited<ReturnType<typeof groupLogs>>, choreId: string): TurnEntry[] =>
+  logs.filter((l) => l.choreId === choreId).map((l) => ({ memberId: l.memberId, at: l.doneAt, skipped: l.skipped }));
+
+/** Today's private nudges for the Group's chores (choreNudgePlan per chore), with the chore's id. */
+export async function nudgePlans(ctx: GroupCtx, now: Date, defaultHour: number): Promise<(ChoreNudge & { choreId: string; chore: string })[]> {
+  const [chart, logs, people, tz] = await Promise.all([groupChores(ctx.groupId), groupLogs(ctx.groupId), listMembers(ctx), groupTimezone(ctx.groupId)]);
+  const everyone = named(people);
+  return chart.flatMap((c) => {
+    const plan = choreNudgePlan({ name: c.name, everyDays: c.everyDays, rotation: c.rotation ?? null }, entriesOf(logs, c.id), now, tz, { people: everyone, defaultHour });
+    return plan ? [{ ...plan, choreId: c.id, chore: c.name }] : [];
+  });
+}
+
+/** Chores whose real rhythm (observedEvery) differs from the chart's enough to offer a change. */
+export async function rhythmMismatches(ctx: GroupCtx): Promise<{ choreId: string; name: string; everyDays: number; observed: number }[]> {
+  const [chart, logs, tz] = await Promise.all([groupChores(ctx.groupId), groupLogs(ctx.groupId), groupTimezone(ctx.groupId)]);
+  return chart.flatMap((c) => {
+    const observed = observedEvery(entriesOf(logs, c.id), tz);
+    return observed !== null && rhythmDiffers(observed, c.everyDays) ? [{ choreId: c.id, name: c.name, everyDays: c.everyDays, observed }] : [];
+  });
 }
 
 /** The sender passes their turn: the next Member in the Rotation is up. Only whoever's turn it is can pass it. */

@@ -15,15 +15,19 @@ type Item = { name: string; qty: string; shared: boolean; addedByName: string; r
 const said = (i: Item) => ({ name: i.name, qty: i.qty, ...(i.shared ? { shared: true } : { for: i.addedByName }), ...(i.recipeTitle ? { recipe: i.recipeTitle } : {}) });
 
 const itemSchema = z.object({
-  name: z.string().min(1).describe("Item name without the quantity, e.g. 'chips'"),
-  qty: z.string().optional().describe("The quantity exactly as they said it, e.g. '3 bags', '2 cartons', '12', '1 lb'. Omit for 1."),
+  name: z.string().min(1).describe("Item name without the quantity, e.g. 'chips'; the clear kind when they said it ('whole milk', 'Diet Pepsi')"),
+  qty: z.string().optional().describe("The quantity exactly as they said it, with the size, e.g. '3 bags', '12 × 12 oz cans', '1 gallon', '1 lb'. Omit when they didn't say one: their usual is used, or you get a question."),
+  remember: z
+    .boolean()
+    .optional()
+    .describe("true when this is their answer to your needsClarification question, or a change for good ('make it 24 from now on', 'always the 2-liter'): it becomes their usual. false for a one-off ('just a 2-liter this time'). Omit for a plain add."),
 });
 
 export const cartTools = {
   cart_add: createTool({
     id: "cart_add",
     description:
-      "Add grocery items to the shared cart, attributed to the sender ('add 3 bags of chips for me' -> one item, name 'chips', qty '3 bags'), or to `for` ('oat milk for Dev'). shared=true for things the whole group uses (toilet paper, dish soap, 'for the house', 'common'). If it's unclear whether it's for them or everyone, ask first. Quantities are stored as said; if the result has `needsClarification`, those items were NOT added: ask that one short question (and say what was added, if anything), then call cart_add again with only those items. No prices: never say a price or total.",
+      "Add grocery items to the shared cart, attributed to the sender ('add 3 bags of chips for me' -> one item, name 'chips', qty '3 bags'), or to `for` ('oat milk for Dev'). shared=true for things the whole group uses (toilet paper, dish soap, 'for the house', 'common'). If it's unclear whether it's for them or everyone, ask first. Quantities are stored as said (omit qty when they didn't say one: their usual is filled in and comes back in `usedUsual`; say it, 'Eggs, 18 like usual.'); if the result has `needsClarification`, those items were NOT added: ask that one short question (and say what was added, if anything), then call cart_add again with only those items and their answer as qty, remember=true. No prices: never say a price or total.",
     inputSchema: z.object({
       items: z.array(itemSchema).min(1),
       shared: z.boolean().optional().describe("true when it's for the whole house, not one person"),
@@ -32,11 +36,12 @@ export const cartTools = {
     execute: async (input, context) => {
       const ctx = ctxOf(context);
       const forMemberId = input.for && !input.shared ? await memberIdByName(ctx, input.for) : undefined;
-      const { added, needsClarification } = await cart.addAsSaid(ctx, { items: input.items, shared: input.shared, forMemberId });
+      const { added, needsClarification, usedUsual } = await cart.addAsSaid(ctx, { items: input.items, shared: input.shared, forMemberId });
       const open = await cart.listOpenItems(ctx);
       return {
         added: added.map(said),
         cartItemCount: open.length,
+        ...(usedUsual.length ? { usedUsual } : {}),
         ...(needsClarification.length ? { needsClarification } : {}),
       };
     },
@@ -54,10 +59,18 @@ export const cartTools = {
   cart_view: createTool({
     id: "cart_view",
     description:
-      "The open cart grouped by who it's for ('Shared' = everyone; recipe items say which recipe). No prices. link=true only when they ask where the Cart page is or for a link to it; then the button is attached for you.",
-    inputSchema: z.object({ link: z.boolean().optional().describe("true only when they asked for the Cart page / a link") }),
+      "The open cart grouped by who it's for ('Shared' = everyone; recipe items say which recipe). No prices. link=true only when they ask where the Cart page is or for a link to it; then the button is attached for you. " +
+      "list=true for 'send me the list' / 'what do we need?' / a list to shop from or forward: returns `text`, the whole list (one ☐ line per item, shared first, personal ones with the name); post `text` as is, as its own message, with nothing added or changed.",
+    inputSchema: z.object({
+      link: z.boolean().optional().describe("true only when they asked for the Cart page / a link"),
+      list: z.boolean().optional().describe("true when they want the list itself, to shop from or forward"),
+    }),
     execute: async (input, context) => {
       const ctx = ctxOf(context);
+      if (input.list) {
+        const { text, itemCount } = await cart.cartList(ctx);
+        return { text, itemCount, ...(input.link ? dashboardLinks("🛒 The Cart", `/g/${ctx.groupId}/cart`) : {}) };
+      }
       const groups = await cart.viewCart(ctx);
       const view = Object.fromEntries(Object.entries(groups).map(([who, items]) => [who, items.map((i) => ({ name: i.name, qty: i.qty, ...(i.recipeTitle ? { recipe: i.recipeTitle } : {}) }))]));
       const itemCount = Object.values(groups).flat().length;

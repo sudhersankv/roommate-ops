@@ -149,7 +149,7 @@ describe("the Lease Inbox Trick against the dev DB", () => {
 
   let noticeDoc: string;
 
-  test("Maya forwards the inspection notice: the landlord is learned, one group line, a Reminder at 18:00 the evening before, the PDF filed and read", async () => {
+  test("Maya forwards the inspection notice: the landlord is learned, one group line, a Reminder at 20:00 the evening before, the PDF filed and read", async () => {
     const m = receive({
       from: `Maya Rao <${mayaEmail}>`,
       subject: "Fwd: Annual Unit Inspection - November 12",
@@ -169,7 +169,7 @@ describe("the Lease Inbox Trick against the dev DB", () => {
     assert.match(dmsTo(o, maya.memberId).join("\n"), /Got it: brookfieldresidential\.com is the landlord now\. Want me to send them a short intro/);
     const [rem] = await db.select().from(schema.reminders).where(eq(schema.reminders.groupId, groupId));
     assert.equal(rem.memberId, null, "the whole Group");
-    assert.equal(rem.dueAt.toISOString(), local(11, 11, 18).toISOString());
+    assert.equal(rem.dueAt.toISOString(), local(11, 11, 20).toISOString());
     assert.equal(rem.text, "Tomorrow: smoke detector inspection Thursday Nov 12, 9am-noon");
     const [mm] = await db.select().from(schema.mailMessages).where(eq(schema.mailMessages.id, r.mailId));
     assert.equal(mm.documentIds.length, 1);

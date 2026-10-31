@@ -1,7 +1,7 @@
 // Pure Recipe helpers (no DB import, so the dashboard can use them too): Pantry matching, have/need, scaling to
 // servings and the fingerprint that decides when an Instacart recipe link is stale. Unit-tested in recipes.test.ts.
 import type { RecipeIngredient } from "@/db/schema";
-import { normalizeUnit, roundQuantity } from "@/lib/units";
+import { formatAmount, normalizeUnit, roundQuantity } from "@/lib/units";
 
 const normalizeName = (s: string) => s.trim().toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
 
@@ -33,6 +33,110 @@ export function haveNeed<T extends { name: string }>(ingredients: T[], pantry: r
   const need: T[] = [];
   for (const i of ingredients) (coveredBy(i.name, pantry) || coveredBy(i.name, skip) ? have : need).push(i);
   return { have, need };
+}
+
+/* ---------- what a Recipe puts in the Cart: amounts you can buy (#37) ---------- */
+
+/**
+ * Things almost every kitchen has (salt, oil, the common spices): a Recipe's Cart items leave them out and Roomie names
+ * them once ("I assumed you have salt and cumin"). Matched like the Pantry ("oil" covers "olive oil"); `EXACT` ones only
+ * by their own name ("pepper" isn't "red bell pepper").
+ */
+const ASSUMED_COVERS = [
+  "salt", "black pepper", "ground pepper", "peppercorns", "oil", "cooking spray", "sugar", "flour", "baking soda", "baking powder", "vanilla extract",
+  "cumin", "chili powder", "paprika", "smoked paprika", "oregano", "cinnamon", "garlic powder", "onion powder", "red pepper flakes", "chili flakes",
+  "cayenne", "cayenne pepper", "thyme", "dried basil", "bay leaves", "nutmeg", "curry powder", "turmeric", "italian seasoning",
+];
+const ASSUMED_EXACT = new Set(["pepper", "water", "ice", "salt and pepper"]);
+
+/**
+ * Assumed in the house, unless the Pantry says otherwise: `notKept` is what the Group took out of its Pantry ("we're
+ * out of cumin for good" -> pantry_set remove), so a staple they told Roomie they don't keep goes in the Cart.
+ */
+export function assumedInHouse(name: string, notKept: readonly string[] = []): boolean {
+  if (coveredBy(name, notKept)) return false;
+  const n = normalizeName(name);
+  return ASSUMED_EXACT.has(n) || coveredBy(name, ASSUMED_COVERS);
+}
+
+/** What a small amount of something comes in, and roughly how many cups one holds ("4 tbsp sour cream" -> 1 tub). */
+const PACKAGES: readonly [readonly string[], string, number][] = [
+  [["sour cream", "yogurt", "greek yogurt", "cream cheese", "cottage cheese", "ricotta", "hummus", "whipped cream"], "tub", 2],
+  [["heavy cream", "cream", "half and half", "milk", "buttermilk", "broth", "stock", "coconut milk"], "carton", 4],
+  [["soy sauce", "vinegar", "lime juice", "lemon juice", "fish sauce", "hot sauce", "ketchup", "mustard", "worcestershire sauce", "sriracha", "syrup", "wine", "juice"], "bottle", 2],
+  [["honey", "mayonnaise", "mayo", "jam", "peanut butter", "salsa", "pesto", "tahini", "capers", "paste"], "jar", 2],
+  [["butter"], "package", 2],
+];
+const CUPS: Partial<Record<string, number>> = { teaspoon: 1 / 48, tablespoon: 1 / 16, cup: 1, "fl oz": 1 / 8, milliliter: 1 / 236.6, pint: 2 };
+const OUNCES: Partial<Record<string, number>> = { ounce: 1, pound: 16 };
+const GRAMS: Partial<Record<string, number>> = { gram: 1, kilogram: 1000 };
+
+export type BuyLine = { name: string; qty: string; quantity: number; unit: string };
+
+/**
+ * One ingredient as something you can buy, building on lib/units (cloves are already heads there): spoons and cups of a
+ * liquid or dairy become the smallest package that holds them ("4 tbsp sour cream" -> "1 tub", "6 cups broth" -> "2
+ * cartons"), weights round up to package sizes (8 oz, then whole pounds; 250 g, 500 g, then whole kilos), counts to whole
+ * ones. Quarts, liters and gallons are bought as they are, rounded up.
+ */
+export function buyableAmount(i: { name: string; quantity: number; unit: string }): BuyLine {
+  const unit = normalizeUnit(i.unit) ?? "each";
+  const q = Number.isFinite(i.quantity) && i.quantity > 0 ? i.quantity : 1;
+  const up = (x: number) => Math.max(1, Math.ceil(x - 1e-9));
+  // "6 garlic cloves" as a count: heads, ten cloves to one.
+  if (/\bcloves?\b/.test(i.name) && (unit === "each" || unit === "head")) {
+    const name = i.name.replace(/\s*\bcloves?( of)?\b\s*/g, " ").trim() || "garlic";
+    const heads = unit === "head" ? up(q) : up(q / 10);
+    return { name, qty: formatAmount(heads, "head"), quantity: heads, unit: "head" };
+  }
+  const cups = CUPS[unit];
+  if (cups !== undefined) {
+    const [, word, holds] = PACKAGES.find(([names]) => coveredBy(i.name, names)) ?? [[], "package", 2];
+    const n = up((q * cups) / holds);
+    return { name: i.name, qty: `${n} ${n > 1 ? `${word}s` : word}`, quantity: n, unit: "package" };
+  }
+  const oz = OUNCES[unit];
+  if (oz !== undefined) {
+    const total = q * oz;
+    if (total <= 8 + 1e-9) return { name: i.name, qty: "8 oz", quantity: 8, unit: "ounce" };
+    const lb = up(total / 16);
+    return { name: i.name, qty: formatAmount(lb, "pound"), quantity: lb, unit: "pound" };
+  }
+  const g = GRAMS[unit];
+  if (g !== undefined) {
+    const total = q * g;
+    const size = [250, 500, 1000].find((s) => total <= s + 1e-9);
+    if (size && size < 1000) return { name: i.name, qty: formatAmount(size, "gram"), quantity: size, unit: "gram" };
+    const kg = up(total / 1000);
+    return { name: i.name, qty: formatAmount(kg, "kilogram"), quantity: kg, unit: "kilogram" };
+  }
+  const n = up(q);
+  return { name: i.name, qty: formatAmount(n, unit), quantity: n, unit };
+}
+
+/** A Recipe's missing ingredients -> what goes in the Cart (buyable amounts) and what's assumed in the house. */
+export function recipeBuyList<T extends { name: string; quantity: number; unit: string }>(need: readonly T[], notKept: readonly string[] = []): { buy: { ingredient: T; line: BuyLine }[]; assumed: string[] } {
+  const buy: { ingredient: T; line: BuyLine }[] = [];
+  const assumed: string[] = [];
+  for (const i of need) {
+    if (assumedInHouse(i.name, notKept)) assumed.push(i.name);
+    else buy.push({ ingredient: i, line: buyableAmount(i) });
+  }
+  return { buy, assumed };
+}
+
+const andList = (xs: readonly string[]) => (xs.length <= 1 ? (xs[0] ?? "") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`);
+
+/** The one line naming what was assumed, with the Pantry offer; null when nothing was. */
+export function assumedLine(assumed: readonly string[]): string | null {
+  if (!assumed.length) return null;
+  return `I assumed you have ${andList(assumed)}; say if you're out. Want me to keep ${assumed.length === 1 ? "it" : "them"} in the Pantry?`;
+}
+
+/** recipe_add_to_cart's line: what went in, then the assumed ones named once. */
+export function recipeAddedLine(title: string, added: number, assumed: readonly string[]): string {
+  const first = added ? `Added ${added} thing${added === 1 ? "" : "s"} for ${title} to the Cart.` : `Nothing new to add for ${title}: it's in the Cart or the Pantry.`;
+  return [first, assumedLine(assumed)].filter(Boolean).join(" ");
 }
 
 /** Countable units round up to whole ones (you can't buy 2.4 limes); measured ones keep two decimals. */

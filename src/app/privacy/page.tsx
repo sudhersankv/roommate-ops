@@ -64,7 +64,9 @@ export default function PrivacyPage() {
           </li>
           <li>
             <strong>Until you delete them:</strong> Expenses, Settlements, the Cart and Recipes, Chores, upkeep and Reminders, the Activity of who changed what, what a
-            Member asked it to remember (a diet, a Venmo handle), counts of how the group talks, and photos sent to it.
+            Member asked it to remember (a diet, a Venmo handle), the grocery usuals Members told it, their own or the house&apos;s (&ldquo;Pepsi, 12 cans&rdquo;; other usuals are
+            worked out from what was added to the Cart, and both are shown and editable on the Cart page), what the group bought and when, counts of how the group
+            talks, and photos sent to it. Usuals aren&apos;t chat: they stay after the 30 days.
           </li>
           <li>
             <strong>With Lease Inbox, until you delete them:</strong> the emails that reach the group&apos;s address (sender, subject, text and what Roomie made of
@@ -93,7 +95,7 @@ export default function PrivacyPage() {
       <Part title="Making it forget">
         <p>
           Say <strong>&ldquo;roomie forget me&rdquo;</strong> in the group and Roomie deletes, for that group: your chat messages, what it remembered about you, your
-          messages in its memory (under any name you had) and its replies that name you, the photos of yours it read, reminders set for you, the debug records of your messages
+          messages in its memory (under any name you had) and its replies that name you, the photos of yours it read, reminders set for you, your grocery usuals, the debug records of your messages
           (and of others&apos; messages that carried your lines as context), and the WhatsApp number pairing behind your id. Your name in the Activity becomes &ldquo;Former member&rdquo;, your name comes off work orders and the emails Roomie sent for you (the emails themselves were sent and stay), and you leave the group&apos;s Members (if you write again, you&apos;re a
           new member an Admin approves).
         </p>
@@ -102,7 +104,7 @@ export default function PrivacyPage() {
           them; what other people said about you; the logs and backups above until they expire.
         </p>
         <p>
-          An Admin can delete the whole group&apos;s data from the dashboard&apos;s Settings: every Expense, list, chat message, note, photo, email, work order, debug record and
+          An Admin can delete the whole group&apos;s data from the dashboard&apos;s Settings: every Expense, list, usual, chat message, note, photo, email, work order, debug record and
           Roomie&apos;s memory for that group, and its email address is given up (mail sent to it bounces). The group, its Members and settings stay, so Roomie keeps
           working.
         </p>

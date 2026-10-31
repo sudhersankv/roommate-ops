@@ -1,6 +1,6 @@
 "use client"
 
-// The Nudges card's form (nudges-card.tsx): the Settle nudge on or off, and when a debt is worth a private DM.
+// The Nudges card's form (nudges-card.tsx): the Settle nudge on or off, the amount worth a private DM and how often.
 import { useState, useTransition } from "react"
 
 import { Button } from "@/components/ui/button"
@@ -20,10 +20,10 @@ export function NudgesForm({ initial }: { initial: NudgeSettingsView }) {
   const money = useFormatMoney()
   const [enabled, setEnabled] = useState(initial.enabled)
   const [amount, setAmount] = useState(centsToInput(initial.thresholdCents))
-  const [days, setDays] = useState(String(initial.thresholdDays))
+  const [days, setDays] = useState(String(initial.everyDays))
   const [pending, start] = useTransition()
   const cents = parseMoney(amount)
-  const changed = cents !== initial.thresholdCents || Number(days) !== initial.thresholdDays
+  const changed = cents !== initial.thresholdCents || Number(days) !== initial.everyDays
 
   const save = (patch: Partial<NudgeSettingsView>, title: string) =>
     start(async () => {
@@ -35,7 +35,7 @@ export function NudgesForm({ initial }: { initial: NudgeSettingsView }) {
   return (
     <FieldSet>
       <FieldLegend className="type-heading">Nudges</FieldLegend>
-      <FieldDescription>Once a week Roomie privately reminds anyone who has owed the same person for a while. The group only hears how many balances are open.</FieldDescription>
+      <FieldDescription>Roomie privately reminds anyone who owes someone more than the amount below, a few hours after it’s logged and then every few days until it’s paid (5 times at most). The group only hears how many balances are open.</FieldDescription>
       <FieldGroup>
         <Field orientation="horizontal">
           <FieldContent>
@@ -64,15 +64,15 @@ export function NudgesForm({ initial }: { initial: NudgeSettingsView }) {
               </InputGroup>
             </Field>
             <Field>
-              <FieldLabel htmlFor="nudge-days">For at least (days)</FieldLabel>
-              <Input id="nudge-days" type="number" min={1} max={60} value={days} onChange={(e) => setDays(e.target.value)} />
+              <FieldLabel htmlFor="nudge-days">Remind every (days)</FieldLabel>
+              <Input id="nudge-days" type="number" min={1} max={14} value={days} onChange={(e) => setDays(e.target.value)} />
             </Field>
             <Button
               variant="outline"
               size="sm"
               className="self-start"
               disabled={pending || !changed || cents === null}
-              onClick={() => save({ thresholdCents: cents ?? initial.thresholdCents, thresholdDays: Number(days) }, `Nudging over ${money(cents ?? 0)} after ${days} days`)}
+              onClick={() => save({ thresholdCents: cents ?? initial.thresholdCents, everyDays: Number(days) }, `Nudging over ${money(cents ?? 0)}, every ${days === "1" ? "day" : `${days} days`}`)}
             >
               Save
             </Button>
