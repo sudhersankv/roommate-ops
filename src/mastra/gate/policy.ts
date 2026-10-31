@@ -206,7 +206,14 @@ const words = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}$]+/gu, " ").t
  */
 export function staleReply(i: { reply: string; changed: boolean; answeredSince: readonly string[] }): boolean {
   if (i.changed || !i.answeredSince.length) return false;
-  if (i.reply.includes("?")) return true;
+  if (onlyAQuestion(i.reply)) return true;
   const said = words(i.reply);
-  return !!said && i.answeredSince.some((line) => words(line).includes(said));
+  // A whole-word repeat: "ok" doesn't repeat "book".
+  return !!said && i.answeredSince.some((line) => ` ${words(line)} `.includes(` ${said} `));
+}
+
+/** A short clarifying question and nothing else: one line, at most 160 characters, ending in "?", no full stop or "!" before it. A full answer that ends with a question isn't one. */
+export function onlyAQuestion(reply: string): boolean {
+  const t = reply.trim();
+  return !!t && t.length <= 160 && !t.includes("\n") && t.endsWith("?") && !/[.!]\s/.test(t);
 }

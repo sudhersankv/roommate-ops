@@ -12,7 +12,7 @@ import { Api, Bot, GrammyError, InlineKeyboard } from "grammy";
 import type { ChatMember, Message, User, UserFromGetMe } from "grammy/types";
 import type { ChatRef } from "@/onboarding";
 import { KeyedQueue } from "./queue";
-import { Coalescer, withMerged, type Merged } from "./coalesce";
+import { Coalescer, mergeableText, withMerged, type Merged } from "./coalesce";
 import { planDelivery } from "./humanize";
 import { envMs, SendLimiter, sleep as realSleep } from "./rate-limit";
 import { BAD_VOICE, chunkText, commandOf, helpText, MANY_GROUPS, MAX_TEXT, NO_GROUP, NO_VOICE, OOPS, startReply, wasAddressed } from "./text";
@@ -514,7 +514,7 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
     if (!isPrivate && m.chat.type !== "group" && m.chat.type !== "supergroup") return;
     // Noted on arrival, so a quick second text from the same person joins this one (channels/coalesce.ts).
     const key = isPrivate ? `dm:${from.id}` : String(m.chat.id);
-    const plain = typeof m.text === "string" && !m.text.trimStart().startsWith("/");
+    const plain = mergeableText(m.text);
     const arrival = coalesce.arrive(key, String(from.id), plain);
     queue.push(key, async () => {
       const merged = await coalesce.take(arrival, plain ? readAddress(me, m) : { text: "" });

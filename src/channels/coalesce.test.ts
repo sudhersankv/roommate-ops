@@ -105,3 +105,38 @@ describe("other senders", () => {
     assert.deepEqual(await co.take(b, { text: "" }), { text: "", arrivedAt: 0, count: 1 });
   });
 });
+
+describe("review fixes (#51)", () => {
+  test("a same-sender text that came after the window isn't merged, even if the queue was slow", async () => {
+    const { co, advance } = fake();
+    const a = co.arrive("chat", "maya", true);
+    await advance(10_000);
+    const b = co.arrive("chat", "maya", true);
+    const ra = await co.take(a, { text: "add milk" });
+    assert.deepEqual(ra, { text: "add milk", arrivedAt: 0, count: 1 }, "runs alone");
+    const pb = co.take(b, { text: "and what's for dinner?" });
+    await advance(4_000);
+    assert.equal((await pb)?.count, 1);
+  });
+
+  test("a queue blocked for over a minute still merges two quick texts and loses none (no age pruning)", async () => {
+    const { co, advance } = fake();
+    const a = co.arrive("chat", "maya", true);
+    await advance(1_000);
+    const b = co.arrive("chat", "maya", true);
+    await advance(90_000);
+    co.arrive("chat", "dev", true);
+    assert.equal(await co.take(a, { text: "one" }), null);
+    const rb = await co.take(b, { text: "two" });
+    assert.equal(rb?.text, "one\ntwo");
+  });
+
+  test("a bare poll number is never mergeable", async () => {
+    const { mergeableText, looksLikeVote } = await import("./coalesce");
+    for (const v of ["2", " 1, 3 ", "1 and 2"]) assert.equal(looksLikeVote(v), true, v);
+    assert.equal(mergeableText("2"), false);
+    assert.equal(mergeableText("2 slices left"), true);
+    assert.equal(mergeableText("/help"), false);
+    assert.equal(mergeableText("roomie suggest"), true);
+  });
+});

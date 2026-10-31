@@ -17,7 +17,7 @@ import { closePollsFor, numberVote, openTextPoll, recordVote, voteOnPoll } from 
 import { echoAfterPrivateRun, resolveDmGroup, runMark } from "@/services/dm";
 import { chatFor, enabledToolkits, getGroup } from "@/services/groups";
 import { getMember, listGroupMembers, memberByChannelUser, type Member } from "@/services/members";
-import { humanMessagesSince, lastRoomieReplyAt, logMessage, recentChatter, roomieAnswersSince } from "@/services/chatlog";
+import { humanMessagesSince, lastRoomieReplyAt, logMessage, recentChatter } from "@/services/chatlog";
 import type { Ctx } from "@/services/types";
 import { NotAllowedError } from "@/services/authz";
 import { mastra } from "@/mastra";
@@ -214,6 +214,25 @@ export async function mediaWantedFor(q: MediaQuestion): Promise<boolean> {
 const setupPendingFor = (group: { onboardedAt: Date | null; createdAt: Date }, member: Pick<Member, "role">) =>
   !group.onboardedAt && member.role === "admin" && Date.now() - group.createdAt.getTime() < SETUP_WINDOW_MS;
 
+/**
+ * The stale-reply rule's "Roomie already answered this Member" (#41): the replies this pipeline handed back for a
+ * Member's own messages, in this process, for 10 minutes. Not the chat log: the Bundle, polls, echoes and other posts
+ * Roomie makes on its own are never answers to anyone (#51 review).
+ */
+const REPLY_MEMORY_MS = 10 * 60_000;
+const replies = (): Map<string, { at: number; text: string }[]> => {
+  const g = globalThis as { __roomieRepliesTo?: Map<string, { at: number; text: string }[]> };
+  return (g.__roomieRepliesTo ??= new Map());
+};
+function noteReplyTo(groupId: string, memberId: string, text: string, now = Date.now()) {
+  const key = `${groupId}:${memberId}`;
+  const kept = (replies().get(key) ?? []).filter((r) => now - r.at < REPLY_MEMORY_MS).slice(-4);
+  replies().set(key, [...kept, { at: now, text }]);
+}
+function repliesTo(groupId: string, memberId: string, since: number): string[] {
+  return (replies().get(`${groupId}:${memberId}`) ?? []).filter((r) => r.at > since).map((r) => r.text);
+}
+
 export async function respond(input: RespondInput): Promise<PipelineResult> {
   if (roomiePaused()) {
     logPaused("messages");
@@ -377,10 +396,7 @@ export async function respond(input: RespondInput): Promise<PipelineResult> {
     // A reply that changed nothing and only asks again or repeats itself then stays unsaid, like "[silent]".
     const changed = toolCalls.some(isActionTool);
     if (chat && input.receivedAt && !changed) {
-      const answeredSince = await roomieAnswersSince(groupId, input.receivedAt, member.id).catch((e) => {
-        console.warn("[pipeline] stale-reply check failed", e);
-        return [];
-      });
+      const answeredSince = repliesTo(groupId, member.id, input.receivedAt.getTime());
       if (staleReply({ reply: replyText, changed, answeredSince })) {
         console.log(`[roomie] stale reply dropped in group ${groupId}: Roomie answered ${member.displayName} since their message came in`);
         root?.end({ output: { replied: false, stale: true, dropped: replyText }, metadata: gateMeta });
@@ -393,7 +409,10 @@ export async function respond(input: RespondInput): Promise<PipelineResult> {
       return null;
     });
     if (cheer) replyText = `${replyText} ${cheer}`;
-    if (chat) await logMessage(groupId, null, replyText);
+    if (chat) {
+      await logMessage(groupId, null, replyText);
+      noteReplyTo(groupId, member.id, replyText);
+    }
     const out: Outgoing = { text: replyText, ...(buttons.length ? { buttons } : {}) };
     root?.end({ output: out, metadata: gateMeta });
     return { out, gate, toolCalls, traceId: root?.traceId };

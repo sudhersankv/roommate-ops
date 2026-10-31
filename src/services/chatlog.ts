@@ -45,22 +45,6 @@ export async function lastRoomieReplyAt(groupId: string): Promise<Date | null> {
 }
 
 /**
- * What Roomie said in the Chat after `since` in answer to this Member (the human line just before it is theirs),
- * oldest first: the stale-reply rule's "already answered them" (#41, policy.ts staleReply).
- */
-export async function roomieAnswersSince(groupId: string, since: Date, memberId: string): Promise<string[]> {
-  const { rows } = await db.execute<{ text: string; answered: string | null }>(sql`
-    select r.text,
-      (select h.member_id from ${chatMessages} h
-        where h.group_id = r.group_id and h.member_id is not null and h.created_at <= r.created_at
-        order by h.created_at desc limit 1) as answered
-    from ${chatMessages} r
-    where r.group_id = ${groupId} and r.member_id is null and r.created_at > ${since.toISOString()}::timestamptz
-    order by r.created_at`);
-  return rows.filter((r) => r.answered === memberId).map((r) => r.text);
-}
-
-/**
  * Human messages (memberId NOT NULL) logged strictly after `since`. The pipeline logs the incoming message before it
  * asks, so when called with lastRoomieReplyAt() the result already counts the message being handled (first follow-up = 1).
  */

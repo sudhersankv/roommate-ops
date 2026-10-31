@@ -18,6 +18,7 @@ import {
   type JevAnswers,
   replyText,
   staleReply,
+  onlyAQuestion,
 } from "./policy";
 import { parseJev, questionsFor, toolkitCriteria } from "./jev";
 import { MANIFESTS, TOOLKIT_IDS } from "@/toolkits/manifests";
@@ -451,5 +452,21 @@ describe("staleReply (#41): Roomie already answered this Member since their mess
 
   test("a new statement (no question, not a repeat): sent", () => {
     assert.equal(staleReply({ reply: "Dev owes you $12.50.", changed: false, answeredSince: [recipe] }), false);
+  });
+});
+
+describe("staleReply review fixes (#51)", () => {
+  const recipe = "Tacos for 3: tortillas, beef, onion, cheese, salsa. Want the missing ones on the list?";
+  test("a full new answer that ends with a question is sent", () => {
+    assert.equal(staleReply({ reply: "Dev owes you $12.50 and Sam is square. Want me to nudge Dev?", changed: false, answeredSince: [recipe] }), false);
+  });
+  test("only a short single question counts as 'only a question'", () => {
+    assert.equal(onlyAQuestion("Suggest what, sudhersan? A different dinner than tacos, or something else?"), true);
+    assert.equal(onlyAQuestion("Dev owes you $12.50. Want me to nudge him?"), false);
+    assert.equal(onlyAQuestion("Added eggs."), false);
+  });
+  test("a repeat is whole words: 'ok' doesn't repeat 'book'", () => {
+    assert.equal(staleReply({ reply: "ok", changed: false, answeredSince: ["I'll book it."] }), false);
+    assert.equal(staleReply({ reply: "tortillas, beef", changed: false, answeredSince: [recipe] }), true);
   });
 });

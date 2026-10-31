@@ -51,7 +51,7 @@ import makeWASocket, {
 import QRCode from "qrcode";
 import type { ChatRef } from "@/onboarding";
 import { KeyedQueue } from "./queue";
-import { Coalescer, withMerged, type Merged } from "./coalesce";
+import { Coalescer, mergeableText, withMerged, type Merged } from "./coalesce";
 import { planDelivery } from "./humanize";
 import { envMs, SendLimiter, sleep as realSleep } from "./rate-limit";
 import { BAD_VOICE, chunkText, commandOf, helpText, MANY_GROUPS, NO_GROUP, NO_VOICE, OOPS, startReply, wasAddressed } from "./text";
@@ -164,6 +164,11 @@ export class WhatsAppNotConnectedError extends Error {
 /* ---------- pure helpers (whatsapp.test.ts) ---------- */
 
 const norm = (jid?: string | null) => (jid ? jidNormalizedUser(jid) || undefined : undefined);
+/** One stable id for a person whichever of the two forms WhatsApp put first: the phone JID when either is one, else the LID. */
+const stableId = (...ids: (string | null | undefined)[]) => {
+  const n = ids.map(norm).filter((x): x is string => !!x);
+  return n.find((x) => x.endsWith("@s.whatsapp.net")) ?? n[0];
+};
 export const isGroupJid = (jid?: string | null) => !!isJidGroup(jid ?? undefined);
 /** A person's 1:1 chat (phone JID or LID). */
 export const isUserJid = (jid?: string | null) => !!(isPnUser(jid ?? undefined) || isLidUser(jid ?? undefined));
@@ -964,10 +969,10 @@ export function createWhatsApp(opts: WhatsAppOptions): WhatsApp {
       const jid = m.key.remoteJid!;
       void sock?.readMessages([m.key]).catch(() => {});
       const group = isGroupJid(jid);
-      const key = group ? jid : `dm:${norm(m.key.remoteJidAlt) ?? jid}`;
+      const key = group ? jid : `dm:${stableId(jid, m.key.remoteJidAlt) ?? jid}`;
       // Noted on arrival, so a quick second text from the same person joins this one (channels/coalesce.ts).
-      const plain = read.kind === "text" && !read.text.trimStart().startsWith("/");
-      const arrival = coalesce.arrive(key, (group ? norm(m.key.participant) ?? norm(m.key.participantAlt) : key) ?? key, plain);
+      const plain = read.kind === "text" && mergeableText(read.text);
+      const arrival = coalesce.arrive(key, (group ? stableId(m.key.participant, m.key.participantAlt) : key) ?? key, plain);
       queue.push(key, async () => {
         const merged = await coalesce.take(arrival, plain ? read : { text: "" });
         if (!merged) return; // it went along with this person's next text

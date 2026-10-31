@@ -17,8 +17,14 @@ import { envMs, sleep as realSleep } from "./rate-limit";
 export const MERGE_WINDOW_MS = 4_000;
 /** At most this many texts are joined into one run; the next starts a new one. */
 export const MAX_MERGED = 5;
-/** Arrivals older than this are forgotten (the next one's take() has long happened). */
-const KEEP_MS = 60_000;
+/** A safety cap per Chat: arrivals are dropped only once taken (forget), this just bounds a stuck queue. */
+const MAX_PENDING = 500;
+
+/** A bare poll answer ("2", "1, 3", "1 and 2"): never merged, so the numbered-poll vote check still sees it alone. */
+export const looksLikeVote = (text: string) => /^\s*\d+(?:[\s,]+(?:and\s+)?\d+)*\s*$/i.test(text);
+
+/** Whether a text may be merged with the same sender's quick next one: plain text, not a command, not a vote. */
+export const mergeableText = (text: string | null | undefined) => typeof text === "string" && !text.trimStart().startsWith("/") && !looksLikeVote(text);
 
 /** One message as noted on arrival. */
 export type Arrival = { readonly id: number; readonly chat: string; readonly sender: string; readonly at: number; readonly mergeable: boolean };
@@ -51,8 +57,8 @@ export class Coalescer {
   arrive(chat: string, sender: string, mergeable: boolean): Arrival {
     const now = this.clock();
     const a: Arrival = { id: ++this.seq, chat, sender, at: now, mergeable };
-    const list = (this.arrivals.get(chat) ?? []).filter((x) => now - x.at < KEEP_MS);
-    list.push(a);
+    // Kept until their own take() (forget): pruning by age could drop one whose queued task hasn't run yet.
+    const list = [...(this.arrivals.get(chat) ?? []), a].slice(-MAX_PENDING);
     this.arrivals.set(chat, list);
     const wake = this.wakers.get(chat);
     this.wakers.delete(chat);
@@ -73,8 +79,11 @@ export class Coalescer {
       for (;;) {
         const next = (this.arrivals.get(a.chat) ?? []).find((x) => x.id > a.id);
         if (next) {
-          if (next.sender === a.sender && next.mergeable) {
-            this.carried.set(next.id, { pieces, at });
+          // Only a quick next text from the same person: one that came after the window is its own request, however
+          // long the queue kept this one waiting.
+          if (next.sender === a.sender && next.mergeable && next.at - a.at <= this.windowMs) {
+            const already = this.carried.get(next.id);
+            this.carried.set(next.id, { pieces: [...(already?.pieces ?? []), ...pieces], at: Math.min(at, already?.at ?? at) });
             this.forget(a);
             return null;
           }
