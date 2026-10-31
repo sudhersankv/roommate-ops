@@ -13,11 +13,10 @@ import { addDaysToDay, daysBetweenDays } from "@/lib/time";
 import { record } from "./activity";
 import { NotAllowedError, requireActive } from "./authz";
 import { getExpense, insertExpenseRows, listExpenses, logExpense, todayIn, type Expense, type ExpenseInput } from "./money";
-import { mayPost, nextDueOnOrAfter, sendDms, shortMoney } from "./rent";
+import { mayPost, nextDueOnOrAfter, sendDms, shortMoney, type DmOutcome } from "./rent";
 import { dollars, type Ctx } from "./types";
 
 const { expenses, groups, pendingAmounts } = schema;
-type Deliver = Parameters<typeof sendDms>[1];
 
 const at = (day: string) => new Date(`${day}T12:00:00Z`);
 const iso = (d: Date) => d.toISOString().slice(0, 10);
@@ -85,14 +84,11 @@ export type VariableInput = Pick<ExpenseInput, "method" | "splitAmong" | "percen
   category?: ExpenseCategory;
 };
 
-/** An Expense needs some cents; a variable parent's are a placeholder that Balances skip. */
-const PLACEHOLDER_CENTS = 100;
-
 /** "Electric varies, due the 20th, Dev pays": a monthly parent whose amount is asked of its Payer each month. */
 export async function setVariableExpense(ctx: Ctx, input: VariableInput): Promise<Expense> {
   if (!Number.isInteger(input.dueDay) || input.dueDay < 1 || input.dueDay > 31) throw new Error("Which day of the month is the bill due (1 to 31)?");
   return logExpense(ctx, {
-    cents: PLACEHOLDER_CENTS,
+    cents: 0,
     description: input.description,
     category: input.category ?? "utilities",
     recurring: "monthly",
@@ -108,17 +104,17 @@ export async function setVariableExpense(ctx: Ctx, input: VariableInput): Promis
 
 type Parent = { id: string; groupId: string; occurredOn: string; tz: string };
 
-/** Ask (or re-ask) a variable parent's Payer for this month's amount. True when a DM went out. */
-async function askVariable(p: Parent, now: Date, deliver?: Deliver): Promise<boolean> {
+/** Ask (or re-ask) a variable parent's Payer for this month's amount. What happened to the DM, or null when nothing was due. */
+async function askVariable(p: Parent, now: Date): Promise<DmOutcome | null> {
   const today = localDay(now, p.tz);
-  if (today < p.occurredOn) return false;
+  if (today < p.occurredOn) return null;
   const period = (latestOccurrence(p.occurredOn, "monthly", today) ?? p.occurredOn).slice(0, 7);
   const [row] = await db.select().from(pendingAmounts).where(and(eq(pendingAmounts.expenseId, p.id), eq(pendingAmounts.period, period)));
   const next = variableAsk(p.occurredOn, today, row ? { asks: row.asks, askedDay: localDay(row.askedAt, p.tz), resolved: !!row.resolvedExpenseId } : null);
-  if (!next || !(await mayPost(p.groupId))) return false;
+  if (!next || !(await mayPost(p.groupId))) return null;
   const e = await getExpense({ groupId: p.groupId }, p.id);
   const payer = e?.payers?.[0];
-  if (!e || !payer) return false;
+  if (!e || !payer) return null;
   // Claim the ask before sending: another process, or the next tick, finds it taken.
   const claimed =
     next.kind === "ask"
@@ -132,8 +128,9 @@ async function askVariable(p: Parent, now: Date, deliver?: Deliver): Promise<boo
           .set({ asks: 2, askedAt: now })
           .where(and(eq(pendingAmounts.id, row!.id), eq(pendingAmounts.asks, 1), isNull(pendingAmounts.resolvedExpenseId)))
           .returning({ prefill: pendingAmounts.prefillCents });
-  if (!claimed.length) return false;
-  return (await sendDms([{ memberId: payer.memberId, text: amountAskText(e.description, claimed[0].prefill), buttons: [] }], deliver)) > 0;
+  if (!claimed.length) return null;
+  const [sent] = await sendDms(p.groupId, [{ memberId: payer.memberId, text: amountAskText(e.description, claimed[0].prefill), buttons: [] }], now);
+  return sent;
 }
 
 /** The parent's split, to log a month of it with a new amount. */
@@ -245,10 +242,11 @@ export async function waitingAmounts(groupId: string): Promise<{ expenseId: stri
 /* ---------- the job ---------- */
 
 /**
- * Make today's copies of every due recurring Expense, and ask for the variable ones' amounts. Returns how many copies
- * were made. Tests pass `deliver` (default: the Member's Channel) and `groupId` (only that Group).
+ * Make today's copies of every due recurring Expense, and ask for the variable ones' amounts (through core's
+ * sendNudge, so quiet hours and "stop nudging me" apply). Returns how many copies were made; `opts.asked` collects
+ * what happened to each ask. Tests pass `groupId` (only that Group).
  */
-export async function runRecurring(now = new Date(), opts: { deliver?: Deliver; groupId?: string } = {}): Promise<number> {
+export async function runRecurring(now = new Date(), opts: { groupId?: string; asked?: DmOutcome[] } = {}): Promise<number> {
   const parents = await db
     .select({ id: expenses.id, groupId: expenses.groupId, occurredOn: expenses.occurredOn, recurring: expenses.recurring, variable: expenses.variable, createdBy: expenses.createdBy, tz: groups.timezone })
     .from(expenses)
@@ -257,7 +255,8 @@ export async function runRecurring(now = new Date(), opts: { deliver?: Deliver; 
   let made = 0;
   for (const p of parents) {
     if (p.variable) {
-      await askVariable(p, now, opts.deliver).catch((e) => console.error(`[recurring] asking for ${p.id} failed`, e));
+      const asked = await askVariable(p, now).catch((e) => (console.error(`[recurring] asking for ${p.id} failed`, e), null));
+      if (asked) opts.asked?.push(asked);
       continue;
     }
     const day = latestOccurrence(p.occurredOn, p.recurring!, localDay(now, p.tz));

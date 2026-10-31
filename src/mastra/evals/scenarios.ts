@@ -1103,7 +1103,7 @@ export const SCENARIOS: Scenario[] = [
       const { zonedTimeToUtc } = await import("@/lib/time");
       const bill = await setVariableExpense(e.as("Dev"), { description: "Electric", dueDay: 20 });
       const [year, month, day] = bill.occurredOn!.split("-").map(Number);
-      await runRecurring(zonedTimeToUtc("America/Chicago", { year, month, day, hour: 10, minute: 0 }), { groupId: e.ctx.groupId, deliver: async () => {} });
+      await runRecurring(zonedTimeToUtc("America/Chicago", { year, month, day, hour: 10, minute: 0 }), { groupId: e.ctx.groupId });
     },
     turn: { text: "roomie electric was 92", from: "Dev" },
     expect: { tools: ["answer_amount"], replyIncludes: ["92"] },

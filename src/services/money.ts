@@ -38,7 +38,7 @@ export type Expense = {
   occurredOn?: string;
   recurring?: Recurrence | null;
   recurringParentId?: string | null;
-  /** A recurring parent whose amount is asked on each due day (utilities); its own cents are a placeholder, never owed. */
+  /** A recurring parent whose amount is asked on each due day (utilities); its own cents are 0, never owed. */
   variable?: boolean;
   receiptUrl?: string | null;
   /** The receipt's Document (open it at receiptUrl, /api/docs/<id>). */
@@ -197,7 +197,10 @@ export const todayIn = async (groupId: string) => localDay(new Date(), await gro
 
 /** Validates an Expense against the Group's active Members and works out every Share. */
 async function build(ctx: Ctx, input: ExpenseInput): Promise<BuiltExpense & { nameOf: (id: string) => string }> {
-  assertWholeCents(input.cents);
+  // A variable parent has no amount of its own (0 cents): each month is its own Expense. Its rows keep who's in and the weights.
+  if (input.variable) {
+    if (input.cents !== 0) throw new Error("A bill that varies has no amount of its own; each month's amount is asked on the due day.");
+  } else assertWholeCents(input.cents);
   const description = input.description?.trim();
   if (!description) throw new Error("What was it for? Give the expense a description.");
 
@@ -210,7 +213,8 @@ async function build(ctx: Ctx, input: ExpenseInput): Promise<BuiltExpense & { na
 
   const payerList = input.payers?.length ? input.payers : [{ memberId: input.payerId ?? ctx.memberId, cents: input.cents }];
   for (const p of payerList) known(p.memberId, "payer");
-  const payers = checkPayers(input.cents, payerList, nameOf);
+  if (input.variable && payerList.length > 1) throw new SplitError("A bill that varies has one payer. Who pays it?");
+  const payers = input.variable ? [{ memberId: payerList[0].memberId, cents: 0 }] : checkPayers(input.cents, payerList, nameOf);
   const tie = { payerIds: payers.map((p) => p.memberId), nameOf };
 
   const method = inferMethod(input);
@@ -385,6 +389,7 @@ export async function updateExpense(ctx: Ctx, input: ExpensePatch): Promise<Expe
     recurring: input.recurring !== undefined ? input.recurring : before.recurring,
     receiptUrl: input.receiptUrl !== undefined ? input.receiptUrl : before.receiptUrl,
     source: before.source,
+    variable: input.variable ?? before.variable,
   });
   await db.transaction(async (tx) => {
     await tx
@@ -469,7 +474,7 @@ export async function findExpenses(ctx: GroupCtx, query: string, opts: { deleted
 
 /* ---------- Balances and the Settle plan ---------- */
 
-/** The Expenses people owe on: live, and not a variable parent (its cents are a placeholder; each month is its own Expense). */
+/** The Expenses people owe on: live, and not a variable parent (0 cents of its own; each month is its own Expense). */
 const owedExpenses = (groupId: string) => and(eq(expenses.groupId, groupId), isNull(expenses.deletedAt), eq(expenses.variable, false));
 
 /**

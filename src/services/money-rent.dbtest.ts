@@ -1,13 +1,14 @@
 // Rent, utilities and the Settle nudge (#25) against the Neon dev branch, in throwaway Groups (Apt 4B's people: Maya
-// pays the landlord, Dev and Sam). DMs are captured with an injected deliver, so no Channel is needed. Times are local
-// to America/Chicago (the Groups' zone). Run: npx tsx --test src/services/money-rent.dbtest.ts
+// pays the landlord, Dev and Sam). DMs go the real way (core's sendNudge: quiet hours, "stop nudging me", paused
+// Groups) into a capturing dev Channel. Times are local to America/Chicago (the Groups' zone). Run: npx tsx --test src/services/money-rent.dbtest.ts
 import "@/lib/env";
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { and, eq, isNull } from "drizzle-orm";
 import { db, schema } from "@/db";
+import { registerChannel } from "@/channels";
 import type { Outgoing } from "@/channels/types";
-import { devUserId } from "@/channels/dev";
+import { DevChannel, devUserId } from "@/channels/dev";
 import { zonedTimeToUtc } from "@/lib/time";
 import { onGroupJoined } from "@/onboarding";
 import { groupBundle } from "./bundle";
@@ -15,7 +16,7 @@ import { deleteGroup } from "./groups";
 import { setPaymentHandles } from "./members";
 import { getExpense, logExpense, settleUp } from "./money";
 import { answerAmount, prefillAmount, runRecurring, setVariableExpense } from "./recurring";
-import { getRent, rentBundleLine, rentDmJob, rentStatus, setRent } from "./rent";
+import { getRent, rentBundleLine, rentDmJob, rentStatus, setRent, type DmOutcome } from "./rent";
 import { groupReport } from "./report";
 import { getNudgeSettings, settleNudgeJob, updateNudgeSettings } from "./settle-nudge";
 import type { Ctx } from "./types";
@@ -25,17 +26,20 @@ import { assertNotProdDb } from "../../scripts/lib/prod-guard";
 const TZ = "America/Chicago";
 const local = (month: number, day: number, hour: number, minute = 0) => zonedTimeToUtc(TZ, { year: 2026, month, day, hour, minute });
 
-type Sent = { memberId: string; out: Outgoing };
-const inbox = () => {
-  const sent: Sent[] = [];
-  return { sent, deliver: async (memberId: string, out: Outgoing) => void sent.push({ memberId, out }) };
-};
+// Every private message the dev Channel was asked to send, by Member.
+const memberOf = new Map<string, string>();
+const sent: { memberId: string; out: Outgoing }[] = [];
+const inbox = () => sent.splice(0);
+const outcomes = (r: DmOutcome[]) => r.map((x) => `${x.memberId}:${x.outcome}`).sort();
+const setNudges = (memberId: string, nudges: "on" | "off") =>
+  db.insert(schema.memberNotes).values({ memberId, note: { nudges } }).onConflictDoUpdate({ target: schema.memberNotes.memberId, set: { note: { nudges } } });
 
 async function apt(tag: string) {
   const stamp = `${tag}-${Date.now()}`;
   const people = ["Maya", "Dev", "Sam"].map((name) => ({ userExternalId: devUserId(`rent-${name}-${stamp}`), name }));
   const joined = await onGroupJoined({ channel: "dev", externalId: `rent-${stamp}`, title: `Rent test ${stamp}` }, people, people[0]);
   const id = Object.fromEntries(joined.members.map((m) => [m.displayName, m.id])) as Record<"Maya" | "Dev" | "Sam", string>;
+  for (const p of people) memberOf.set(p.userExternalId, id[p.name as keyof typeof id]);
   const as = (name: keyof typeof id): Ctx => ({ groupId: joined.group.id, memberId: id[name], source: "chat" });
   return { groupId: joined.group.id, id, as };
 }
@@ -46,6 +50,7 @@ let B: Awaited<ReturnType<typeof apt>>;
 describe("rent, utilities and the Settle nudge against the dev DB", () => {
   before(async () => {
     await assertNotProdDb(db, "money-rent dbtest");
+    registerChannel(new DevChannel((o) => void (o.to === "private" && sent.push({ memberId: memberOf.get(o.userExternalId) ?? o.userExternalId, out: o.msg }))));
     A = await apt("a");
     B = await apt("b");
     await setPaymentHandles(A.as("Maya"), { venmo: "maya-k" });
@@ -79,13 +84,14 @@ describe("rent, utilities and the Settle nudge against the dev DB", () => {
   });
 
   test("day -3: the Bundle's line and two DMs (Dev $800, Sam $600, never Maya), once", async () => {
-    const box = inbox();
-    assert.equal(await rentDmJob(A, local(10, 29, 8, 30), box.deliver), 0, "outside the Bundle's hour");
-    assert.equal(await rentDmJob(A, local(10, 29, 9, 5), box.deliver), 2);
-    assert.equal(await rentDmJob(A, local(10, 29, 9, 30), box.deliver), 0, "once a month");
-    assert.deepEqual(box.sent.map((s) => s.memberId).sort(), [A.id.Dev, A.id.Sam].sort());
-    const dev = box.sent.find((s) => s.memberId === A.id.Dev)!.out;
-    const sam = box.sent.find((s) => s.memberId === A.id.Sam)!.out;
+    inbox();
+    assert.deepEqual(await rentDmJob(A, local(10, 29, 8, 30)), [], "outside the Bundle's hour");
+    assert.deepEqual(outcomes(await rentDmJob(A, local(10, 29, 9, 5))), [`${A.id.Dev}:sent`, `${A.id.Sam}:sent`].sort());
+    assert.deepEqual(await rentDmJob(A, local(10, 29, 9, 30)), [], "once a month");
+    const got = inbox();
+    assert.deepEqual(got.map((s) => s.memberId).sort(), [A.id.Dev, A.id.Sam].sort());
+    const dev = got.find((s) => s.memberId === A.id.Dev)!.out;
+    const sam = got.find((s) => s.memberId === A.id.Sam)!.out;
     assert.match(dev.text, /your share is \$800\b/);
     assert.match(sam.text, /your share is \$600\b/);
     assert.ok(!dev.text.includes("$600") && !sam.text.includes("$800"));
@@ -95,6 +101,18 @@ describe("rent, utilities and the Settle nudge against the dev DB", () => {
     assert.equal(await rentBundleLine(A, local(10, 29, 9, 5)), line);
     assert.ok((await groupBundle(A, local(10, 29, 9, 5)))?.includes(line), "Money's line is in the Bundle");
     assert.equal(await rentBundleLine(A, local(10, 30, 9)), null, "nothing on the days between");
+  });
+
+  test("a Member who said \"stop nudging me\" gets no rent DM (sendNudge says off)", async () => {
+    const { id, as } = B;
+    await setRent(as("Maya"), { cents: 240000, dueDay: 1 }, local(10, 29, 8));
+    await setNudges(id.Sam, "off");
+    inbox();
+    assert.deepEqual(outcomes(await rentDmJob(B, local(10, 29, 9, 5))), [`${id.Dev}:sent`, `${id.Sam}:off`].sort());
+    assert.deepEqual(inbox().map((s) => s.memberId), [id.Dev]);
+    // Out of the way of the Settle nudge test below (B's ledger and its rent offer).
+    const { deleteExpense } = await import("./money");
+    await deleteExpense(as("Maya"), { expenseId: (await getRent(B))!.expenseId });
   });
 
   test("the due day with Dev settled: only Sam is named", async () => {
@@ -119,22 +137,28 @@ describe("rent, utilities and the Settle nudge against the dev DB", () => {
 
   // ---------- utilities ----------
 
-  test("a variable electric bill: asked on its due day, once more the next day, then quiet; one row", async () => {
-    const box = inbox();
+  test("a variable electric bill: 0 cents of its own; asked on its due day (held to 08:00 in quiet hours), once more the next day, then quiet", async () => {
+    inbox();
     const parent = await setVariableExpense(A.as("Dev"), { description: "Electric", dueDay: 20 });
     assert.equal(parent.variable, true);
+    assert.equal(parent.cents, 0, "no fake amount");
     assert.equal(parent.occurredOn, "2026-11-20");
-    await runRecurring(local(11, 19, 10), { deliver: box.deliver, groupId: A.groupId });
-    assert.equal(box.sent.length, 0, "not due yet");
-    await runRecurring(local(11, 20, 10), { deliver: box.deliver, groupId: A.groupId });
-    await runRecurring(local(11, 20, 15), { deliver: box.deliver, groupId: A.groupId });
-    assert.deepEqual(box.sent, [{ memberId: A.id.Dev, out: { text: "How much was the electric bill?" } }]);
+    const asked: DmOutcome[] = [];
+    await runRecurring(local(11, 19, 10), { groupId: A.groupId, asked });
+    assert.equal(asked.length, 0, "not due yet");
+    await runRecurring(local(11, 20, 23), { groupId: A.groupId, asked });
+    await runRecurring(local(11, 20, 23, 30), { groupId: A.groupId, asked });
+    assert.deepEqual(asked, [{ memberId: A.id.Dev, outcome: "quiet" }], "11 PM is quiet hours: one ask, held");
+    const held = await db.select().from(schema.pendingPosts).where(eq(schema.pendingPosts.groupId, A.groupId));
+    assert.deepEqual(held.map((h) => [h.kind, h.memberId, h.text]), [["dm", A.id.Dev, "How much was the electric bill?"]]);
+    assert.equal(inbox().length, 0, "nothing sent at night");
     const rows = await db.select().from(schema.pendingAmounts).where(eq(schema.pendingAmounts.expenseId, parent.id));
     assert.equal(rows.length, 1);
     assert.equal(rows[0].period, "2026-11");
-    await runRecurring(local(11, 21, 10), { deliver: box.deliver, groupId: A.groupId });
-    await runRecurring(local(11, 22, 10), { deliver: box.deliver, groupId: A.groupId });
-    assert.equal(box.sent.length, 2, "one re-ask, then nothing until next month");
+    await runRecurring(local(11, 21, 10), { groupId: A.groupId, asked });
+    await runRecurring(local(11, 22, 10), { groupId: A.groupId, asked });
+    assert.deepEqual(asked.map((a) => a.outcome), ["quiet", "sent"], "one re-ask, then nothing until next month");
+    assert.deepEqual(inbox(), [{ memberId: A.id.Dev, out: { text: "How much was the electric bill?" } }]);
     assert.equal((await db.select().from(schema.pendingAmounts).where(eq(schema.pendingAmounts.expenseId, parent.id)))[0].asks, 2);
     const copies = await db.select().from(schema.expenses).where(eq(schema.expenses.recurringParentId, parent.id));
     assert.equal(copies.length, 0, "a variable parent is never copied");
@@ -156,9 +180,9 @@ describe("rent, utilities and the Settle nudge against the dev DB", () => {
     assert.equal(await prefillAmount(A.groupId, "water", 5000), null, "no water bill");
     const hit = await prefillAmount(A.groupId, "ComEd electric bill", 9500);
     assert.equal(hit?.description, "Electric");
-    const box = inbox();
-    await runRecurring(local(12, 20, 10), { deliver: box.deliver, groupId: A.groupId });
-    assert.deepEqual(box.sent.map((s) => s.out.text), ["How much was the electric bill? Looks like $95 (from the bill). Right?"]);
+    inbox();
+    await runRecurring(local(12, 20, 10), { groupId: A.groupId });
+    assert.deepEqual(inbox().map((s) => s.out.text), ["How much was the electric bill? Looks like $95 (from the bill). Right?"]);
   });
 
   // ---------- the Settle nudge ----------
@@ -167,17 +191,18 @@ describe("rent, utilities and the Settle nudge against the dev DB", () => {
     const { id, as } = B;
     await logExpense(as("Maya"), { cents: 9000, description: "groceries", category: "groceries", occurredOn: "2026-10-30" });
     await logExpense(as("Dev"), { cents: 1500, description: "pizza", category: "food", occurredOn: "2026-11-13", splitAmong: [id.Dev, id.Sam] });
-    await db.insert(schema.memberNotes).values({ memberId: id.Sam, note: { nudges: "off" } }).onConflictDoNothing();
+    await setNudges(id.Sam, "off");
     assert.deepEqual(await getNudgeSettings(B), { thresholdCents: 2000, thresholdDays: 7, enabled: true });
 
-    const box = inbox();
+    inbox();
     const sunday = local(11, 15, 18, 10); // the report's default day and hour
-    assert.equal(await settleNudgeJob(B, local(11, 15, 17, 10), box.deliver), 0, "outside the report's hour");
-    assert.equal(await settleNudgeJob(B, sunday, box.deliver), 1);
-    assert.equal(await settleNudgeJob(B, local(11, 15, 18, 40), box.deliver), 0, "once a week");
-    assert.deepEqual(box.sent.map((s) => s.memberId), [id.Dev], "Sam opted out; Sam's $7.50 to Dev is under the line");
-    assert.equal(box.sent[0].out.text, `Quick one: you owe Maya $30.00. Tap to pay, then say "paid" here.`);
-    assert.deepEqual(box.sent[0].out.buttons, [{ text: "Pay Maya on Venmo", url: "https://venmo.com/u/maya-k?txn=pay&amount=30.00" }]);
+    assert.deepEqual(await settleNudgeJob(B, local(11, 15, 17, 10)), [], "outside the report's hour");
+    assert.deepEqual(await settleNudgeJob(B, sunday), [{ memberId: id.Dev, outcome: "sent" }]);
+    assert.deepEqual(await settleNudgeJob(B, local(11, 15, 18, 40)), [], "once a week");
+    const got = inbox();
+    assert.deepEqual(got.map((s) => s.memberId), [id.Dev], "Sam opted out; Sam's $7.50 to Dev is under the line");
+    assert.equal(got[0].out.text, `Quick one: you owe Maya $30.00. Tap to pay, then say "paid" here.`);
+    assert.deepEqual(got[0].out.buttons, [{ text: "Pay Maya on Venmo", url: "https://venmo.com/u/maya-k?txn=pay&amount=30.00" }]);
 
     const report = await groupReport(B, local(11, 15, 18, 45));
     const money = report.parts.map((p) => p.text);
@@ -191,8 +216,7 @@ describe("rent, utilities and the Settle nudge against the dev DB", () => {
   test("nudge settings: Admin only; off means no DMs and a plain count", async () => {
     await assert.rejects(updateNudgeSettings(B.as("Dev"), { enabled: false }), NotAllowedError);
     assert.deepEqual(await updateNudgeSettings(B.as("Maya"), { enabled: false, thresholdCents: 1000 }), { thresholdCents: 1000, thresholdDays: 7, enabled: false });
-    const box = inbox();
-    assert.equal(await settleNudgeJob(B, local(11, 22, 18, 10), box.deliver), 0);
+    assert.deepEqual(await settleNudgeJob(B, local(11, 22, 18, 10)), []);
     assert.ok((await groupReport(B, local(11, 22, 18, 15))).parts.some((p) => p.text === "2 open balances."));
   });
 });

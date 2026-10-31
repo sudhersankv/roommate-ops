@@ -12,7 +12,7 @@ import { recordFor } from "./activity";
 import { requireAdmin } from "./authz";
 import { listMembersWithHandles } from "./members";
 import { computeSettlePlan, pairwiseDebts, type Transfer } from "./money";
-import { mayPost, sendDms, type RentDm } from "./rent";
+import { mayPost, sendDms, type DmOutcome, type RentDm } from "./rent";
 import { claimPost, getSchedule, groupTimezone, weeklyReportWindow } from "./schedule";
 import { dollars, type Ctx, type GroupCtx } from "./types";
 
@@ -180,13 +180,13 @@ export async function settleNudgeDms(ctx: GroupCtx, now = new Date()): Promise<R
 /**
  * The weekly Settle nudge: only in the report's day and hour, claimed as scheduled_posts "nudge.settle" for that
  * local day, then one DM per pair. Called from Money's report() (the weekly report job builds it in that hour; the
- * scheduler is untouched). Returns how many DMs went out.
+ * scheduler is untouched). Returns what happened to each DM (none when it wasn't time).
  */
-export async function settleNudgeJob(ctx: GroupCtx, now = new Date(), deliver?: Parameters<typeof sendDms>[1]): Promise<number> {
+export async function settleNudgeJob(ctx: GroupCtx, now = new Date()): Promise<DmOutcome[]> {
   const [tz, sched, settings] = await Promise.all([groupTimezone(ctx.groupId), getSchedule(ctx), getNudgeSettings(ctx)]);
-  if (!settings.enabled) return 0;
+  if (!settings.enabled) return [];
   const w = weeklyReportWindow(now, tz, sched.reportWeekday, sched.reportHour);
-  if (!w.open || !(await mayPost(ctx.groupId))) return 0;
-  if (!(await claimPost(ctx.groupId, "nudge.settle", w.period))) return 0;
-  return sendDms(await settleNudgeDms(ctx, now), deliver);
+  if (!w.open || !(await mayPost(ctx.groupId))) return [];
+  if (!(await claimPost(ctx.groupId, "nudge.settle", w.period))) return [];
+  return sendDms(ctx.groupId, await settleNudgeDms(ctx, now), now);
 }

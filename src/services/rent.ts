@@ -6,7 +6,7 @@
 import { and, desc, eq, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import type { SplitMethod } from "@/db/enums";
-import type { Button } from "@/channels/types";
+import { CantMessagePrivatelyError, type Button, type Outgoing } from "@/channels/types";
 import { roomiePaused } from "@/lib/kill-switch";
 import { formatMoney } from "@/lib/money";
 import { payLinks } from "@/lib/pay-links";
@@ -276,37 +276,47 @@ export async function mayPost(groupId: string): Promise<boolean> {
   return !!g && !g.pausedAt;
 }
 
-/** Send private messages one by one; a refused DM (no Start yet on Telegram) is logged and skipped. Returns how many went. */
-export async function sendDms(dms: readonly Pick<RentDm, "memberId" | "text" | "buttons">[], deliver = defaultDeliver): Promise<number> {
-  let sent = 0;
+/**
+ * What happened to one DM: sent; held for 08:00 ("quiet", pending_posts); not sent ("off": they said "stop nudging me",
+ * "paused", "not-member"); the Channel can't DM them yet, so core's neutral Start hint went to the group ("hint", never
+ * the content) or not this week ("no-hint"); or the send failed.
+ */
+export type DmOutcome = { memberId: string; outcome: "sent" | "quiet" | "off" | "paused" | "not-member" | "hint" | "no-hint" | "failed" };
+
+/** Send private nudges one by one through core's sendNudge (services/nudges.ts), with nudgeOrHint (services/dm.ts) when the Channel can't DM someone yet. */
+export async function sendDms(groupId: string, dms: readonly Pick<RentDm, "memberId" | "text" | "buttons">[], now = new Date()): Promise<DmOutcome[]> {
+  const [{ sendNudge }, { nudgeOrHint }] = await Promise.all([import("./nudges"), import("./dm")]);
+  const out: DmOutcome[] = [];
   for (const dm of dms) {
+    const msg: Outgoing = { text: dm.text, ...(dm.buttons.length ? { buttons: dm.buttons } : {}) };
     try {
-      await deliver(dm.memberId, { text: dm.text, ...(dm.buttons.length ? { buttons: dm.buttons } : {}) });
-      sent++;
+      const r = await sendNudge(dm.memberId, msg, now);
+      out.push({ memberId: dm.memberId, outcome: r.sent ? "sent" : r.reason });
     } catch (e) {
-      console.error(`[money] DM to member ${dm.memberId} failed:`, e instanceof Error ? e.message : e);
+      if (e instanceof CantMessagePrivatelyError) {
+        const r = await nudgeOrHint(dm.memberId, groupId, msg, now).catch(() => "failed" as const);
+        out.push({ memberId: dm.memberId, outcome: r === "private" ? "sent" : r === "quiet" ? "no-hint" : r });
+      } else {
+        console.error(`[money] DM to member ${dm.memberId} failed:`, e instanceof Error ? e.message : e);
+        out.push({ memberId: dm.memberId, outcome: "failed" });
+      }
     }
   }
-  return sent;
-}
-
-async function defaultDeliver(memberId: string, out: { text: string; buttons?: Button[] }) {
-  const { deliverPrivate } = await import("@/channels");
-  await deliverPrivate(memberId, out);
+  return out;
 }
 
 /**
  * The rent DMs, once a month: only on the ahead day in the Bundle's hour, claimed as scheduled_posts "rent.ahead" for
  * the due month first. Called from Money's bundle() (the scheduler is untouched; Home's Today calls bundle() too,
- * which is why the hour is checked here). Returns how many DMs went out.
+ * which is why the hour is checked here). Returns what happened to each DM (none when it wasn't time).
  */
-export async function rentDmJob(ctx: GroupCtx, now = new Date(), deliver = defaultDeliver): Promise<number> {
+export async function rentDmJob(ctx: GroupCtx, now = new Date()): Promise<DmOutcome[]> {
   const rent = await getRent(ctx);
-  if (!rent) return 0;
+  if (!rent) return [];
   const [tz, sched] = await Promise.all([groupTimezone(ctx.groupId), getSchedule(ctx)]);
   const w = rentWindows(rent.dueDay, tz, now);
-  if (rent.startsOn > w.dueDay || dayInZone(tz, now) !== w.aheadDay) return 0;
-  if (!bundleWindow(now, tz, sched.nudgeHour).open || !(await mayPost(ctx.groupId))) return 0;
-  if (!(await claimPost(ctx.groupId, "rent.ahead", w.dueDay.slice(0, 7)))) return 0;
-  return sendDms(await rentDms(ctx, now), deliver);
+  if (rent.startsOn > w.dueDay || dayInZone(tz, now) !== w.aheadDay) return [];
+  if (!bundleWindow(now, tz, sched.nudgeHour).open || !(await mayPost(ctx.groupId))) return [];
+  if (!(await claimPost(ctx.groupId, "rent.ahead", w.dueDay.slice(0, 7)))) return [];
+  return sendDms(ctx.groupId, await rentDms(ctx, now), now);
 }

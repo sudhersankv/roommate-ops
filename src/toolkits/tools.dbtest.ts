@@ -436,7 +436,7 @@ describe("Roomie tools against the dev DB", () => {
     await assert.rejects(run("answer_amount", { amount: 92 }, ryan), /No bill is waiting/);
     const tz = (await groups.getGroup(groupId))!.timezone;
     const [y, m, d] = (bill.firstAsk as string).split("-").map(Number);
-    await recurring.runRecurring(zonedTimeToUtc(tz, { year: y, month: m, day: d, hour: 10, minute: 0 }), { groupId, deliver: async () => {} });
+    await recurring.runRecurring(zonedTimeToUtc(tz, { year: y, month: m, day: d, hour: 10, minute: 0 }), { groupId });
     const paid = await run("answer_amount", { amount: 92, bill: "electric" }, ryan);
     assert.equal(paid.total, "$92.00");
     assert.equal(paid.shares, undefined, "no shares in the group");
