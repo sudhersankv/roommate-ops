@@ -51,6 +51,7 @@ import makeWASocket, {
 import QRCode from "qrcode";
 import type { ChatRef } from "@/onboarding";
 import { KeyedQueue } from "./queue";
+import { Coalescer, withMerged, type Merged } from "./coalesce";
 import { planDelivery } from "./humanize";
 import { envMs, SendLimiter, sleep as realSleep } from "./rate-limit";
 import { BAD_VOICE, chunkText, commandOf, helpText, MANY_GROUPS, NO_GROUP, NO_VOICE, OOPS, startReply, wasAddressed } from "./text";
@@ -483,6 +484,8 @@ export type WhatsAppOptions = {
   /** The raw QR string, for a terminal (scripts/whatsapp.ts). */
   onQr?: (qr: string) => void;
   onStatus?: (s: WhatsAppStatus) => void;
+  /** Joins quick consecutive texts from one person into one run (default: MERGE_WINDOW_MS, else 4 s). */
+  coalescer?: Coalescer;
 } & Omit<WhatsAppChannelOptions, "recipientOf" | "onSent">;
 
 export type WhatsApp = {
@@ -545,6 +548,7 @@ export function createWhatsApp(opts: WhatsAppOptions): WhatsApp {
   const toldNoGroup = new Set<string>();
   const namesHeard = new Map<string, string>();
   const queue = new KeyedQueue("whatsapp");
+  const coalesce = opts.coalescer ?? new Coalescer();
 
   const channel = new WhatsAppChannel(() => (status.state === "open" ? sock : null), {
     limiter: opts.limiter,
@@ -851,7 +855,7 @@ export function createWhatsApp(opts: WhatsAppOptions): WhatsApp {
     return base;
   }
 
-  async function groupMessage(m: WAMessage, read: ReadMessage) {
+  async function groupMessage(m: WAMessage, read: ReadMessage, merged: Merged) {
     const jid = m.key.remoteJid!;
     if (isRefused(jid)) return;
     const senderIds = [m.key.participant, m.key.participantAlt, (m.key as { participantPn?: string }).participantPn];
@@ -870,10 +874,10 @@ export function createWhatsApp(opts: WhatsAppOptions): WhatsApp {
     const got = await content(m, read, say, jid, jid, from);
     if (!got) return;
     const title = (await metadata(jid))?.subject || undefined;
-    await pipeline({ channel: "whatsapp", chatExternalId: jid, ...(title ? { chatTitle: title } : {}), userExternalId: from.userExternalId, userName: from.name, ...got }, jid, say);
+    await pipeline({ channel: "whatsapp", chatExternalId: jid, ...(title ? { chatTitle: title } : {}), userExternalId: from.userExternalId, userName: from.name, ...withMerged(got, merged) }, jid, say);
   }
 
-  async function privateMessage(m: WAMessage, read: ReadMessage) {
+  async function privateMessage(m: WAMessage, read: ReadMessage, merged: Merged) {
     const jid = m.key.remoteJid!;
     const ids = [jid, m.key.remoteJidAlt, (m.key as { senderPn?: string }).senderPn];
     const from = await person(ids, m.pushName);
@@ -903,7 +907,7 @@ export function createWhatsApp(opts: WhatsAppOptions): WhatsApp {
     }
     const got = await content(m, read, say, `dm:${from.userExternalId}`, chats[0], from, true);
     if (!got) return;
-    await pipeline({ channel: "whatsapp", chatExternalId: chats[0], userExternalId: from.userExternalId, userName: from.name, ...got, isPrivate: true }, jid, say);
+    await pipeline({ channel: "whatsapp", chatExternalId: chats[0], userExternalId: from.userExternalId, userName: from.name, ...withMerged(got, merged), isPrivate: true }, jid, say);
   }
 
   /**
@@ -959,7 +963,16 @@ export function createWhatsApp(opts: WhatsAppOptions): WhatsApp {
       if (!read) continue;
       const jid = m.key.remoteJid!;
       void sock?.readMessages([m.key]).catch(() => {});
-      queue.push(isGroupJid(jid) ? jid : `dm:${norm(m.key.remoteJidAlt) ?? jid}`, () => (isGroupJid(jid) ? groupMessage(m, read) : privateMessage(m, read)));
+      const group = isGroupJid(jid);
+      const key = group ? jid : `dm:${norm(m.key.remoteJidAlt) ?? jid}`;
+      // Noted on arrival, so a quick second text from the same person joins this one (channels/coalesce.ts).
+      const plain = read.kind === "text" && !read.text.trimStart().startsWith("/");
+      const arrival = coalesce.arrive(key, (group ? norm(m.key.participant) ?? norm(m.key.participantAlt) : key) ?? key, plain);
+      queue.push(key, async () => {
+        const merged = await coalesce.take(arrival, plain ? read : { text: "" });
+        if (!merged) return; // it went along with this person's next text
+        return group ? groupMessage(m, read, merged) : privateMessage(m, read, merged);
+      });
     }
   }
 

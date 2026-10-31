@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import type { Update } from "grammy/types";
 import { CantMessagePrivatelyError, type IncomingMessage } from "./types";
 import { TokenBucket } from "./rate-limit";
+import { Coalescer } from "./coalesce";
 import {
   botInfoFromToken,
   botWasAdded,
@@ -34,7 +35,7 @@ type Call = { method: string; payload: Record<string, unknown> };
 let updateId = 1;
 let messageId = 1;
 
-function harness(opts: { deps?: Partial<TelegramDeps>; joinDelayMs?: number; failSend?: { error_code: number; description: string } } = {}) {
+function harness(opts: { deps?: Partial<TelegramDeps>; joinDelayMs?: number; failSend?: { error_code: number; description: string }; coalescer?: Coalescer } = {}) {
   const calls: Call[] = [];
   const seen = { incoming: [] as IncomingMessage[], joined: [] as unknown[][], participants: [] as unknown[][], moved: [] as string[][], saved: [] as string[] };
   const deps: TelegramDeps = {
@@ -71,6 +72,7 @@ function harness(opts: { deps?: Partial<TelegramDeps>; joinDelayMs?: number; fai
     sleep,
     limiter: telegramLimiter({ clock, sleep }),
     download: async () => new Uint8Array([1, 2, 3]).buffer,
+    coalescer: opts.coalescer ?? new Coalescer({ windowMs: 0, clock }),
   });
   tg.bot.api.config.use(async (_prev, method, payload) => {
     calls.push({ method, payload: payload as Record<string, unknown> });
@@ -197,9 +199,30 @@ describe("incoming messages", () => {
     const h = harness();
     await h.feed(message(MAYA, { text: "@roomie_test_bot who's here", entities: [{ type: "mention", offset: 0, length: 16 }] }));
     assert.deepEqual(h.seen.incoming, [
-      { channel: "telegram", chatExternalId: "-1001", chatTitle: "Apt 4B", userExternalId: "11", userName: "Maya Lee", text: "Roomie who's here", mentionsRoomie: true, isReplyToRoomie: false },
+      { channel: "telegram", chatExternalId: "-1001", chatTitle: "Apt 4B", userExternalId: "11", userName: "Maya Lee", text: "Roomie who's here", mentionsRoomie: true, isReplyToRoomie: false, receivedAt: new Date(0) },
     ]);
     assert.equal(h.sent().at(-1)?.payload.text, "ok Roomie who's here");
+  });
+
+  test("two quick texts from one Member -> ONE pipeline run with both and one reply; someone else's text isn't merged (#41)", async () => {
+    // Real time here (the updates go in one by one): a 150 ms window stands in for the 4 s one.
+    const h = harness({ coalescer: new Coalescer({ windowMs: 150 }) });
+    const push = (from: object, text: string) => h.tg.bot.handleUpdate({ update_id: updateId++, ...message(from, { text }) } as Update);
+    await push(MAYA, "we need to make tacos tonight, what do we need");
+    await push(MAYA, "roomie suggest");
+    await h.tg.idle();
+    await push(SAM, "roomie add eggs");
+    await push(MAYA, "and bread");
+    await h.tg.idle();
+    assert.deepEqual(
+      h.seen.incoming.map((m) => [m.userName, m.text, m.merged]),
+      [
+        ["Maya Lee", "we need to make tacos tonight, what do we need\nroomie suggest", 2],
+        ["Sam", "roomie add eggs", undefined],
+        ["Maya Lee", "and bread", undefined],
+      ],
+    );
+    assert.equal(h.sent().length, 3, "one reply per run");
   });
 
   test("a reply to Roomie is flagged; one to someone else isn't", () => {

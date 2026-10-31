@@ -17,6 +17,7 @@ import {
   type Chattiness,
   type JevAnswers,
   replyText,
+  staleReply,
 } from "./policy";
 import { parseJev, questionsFor, toolkitCriteria } from "./jev";
 import { MANIFESTS, TOOLKIT_IDS } from "@/toolkits/manifests";
@@ -425,5 +426,30 @@ describe("replyText: only what Roomie said after its last tool ran (live test #1
     assert.equal(replyText([{ text: "Added it.", toolCalls: [{}] }, { text: "", toolCalls: [] }], "Added it."), "Added it.");
     assert.equal(replyText([{ text: "Hey!", toolCalls: [] }], "Hey!"), "Hey!");
     assert.equal(replyText([], "Hey!"), "Hey!");
+  });
+});
+
+describe("staleReply (#41): Roomie already answered this Member since their message came in", () => {
+  // The live example: the tacos recipe went out while "roomie suggest" waited its turn; its own run then asked.
+  const recipe = "Tacos for 3: tortillas, beef, onion, cheese, salsa. Add the 12 missing ingredients to the cart?";
+
+  test("a question after Roomie answered them: dropped", () => {
+    assert.equal(staleReply({ reply: "Suggest what, sudhersan? A different dinner than tacos, or something else?", changed: false, answeredSince: [recipe] }), true);
+  });
+
+  test("a repeat of what Roomie just said (case, spacing and punctuation aside): dropped", () => {
+    assert.equal(staleReply({ reply: "tacos for 3:  tortillas, beef, onion, cheese, salsa", changed: false, answeredSince: [recipe] }), true);
+  });
+
+  test("nothing said to them since: sent, question or not", () => {
+    assert.equal(staleReply({ reply: "Suggest what?", changed: false, answeredSince: [] }), false);
+  });
+
+  test("the run changed something (a tool ran): always sent", () => {
+    assert.equal(staleReply({ reply: "Added the 12 taco ingredients. Anything else?", changed: true, answeredSince: [recipe] }), false);
+  });
+
+  test("a new statement (no question, not a repeat): sent", () => {
+    assert.equal(staleReply({ reply: "Dev owes you $12.50.", changed: false, answeredSince: [recipe] }), false);
   });
 });

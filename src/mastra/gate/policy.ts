@@ -193,3 +193,20 @@ export function parseSilent(text: string): string | null {
   if (ONLY_FILLER.test(rest)) return null;
   return rest.replace(/^[\s\p{P}]+/u, "").trim();
 }
+
+/** A reply's words only: lower case, punctuation and runs of spaces gone (for "is this a repeat?"). */
+const words = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}$]+/gu, " ").trim();
+
+/**
+ * The stale-reply rule (#41). Messages in a Chat run one at a time, so a run can finish after Roomie already answered
+ * the same Member (their earlier message's run, say, while the "Yes" after it waited). Such a reply is dropped, the
+ * `[silent]` way, when the run changed nothing (no tool besides working memory ran) and it's only a question or a
+ * repeat of a line Roomie said to them since their message arrived (`answeredSince`). Anything that did something, or
+ * says something new, is sent.
+ */
+export function staleReply(i: { reply: string; changed: boolean; answeredSince: readonly string[] }): boolean {
+  if (i.changed || !i.answeredSince.length) return false;
+  if (i.reply.includes("?")) return true;
+  const said = words(i.reply);
+  return !!said && i.answeredSince.some((line) => words(line).includes(said));
+}

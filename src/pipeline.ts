@@ -17,7 +17,7 @@ import { closePollsFor, numberVote, openTextPoll, recordVote, voteOnPoll } from 
 import { echoAfterPrivateRun, resolveDmGroup, runMark } from "@/services/dm";
 import { chatFor, enabledToolkits, getGroup } from "@/services/groups";
 import { getMember, listGroupMembers, memberByChannelUser, type Member } from "@/services/members";
-import { humanMessagesSince, lastRoomieReplyAt, logMessage, recentChatter } from "@/services/chatlog";
+import { humanMessagesSince, lastRoomieReplyAt, logMessage, recentChatter, roomieAnswersSince } from "@/services/chatlog";
 import type { Ctx } from "@/services/types";
 import { NotAllowedError } from "@/services/authz";
 import { mastra } from "@/mastra";
@@ -29,7 +29,7 @@ import { BREATHER, BREATHER_MEMBER, BREATHER_SHORT, caps, clipInput } from "@/li
 import { localDay } from "@/lib/dates";
 import { logPaused, roomiePaused } from "@/lib/kill-switch";
 import { effectiveDials, isPetCommand, normalizePersonality, shapeLine, winsFrom, type Personality } from "@/lib/personality";
-import { mediaWanted, replyText as finalText, type GateDecision } from "@/mastra/gate/policy";
+import { mediaWanted, replyText as finalText, staleReply, type GateDecision } from "@/mastra/gate/policy";
 import type { MediaQuestion } from "@/channels/types";
 import { allSquare } from "@/services/personality";
 import { claimWins, dayGreeting, dbMoments } from "@/services/pet";
@@ -54,6 +54,11 @@ export type RespondInput = {
   isPrivate?: boolean;
   /** A photo or voice note nobody addressed to Roomie (IncomingMessage.skippedMedia). */
   skippedMedia?: "photo" | "voice";
+  /** When the message reached the adapter (IncomingMessage.receivedAt): the stale-reply rule looks at what Roomie said
+   * to this Member since then. */
+  receivedAt?: Date;
+  /** How many quick texts `text` joins (channels/coalesce.ts), for the trace. */
+  merged?: number;
 };
 
 export type PipelineResult = {
@@ -166,6 +171,8 @@ export async function respondToIncoming(msg: IncomingMessage): Promise<PipelineR
     mentionsRoomie: msg.mentionsRoomie,
     isPrivate: msg.isPrivate,
     skippedMedia: msg.skippedMedia,
+    receivedAt: msg.receivedAt,
+    merged: msg.merged,
   });
 }
 
@@ -270,7 +277,7 @@ export async function respond(input: RespondInput): Promise<PipelineResult> {
   const jevOk = await limits.jev(groupId, source);
   if (!jevOk) console.log(`[caps] group ${groupId} used its Jev calls for today: hard triggers only`);
 
-  const root = startSpan("roomie message", { text: line }, { channel: input.channel, source, groupId, memberId: member.id, role: member.role, status: member.status });
+  const root = startSpan("roomie message", { text: line }, { channel: input.channel, source, groupId, memberId: member.id, role: member.role, status: member.status, ...(input.merged ? { merged: input.merged } : {}) });
   const gateSpan = root?.createChildSpan({ type: SpanType.GENERIC, name: "gate", input: { latest: line, hardTrigger, inWindow } });
   const gate = await runGate({
     latest: line,
@@ -365,6 +372,20 @@ export async function respond(input: RespondInput): Promise<PipelineResult> {
     if (replyText === null) {
       root?.end({ output: { replied: false, silent: true }, metadata: gateMeta });
       return { out: null, gate, toolCalls, traceId: root?.traceId };
+    }
+    // Messages run one at a time per Chat: while this one waited, Roomie may have answered this Member already (#41).
+    // A reply that changed nothing and only asks again or repeats itself then stays unsaid, like "[silent]".
+    const changed = toolCalls.some(isActionTool);
+    if (chat && input.receivedAt && !changed) {
+      const answeredSince = await roomieAnswersSince(groupId, input.receivedAt, member.id).catch((e) => {
+        console.warn("[pipeline] stale-reply check failed", e);
+        return [];
+      });
+      if (staleReply({ reply: replyText, changed, answeredSince })) {
+        console.log(`[roomie] stale reply dropped in group ${groupId}: Roomie answered ${member.displayName} since their message came in`);
+        root?.end({ output: { replied: false, stale: true, dropped: replyText }, metadata: gateMeta });
+        return { out: null, gate, toolCalls, traceId: root?.traceId };
+      }
     }
     // A win (everyone square, a 3/7/30 streak, a Checkout) gets one short line in the pet's voice, once.
     const cheer = await winCheer(groupId, member.displayName, group?.timezone, personality, steps).catch((e) => {
