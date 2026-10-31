@@ -91,8 +91,9 @@ src/
                         setPhotoReader for tests), addPhotoToCart (a recipe is saved first), photoSummary
     splitwise.ts        connect / import / export / live mirror (ADR 0004) + runSplitwiseOutbox
     outbox.ts           outbox_jobs: enqueue, due, done/failed with backoff (ADR 0009)
-    cart.ts             Cart items (recipe_id, quantity + unit next to the free-text qty, no prices), addAsSaid (ambiguous
-                        quantities -> needsClarification), removal (adder or Admin), checkout (snapshot -> Instacart
+    cart.ts             Cart items (recipe_id, quantity + unit next to the free-text qty, no prices), addAsSaid (a missing
+                        quantity takes the Usual, cart-usuals.ts usualFor, -> usedUsual; ambiguous quantities and eggs with
+                        no count -> needsClarification), removal (adder or Admin), checkout (snapshot -> Instacart
                         shopping list -> cart_checkouts), markPurchased (exact Expense), cartReportParts; every change
                         is an Activity row
     cart-split.ts       pure: computeCartSplits (one share per item), canRemoveItem (the "I paid" drawer previews with it)

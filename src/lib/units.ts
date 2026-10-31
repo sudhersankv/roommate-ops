@@ -112,9 +112,24 @@ const PACKS: Record<string, string> = { egg: "cartons", eggs: "cartons", milk: "
 export type QtyItem = { name: string; qty?: string };
 
 /**
+ * Things where the count really matters and "1" isn't a sensible guess: with no quantity said (and no usual,
+ * services/cart-usuals.ts), Roomie asks once. Keyed by the singular word; the choices are what the store sells.
+ */
+const COUNT_CHOICES: Record<string, string> = { egg: "12 or 18" };
+
+/** "eggs" (no quantity) -> "eggs: 12 or 18?"; null for anything a plain 1 is fine for. */
+export function countQuestion(name: string): string | null {
+  const words = name.trim().toLowerCase().split(/\s+/);
+  const last = (words[words.length - 1] ?? "").replace(/s$/, "");
+  const choices = COUNT_CHOICES[last];
+  return choices ? `${last}s: ${choices}?` : null;
+}
+
+/**
  * Free-text Cart quantities, stored as people said them ("2 cartons", "12", "1 lb"), except when they can't be
  * read one way: several bare numbers for one thing ("eggs, 12, 18" arrives as "12, 18", or as two eggs lines
- * with "12" and "18"). Those are held back with one short question each; everything else is fine as is.
+ * with "12" and "18"), or no quantity for something where it matters (countQuestion: "eggs" -> "12 or 18?"). Those
+ * are held back with one short question each; everything else is fine as is.
  */
 export function clarifyQuantities(items: QtyItem[]): { ok: QtyItem[]; questions: string[] } {
   const key = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
@@ -127,14 +142,17 @@ export function clarifyQuantities(items: QtyItem[]): { ok: QtyItem[]; questions:
   for (const i of items) if (bare(i.qty)) counts.set(key(i.name), [...(counts.get(key(i.name)) ?? []), i.qty!.trim()]);
   const ok: QtyItem[] = [];
   const asked = new Map<string, string[]>();
+  const countAsks = new Set<string>();
   for (const i of items) {
     const k = key(i.name);
     const several = numbersIn(i.qty) ?? (bare(i.qty) && new Set(counts.get(k)).size > 1 ? counts.get(k)! : null);
+    const howMany = !(i.qty ?? "").trim() ? countQuestion(i.name) : null;
     if (several) asked.set(k, [...new Set([...(asked.get(k) ?? []), ...several])]);
+    else if (howMany) countAsks.add(howMany);
     else ok.push(i);
   }
   const questions = [...asked].map(([name, nums]) => `${name}: ${nums.join(" and ")} what? ${PACKS[name] ?? "packs"} or ${name}?`);
-  return { ok, questions };
+  return { ok, questions: [...questions, ...countAsks] };
 }
 
 const PLURAL: Partial<Record<InstacartUnit, string>> = { cup: "cups", gallon: "gallons", milliliter: "ml", liter: "liters", pint: "pints", quart: "quarts", tablespoon: "tbsp", teaspoon: "tsp", gram: "g", kilogram: "kg", ounce: "oz", pound: "lb", bunch: "bunches", can: "cans", head: "heads", package: "packages", packet: "packets" };

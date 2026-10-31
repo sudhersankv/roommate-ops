@@ -17,8 +17,8 @@ export const groceries = defineManifest({
   status: "stable",
   gate: {
     criterion:
-      "Groceries and food at home: the shared grocery cart (adding or removing items, being out of something, shopping, checking out, what the grocery shop cost), a photo of a recipe or a shopping list, recipes, cooking, meal planning ('tacos for 5 friday'), and the pantry of things the group always has.",
-    examples: ["tacos for 5 friday", "add milk and eggs", "we're out of dish soap", "add these (with a photo of a list or a recipe)", "I paid 84 for groceries"],
+      "Groceries and food at home: the shared grocery cart (adding or removing items, being out of something, shopping, checking out, what the grocery shop cost), a photo of a recipe or a shopping list, recipes, cooking, meal planning ('tacos for 5 friday'), and the pantry of things the group always has. Someone saying the house needs or is out of something ('we need eggs', '+ paper towels', 'out of soap') is a cart add for Roomie to act on even when nobody named Roomie.",
+    examples: ["tacos for 5 friday", "add milk and eggs", "we need eggs", "+ paper towels", "out of soap", "we're out of milk", "we're out of dish soap", "add these (with a photo of a list or a recipe)", "I paid 84 for groceries"],
   },
   abilities: {
     cart_add: "Add things to the Cart, for you or for everyone",

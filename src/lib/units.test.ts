@@ -2,7 +2,7 @@
 // Run: npx tsx --test src/lib/units.test.ts
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { clarifyQuantities, parseAmount } from "./units";
+import { clarifyQuantities, countQuestion, parseAmount } from "./units";
 
 test("clarifyQuantities: plain quantities go through as said", () => {
   const items = [{ name: "oat milk", qty: "2 cartons" }, { name: "eggs", qty: "12" }, { name: "chicken", qty: "1 lb" }, { name: "bread" }];
@@ -34,4 +34,22 @@ test("parseAmount: what the Cart stores next to the free text", () => {
   assert.deepEqual(parseAmount("12"), { quantity: 12, unit: "each" });
   assert.deepEqual(parseAmount("1 lb"), { quantity: 1, unit: "pound" });
   assert.equal(parseAmount("a jar"), null);
+});
+
+test("countQuestion: eggs with no count ask 12 or 18; other things don't", () => {
+  assert.equal(countQuestion("eggs"), "eggs: 12 or 18?");
+  assert.equal(countQuestion("Large Eggs"), "eggs: 12 or 18?");
+  assert.equal(countQuestion("egg"), "eggs: 12 or 18?");
+  assert.equal(countQuestion("milk"), null);
+  assert.equal(countQuestion("eggplant"), null);
+});
+
+test("clarifyQuantities: eggs with no quantity ask once; with one they go in", () => {
+  const r = clarifyQuantities([{ name: "eggs" }, { name: "milk" }]);
+  assert.deepEqual(r.ok, [{ name: "milk" }]);
+  assert.deepEqual(r.questions, ["eggs: 12 or 18?"]);
+  assert.deepEqual(clarifyQuantities([{ name: "eggs", qty: "18" }]).questions, []);
+  assert.deepEqual(clarifyQuantities([{ name: "eggs", qty: "a dozen" }]).questions, []);
+  // Twice in one message is still one question.
+  assert.deepEqual(clarifyQuantities([{ name: "eggs" }, { name: "Eggs" }]).questions, ["eggs: 12 or 18?"]);
 });
