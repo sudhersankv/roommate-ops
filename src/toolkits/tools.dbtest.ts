@@ -777,6 +777,17 @@ describe("Roomie tools against the dev DB", () => {
     if (/^https?:\/\//i.test(appUrl)) assert.deepEqual(asked.links?.map((b) => b.url), [`${appUrl}/g/${groupId}/cart`]);
   });
 
+  test("cart_view list: the whole list ready to post, the same text the Cart page's Share button gets", async () => {
+    const { cartShareText } = await import("@/app/g/[groupId]/_components/data");
+    const group = await groups.getGroup(groupId);
+    const r = await run("cart_view", { list: true });
+    assert.equal(r.text, `${group!.name} shopping list\n☐ dish soap\n☐ chips, 3 bags (Sudhersan)`);
+    assert.equal(r.itemCount, 2);
+    assert.equal(r.links, undefined);
+    assert.equal(r.text, await cartShareText({ ctx }), "one truth for the chat and the dashboard");
+    noPrice(r);
+  });
+
   test("cart_remove by name; the dashboard's remove is recorded as the dashboard", async () => {
     await run("cart_add", { items: [{ name: "oat milk", qty: "2" }] });
     assert.deepEqual(await run("cart_remove", { name: "Oat Milk" }), { removed: true, cartItemCount: 2 });

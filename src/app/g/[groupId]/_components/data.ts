@@ -370,6 +370,11 @@ export function probablyLowRows(rows: readonly { item: string; lastBought: strin
   return rows.map((r) => ({ item: r.item, when: lastBoughtText(r.lastBought, today), scope: r.scope }))
 }
 
+/** The Share list button's text: the same list cart_view list posts in the chat (services/cart.ts cartListText). */
+export async function cartShareText(s: Pick<GroupSession, "ctx">): Promise<string> {
+  return (await cart.cartList(s.ctx)).text
+}
+
 /** The Cart page's Usuals: the viewer's own, then the house's. */
 export async function usualsView(s: GroupSession): Promise<UsualView[]> {
   const { mine, house } = await usuals.listUsuals(s.ctx)
@@ -379,7 +384,7 @@ export async function usualsView(s: GroupSession): Promise<UsualView[]> {
 
 export async function cartPageView(s: GroupSession): Promise<CartPageView> {
   const now = new Date()
-  const [items, list, pantryList, people, ic, low, usualRows] = await Promise.all([
+  const [items, list, pantryList, people, ic, low, usualRows, shareText] = await Promise.all([
     cartView(s),
     recipes.listRecipes(s.ctx, 12),
     pantry.getPantry(s.ctx),
@@ -387,9 +392,11 @@ export async function cartPageView(s: GroupSession): Promise<CartPageView> {
     instacartAvailability(),
     probablyLowView(s.ctx, now),
     usualsView(s),
+    cartShareText(s),
   ])
   return {
     items,
+    shareText,
     probablyLow: probablyLowRows(low, localDay(now, s.group.timezone)),
     usuals: usualRows,
     recipes: list.map((r) => recipeView(r, pantryList, items)),

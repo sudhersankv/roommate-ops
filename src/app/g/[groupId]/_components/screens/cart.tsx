@@ -1,7 +1,7 @@
 "use client"
 
-import { useRef, useState, useTransition } from "react"
-import { PencilIcon, ShoppingCart, XIcon } from "lucide-react"
+import { useRef, useState, useSyncExternalStore, useTransition } from "react"
+import { CopyIcon, PencilIcon, Share2Icon, ShoppingCart, XIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Drawer, DrawerClose, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/ui/drawer"
@@ -113,6 +113,7 @@ export function CartScreen({ view, openRecipeId }: { view: CartPageView; openRec
               <Button size="lg" onClick={() => setPaying(true)}>
                 I paid for these
               </Button>
+              <ShareListButton text={view.shareText} />
               <Button size="lg" variant="outline" disabled={!view.instacart.ready || linking} aria-describedby={view.instacart.ready ? undefined : "instacart-hint"} onClick={instacart}>
                 {linking ? <Spinner data-icon="inline-start" /> : null}
                 Get Instacart link
@@ -132,6 +133,34 @@ export function CartScreen({ view, openRecipeId }: { view: CartPageView; openRec
       </div>
       <PaidDrawer open={paying} onOpenChange={setPaying} items={items} splitMemberIds={view.splitMemberIds} />
     </>
+  )
+}
+
+const noSubscribe = () => () => {}
+
+/** The list as text (the same the chat gets): the phone's share sheet, or Copy where there's none. */
+function ShareListButton({ text }: { text: string }) {
+  const canShare = useSyncExternalStore(noSubscribe, () => typeof navigator.share === "function", () => false)
+  const share = async () => {
+    if (canShare) {
+      try {
+        return void (await navigator.share({ text }))
+      } catch (e) {
+        if (e instanceof DOMException && e.name === "AbortError") return
+      }
+    }
+    try {
+      await navigator.clipboard.writeText(text)
+      toast.add({ title: "List copied", description: "Paste it anywhere." })
+    } catch {
+      toast.add({ title: "Couldn't copy the list", type: "error" })
+    }
+  }
+  return (
+    <Button size="lg" variant="outline" onClick={share}>
+      {canShare ? <Share2Icon data-icon="inline-start" /> : <CopyIcon data-icon="inline-start" />}
+      {canShare ? "Share list" : "Copy list"}
+    </Button>
   )
 }
 

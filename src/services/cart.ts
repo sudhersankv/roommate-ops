@@ -16,7 +16,7 @@ import { logExpense, type Expense } from "./money";
 import { insertPurchases, localDay } from "./restock";
 import type { ReportPart } from "./report";
 import { moneyIn, type Ctx, type GroupCtx } from "./types";
-import { currencyOf } from "./groups";
+import { currencyOf, getGroup } from "./groups";
 import { addedLine, matchUsual, planAdd, usualOwner, type Usual, type UsualSource } from "./usual-rules";
 import { learnFromPurchases, saveUsual, touchUsual, usualsFor } from "./usuals";
 
@@ -82,6 +82,24 @@ async function openRows(groupId: string): Promise<Row[]> {
 export async function listOpenItems(ctx: GroupCtx): Promise<CartItem[]> {
   const [rows, names, titles] = await Promise.all([openRows(ctx.groupId), namesFor(ctx.groupId), recipeTitles(ctx.groupId)]);
   return rows.map((r) => toItem(r, names, titles));
+}
+
+/**
+ * The Cart as a list to take to the store or paste anywhere (#38): the Group's name, then one "☐" line per open item,
+ * its quantity as stored, shared things first (in the order they went in), then each person's, labelled "(Dev)". Pure:
+ * the chat (cart_view list) and the Cart page's Share button both post this text.
+ */
+export function cartListText(groupName: string, items: readonly Pick<CartItem, "name" | "qty" | "shared" | "addedByName">[]): string {
+  if (items.length === 0) return `${groupName}'s Cart is empty: nothing to buy.`;
+  const line = (i: (typeof items)[number]) => `☐ ${i.name}${i.qty && i.qty.trim() !== "1" ? `, ${i.qty}` : ""}${i.shared ? "" : ` (${i.addedByName})`}`;
+  const personal = items.filter((i) => !i.shared).map((i, k) => ({ i, k })).sort((a, b) => a.i.addedByName.localeCompare(b.i.addedByName) || a.k - b.k).map((x) => x.i);
+  return [`${groupName} shopping list`, ...items.filter((i) => i.shared).map(line), ...personal.map(line)].join("\n");
+}
+
+/** The open Cart as that list, for the chat and the dashboard alike. */
+export async function cartList(ctx: GroupCtx): Promise<{ text: string; itemCount: number }> {
+  const [items, group] = await Promise.all([listOpenItems(ctx), getGroup(ctx.groupId)]);
+  return { text: cartListText(group?.name ?? "The group", items), itemCount: items.length };
 }
 
 /** Groceries' section of the weekly Group Report: the Cart's size (no prices). Pure. */

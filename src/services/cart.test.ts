@@ -2,7 +2,7 @@
 // Run: npx tsx --test src/services/cart.test.ts
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { computeCartSplits, itemList, lineItemFor, type SplitItem } from "./cart";
+import { cartListText, computeCartSplits, itemList, lineItemFor, type SplitItem } from "./cart";
 
 const sum = (rows: { cents: number }[]) => rows.reduce((s, r) => s + r.cents, 0);
 const by = (rows: { memberId: string; cents: number }[]) => Object.fromEntries(rows.map((r) => [r.memberId, r.cents]));
@@ -76,6 +76,30 @@ test("lineItemFor: a Cart item -> an Instacart line (structured amount, else par
   assert.deepEqual(lineItemFor({ name: "Oat milk", qty: "2 cartons", quantity: null, unit: null }).measurements, [{ quantity: 2, unit: "package" }]);
   assert.deepEqual(lineItemFor({ name: "Dish soap", qty: "1", quantity: null, unit: null }), { name: "dish soap", displayText: "Dish soap", measurements: [{ quantity: 1, unit: "each" }] });
   assert.deepEqual(lineItemFor({ name: "Salsa", qty: "a jar", quantity: null, unit: null }).measurements, [{ quantity: 1, unit: "each" }]);
+});
+
+/* ---------- the Cart as a list (#38) ---------- */
+
+const it = (name: string, qty: string, shared: boolean, addedByName: string) => ({ name, qty, shared, addedByName });
+
+test("cartListText: the Group's name, shared things first in the order they went in, then each person's labelled", () => {
+  const items = [
+    it("Pepsi", "12 × 12 oz cans", false, "Sam"),
+    it("Whole milk", "1 gallon", true, "Maya"),
+    it("Oat milk", "2 cartons", false, "Dev"),
+    it("Dish soap", "1", true, "Dev"),
+    it("Protein bars", "1 box", false, "Dev"),
+    it("Sourdough bread", "1 loaf", true, "Sam"),
+  ];
+  assert.equal(
+    cartListText("Apt 4B", items),
+    ["Apt 4B shopping list", "☐ Whole milk, 1 gallon", "☐ Dish soap", "☐ Sourdough bread, 1 loaf", "☐ Oat milk, 2 cartons (Dev)", "☐ Protein bars, 1 box (Dev)", "☐ Pepsi, 12 × 12 oz cans (Sam)"].join("\n"),
+  );
+});
+
+test("cartListText: quantities as stored; an empty Cart says so plainly", () => {
+  assert.equal(cartListText("Apt 4B", [it("Ground beef", "1 lb", true, "Maya"), it("Limes", "4", true, "Maya")]), "Apt 4B shopping list\n☐ Ground beef, 1 lb\n☐ Limes, 4");
+  assert.equal(cartListText("Apt 4B", []), "Apt 4B's Cart is empty: nothing to buy.");
 });
 
 test("itemList: short lists for Activity lines", () => {

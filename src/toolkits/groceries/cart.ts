@@ -60,10 +60,18 @@ export const cartTools = {
   cart_view: createTool({
     id: "cart_view",
     description:
-      "The open cart grouped by who it's for ('Shared' = everyone; recipe items say which recipe). No prices. link=true only when they ask where the Cart page is or for a link to it; then the button is attached for you.",
-    inputSchema: z.object({ link: z.boolean().optional().describe("true only when they asked for the Cart page / a link") }),
+      "The open cart grouped by who it's for ('Shared' = everyone; recipe items say which recipe). No prices. link=true only when they ask where the Cart page is or for a link to it; then the button is attached for you. " +
+      "list=true for 'send me the list' / 'what do we need?' / a list to shop from or forward: returns `text`, the whole list (one ☐ line per item, shared first, personal ones with the name); post `text` as is, as its own message, with nothing added or changed.",
+    inputSchema: z.object({
+      link: z.boolean().optional().describe("true only when they asked for the Cart page / a link"),
+      list: z.boolean().optional().describe("true when they want the list itself, to shop from or forward"),
+    }),
     execute: async (input, context) => {
       const ctx = ctxOf(context);
+      if (input.list) {
+        const { text, itemCount } = await cart.cartList(ctx);
+        return { text, itemCount, ...(input.link ? dashboardLinks("🛒 The Cart", `/g/${ctx.groupId}/cart`) : {}) };
+      }
       const groups = await cart.viewCart(ctx);
       const view = Object.fromEntries(Object.entries(groups).map(([who, items]) => [who, items.map((i) => ({ name: i.name, qty: i.qty, ...(i.recipeTitle ? { recipe: i.recipeTitle } : {}) }))]));
       const itemCount = Object.values(groups).flat().length;

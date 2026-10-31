@@ -145,6 +145,8 @@ export type UsualView = {
 
 export type CartPageView = {
   items: CartItemView[]
+  /** The Share list button's text, the same the chat gets (data.ts cartShareText). */
+  shareText: string
   /** Empty: the section is hidden. */
   probablyLow: ProbablyLowView[]
   /** Yours first, then the house's. Empty: the section is hidden. */
