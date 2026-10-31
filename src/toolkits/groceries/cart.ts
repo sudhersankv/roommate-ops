@@ -15,15 +15,20 @@ type Item = { name: string; qty: string; shared: boolean; addedByName: string; r
 const said = (i: Item) => ({ name: i.name, qty: i.qty, ...(i.shared ? { shared: true } : { for: i.addedByName }), ...(i.recipeTitle ? { recipe: i.recipeTitle } : {}) });
 
 const itemSchema = z.object({
-  name: z.string().min(1).describe("Item name without the quantity, e.g. 'chips'"),
-  qty: z.string().optional().describe("The quantity exactly as they said it, e.g. '3 bags', '2 cartons', '12', '1 lb'. Omit for 1."),
+  name: z.string().min(1).describe("Item name without the quantity, e.g. 'chips'; the clear kind when they said it ('whole milk', 'Diet Pepsi')"),
+  qty: z.string().optional().describe("The quantity exactly as they said it, with the size, e.g. '3 bags', '12 × 12 oz cans', '1 gallon', '1 lb'. Omit when they didn't say one: their usual is used, or you get a question."),
+  remember: z
+    .boolean()
+    .optional()
+    .describe("true when a change is for good ('make it 24 from now on', 'always the 2-liter'); false for a one-off ('just a 2-liter this time'). Omit otherwise: an answer to your question is remembered."),
 });
 
 export const cartTools = {
   cart_add: createTool({
     id: "cart_add",
     description:
-      "Add grocery items to the shared cart, attributed to the sender ('add 3 bags of chips for me' -> one item, name 'chips', qty '3 bags'), or to `for` ('oat milk for Dev'). shared=true for things the whole group uses (toilet paper, dish soap, 'for the house', 'common'). If it's unclear whether it's for them or everyone, ask first. Quantities are stored as said; if the result has `needsClarification`, those items were NOT added: ask that one short question (and say what was added, if anything), then call cart_add again with only those items. No prices: never say a price or total.",
+      "Add grocery items to the shared cart, attributed to the sender ('add 3 bags of chips for me' -> one item, name 'chips', qty '3 bags'), or to `for` ('oat milk for Dev'). shared=true for things the whole group uses (toilet paper, dish soap, 'for the house', 'common'). If it's unclear whether it's for them or everyone, ask first. " +
+      "A bare mention ('Pepsi') uses the person's usual (the house's for shared items); the result's `say` names it ('Added your usual: Pepsi, 12 cans.'): post `say`. If the result has `needsClarification`, those items were NOT added: ask that one short question in one line (and say what was added, if anything), then call cart_add again with only those items and their answer as qty. Quantities are stored as said. No prices: never say a price or total.",
     inputSchema: z.object({
       items: z.array(itemSchema).min(1),
       shared: z.boolean().optional().describe("true when it's for the whole house, not one person"),
@@ -32,11 +37,12 @@ export const cartTools = {
     execute: async (input, context) => {
       const ctx = ctxOf(context);
       const forMemberId = input.for && !input.shared ? await memberIdByName(ctx, input.for) : undefined;
-      const { added, needsClarification } = await cart.addAsSaid(ctx, { items: input.items, shared: input.shared, forMemberId });
+      const { added, needsClarification, say } = await cart.addWithUsuals(ctx, { items: input.items, shared: input.shared, forMemberId });
       const open = await cart.listOpenItems(ctx);
       return {
-        added: added.map(said),
+        added: added.map((i) => ({ ...said(i), ...(i.usual ? { usual: i.usual } : {}) })),
         cartItemCount: open.length,
+        ...(say ? { say } : {}),
         ...(needsClarification.length ? { needsClarification } : {}),
       };
     },

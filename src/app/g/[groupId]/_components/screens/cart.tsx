@@ -1,12 +1,13 @@
 "use client"
 
-import { useState, useTransition } from "react"
-import { ShoppingCart, XIcon } from "lucide-react"
+import { useRef, useState, useTransition } from "react"
+import { PencilIcon, ShoppingCart, XIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Drawer, DrawerClose, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/ui/drawer"
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { Field, FieldContent, FieldDescription, FieldLabel } from "@/components/ui/field"
+import { Input } from "@/components/ui/input"
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput, InputGroupText } from "@/components/ui/input-group"
 import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "@/components/ui/item"
 import { Spinner } from "@/components/ui/spinner"
@@ -15,11 +16,11 @@ import { toast } from "@/components/ui/toast"
 import { Amount, useFormatMoney } from "@/components/app/money-bits"
 import { currencySymbol, parseMoney } from "@/lib/money"
 import { computeCartSplits } from "@/services/cart-split"
-import { addCartItem, addProbablyLow, checkoutCart, muteProbablyLow, purchaseCart, removeCartItem } from "../../actions"
+import { addCartItem, addProbablyLow, checkoutCart, muteProbablyLow, purchaseCart, removeCartItem, removeUsual, updateUsual } from "../../actions"
 import { useGroup } from "../group-context"
 import { PantryCard, RecipesSection } from "../recipes"
 import { PageHeader, TopBar } from "../shell"
-import type { CartItemView, CartPageView, ProbablyLowView } from "../types"
+import type { CartItemView, CartPageView, ProbablyLowView, UsualView } from "../types"
 
 export function CartScreen({ view, openRecipeId }: { view: CartPageView; openRecipeId: string | null }) {
   const { group } = useGroup()
@@ -30,6 +31,7 @@ export function CartScreen({ view, openRecipeId }: { view: CartPageView; openRec
   const [paying, setPaying] = useState(false)
   const [pending, start] = useTransition()
   const [linking, startLink] = useTransition()
+  const qtyRef = useRef<HTMLInputElement>(null)
 
   const add = () => {
     const clean = name.trim()
@@ -37,9 +39,13 @@ export function CartScreen({ view, openRecipeId }: { view: CartPageView; openRec
     start(async () => {
       const res = await addCartItem(group.id, { name: clean.charAt(0).toUpperCase() + clean.slice(1), qty: qty.trim() || undefined, shared })
       if (!res.ok) return void toast.add({ title: "Couldn't add it", description: res.error, type: "error" })
+      if (res.data?.question) {
+        qtyRef.current?.focus()
+        return void toast.add({ title: "How much?", description: res.data.question })
+      }
       setName("")
       setQty("")
-      toast.add({ title: `Added ${clean}`, description: shared ? "Shared, so it's split evenly." : "Personal, so it's on you." })
+      toast.add({ title: res.data?.say ?? `Added ${clean}`, description: shared ? "Shared, so it's split evenly." : "Personal, so it's on you." })
     })
   }
 
@@ -71,7 +77,7 @@ export function CartScreen({ view, openRecipeId }: { view: CartPageView; openRec
         >
           <InputGroup>
             <InputGroupInput aria-label="Add to the Cart" placeholder="Add to the Cart…" autoComplete="off" value={name} onChange={(e) => setName(e.target.value)} />
-            <InputGroupInput aria-label="How much" placeholder="Qty" autoComplete="off" className="max-w-20" value={qty} onChange={(e) => setQty(e.target.value)} />
+            <InputGroupInput ref={qtyRef} aria-label="How much" placeholder="Qty" autoComplete="off" className="max-w-20" value={qty} onChange={(e) => setQty(e.target.value)} />
             <InputGroupAddon align="inline-end">
               <InputGroupButton type="submit" variant="default" size="sm" disabled={!name.trim() || pending}>
                 Add
@@ -120,6 +126,7 @@ export function CartScreen({ view, openRecipeId }: { view: CartPageView; openRec
           </>
         )}
 
+        <UsualsSection rows={view.usuals} />
         <RecipesSection recipes={view.recipes} pantry={view.pantry} instacartReady={view.instacart.ready} openRecipeId={openRecipeId} />
         <PantryCard pantry={view.pantry} />
       </div>
@@ -175,6 +182,100 @@ function ProbablyLowSection({ rows }: { rows: ProbablyLowView[] }) {
         ))}
       </ItemGroup>
     </section>
+  )
+}
+
+/** What "Pepsi" means: your usuals and the house's. Edit or remove; Roomie asks again next time once one's gone. */
+function UsualsSection({ rows }: { rows: UsualView[] }) {
+  const { group } = useGroup()
+  const [pending, start] = useTransition()
+  const [editing, setEditing] = useState<UsualView | null>(null)
+  if (rows.length === 0) return null
+  const remove = (u: UsualView) =>
+    start(async () => {
+      const res = await removeUsual(group.id, u.id)
+      if (!res.ok) return void toast.add({ title: "Couldn't remove it", description: res.error, type: "error" })
+      toast.add({ title: `Removed ${u.scope === "mine" ? "your" : "the house's"} usual ${u.name.toLowerCase()}`, description: "Roomie asks next time." })
+    })
+  return (
+    <section aria-labelledby="cart-usuals" className="flex flex-col gap-2">
+      <div className="flex items-baseline justify-between px-1">
+        <h2 id="cart-usuals" className="type-heading">
+          Usuals
+        </h2>
+        <span className="type-caption text-muted-foreground">What a plain “Pepsi” means</span>
+      </div>
+      <ItemGroup className="gap-0 rounded-3xl bg-card py-1">
+        {rows.map((u) => (
+          <Item key={u.id} className="py-2 pr-1.5">
+            <ItemContent className="min-w-0">
+              <ItemTitle className="truncate">
+                {u.name}
+                <span className="font-normal text-muted-foreground">{u.qty}</span>
+              </ItemTitle>
+              <ItemDescription>
+                {u.scope === "mine" ? "Yours" : "The house's"} · {u.learned ? "From what you bought" : "You told Roomie"}
+              </ItemDescription>
+            </ItemContent>
+            <ItemActions className="gap-1">
+              <Button variant="ghost" size="icon-sm" aria-label={`Edit ${u.name}`} disabled={pending} onClick={() => setEditing(u)}>
+                <PencilIcon />
+              </Button>
+              <Button variant="ghost" size="icon-sm" aria-label={`Remove ${u.name}`} disabled={pending} onClick={() => remove(u)}>
+                <XIcon />
+              </Button>
+            </ItemActions>
+          </Item>
+        ))}
+      </ItemGroup>
+      <Drawer open={!!editing} onOpenChange={(o) => (o ? null : setEditing(null))}>
+        <DrawerContent className="mx-auto max-w-md">{editing ? <UsualForm usual={editing} onDone={() => setEditing(null)} /> : null}</DrawerContent>
+      </Drawer>
+    </section>
+  )
+}
+
+function UsualForm({ usual, onDone }: { usual: UsualView; onDone: () => void }) {
+  const { group } = useGroup()
+  const [pending, start] = useTransition()
+  const [name, setName] = useState(usual.name)
+  const [qty, setQty] = useState(usual.qty)
+  const save = () =>
+    start(async () => {
+      const res = await updateUsual(group.id, { id: usual.id, name: name.trim(), qty: qty.trim() })
+      if (!res.ok) return void toast.add({ title: "Couldn't save it", description: res.error, type: "error" })
+      toast.add({ title: `Saved: ${name.trim()}, ${qty.trim()}` })
+      onDone()
+    })
+  return (
+    <>
+      <DrawerHeader>
+        <DrawerTitle className="type-heading">{usual.scope === "mine" ? "Your usual" : "The house's usual"}</DrawerTitle>
+        <DrawerDescription>What Roomie adds when someone just says “{usual.name.toLowerCase()}”.</DrawerDescription>
+      </DrawerHeader>
+      <form
+        className="flex flex-col gap-4 p-4"
+        onSubmit={(e) => {
+          e.preventDefault()
+          save()
+        }}
+      >
+        <Field>
+          <FieldLabel htmlFor="usual-name">What</FieldLabel>
+          <Input id="usual-name" autoComplete="off" value={name} onChange={(e) => setName(e.target.value)} />
+        </Field>
+        <Field>
+          <FieldLabel htmlFor="usual-qty">How much</FieldLabel>
+          <Input id="usual-qty" autoComplete="off" placeholder="12 × 12 oz cans" value={qty} onChange={(e) => setQty(e.target.value)} />
+        </Field>
+      </form>
+      <DrawerFooter className="border-t pt-4">
+        <Button size="lg" disabled={!name.trim() || !qty.trim() || pending} onClick={save}>
+          Save
+        </Button>
+        <DrawerClose render={<Button variant="ghost" size="lg" />}>Cancel</DrawerClose>
+      </DrawerFooter>
+    </>
   )
 }
 

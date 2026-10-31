@@ -128,6 +128,7 @@ describe("Roomie tools against the dev DB", () => {
         ["maintenance", schema.maintenance],
         ["cart_items", schema.cartItems],
         ["cart_checkouts", schema.cartCheckouts],
+        ["grocery_usuals", schema.groceryUsuals],
         ["recipes", schema.recipes],
         ["chat_messages", schema.chatMessages],
         ["activity", schema.activity],
@@ -739,12 +740,28 @@ describe("Roomie tools against the dev DB", () => {
   });
 
   test("cart_add: an ambiguous quantity is held back with one question; 'for Ryan' attributes to Ryan", async () => {
-    const r: CartAdd = await run("cart_add", { items: [{ name: "bread" }, { name: "eggs", qty: "12, 18" }], for: "Ryan" });
-    assert.deepEqual(r.added, [{ name: "bread", qty: "1", for: "Ryan" }]);
+    const r: CartAdd = await run("cart_add", { items: [{ name: "bagels" }, { name: "eggs", qty: "12, 18" }], for: "Ryan" });
+    assert.deepEqual(r.added, [{ name: "bagels", qty: "1", for: "Ryan" }]);
     assert.deepEqual(r.needsClarification, ["eggs: 12 and 18 what? cartons or eggs?"]);
-    assert.equal((await lastActivity()).summary, "put bread on the Cart for Ryan");
-    assert.equal(await run("cart_remove", { name: "bread" }).then((x) => x.removed), true);
-    assert.equal((await lastActivity()).summary, "took bread (Ryan's) off the Cart");
+    assert.equal((await lastActivity()).summary, "put bagels on the Cart for Ryan");
+    assert.equal(await run("cart_remove", { name: "bagels" }).then((x) => x.removed), true);
+    assert.equal((await lastActivity()).summary, "took bagels (Ryan's) off the Cart");
+  });
+
+  test("cart_add with usuals: a bare 'Pepsi' asks once; the answer is remembered; next time it's 'your usual'; Ryan's is his own", async () => {
+    const ask: CartAdd & { say?: string } = await run("cart_add", { items: [{ name: "Pepsi" }] });
+    assert.deepEqual([ask.added, ask.needsClarification, ask.say], [[], ["Pepsi: cans or a bottle, and how many?"], undefined]);
+    const answer: CartAdd & { say?: string } = await run("cart_add", { items: [{ name: "Pepsi", qty: "12 × 12 oz cans" }] });
+    assert.deepEqual([answer.added, answer.say], [[{ name: "Pepsi", qty: "12 × 12 oz cans", for: "Sudhersan" }], "Added Pepsi (12 × 12 oz cans)."]);
+    await run("cart_remove", { name: "Pepsi" });
+    const usual: CartAdd & { say?: string } = await run("cart_add", { items: [{ name: "pepsi" }] });
+    assert.deepEqual([usual.added, usual.say], [[{ name: "Pepsi", qty: "12 × 12 oz cans", for: "Sudhersan", usual: "your usual" }], "Added your usual: Pepsi, 12 × 12 oz cans."]);
+    const once: CartAdd = await run("cart_add", { items: [{ name: "Pepsi", qty: "1 × 2-liter bottle", remember: false }] });
+    assert.equal(once.added[0].qty, "1 × 2-liter bottle");
+    const ryans: CartAdd = await run("cart_add", { items: [{ name: "Pepsi" }] }, contextFor(member.Ryan, "Ryan", "member", "active"));
+    assert.deepEqual(ryans.needsClarification, ["Pepsi: cans or a bottle, and how many?"], "Sudhersan's usual isn't Ryan's");
+    for (let k = 0; k < 2; k++) await run("cart_remove", { name: "Pepsi" });
+    noPrice(usual);
   });
 
   test("cart_view groups open items by who added them; no prices; the Cart page only when asked", async () => {
@@ -848,21 +865,21 @@ describe("Roomie tools against the dev DB", () => {
   });
 
   test("cart_purchased: payer by name; people with nothing in the cart are left out of the split; empty cart throws", async () => {
-    await run("cart_add", { items: [{ name: "milk" }] });
+    await run("cart_add", { items: [{ name: "bananas" }] });
     const e: Expense = await run("cart_purchased", { total: 5, payer: "Ryan" });
     assert.equal(e.payerName, "Ryan");
     assert.equal(e.cents, 500);
     assert.deepEqual(
       (e.splits ?? []).map((s) => [s.name, s.cents]),
       [["Sudhersan", 500]],
-      "Sudhersan's milk, paid by Ryan: only Sudhersan owes",
+      "Sudhersan's bananas, paid by Ryan: only Sudhersan owes",
     );
     await assert.rejects(run("cart_purchased", { total: 5 }), /cart is empty/i);
     await assert.rejects(run("cart_purchased", { total: 5, payer: "Dev" }), /No member named "Dev"/);
   });
 
   test("cart_purchased: a double-click charges once; a failed purchase leaves the items open", async () => {
-    await run("cart_add", { items: [{ name: "bread" }] });
+    await run("cart_add", { items: [{ name: "tortillas" }] });
     const before = await count(schema.expenses);
     const [first, second] = await Promise.allSettled([run("cart_purchased", { total: 4 }), run("cart_purchased", { total: 4 })]);
     const ok = [first, second].filter((r) => r.status === "fulfilled");

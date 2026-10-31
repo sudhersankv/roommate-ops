@@ -133,10 +133,22 @@ export type ProbablyLowView = {
   scope: "shared" | "mine"
 }
 
+/** One grocery usual on the Cart page (services/usuals.ts): the viewer's own, or the house's. */
+export type UsualView = {
+  id: string
+  name: string
+  qty: string
+  /** "From what you bought" vs told to Roomie. */
+  learned: boolean
+  scope: "mine" | "shared"
+}
+
 export type CartPageView = {
   items: CartItemView[]
   /** Empty: the section is hidden. */
   probablyLow: ProbablyLowView[]
+  /** Yours first, then the house's. Empty: the section is hidden. */
+  usuals: UsualView[]
   recipes: RecipeView[]
   pantry: string[]
   /** Active Members in the order services/cart.ts splits with, so the "I paid" preview matches to the cent. */

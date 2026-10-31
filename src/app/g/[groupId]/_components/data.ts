@@ -20,6 +20,7 @@ import { getRent, rentWindows } from "@/services/rent"
 import { probablyLowView } from "@/services/restock"
 import { lastBoughtText } from "@/services/restock-math"
 import { getNudgeSettings } from "@/services/settle-nudge"
+import * as usuals from "@/services/usuals"
 import { toolkitStates } from "@/toolkits/catalog"
 import { toolkitById } from "@/toolkits/registry"
 import { COMING_SOON, MANIFESTS, TOOLKIT_IDS, type ToolkitId } from "@/toolkits/manifests"
@@ -48,6 +49,7 @@ import type {
   ToolkitCardView,
   Transfer,
   UpkeepView,
+  UsualView,
 } from "./types"
 
 /**
@@ -368,19 +370,28 @@ export function probablyLowRows(rows: readonly { item: string; lastBought: strin
   return rows.map((r) => ({ item: r.item, when: lastBoughtText(r.lastBought, today), scope: r.scope }))
 }
 
+/** The Cart page's Usuals: the viewer's own, then the house's. */
+export async function usualsView(s: GroupSession): Promise<UsualView[]> {
+  const { mine, house } = await usuals.listUsuals(s.ctx)
+  const row = (scope: UsualView["scope"]) => (u: usuals.Usual): UsualView => ({ id: u.id, name: u.name, qty: u.qty, learned: u.source === "purchase", scope })
+  return [...mine.map(row("mine")), ...house.map(row("shared"))]
+}
+
 export async function cartPageView(s: GroupSession): Promise<CartPageView> {
   const now = new Date()
-  const [items, list, pantryList, people, ic, low] = await Promise.all([
+  const [items, list, pantryList, people, ic, low, usualRows] = await Promise.all([
     cartView(s),
     recipes.listRecipes(s.ctx, 12),
     pantry.getPantry(s.ctx),
     members.listMembers(s.ctx),
     instacartAvailability(),
     probablyLowView(s.ctx, now),
+    usualsView(s),
   ])
   return {
     items,
     probablyLow: probablyLowRows(low, localDay(now, s.group.timezone)),
+    usuals: usualRows,
     recipes: list.map((r) => recipeView(r, pantryList, items)),
     pantry: pantryList,
     splitMemberIds: people.map((m) => m.id),

@@ -707,6 +707,34 @@ export const purchaseEvents = pgTable(
   ],
 );
 
+// ---- grocery usuals (#36) ----
+
+/**
+ * What "Pepsi" means for a Member (member_id) or for the house (null): the clear Cart item ("Pepsi", "12 × 12 oz cans")
+ * a bare mention turns into (services/usuals.ts). `item` is normalizeItem's name. Long-term, not chat: only forget me
+ * (a Member's own) and delete group data remove them. `source`: asked (they told Roomie), corrected ("from now on"),
+ * purchase (learned from what was bought; a purchase never overwrites an asked or corrected one).
+ */
+export const groceryUsuals = pgTable(
+  "grocery_usuals",
+  {
+    id: id(),
+    groupId: uuid("group_id").notNull().references(() => groups.id, { onDelete: "cascade" }),
+    item: text("item").notNull(),
+    memberId: uuid("member_id").references(() => members.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    // The quantity text as the Cart shows it ("12 × 12 oz cans"), with the size in it; quantity + unit for Instacart.
+    qty: text("qty").notNull(),
+    quantity: numeric("quantity"),
+    unit: text("unit"),
+    brand: text("brand"),
+    source: text("source", { enum: ["asked", "corrected", "purchase"] }).notNull(),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("grocery_usuals_one").on(t.groupId, t.item, sql`coalesce(${t.memberId}, '00000000-0000-0000-0000-000000000000'::uuid)`)],
+);
+
 /* ---------- Lease Inbox (services/lease-inbox.ts, ADR 0016) ---------- */
 
 /**

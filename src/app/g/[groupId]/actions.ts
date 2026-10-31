@@ -14,6 +14,7 @@ import { releaseInbox, removeSender, sendForMember } from "@/services/lease-inbo
 import { setRent, type RentInput } from "@/services/rent"
 import { mute as muteRestock, restockAddListed } from "@/services/restock"
 import { updateNudgeSettings, type NudgeSettings } from "@/services/settle-nudge"
+import * as usuals from "@/services/usuals"
 import type { ToolkitId } from "@/toolkits/types"
 import type { ActionResult } from "./_components/group-context"
 import type { RecipeDraftView } from "./_components/types"
@@ -78,8 +79,20 @@ export async function recordSettlement(groupId: string, input: { fromId: string;
   return act(groupId, (ctx) => money.settleUp(ctx, input))
 }
 
+/** The Add box: the same add path as cart_add (usuals, one question for something unclear). */
 export async function addCartItem(groupId: string, input: { name: string; qty?: string; shared: boolean }) {
-  return act(groupId, async (ctx) => (await cart.addItems(ctx, { items: [{ name: input.name, qty: input.qty }], shared: input.shared }))[0].id)
+  return act(groupId, async (ctx) => {
+    const r = await cart.addWithUsuals(ctx, { items: [{ name: input.name, qty: input.qty }], shared: input.shared })
+    return { id: r.added[0]?.id ?? null, say: r.say, question: r.needsClarification[0] ?? null }
+  })
+}
+
+export async function updateUsual(groupId: string, input: { id: string; name: string; qty: string }) {
+  return act(groupId, async (ctx) => (await usuals.updateUsual(ctx, input)).id)
+}
+
+export async function removeUsual(groupId: string, id: string) {
+  return act(groupId, (ctx) => usuals.removeUsual(ctx, { id }))
 }
 
 export async function removeCartItem(groupId: string, itemId: string) {

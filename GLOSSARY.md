@@ -218,6 +218,10 @@ _Avoid_: Meal plan
 The things a Group always has (salt, oil, rice). When a Recipe's ingredients go into the Cart, the Pantry's are left out.
 _Avoid_: Staples, inventory
 
+**Usual**:
+What a bare mention means: a Member's own ("Pepsi" is their 12 cans) or the house's, for shared items (the bread the Group always gets). Learned from the one question Roomie asks the first time, from corrections ("from now on") and from what was bought; shown and edited on the Cart page.
+_Avoid_: Preference, default, favourite
+
 **Checkout**:
 The open Cart as it was when someone asked for the Instacart list, kept so that "I paid" can point at what was ordered.
 _Avoid_: Order, purchase

@@ -17,6 +17,8 @@ import { insertPurchases, localDay } from "./restock";
 import type { ReportPart } from "./report";
 import { moneyIn, type Ctx, type GroupCtx } from "./types";
 import { currencyOf } from "./groups";
+import { addedLine, matchUsual, planAdd, usualOwner, type Usual, type UsualSource } from "./usual-rules";
+import { learnFromPurchases, saveUsual, touchUsual, usualsFor } from "./usuals";
 
 export { canRemoveItem, computeCartSplits, type SplitItem } from "./cart-split";
 
@@ -139,6 +141,41 @@ export async function addAsSaid(ctx: Ctx, input: { items: { name: string; qty?: 
   const { ok, questions } = clarifyQuantities(input.items);
   const added = ok.length ? await addItems(ctx, { ...input, items: ok }) : [];
   return { added, needsClarification: questions };
+}
+
+export type WishItem = { name: string; qty?: string; brand?: string; remember?: boolean };
+export type AddedItem = CartItem & { usual?: string };
+
+/**
+ * The add path behind cart_add and the dashboard's Add (#36): each item against the adder's own usual (or the house's,
+ * for shared items). A bare mention with a usual adds the usual ("your usual"); one of something that comes in sizes or
+ * kinds with none is held back with one question (the same `needsClarification` as ambiguous quantities); a clear one
+ * goes in as said and becomes the usual unless `remember` is false; a change to a usual overwrites it only with
+ * `remember` true ("from now on"). `say` is the line to post ("Added your usual: Pepsi, 12 cans.").
+ */
+export async function addWithUsuals(ctx: Ctx, input: { items: WishItem[]; shared?: boolean; forMemberId?: string }): Promise<{ added: AddedItem[]; needsClarification: string[]; say: string | null }> {
+  await requireActive(ctx);
+  const addedBy = input.forMemberId ?? ctx.memberId;
+  const scope = input.shared ? null : addedBy;
+  const { ok, questions } = clarifyQuantities(input.items);
+  const wishes = ok as WishItem[];
+  const known = await usualsFor(ctx.groupId, scope);
+  const plans = wishes.map((w) => ({ wish: w, plan: planAdd(w, matchUsual(known, w.name, !(w.qty ?? "").trim())) }));
+  type Going = { name: string; qty: string; usual: Usual | null; brand: string | null; write: UsualSource | null; touch: Usual | null };
+  const going = plans.flatMap(({ plan }): Going[] => {
+    if (plan.kind === "ask") return [];
+    if (plan.kind === "usual") return [{ name: plan.usual.name, qty: plan.usual.qty, usual: plan.usual, brand: plan.usual.brand, write: null, touch: plan.usual }];
+    return [{ name: plan.name, qty: plan.qty, usual: null, brand: plan.brand, write: plan.write, touch: plan.touch }];
+  });
+  const asked = plans.flatMap(({ plan }) => (plan.kind === "ask" ? [plan.question] : []));
+  const rows = going.length ? await addItems(ctx, { items: going.map((g) => ({ name: g.name, qty: g.qty })), shared: input.shared, forMemberId: input.forMemberId }) : [];
+  for (const g of going) {
+    if (g.write) await saveUsual(db, ctx.groupId, { memberId: scope, name: g.name, qty: g.qty, brand: g.brand, source: g.write });
+    else if (g.touch) await touchUsual(g.touch.id);
+  }
+  const adderName = rows[0]?.addedByName ?? "";
+  const added = rows.map((r, k) => (going[k].usual ? { ...r, usual: usualOwner(!!input.shared, adderName, addedBy === ctx.memberId) } : r));
+  return { added, needsClarification: [...questions, ...asked], say: addedLine(added) };
 }
 
 async function recordRemoved(ctx: Ctx, item: { id: string; name: string; addedBy: string }) {
@@ -355,6 +392,8 @@ export async function markPurchased(ctx: Ctx, input: { totalCents: number; payer
       ctx.groupId,
       items.map((i) => ({ name: i.name, memberId: i.shared ? null : i.addedBy, occurredOn: today, source: "cart" as const, sourceId: i.id })),
     );
+    // And the usuals: what was bought, unless someone told Roomie otherwise (usual-rules learnFromPurchase).
+    await learnFromPurchases(tx, ctx.groupId, items.map((i) => ({ name: i.name, qty: i.qty, memberId: i.shared ? null : i.addedBy })));
     count = items.length;
     return expense;
   });
