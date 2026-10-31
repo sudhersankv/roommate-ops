@@ -31,8 +31,10 @@ export function AppShell({ children }: { children: ReactNode }) {
     document.cookie = `${LAST_GROUP_COOKIE}=${group.id}; path=/; max-age=31536000; samesite=lax`
   }, [group.id])
 
+  // A page that reads better wide (a list beside what it opens) marks its root `data-wide`: the column widens on large
+  // screens. The dock stays phone-width.
   return (
-    <div className="mx-auto flex min-h-dvh w-full max-w-md flex-col bg-background md:border-x">
+    <div className="mx-auto flex min-h-dvh w-full max-w-md flex-col bg-background md:border-x lg:has-[[data-wide]]:max-w-6xl">
       <a
         href="#main"
         className="sr-only rounded-full bg-primary px-5 font-semibold text-primary-foreground focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50 focus:inline-flex focus:h-11 focus:items-center"

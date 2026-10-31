@@ -4,11 +4,8 @@ import Link from "next/link"
 import { Fragment, useEffect, useState, useTransition, type ReactNode } from "react"
 import { BellIcon, ChevronRightIcon, FileTextIcon, ShoppingCart, WrenchIcon } from "lucide-react"
 
-import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { Button } from "@/components/ui/button"
 import { Item, ItemActions, ItemContent, ItemDescription, ItemMedia, ItemTitle } from "@/components/ui/item"
-import { Marker, MarkerContent } from "@/components/ui/marker"
-import { Message, MessageAvatar, MessageContent, MessageGroup } from "@/components/ui/message"
 import { Separator } from "@/components/ui/separator"
 import { toast } from "@/components/ui/toast"
 import { Roomie, type RoomieMood } from "@/components/roomie/mascot"
@@ -21,17 +18,17 @@ import { markChoreDone } from "../../actions"
 import { useGroup } from "../group-context"
 import { SettleDrawer } from "../settle-drawer"
 import { TopBar } from "../shell"
-import type { CartItemView, ChoreView, NarrationView, RecentDocumentView, ReminderView, TodayRowView, Transfer, UpkeepView } from "../types"
+import type { ActivityView, CartItemView, ChoreView, RecentDocumentView, ReminderView, TodayRowView, Transfer, UpkeepView } from "../types"
 
 /**
  * Home: Roomie in the doorway with the Group's mood, the Today strip (the morning Bundle on a page), Recent documents
  * (when there are any), then each enabled Toolkit's Home section (children, in home order, from their manifests),
- * core's Reminders coming up, then what Roomie said lately.
+ * core's Reminders coming up, then Recent (the newest Activity).
  */
 export function HomeScreen({
   mood,
   moodReason,
-  narration,
+  recent,
   today,
   documents,
   children,
@@ -39,12 +36,12 @@ export function HomeScreen({
   mood: RoomieMood
   /** Why (services/personality.ts groupMood); without one the mood came from a Toolkit (your own Balance). */
   moodReason?: string | null
-  narration: NarrationView[]
+  recent: ActivityView[]
   today: TodayRowView[]
   documents: RecentDocumentView[]
   children: ReactNode
 }) {
-  const { group, base, cheers } = useGroup()
+  const { group, cheers } = useGroup()
   const [cheering, cheer] = useCheer()
   const moodWords = moodReason ? `${mood === "worried" ? "a little worried" : mood}: ${moodReason}` : mood === "happy" ? "happy because you're owed" : mood
 
@@ -64,23 +61,8 @@ export function HomeScreen({
         <TodayStrip rows={today} />
         <RecentDocuments docs={documents} />
         {children}
+        <RecentCard rows={recent} />
       </div>
-
-      <section aria-labelledby="activity-title" className="flex flex-col gap-4 px-4 pt-8">
-        <div className="flex items-baseline justify-between px-1">
-          <h2 id="activity-title" className="type-heading">
-            What Roomie&apos;s been up to
-          </h2>
-          <Button variant="link" size="xs" nativeButton={false} render={<Link href={`${base}/money?tab=activity`} />}>
-            All activity
-          </Button>
-        </div>
-        {narration.length ? (
-          <Narration items={narration} />
-        ) : (
-          <p className="type-body px-1 text-muted-foreground">Nothing yet. Say “roomie hi” in the chat and I&apos;ll get going.</p>
-        )}
-      </section>
     </>
   )
 }
@@ -127,12 +109,15 @@ function Breakdown({ plan }: { plan: Transfer[] }) {
   return <>{sentence.charAt(0).toUpperCase() + sentence.slice(1)}.</>
 }
 
-function HomeCard({ id, title, children }: { id: string; title: string; children: ReactNode }) {
+function HomeCard({ id, title, action, children }: { id: string; title: string; action?: ReactNode; children: ReactNode }) {
   return (
     <section aria-labelledby={id} className="flex flex-col gap-3 px-4">
-      <h2 id={id} className="type-heading px-1">
-        {title}
-      </h2>
+      <div className="flex items-baseline justify-between gap-3 px-1">
+        <h2 id={id} className="type-heading">
+          {title}
+        </h2>
+        {action}
+      </div>
       <div className="flex flex-col rounded-3xl bg-card">{children}</div>
     </section>
   )
@@ -333,37 +318,52 @@ export function CartToday({ cart, nextRecipe }: { cart: CartItemView[]; nextReci
   )
 }
 
-function Narration({ items }: { items: NarrationView[] }) {
-  const { dates } = useGroup()
-  const days: { day: string; items: NarrationView[] }[] = []
-  for (const n of items) {
-    const last = days.at(-1)
-    if (last && last.day === n.date) last.items.push(n)
-    else days.push({ day: n.date, items: [n] })
-  }
+
+/**
+ * The Recent card: the newest Activity, one row each: who (their avatar, their name first), what, and when (the time
+ * today, the day before that). All activity has the rest.
+ */
+export function RecentCard({ rows }: { rows: ActivityView[] }) {
+  const { base, me, dates } = useGroup()
   return (
-    <div className="flex flex-col gap-4">
-      {days.map((d) => (
-        <div key={d.day} className="flex flex-col gap-3">
-          <Marker variant="separator">
-            <MarkerContent>{dates.dayLabel(d.day)}</MarkerContent>
-          </Marker>
-          <Message align="start">
-            <MessageAvatar>
-              <RoomieAvatar />
-            </MessageAvatar>
-            <MessageContent>
-              <MessageGroup>
-                {d.items.map((n) => (
-                  <Bubble key={n.id} variant="secondary" className="max-w-[88%]">
-                    {n.href ? <BubbleContent render={<Link href={n.href} />}>{n.text}</BubbleContent> : <BubbleContent>{n.text}</BubbleContent>}
-                  </Bubble>
-                ))}
-              </MessageGroup>
-            </MessageContent>
-          </Message>
-        </div>
-      ))}
-    </div>
+    <HomeCard
+      id="recent-title"
+      title="Recent"
+      action={
+        <Button variant="link" size="xs" nativeButton={false} render={<Link href={`${base}/money?tab=activity`} />}>
+          All activity
+        </Button>
+      }
+    >
+      {rows.length === 0 ? (
+        <p className="type-body px-4 py-3.5 text-muted-foreground">Nothing yet. Say “roomie hi” in the chat and I&apos;ll get going.</p>
+      ) : (
+        rows.map((a, i) => {
+          const who = a.actor === "roomie" ? "Roomie" : a.actor === me.id ? "You" : a.actorName
+          const when = a.date === dates.today && a.time ? a.time : dates.dayLabel(a.date)
+          return (
+            <Fragment key={a.id}>
+              {i > 0 ? <Separator className="mx-4 data-horizontal:w-auto" /> : null}
+              <Item render={a.href ? <Link href={a.href} /> : undefined} className="py-3">
+                <ItemMedia className="size-8 justify-center">{a.actor === "roomie" ? <RoomieAvatar size={32} /> : <MemberAvatar name={a.actorName} />}</ItemMedia>
+                <ItemContent className="min-w-0">
+                  <ItemTitle className="line-clamp-2 font-normal text-pretty">
+                    <span>
+                      <span className="font-semibold">{who}</span> {a.text}
+                    </span>
+                  </ItemTitle>
+                  <ItemDescription>{when}</ItemDescription>
+                </ItemContent>
+                {a.href ? (
+                  <ItemActions>
+                    <ChevronRightIcon className="size-4 text-muted-foreground" aria-hidden />
+                  </ItemActions>
+                ) : null}
+              </Item>
+            </Fragment>
+          )
+        })
+      )}
+    </HomeCard>
   )
 }

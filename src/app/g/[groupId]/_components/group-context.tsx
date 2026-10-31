@@ -55,10 +55,10 @@ export type GroupView = {
   toolkits: Record<ToolkitId, boolean>
   /** Names of the enabled Toolkits, in marketplace order. */
   toolkitNames: string[]
-  /** Dock tabs between Home and More (the first NAV_TABS learned Tricks by nav order, one per page). */
+  /** Dock tabs between Home and More, left to right: the Member's two chosen Tricks, filled from nav order. */
   nav: NavItemView[]
-  /** The More drawer: the learned Tricks not in the dock, greyed slots for the ones not learned yet, and the
-   * coming-soon ones (one "What's coming" tile). */
+  /** The More drawer: every learned Trick with a page (nav order; the dock's two included), greyed slots for the
+   * ones not learned yet, and the coming-soon ones (one "What's coming" tile). */
   drawer: { learned: NavItemView[]; notYet: TrickSlotView[]; soon: TrickSlotView[] }
   ownedPages: OwnedPageView[]
   today: string
