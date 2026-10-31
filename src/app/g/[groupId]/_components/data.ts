@@ -11,6 +11,7 @@ import { instacartAvailability } from "@/integrations/instacart"
 import { activity, cart, chatlog, chores, groups, joins, members, money, pantry, recipes, reminders, schedule, splitwise, toolkits, upkeep } from "@/services"
 import { canChangeExpense } from "@/services/authz"
 import { guessCategory } from "@/services/categories"
+import { receiptHref } from "@/services/documents"
 import type { Expense } from "@/services/money"
 import { haveNeed } from "@/services/recipe-math"
 import type { Recipe } from "@/services/recipes"
@@ -218,13 +219,6 @@ export const balancesView = cache(async (s: GroupSession) => {
   }
 })
 
-/** Our own uploads render from this server, whatever APP_URL says. */
-const localPath = (url: string | null | undefined) => {
-  if (!url) return null
-  const m = /\/uploads\/[a-z0-9-]+\/[a-z0-9-]+\.[a-z]+$/i.exec(url)
-  return m ? m[0] : url
-}
-
 export function expenseView(s: GroupSession, e: Expense): ExpenseView {
   const shares = (e.splits ?? []).map((x) => ({ memberId: x.memberId, cents: x.cents, weight: x.weight ?? null }))
   const payers = (e.payers ?? []).map((p) => ({ memberId: p.memberId, cents: p.cents }))
@@ -244,7 +238,8 @@ export function expenseView(s: GroupSession, e: Expense): ExpenseView {
     note: e.note ?? null,
     recurring: e.recurring ?? null,
     repeated: !!e.recurringParentId,
-    receiptUrl: localPath(e.receiptUrl),
+    // Only a Document's link renders from this server, whatever APP_URL says; an old /uploads path shows no receipt.
+    receiptUrl: receiptHref(e.receiptUrl),
     inSplitwise: !!e.splitwiseId,
     source: e.source ?? "chat",
     canChange: payers.some((p) => canChangeExpense(s.member, { createdBy: e.createdBy ?? null, payerId: p.memberId, participantIds })),

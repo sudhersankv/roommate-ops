@@ -7,7 +7,7 @@ import { localDay } from "@/lib/dates";
 import { recordFor } from "./activity";
 import { canChangeExpense, NotAllowedError, requireActive } from "./authz";
 import { guessCategory, isCategory } from "./categories";
-import { attachReceipt, docIdFromUrl } from "./documents";
+import { attachReceipt, docIdFromUrl, receiptHref } from "./documents";
 import { listMembers } from "./members";
 import { enqueueSplitwisePush } from "./outbox";
 import { joinNames, type ReportPart } from "./report";
@@ -403,7 +403,7 @@ export async function updateExpense(ctx: Ctx, input: ExpensePatch): Promise<Expe
 async function linkReceipt(ctx: Ctx, expenseId: string, description: string, receiptUrl: string | null) {
   const docId = receiptUrl ? docIdFromUrl(receiptUrl) : null;
   const linked = docId ? await attachReceipt(ctx, docId, { id: expenseId, description }) : false;
-  await db.update(expenses).set({ receiptDocumentId: linked ? docId : null }).where(eq(expenses.id, expenseId));
+  if (!linked) await db.update(expenses).set({ receiptDocumentId: null }).where(eq(expenses.id, expenseId));
 }
 
 /** Soft delete, so undo can bring it back. */
@@ -638,7 +638,7 @@ export function expenseSummary(e: Expense) {
     shares: (e.splits ?? []).map((s) => ({ name: s.name, owes: dollars(s.cents), ...(s.weight != null ? { [e.method === "percent" ? "percent" : "shares"]: s.weight } : {}) })),
     ...(e.note ? { note: e.note } : {}),
     ...(e.recurring ? { repeats: e.recurring } : {}),
-    ...(e.receiptUrl ? { hasReceipt: true } : {}),
+    ...(receiptHref(e.receiptUrl) ? { hasReceipt: true } : {}),
     ...(e.splitwiseId ? { inSplitwise: true } : {}),
   };
 }

@@ -2,6 +2,7 @@
 // printed); every number after that is computed here (ADR 0007). The printed total is never trusted on its own:
 // items + tax + tip is recomputed and a mismatch is flagged so Roomie asks before logging.
 import { z } from "zod";
+import { appUrl } from "@/lib/urls";
 import { docIdFromUrl, docPath, docUrl, documentBytes, documentGroup, fileDocument, getDocument, stableDocId } from "./documents";
 import { apportion, type SplitRow } from "./split";
 
@@ -268,8 +269,17 @@ export async function uploadBelongsTo(url: string, groupId: string): Promise<boo
   return !!id && !!(await getDocument({ groupId }, id));
 }
 
+const GONE = "That photo isn't here anymore.";
+/** A link from before Documents (/uploads/<folder>/<name>.<ext>, relative or under APP_URL): that disk is long wiped. */
+function isOldUpload(url: string): boolean {
+  const base = appUrl();
+  const rel = base && url.startsWith(`${base}/`) ? url.slice(base.length) : url;
+  return /^\/uploads\/(?:[a-z0-9_-]+\/)+[a-z0-9_-]+\.[a-z0-9]+$/i.test(rel);
+}
+
 /** Throws the friendly error unless the photo was sent in (or uploaded for) this Group. */
 export async function requireGroupUpload(url: string, groupId: string): Promise<void> {
+  if (isOldUpload(url)) throw new Error(GONE);
   if (!(await uploadBelongsTo(url, groupId))) throw new Error("I can only read photos sent in this group's chat or uploaded on its dashboard.");
 }
 
@@ -282,9 +292,10 @@ export async function imageDataUrl(url: string, opts: { ownOnly?: boolean } = {}
   if (id) {
     const groupId = await documentGroup(id);
     const blob = groupId ? await documentBytes(groupId, id) : null;
-    if (!blob) throw new Error("That photo isn't here anymore.");
+    if (!blob) throw new Error(GONE);
     return `data:${blob.contentType};base64,${blob.bytes.toString("base64")}`;
   }
+  if (isOldUpload(url)) throw new Error(GONE);
   if (opts.ownOnly || !/^https:\/\//i.test(url)) throw new Error("I can only read photos sent in the chat or uploaded on the dashboard.");
   const res = await fetch(url, { signal: AbortSignal.timeout(20_000), redirect: "error" });
   const type = res.headers.get("content-type")?.split(";")[0] ?? "";

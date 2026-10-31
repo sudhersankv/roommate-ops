@@ -60,6 +60,23 @@ export function checkRequirements(m: ToolkitManifest, facts: RequirementFacts): 
 
 export const unmet = (reqs: Requirement[]) => reqs.filter((r) => r.blocking && !r.ok);
 
+/**
+ * A whole list of Toolkits to have on (set_group_settings, Onboarding's preset): what each one `requires` comes along
+ * (Groceries brings Money), coming-soon and unknown ids drop out. Catalog order. Pure.
+ */
+export function resolveToolkitSet(ids: readonly string[], catalog: readonly ToolkitManifest[]): ToolkitId[] {
+  const live = new Map(catalog.filter((m) => m.status !== "coming-soon" && isToolkitId(m.id)).map((m) => [m.id, m]));
+  const on = new Set<string>();
+  const add = (id: string) => {
+    const m = live.get(id);
+    if (!m || on.has(id)) return;
+    on.add(id);
+    for (const dep of m.requires?.toolkits ?? []) add(dep);
+  };
+  ids.forEach(add);
+  return [...live.keys()].filter((id) => on.has(id)) as ToolkitId[];
+}
+
 /** The live facts: env, the Group's enabled Toolkits, and integration health (cached by the integrations). */
 export async function requirementFacts(groupId: string, needed: Iterable<Integration>): Promise<RequirementFacts> {
   const wanted = new Set(needed);

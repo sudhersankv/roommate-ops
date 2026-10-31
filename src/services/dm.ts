@@ -132,18 +132,26 @@ export async function nudgeOrHint(memberId: string, groupId: string, out: Outgoi
   } catch (err) {
     if (!(err instanceof CantMessagePrivatelyError)) throw err;
   }
+  return (await postStartHint(memberId, groupId, now)) ? "hint" : "quiet";
+}
+
+/**
+ * The no-DM-path line alone ("Dev, I've got something for you; tap @bot and press Start."), at most once a week per
+ * Member: for a caller whose private send was already refused (a held DM at 08:00). Never the content. Whether it posted.
+ */
+export async function postStartHint(memberId: string, groupId: string, now = new Date()): Promise<boolean> {
   const note = (await getNote(memberId)) as NudgeNote;
-  if (!startHintDue(note.lastStartHintAt, now)) return "quiet";
+  if (!startHintDue(note.lastStartHintAt, now)) return false;
   const [row] = await db
     .select({ name: members.displayName, channel: chats.channel })
     .from(members)
     .innerJoin(chats, eq(chats.groupId, members.groupId))
     .where(eq(members.id, memberId));
-  if (!row) return "quiet";
+  if (!row) return false;
   const handle = (channelFor(row.channel) as { username?: string } | undefined)?.username;
   await setNoteKeys(memberId, { lastStartHintAt: now.toISOString() });
   const text = startHint(row.name.split(" ")[0], handle);
   await deliver(groupId, { text });
   await logMessage(groupId, null, text);
-  return "hint";
+  return true;
 }

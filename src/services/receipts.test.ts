@@ -1,7 +1,8 @@
 // Receipts: the model only transcribes; sums and splits are recomputed here (pure, no model call).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { checkReceipt, imageDataUrl, isOwnUpload, matchItem, parseModelJson, priceToCents, receiptSplits, SAMPLE_RECEIPT } from "./receipts";
+import { receiptHref } from "./documents";
+import { checkReceipt, imageDataUrl, isOwnUpload, matchItem, parseModelJson, priceToCents, receiptSplits, requireGroupUpload, SAMPLE_RECEIPT } from "./receipts";
 
 const sum = (rows: { cents: number }[]) => rows.reduce((s, r) => s + r.cents, 0);
 
@@ -70,4 +71,22 @@ test("our own photos are /api/docs links (relative or under APP_URL); old /uploa
   assert.equal(isOwnUpload(`https://evil.example/api/docs/${id}`), false);
   await assert.rejects(imageDataUrl("/uploads/../../.env"), /only read photos/);
   await assert.rejects(imageDataUrl("http://127.0.0.9/a.jpg"), /only read photos/);
+});
+
+test("an old /uploads receipt (that disk is wiped every deploy) is 'not here anymore', and shows no receipt", async () => {
+  await assert.rejects(imageDataUrl("/uploads/tg/-100123/AQAD_x-1.jpg"), /^Error: That photo isn't here anymore\.$/);
+  const appUrl = process.env.APP_URL;
+  process.env.APP_URL = "https://roomie.fly.dev";
+  try {
+    await assert.rejects(imageDataUrl("https://roomie.fly.dev/uploads/g-4b/receipt.jpg", { ownOnly: true }), /That photo isn't here anymore\./);
+    await assert.rejects(imageDataUrl("http://127.0.0.9:1/uploads/x/a.jpg"), /only read photos/, "someone else's host is no old receipt");
+  } finally {
+    if (appUrl === undefined) delete process.env.APP_URL;
+    else process.env.APP_URL = appUrl;
+  }
+  await assert.rejects(requireGroupUpload("/uploads/wa/15551234567/3EB0.jpg", "0b7e4a52-3c1d-4f6a-9e2b-5d8c7a1f0e93"), /That photo isn't here anymore\./);
+  const id = "0b7e4a52-3c1d-4f6a-9e2b-5d8c7a1f0e93";
+  assert.equal(receiptHref(`/api/docs/${id}`), `/api/docs/${id}`);
+  assert.equal(receiptHref("/uploads/tg/-100123/AQAD.jpg"), null);
+  assert.equal(receiptHref(null), null);
 });

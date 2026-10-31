@@ -9,6 +9,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { registerChannel } from "@/channels";
 import { DevChannel, devUserId, type DevOutput } from "@/channels/dev";
+import { CantMessagePrivatelyError, type Outgoing, type Sent } from "@/channels/types";
 import { MemoryBlobStore, setBlobStore } from "@/integrations/blob-store";
 import { bundleJob } from "@/jobs/scheduler";
 import { zonedParts, zonedTimeToUtc } from "@/lib/time";
@@ -16,7 +17,7 @@ import { onGroupJoined } from "@/onboarding";
 import { deleteGroup, deleteGroupData, groupsWithChat, updateGroupSettings } from "./groups";
 import * as documents from "./documents";
 import { forgetMe } from "./members";
-import { logExpense } from "./money";
+import { logExpense, updateExpense } from "./money";
 import { sendNudge } from "./nudges";
 import { saveUpload } from "./receipts";
 import { setReminder } from "./reminders";
@@ -25,10 +26,44 @@ import type { Ctx } from "./types";
 import { assertNotProdDb } from "../../scripts/lib/prod-guard";
 
 const CHI = "America/Chicago";
-const blobs = new MemoryBlobStore();
+/** A MemoryBlobStore whose next `failDeletes` deletes are refused (object storage having a bad minute). */
+const blobs = new (class extends MemoryBlobStore {
+  failDeletes = 0;
+  override async delete(key: string) {
+    if (this.failDeletes > 0) {
+      this.failDeletes--;
+      throw new Error("storage 503");
+    }
+    return super.delete(key);
+  }
+})();
 setBlobStore(blobs);
 const outbox: DevOutput[] = [];
-registerChannel(new DevChannel((o) => outbox.push(o)));
+const devChannel = new DevChannel((o) => outbox.push(o));
+registerChannel(devChannel);
+
+/** The dev Channel, but private messages are refused (Telegram before Start) or every send fails (Roomie removed). */
+class RefusingChannel extends DevChannel {
+  constructor(private readonly mode: "no-dm" | "down") {
+    super((o) => outbox.push(o));
+  }
+  override async sendPrivate(userExternalId: string, msg: Outgoing): Promise<Sent> {
+    if (this.mode === "no-dm") throw new CantMessagePrivatelyError("Tap @roomie and press Start.");
+    throw new Error("Forbidden: bot was kicked from the group chat");
+  }
+  override async sendToChat(chatExternalId: string, msg: Outgoing): Promise<Sent> {
+    if (this.mode === "down") throw new Error("Forbidden: bot was kicked from the group chat");
+    return super.sendToChat(chatExternalId, msg);
+  }
+}
+async function withChannel<T>(channel: DevChannel, run: () => Promise<T>): Promise<T> {
+  registerChannel(channel);
+  try {
+    return await run();
+  } finally {
+    registerChannel(devChannel);
+  }
+}
 
 let groupId: string;
 let otherGroupId: string;
@@ -120,6 +155,38 @@ describe("core slots against the dev DB", () => {
     assert.equal(outbox.length, 2);
   });
 
+  test("a held DM to Dev, who never pressed Start: 08:00 posts the neutral Start line in the group, never the amount", async () => {
+    outbox.length = 0;
+    assert.equal((await sendNudge(m.Dev, { text: "You owe Maya $24." }, at(23, 0, 20))).sent, false);
+    await withChannel(new RefusingChannel("no-dm"), () => flushPendingPosts(at(8, 0, 21)));
+    assert.deepEqual(chatPosts().map((o) => o.msg.text), ["Dev, I've got something for you; open a chat with me and press Start."]);
+    assert.ok(!outbox.some((o) => o.msg.text.includes("$24")), "the content stays private");
+    assert.equal((await db.select().from(schema.pendingPosts).where(eq(schema.pendingPosts.memberId, m.Dev))).length, 0, "not held again");
+  });
+
+  test("a failed queue write gives the urgent slot back: the retry is held, not refused", async () => {
+    await db.delete(schema.scheduledPosts).where(and(eq(schema.scheduledPosts.groupId, groupId), eq(schema.scheduledPosts.kind, "urgent")));
+    // Postgres refuses a NUL byte in text: the pending_posts insert fails after the claim.
+    await assert.rejects(postUrgent(groupId, "📬 Water's off\u0000 tomorrow.", at(23, 0, 30)));
+    const claims = await db.select().from(schema.scheduledPosts).where(and(eq(schema.scheduledPosts.groupId, groupId), eq(schema.scheduledPosts.kind, "urgent")));
+    assert.equal(claims.length, 0, "the slot is unclaimed");
+    assert.deepEqual(await postUrgent(groupId, "📬 Water's off tomorrow 9-12.", at(23, 5, 30)), { posted: false, reason: "quiet", dueAt: at(8, 0, 31) });
+    await db.delete(schema.pendingPosts).where(eq(schema.pendingPosts.groupId, groupId));
+  });
+
+  test("a held post that keeps failing is put back, then dropped once it's a day old", async () => {
+    await db.delete(schema.pendingPosts).where(eq(schema.pendingPosts.groupId, groupId));
+    await db.insert(schema.pendingPosts).values([
+      { groupId, kind: "urgent", text: "📬 Fresh notice.", dueAt: at(8, 0, 40), createdAt: at(23, 0, 39) },
+      { groupId, kind: "urgent", text: "📬 Old notice.", dueAt: at(8, 0, 40), createdAt: at(7, 0, 39) },
+    ]);
+    const sent = await withChannel(new RefusingChannel("down"), () => flushPendingPosts(at(9, 0, 40)));
+    assert.equal(sent, 0);
+    const left = await db.select().from(schema.pendingPosts).where(eq(schema.pendingPosts.groupId, groupId));
+    assert.deepEqual(left.map((p) => [p.text, p.dueAt.getTime()]), [["📬 Fresh notice.", at(9, 5, 40).getTime()]], "the fresh one retries in 5 minutes; the 26-hour-old one is gone");
+    await db.delete(schema.pendingPosts).where(eq(schema.pendingPosts.groupId, groupId));
+  });
+
   /* ---------- Documents ---------- */
 
   test("a receipt saved through saveUpload is a Document and a blob; the Expense points at it", async () => {
@@ -135,6 +202,50 @@ describe("core slots against the dev DB", () => {
     assert.deepEqual((await documents.findDocuments({ groupId }, "luigi's receipt")).map((d) => d.id), [photo.id]);
     const same = await saveUpload(`g-${groupId}`, Buffer.from("receipt jpeg"), "image/jpeg", "tg-file-1");
     assert.equal((await saveUpload(`g-${groupId}`, Buffer.from("receipt jpeg"), "image/jpeg", "tg-file-1")).id, same.id, "the same Channel file is stored once");
+  });
+
+  test("a receipt belongs to one Expense: attaching it to another moves it, and the first loses it", async () => {
+    const photo = await saveUpload({ groupId }, Buffer.from("pizza receipt"), "image/jpeg");
+    const first = await logExpense(ctxOf(m.Dev), { cents: 4500, description: "Pizza", receiptUrl: photo.path });
+    const second = await logExpense(ctxOf(m.Sam), { cents: 4500, description: "Pizza night", receiptUrl: photo.path });
+    const row = async (id: string) => (await db.select().from(schema.expenses).where(eq(schema.expenses.id, id)))[0];
+    assert.deepEqual([(await row(first.id)).receiptDocumentId, (await row(first.id)).receiptUrl], [null, null], "the first Expense lost it");
+    assert.deepEqual([(await row(second.id)).receiptDocumentId, (await row(second.id)).receiptUrl], [photo.id, photo.path]);
+    let doc = (await documents.getDocument({ groupId }, photo.id))!;
+    assert.deepEqual([doc.title, doc.source], ["Receipt: Pizza night", { table: "expenses", id: second.id }]);
+
+    await updateExpense(ctxOf(m.Dev), { expenseId: first.id, receiptUrl: photo.path });
+    assert.equal((await row(first.id)).receiptDocumentId, photo.id, "moved back by an edit");
+    assert.deepEqual([(await row(second.id)).receiptDocumentId, (await row(second.id)).receiptUrl], [null, null]);
+    doc = (await documents.getDocument({ groupId }, photo.id))!;
+    assert.deepEqual(doc.source, { table: "expenses", id: first.id });
+  });
+
+  test("the same photo sent again after it was deleted comes back as a Document", async () => {
+    const sent = await saveUpload(`g-${groupId}`, Buffer.from("fridge shelf"), "image/jpeg", "tg-file-again", { uploadedBy: m.Dev });
+    await documents.deleteDocument(ctxOf(m.Maya), sent.id);
+    assert.equal(await documents.getDocument({ groupId }, sent.id), null);
+    const again = await saveUpload(`g-${groupId}`, Buffer.from("fridge shelf, again"), "image/jpeg", "tg-file-again", { uploadedBy: m.Sam });
+    assert.equal(again.id, sent.id, "the same stable id");
+    const doc = (await documents.getDocument({ groupId }, again.id))!;
+    assert.deepEqual([doc.kind, doc.filed, doc.uploadedBy, doc.size], ["photo", false, m.Sam, "fridge shelf, again".length]);
+    assert.equal((await blobs.get(`g/${groupId}/${again.id}`))?.bytes.toString(), "fridge shelf, again");
+  });
+
+  test("a file the store won't delete keeps its row (soft-deleted) until a later delete gets it", async () => {
+    const photo = await saveUpload({ groupId }, Buffer.from("blurry selfie"), "image/jpeg");
+    const key = `g/${groupId}/${photo.id}`;
+    const rowOf = async () => (await db.select().from(schema.documents).where(eq(schema.documents.id, photo.id)))[0];
+    blobs.failDeletes = 1;
+    assert.equal(await documents.deleteUnfiledByUrl(groupId, [photo.path]), 0);
+    assert.ok((await rowOf())?.deletedAt, "the row stays, soft-deleted");
+    assert.ok(await blobs.get(key), "the file is still there");
+    assert.equal(await documents.getDocument({ groupId }, photo.id), null, "nobody sees it");
+    // Retention, once the soft delete is 30 days old.
+    await db.update(schema.documents).set({ deletedAt: new Date(Date.now() - 31 * 24 * 60 * 60 * 1000) }).where(eq(schema.documents.id, photo.id));
+    assert.ok((await documents.purgeOldDocuments()) >= 1);
+    assert.equal(await rowOf(), undefined);
+    assert.equal(await blobs.get(key), null);
   });
 
   test("keep and find: 'roomie keep this, it's the lease' files it; find returns it newest first; another Group's link is refused", async () => {
