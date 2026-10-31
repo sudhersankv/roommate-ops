@@ -1271,6 +1271,37 @@ export const SCENARIOS: Scenario[] = [
     },
   },
   {
+    id: "lease-problem-offer",
+    area: "lease",
+    // #45: a house problem mentioned in passing gets one light offer; nothing is sent until someone says yes.
+    seed: async (e) => void (await landlordKnown(e)),
+    turn: { text: "roomie ugh the bathroom sink is leaking again", from: "Dev" },
+    expect: {
+      asks: true,
+      replyIncludes: [/landlord/i],
+      noTools: ["report_issue", "send_to_landlord"],
+      excludes: [/\bsay\b ["'“]/i],
+      check: async (e) => {
+        const rows = await db.select().from(schema.sentMail).where(eq(schema.sentMail.groupId, e.ctx.groupId));
+        return fail(rows.length === 0, `nothing should be sent before a yes, got ${rows.length}`);
+      },
+    },
+  },
+  {
+    id: "lease-problem-offer-yes",
+    area: "lease",
+    seed: async (e) => void (await landlordKnown(e)),
+    setup: [{ text: "roomie ugh the bathroom sink is leaking again", from: "Dev" }],
+    turn: { text: "yes please", from: "Dev", isReplyToRoomie: true },
+    expect: {
+      tools: ["report_issue"],
+      check: async (e) => {
+        const rows = await db.select().from(schema.workOrders).where(eq(schema.workOrders.groupId, e.ctx.groupId));
+        return fail(rows.length === 1 && /sink/i.test(rows[0].title), `one work order about the sink, got ${rows.map((r) => r.title).join(", ") || "none"}`);
+      },
+    },
+  },
+  {
     id: "lease-not-renewing-asks",
     area: "lease",
     seed: async (e) => void (await landlordKnown(e)),

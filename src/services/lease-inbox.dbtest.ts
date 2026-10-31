@@ -212,20 +212,20 @@ describe("Lease Inbox services against the dev DB", () => {
       },
     });
     assert.equal(out.class, "notice");
-    assert.equal(out.line, "Notice from the landlord: water off Monday Nov 2, 10am-2pm");
+    assert.equal(out.line, "📬 Brookfield Residential Leasing: water off Monday Nov 2, 10am-2pm");
     assert.equal(out.urgent, true);
     // 18:00 Chicago on Sunday Nov 1, after the switch back to CST: 00:00Z on Nov 2.
     assert.equal(out.reminderAt?.toISOString(), "2026-11-02T00:00:00.000Z");
-    assert.deepEqual(calls, ["remind 2026-11-02T00:00:00.000Z Water off Monday Nov 2, 10am-2pm", "urgent Notice from the landlord: water off Monday Nov 2, 10am-2pm"]);
+    assert.deepEqual(calls, ["remind 2026-11-02T00:00:00.000Z Water off Monday Nov 2, 10am-2pm", "urgent 📬 Brookfield Residential Leasing: water off Monday Nov 2, 10am-2pm"]);
     const [row] = await db.select().from(schema.mailMessages).where(eq(schema.mailMessages.id, result.id!));
     assert.deepEqual([row.class, row.noticeDate], ["notice", "2026-11-02T10:00"]);
   });
 
-  test("everything else is filed quietly", async () => {
+  test("everything else from the landlord is one line too, like a notification (#45), and filed", async () => {
     const { result } = await deliver({ from: LANDLORD, subject: "Fall community mixer!", text: "Join us in the clubhouse." });
     nextClassifications.push({ class: "other", summary: "community mixer" });
     const out = await leaseInbox.classifyInbound(groupId, result.id!);
-    assert.deepEqual([out.class, out.line], ["other", null]);
+    assert.deepEqual([out.class, out.line], ["other", "📬 Brookfield Residential Leasing: community mixer"]);
   });
 
   let sinkThread: string;
@@ -255,7 +255,7 @@ describe("Lease Inbox services against the dev DB", () => {
     nextClassifications.push({ class: "work-order", reply: "scheduled", date: "2026-11-03T10:00", summary: "plumber Tuesday 10-12" });
     const out = await leaseInbox.classifyInbound(groupId, result.id!);
     assert.equal(out.class, "work-order");
-    assert.equal(out.line, "Update on the leaking kitchen sink: plumber Tuesday 10-12");
+    assert.equal(out.line, "📬 Brookfield Work Orders on the leaking kitchen sink: plumber Tuesday 10-12");
     const status = await leaseInbox.workOrderStatus({ groupId }, { what: "sink" });
     assert.ok(status && "status" in status);
     assert.deepEqual([status.status, status.scheduledFor, status.lastReply], ["scheduled", "2026-11-03T10:00", "plumber Tuesday 10-12"]);

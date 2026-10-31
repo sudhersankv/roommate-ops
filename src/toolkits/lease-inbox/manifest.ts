@@ -8,7 +8,7 @@ export const leaseInbox = defineManifest({
   description: "The Group's own email address for the landlord: notices to the chat and a Reminder the evening before, rent changes to the Admin, work orders emailed from the chat and followed, the rest filed.",
   summary: "Your group's own email address for the landlord.",
   longDescription:
-    "Roomie gets an email address you give the landlord or leasing office. Notices (an inspection, a water shut-off) become one line in the chat and a reminder the evening before; \"the sink's leaking, tell them\" sends a work order with your name on it and tracks the reply; everything else is filed where you can find it.",
+    "Roomie gets an email address you give the landlord or leasing office. Their emails show up in the chat as one line, and a notice gets a reminder the evening before. Mention something broken and Roomie offers to email the landlord, with your name on it, and follows the reply. Everything is filed where you can find it.",
   icon: "Mail",
   category: "home",
   tags: ["lease", "landlord", "email", "notices", "work orders", "leasing office", "inbox"],

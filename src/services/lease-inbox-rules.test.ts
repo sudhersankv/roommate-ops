@@ -1,6 +1,6 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { isUrgent, nextStatus, pickWorkOrder, topicWords, type WorkOrderState } from "./lease-inbox-rules";
+import { isUrgent, mailLine, nextStatus, pickWorkOrder, senderName, topicWords, type WorkOrderState } from "./lease-inbox-rules";
 
 const at = (status: WorkOrderState["status"], scheduledFor: string | null = null): WorkOrderState => ({ status, scheduledFor });
 
@@ -120,5 +120,21 @@ describe("pickWorkOrder: which work order a question means", () => {
     assert.deepEqual(pickWorkOrder([heat], "the heat"), { order: heat });
     assert.equal(pickWorkOrder([heat], "the dishwasher"), null);
     assert.equal(pickWorkOrder([], undefined), null);
+  });
+});
+
+describe("mail in the chat is one line, like a notification (#45)", () => {
+  test("senderName: the display name, else 'The landlord'", () => {
+    assert.equal(senderName('"Oakwood Leasing" <office@oakwood.com>'), "Oakwood Leasing");
+    assert.equal(senderName("Pat Lee <pat@oakwood.com>"), "Pat Lee");
+    assert.equal(senderName("office@oakwood.com"), "The landlord");
+    assert.equal(senderName(null), "The landlord");
+  });
+
+  test("each class gets one line; rent stays private", () => {
+    assert.equal(mailLine({ class: "notice", sender: "Oakwood Leasing", summary: "water off Monday Nov 2, 10am-2pm" }), "📬 Oakwood Leasing: water off Monday Nov 2, 10am-2pm");
+    assert.equal(mailLine({ class: "work-order", sender: "Pat Lee", summary: "plumber Tuesday 10-12", title: "the leaking kitchen sink" }), "📬 Pat Lee on the leaking kitchen sink: plumber Tuesday 10-12");
+    assert.equal(mailLine({ class: "rent-lease", sender: "Oakwood Leasing", summary: "rent goes to $2,500 in January" }), "📬 Oakwood Leasing emailed about the rent or the lease. An admin has the details.");
+    assert.equal(mailLine({ class: "other", sender: "The landlord", summary: "a reminder to renew renters insurance" }), "📬 The landlord: a reminder to renew renters insurance");
   });
 });
