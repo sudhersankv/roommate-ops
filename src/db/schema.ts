@@ -427,7 +427,7 @@ export const scheduledPosts = pgTable(
   "scheduled_posts",
   {
     groupId: uuid("group_id").notNull().references(() => groups.id, { onDelete: "cascade" }),
-    kind: text("kind", { enum: ["chores.nudge", "report.weekly", "rent.ahead", "rent.due", "nudge.settle"] }).notNull(),
+    kind: text("kind", { enum: ["chores.nudge", "report.weekly", "rent.ahead", "nudge.settle"] }).notNull(),
     // The Group's local day ("2026-10-28") for the nudge, the report's local day for the report.
     period: text("period").notNull(),
     createdAt: createdAt(),
