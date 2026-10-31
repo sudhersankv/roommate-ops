@@ -25,10 +25,8 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
-  themeColor: [
-    { media: "(prefers-color-scheme: dark)", color: "#0b141a" },
-    { media: "(prefers-color-scheme: light)", color: "#f4faf6" },
-  ],
+  // The public site is dark in every browser (theme-script.ts); the dashboard's own layout follows the preference.
+  themeColor: "#0b141a",
 }
 
 export default function RootLayout({ children }: { children: ReactNode }) {
