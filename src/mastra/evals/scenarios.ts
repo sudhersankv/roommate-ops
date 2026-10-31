@@ -456,6 +456,27 @@ export const SCENARIOS: Scenario[] = [
     },
   },
   {
+    id: "bare-roomie-after-food-chatter",
+    area: "groceries",
+    // Live test #4: "roomie" alone got "Want me to add eggs and Pepsi?" from earlier chatter.
+    setup: [{ text: "ugh we're out of eggs again and I really want a pepsi", from: "Dev" }],
+    turn: { text: "roomie" },
+    expect: { noTools: "actions", maxLines: 2, excludes: [/cart/i, /\badd\b/i] },
+  },
+  {
+    id: "food-talk-no-cart",
+    area: "groceries",
+    // Live test #5: food talk isn't a shopping request.
+    turn: { text: "roomie I'm craving tacos so bad lol", from: "Sam" },
+    expect: { noTools: "actions", excludes: [/cart/i, /\badd\b/i, /on the list/i] },
+  },
+  {
+    id: "recipe-idea-no-offer",
+    area: "groceries",
+    turn: { text: "roomie what's a quick vegetarian dinner idea?", from: "Dev" },
+    expect: { noTools: ["cart_add", "recipe_add_to_cart"], excludes: [/cart/i, /on the list/i], long: true },
+  },
+  {
     id: "recipe-yes-add-them",
     area: "groceries",
     setup: [{ text: "roomie tacos for 5 on friday" }],
@@ -1246,6 +1267,37 @@ export const SCENARIOS: Scenario[] = [
       check: async (e) => {
         const rows = await db.select().from(schema.workOrders).where(eq(schema.workOrders.groupId, e.ctx.groupId));
         return fail(rows.length === 1 && rows[0].reportedBy === e.member.Dev && /sink/i.test(rows[0].title), `one work order about the sink by Dev, got ${rows.map((r) => r.title).join(", ") || "none"}`);
+      },
+    },
+  },
+  {
+    id: "lease-problem-offer",
+    area: "lease",
+    // #45: a house problem mentioned in passing gets one light offer; nothing is sent until someone says yes.
+    seed: async (e) => void (await landlordKnown(e)),
+    turn: { text: "roomie ugh the bathroom sink is leaking again", from: "Dev" },
+    expect: {
+      asks: true,
+      replyIncludes: [/landlord/i],
+      noTools: ["report_issue", "send_to_landlord"],
+      excludes: [/\bsay\b ["'“]/i],
+      check: async (e) => {
+        const rows = await db.select().from(schema.sentMail).where(eq(schema.sentMail.groupId, e.ctx.groupId));
+        return fail(rows.length === 0, `nothing should be sent before a yes, got ${rows.length}`);
+      },
+    },
+  },
+  {
+    id: "lease-problem-offer-yes",
+    area: "lease",
+    seed: async (e) => void (await landlordKnown(e)),
+    setup: [{ text: "roomie ugh the bathroom sink is leaking again", from: "Dev" }],
+    turn: { text: "yes please", from: "Dev", isReplyToRoomie: true },
+    expect: {
+      tools: ["report_issue"],
+      check: async (e) => {
+        const rows = await db.select().from(schema.workOrders).where(eq(schema.workOrders.groupId, e.ctx.groupId));
+        return fail(rows.length === 1 && /sink/i.test(rows[0].title), `one work order about the sink, got ${rows.map((r) => r.title).join(", ") || "none"}`);
       },
     },
   },

@@ -15,6 +15,7 @@
     "telegram:webhook": "tsx scripts/telegram-webhook.ts",
     "telegram:check": "tsx scripts/telegram-check.ts",
     "whatsapp": "tsx scripts/whatsapp.ts",
+    "skills": "tsx scripts/build-skills.ts",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test \"src/**/*.test.ts\"",
     "test:tools": "tsx --test src/toolkits/tools.dbtest.ts",

@@ -133,7 +133,7 @@ export async function catalogFor(ctx: GroupCtx): Promise<ToolkitState[]> {
 
 /* ---------- writes ---------- */
 
-export type ToolkitChange = { toolkit: ToolkitId; name: string; enabled: boolean; changed: boolean; toolkits: ToolkitId[]; tryThis?: string };
+export type ToolkitChange = { toolkit: ToolkitId; name: string; enabled: boolean; changed: boolean; toolkits: ToolkitId[]; summary: string };
 
 /**
  * Admin: switch one Toolkit on or off by id or name. Nothing is deleted when it's off. A coming-soon Toolkit or one
@@ -144,7 +144,7 @@ export async function setToolkit(ctx: Ctx, input: { toolkit: string; enabled: bo
   const m = findManifest(input.toolkit);
   if (!m) throw new ToolkitUnavailableError(`I don't know a "${input.toolkit}" Trick. I can learn ${MANIFESTS.map((x) => x.name).join(", ")}.`, "unknown");
   if (m.status === "coming-soon") {
-    if (!input.enabled) return { toolkit: m.id as ToolkitId, name: m.name, enabled: false, changed: false, toolkits: await enabledToolkits(ctx) };
+    if (!input.enabled) return { toolkit: m.id as ToolkitId, name: m.name, enabled: false, changed: false, toolkits: await enabledToolkits(ctx), summary: m.summary };
     throw new ToolkitUnavailableError(`I can't learn ${m.name} yet: it isn't ready yet, but it's on the list.`, "coming-soon");
   }
   if (!isToolkitId(m.id)) throw new ToolkitUnavailableError(`I don't know a "${input.toolkit}" Trick.`, "unknown");
@@ -173,7 +173,7 @@ export async function setToolkit(ctx: Ctx, input: { toolkit: string; enabled: bo
     await runHooks({ groupId: ctx.groupId, memberId: ctx.memberId }, input.enabled ? [id] : [], input.enabled ? [] : [id]);
     if (input.enabled && ctx.source === "ui") await announceToolkitOn(ctx.groupId, id).catch((e) => console.error("[toolkits] announce failed", e));
   }
-  return { toolkit: id, name: m.name, enabled: input.enabled, changed, toolkits: await enabledToolkits(ctx), ...(input.enabled ? { tryThis: m.gate.examples[0] } : {}) };
+  return { toolkit: id, name: m.name, enabled: input.enabled, changed, toolkits: await enabledToolkits(ctx), summary: m.summary };
 }
 
 /** Run the Toolkits' onEnable / onDisable hooks (lazy: services never load the tools at import time). */
@@ -194,11 +194,16 @@ export async function enabledToolkitEntries(ctx: GroupCtx): Promise<Toolkit[]> {
   return byPostOrder(TOOLKITS.filter((t) => (on as readonly string[]).includes(t.id)));
 }
 
-/** The line Roomie posts when a Toolkit goes on from the dashboard. Pure. */
-export function announcement(m: Pick<ToolkitManifest, "name" | "gate">): string {
-  const example = m.gate.examples[0];
-  return example ? `Learned ${m.name}. Try: "roomie, ${example}"` : `Learned ${m.name}.`;
+/**
+ * What Roomie says when it learns a Trick (in the chat, or posted when an Admin teaches it on the dashboard): what it
+ * can do now, from the manifest's summary. No sample phrase to type (#44, #45). Pure.
+ */
+export function learnedSay(m: Pick<ToolkitManifest, "name" | "summary">): string {
+  return `Learned ${m.name}: ${m.summary.charAt(0).toLowerCase()}${m.summary.slice(1)}`;
 }
+
+/** The line Roomie posts when a Toolkit goes on from the dashboard. Pure. */
+export const announcement = (m: Pick<ToolkitManifest, "name" | "summary">): string => learnedSay(m);
 
 const ANNOUNCE_COOLDOWN_MS = 10 * 60_000;
 const announced = (): Map<string, number> => ((globalThis as { __roomieAnnounced?: Map<string, number> }).__roomieAnnounced ??= new Map());
