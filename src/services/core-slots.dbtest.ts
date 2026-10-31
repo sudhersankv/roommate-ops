@@ -9,6 +9,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { registerChannel } from "@/channels";
 import { DevChannel, devUserId, type DevOutput } from "@/channels/dev";
+import { CantMessagePrivatelyError, type Outgoing, type Sent } from "@/channels/types";
 import { MemoryBlobStore, setBlobStore } from "@/integrations/blob-store";
 import { bundleJob } from "@/jobs/scheduler";
 import { zonedParts, zonedTimeToUtc } from "@/lib/time";
@@ -28,7 +29,31 @@ const CHI = "America/Chicago";
 const blobs = new MemoryBlobStore();
 setBlobStore(blobs);
 const outbox: DevOutput[] = [];
-registerChannel(new DevChannel((o) => outbox.push(o)));
+const devChannel = new DevChannel((o) => outbox.push(o));
+registerChannel(devChannel);
+
+/** The dev Channel, but private messages are refused (Telegram before Start) or every send fails (Roomie removed). */
+class RefusingChannel extends DevChannel {
+  constructor(private readonly mode: "no-dm" | "down") {
+    super((o) => outbox.push(o));
+  }
+  override async sendPrivate(userExternalId: string, msg: Outgoing): Promise<Sent> {
+    if (this.mode === "no-dm") throw new CantMessagePrivatelyError("Tap @roomie and press Start.");
+    throw new Error("Forbidden: bot was kicked from the group chat");
+  }
+  override async sendToChat(chatExternalId: string, msg: Outgoing): Promise<Sent> {
+    if (this.mode === "down") throw new Error("Forbidden: bot was kicked from the group chat");
+    return super.sendToChat(chatExternalId, msg);
+  }
+}
+async function withChannel<T>(channel: DevChannel, run: () => Promise<T>): Promise<T> {
+  registerChannel(channel);
+  try {
+    return await run();
+  } finally {
+    registerChannel(devChannel);
+  }
+}
 
 let groupId: string;
 let otherGroupId: string;
@@ -118,6 +143,38 @@ describe("core slots against the dev DB", () => {
     await db.insert(schema.memberNotes).values({ memberId: m.Sam, note: { nudges: "off" } }).onConflictDoUpdate({ target: schema.memberNotes.memberId, set: { note: sql`${schema.memberNotes.note} || '{"nudges":"off"}'::jsonb` } });
     assert.deepEqual(await sendNudge(m.Sam, { text: "You owe Maya $10." }, at(12, 0, 11)), { sent: false, reason: "off" });
     assert.equal(outbox.length, 2);
+  });
+
+  test("a held DM to Dev, who never pressed Start: 08:00 posts the neutral Start line in the group, never the amount", async () => {
+    outbox.length = 0;
+    assert.equal((await sendNudge(m.Dev, { text: "You owe Maya $24." }, at(23, 0, 20))).sent, false);
+    await withChannel(new RefusingChannel("no-dm"), () => flushPendingPosts(at(8, 0, 21)));
+    assert.deepEqual(chatPosts().map((o) => o.msg.text), ["Dev, I've got something for you; open a chat with me and press Start."]);
+    assert.ok(!outbox.some((o) => o.msg.text.includes("$24")), "the content stays private");
+    assert.equal((await db.select().from(schema.pendingPosts).where(eq(schema.pendingPosts.memberId, m.Dev))).length, 0, "not held again");
+  });
+
+  test("a failed queue write gives the urgent slot back: the retry is held, not refused", async () => {
+    await db.delete(schema.scheduledPosts).where(and(eq(schema.scheduledPosts.groupId, groupId), eq(schema.scheduledPosts.kind, "urgent")));
+    // Postgres refuses a NUL byte in text: the pending_posts insert fails after the claim.
+    await assert.rejects(postUrgent(groupId, "📬 Water's off\u0000 tomorrow.", at(23, 0, 30)));
+    const claims = await db.select().from(schema.scheduledPosts).where(and(eq(schema.scheduledPosts.groupId, groupId), eq(schema.scheduledPosts.kind, "urgent")));
+    assert.equal(claims.length, 0, "the slot is unclaimed");
+    assert.deepEqual(await postUrgent(groupId, "📬 Water's off tomorrow 9-12.", at(23, 5, 30)), { posted: false, reason: "quiet", dueAt: at(8, 0, 31) });
+    await db.delete(schema.pendingPosts).where(eq(schema.pendingPosts.groupId, groupId));
+  });
+
+  test("a held post that keeps failing is put back, then dropped once it's a day old", async () => {
+    await db.delete(schema.pendingPosts).where(eq(schema.pendingPosts.groupId, groupId));
+    await db.insert(schema.pendingPosts).values([
+      { groupId, kind: "urgent", text: "📬 Fresh notice.", dueAt: at(8, 0, 40), createdAt: at(23, 0, 39) },
+      { groupId, kind: "urgent", text: "📬 Old notice.", dueAt: at(8, 0, 40), createdAt: at(7, 0, 39) },
+    ]);
+    const sent = await withChannel(new RefusingChannel("down"), () => flushPendingPosts(at(9, 0, 40)));
+    assert.equal(sent, 0);
+    const left = await db.select().from(schema.pendingPosts).where(eq(schema.pendingPosts.groupId, groupId));
+    assert.deepEqual(left.map((p) => [p.text, p.dueAt.getTime()]), [["📬 Fresh notice.", at(9, 5, 40).getTime()]], "the fresh one retries in 5 minutes; the 26-hour-old one is gone");
+    await db.delete(schema.pendingPosts).where(eq(schema.pendingPosts.groupId, groupId));
   });
 
   /* ---------- Documents ---------- */

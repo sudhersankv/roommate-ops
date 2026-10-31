@@ -9,6 +9,7 @@ import { CantMessagePrivatelyError } from "@/channels/types";
 import { db, schema } from "@/db";
 import { inQuietHours, nextAllowed } from "@/lib/quiet-hours";
 import { dayInZone } from "@/lib/time";
+import { postStartHint } from "./dm";
 import { claimPost, DEFAULT_TIMEZONE, releasePost } from "./schedule";
 
 const { groups, members, memberNotes, pendingPosts } = schema;
@@ -46,7 +47,14 @@ export async function postUrgent(groupId: string, text: string, now = new Date()
   const claimed = paused ? false : await claimPost(groupId, "urgent", plan.period);
   const outcome = urgentOutcome({ paused, claimed, quiet: plan.quiet, at: plan.at });
   if (outcome !== "post") {
-    if (!outcome.posted && outcome.reason === "quiet") await db.insert(pendingPosts).values({ groupId, kind: "urgent", text, dueAt: plan.at, createdAt: now });
+    if (!outcome.posted && outcome.reason === "quiet") {
+      try {
+        await db.insert(pendingPosts).values({ groupId, kind: "urgent", text, dueAt: plan.at, createdAt: now });
+      } catch (e) {
+        await releasePost(groupId, "urgent", plan.period).catch(() => {});
+        throw e;
+      }
+    }
     return outcome;
   }
   try {
@@ -66,19 +74,29 @@ export async function nudgesOff(memberId: string): Promise<boolean> {
 
 type Pending = typeof pendingPosts.$inferSelect;
 
-async function send(p: Pending) {
+/** A held post that has kept failing this long is given up on (reminders give up after their own failures too). */
+export const HELD_POST_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+async function send(p: Pending, now: Date) {
   const out = { text: p.text, ...(p.buttons?.length ? { buttons: p.buttons } : {}) };
   if (p.kind === "urgent") return deliver(p.groupId, out);
   if (!p.memberId || (await nudgesOff(p.memberId))) return;
   const [m] = await db.select({ status: members.status }).from(members).where(eq(members.id, p.memberId));
   if (m?.status !== "active") return;
-  return deliverPrivate(p.memberId, out);
+  try {
+    await deliverPrivate(p.memberId, out, { groupId: p.groupId });
+  } catch (e) {
+    if (!(e instanceof CantMessagePrivatelyError)) throw e;
+    // No DM path yet (Telegram before Start): the neutral group line, never the content (ADR 0020).
+    await postStartHint(p.memberId, p.groupId, now);
+  }
 }
 
 /**
  * Scheduler: every held post whose time has come, outside paused Groups. Each is claimed by deleting its row (two
- * processes can't both send it); a failed send puts it back five minutes later. A DM to someone Roomie can't message
- * privately is dropped (the nudge's fallback is the caller's). Returns how many went out.
+ * processes can't both send it); a failed send puts it back five minutes later, until it's a day old, then it's
+ * dropped with a warning. A DM to someone Roomie can't message privately becomes the Start hint. Returns how many went
+ * out.
  */
 export async function flushPendingPosts(now = new Date(), paused: ReadonlySet<string> = new Set()): Promise<number> {
   const due = await db.select({ id: pendingPosts.id, groupId: pendingPosts.groupId }).from(pendingPosts).where(lte(pendingPosts.dueAt, now));
@@ -88,11 +106,11 @@ export async function flushPendingPosts(now = new Date(), paused: ReadonlySet<st
     const [p] = await db.delete(pendingPosts).where(and(eq(pendingPosts.id, d.id), lte(pendingPosts.dueAt, now))).returning();
     if (!p) continue; // another process has it
     try {
-      await send(p);
+      await send(p, now);
       sent++;
     } catch (e) {
-      if (e instanceof CantMessagePrivatelyError) {
-        console.warn(`[pending] can't DM member ${p.memberId}; dropped a held ${p.kind}`);
+      if (now.getTime() - p.createdAt.getTime() >= HELD_POST_MAX_AGE_MS) {
+        console.warn(`[pending] gave up on a held ${p.kind} for group ${p.groupId} after a day of failures`, e);
         continue;
       }
       console.error(`scheduler: held ${p.kind} for group ${p.groupId} failed`, e);
