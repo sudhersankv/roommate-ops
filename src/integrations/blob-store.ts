@@ -70,7 +70,7 @@ export const amzDate = (d: Date) => d.toISOString().replace(/[-:]/g, "").replace
 export type NeonStorageConfig = { endpoint: string; bucket: string; accessKey: string; secretKey: string; region: string };
 
 /** NEON_STORAGE_* first, then the AWS-standard names Neon injects (AWS_ENDPOINT_URL_S3, AWS_ACCESS_KEY_ID, ...). */
-export function storageConfigFromEnv(env = process.env): NeonStorageConfig | null {
+export function storageConfigFromEnv(env: Record<string, string | undefined> = process.env): NeonStorageConfig | null {
   const endpoint = env.NEON_STORAGE_ENDPOINT || env.AWS_ENDPOINT_URL_S3;
   const bucket = env.NEON_STORAGE_BUCKET;
   const accessKey = env.NEON_STORAGE_ACCESS_KEY || env.AWS_ACCESS_KEY_ID;

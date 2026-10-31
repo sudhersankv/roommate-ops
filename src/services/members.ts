@@ -323,7 +323,8 @@ async function namesOf(me: Member): Promise<string[]> {
 /**
  * "roomie forget me" (ADR 0006, audit H5): deletes the Member's raw chat lines, Member note (table + working memory),
  * Claim links, their lines in Roomie's memory thread under any name they went by (and Roomie's replies naming them),
- * the photos those lines pointed at (unless an Expense keeps one as its receipt), the traces and scores of their
+ * the photos those lines pointed at (unless someone filed one: a receipt, a kept photo), the Documents of kind photo
+ * they uploaded (their name comes off the rest), the traces and scores of their
  * messages, and the WhatsApp contact row behind their id. Their names in Activity become "Former member". Then they
  * are removed: "Former member", no Channel id (a later message makes them a new Pending member) and no Account.
  * Ledger rows (Expenses, Shares, Settlements, chores) stay so the Group's Balances still add up. Safe to run twice.
@@ -353,7 +354,7 @@ export async function forgetMe(ctx: Ctx): Promise<{ chatLines: number; memoryMes
   const own = names.filter((n) => !taken.has(n.toLowerCase()));
   const traces = () => forget.forgetMemberTraces(me.id, { groupId: ctx.groupId, names: own }).catch((e) => console.warn("[forget-me] trace cleanup failed", e));
   await traces();
-  await removePhotos(ctx.groupId, photos);
+  await removePhotos(ctx.groupId, me.id, photos);
   // Reminders addressed to them privately (nobody to send them to now).
   await db.delete(schema.reminders).where(and(eq(schema.reminders.groupId, ctx.groupId), eq(schema.reminders.memberId, me.id)));
 
@@ -398,16 +399,13 @@ export async function forgetMe(ctx: Ctx): Promise<{ chatLines: number; memoryMes
 /** How long after "forget me" the follow-up sweep runs (the agent's turn is over by then). */
 const FORGET_SWEEP_MS = 90_000;
 
-const uploadPath = (url: string) => /\/uploads\/.+$/.exec(url)?.[0] ?? url;
-
-/** Deletes photo files from forgotten lines; one an Expense keeps as its receipt stays with the Expense. */
-async function removePhotos(groupId: string, urls: string[]) {
-  if (!urls.length) return;
-  const receipts = await db
-    .select({ url: schema.expenses.receiptUrl })
-    .from(schema.expenses)
-    .where(and(eq(schema.expenses.groupId, groupId), sql`${schema.expenses.receiptUrl} is not null`));
-  const kept = new Set(receipts.map((r) => uploadPath(r.url!)));
-  const { removeUpload } = await import("./receipts");
-  for (const url of urls) if (!kept.has(uploadPath(url))) await removeUpload(url).catch((e) => console.warn("[forget-me] couldn't delete a photo", e));
+/**
+ * Their files (ADR 0018): the photos in their forgotten lines that nobody filed, their own photos, and their name on
+ * the rest (a receipt stays with its Expense, the lease with the Group).
+ */
+async function removePhotos(groupId: string, memberId: string, urls: string[]) {
+  const documents = await import("./documents");
+  await documents.deleteUnfiledByUrl(groupId, urls).catch((e) => console.warn("[forget-me] couldn't delete the photos in their lines", e));
+  await documents.deleteMemberPhotos(groupId, memberId);
+  await documents.anonymizeUploader(groupId, memberId);
 }

@@ -1,11 +1,8 @@
 // Receipt photo -> Expense. A vision model on the Neon AI Gateway only transcribes the receipt (names and prices as
 // printed); every number after that is computed here (ADR 0007). The printed total is never trusted on its own:
 // items + tax + tip is recomputed and a mismatch is flagged so Roomie asks before logging.
-import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import path from "node:path";
 import { z } from "zod";
-import { appUrl } from "@/lib/urls";
+import { docIdFromUrl, docPath, docUrl, documentBytes, documentGroup, fileDocument, getDocument, stableDocId } from "./documents";
 import { apportion, type SplitRow } from "./split";
 
 export type ReceiptItem = { name: string; cents: number };
@@ -216,78 +213,59 @@ const currentReader = () => reader ?? (process.env.RECEIPT_FAKE === "1" ? fakeRe
 
 /* ---------- images ---------- */
 
-const UPLOADS = path.join(process.cwd(), "public", "uploads");
 const MAX_BYTES = 8 * 1024 * 1024;
-const safeFolder = (folder: string) => folder.split("/").map((s) => s.replace(/[^a-z0-9-]/gi, "")).filter(Boolean).join("/");
 const EXT: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif", "image/heic": "heic" };
-
-/**
- * Save an uploaded photo under public/uploads/<folder>/ (folder may be nested, "tg/-100123") and return its URL
- * (absolute when APP_URL is set). `baseName` keeps a Channel's file id, so the same photo is stored once.
- */
-export async function saveUpload(folder: string, bytes: Buffer, mime: string, baseName?: string): Promise<{ file: string; path: string; url: string }> {
-  if (!EXT[mime]) throw new Error("That isn't a photo I can read (JPEG, PNG, WebP or GIF).");
-  if (bytes.length > MAX_BYTES) throw new Error("That photo is over 8 MB.");
-  const safe = safeFolder(folder);
-  const name = `${baseName?.replace(/[^a-z0-9_-]/gi, "") || randomUUID()}.${EXT[mime]}`;
-  await mkdir(path.join(UPLOADS, safe), { recursive: true });
-  const file = path.join(UPLOADS, safe, name);
-  await writeFile(file, bytes);
-  const rel = `/uploads/${safe}/${name}`;
-  return { file, path: rel, url: `${appUrl()}${rel}` };
-}
-
-/** The upload folder saveUpload uses for a Group's dashboard scans and its Chat's photos (adapters: tg/<chat>, wa/<jid user>). */
-export function uploadFoldersFor(groupId: string, chat?: { channel: string; externalId: string } | null): string[] {
-  const out = [`g-${groupId}`];
-  if (chat?.channel === "telegram") out.push(`tg/${chat.externalId}`);
-  if (chat?.channel === "whatsapp") out.push(`wa/${chat.externalId.split("@")[0]}`);
-  return out;
-}
-
-/** Deletes a whole upload folder (delete group data). Missing is fine. */
-export async function removeUploadFolder(folder: string): Promise<void> {
-  const safe = safeFolder(folder);
-  if (!safe) return;
-  await rm(path.join(UPLOADS, safe), { recursive: true, force: true });
-}
-
-/** Deletes one of our own uploads by its URL or /uploads path (forget me). Anything else is ignored. Returns whether it was ours. */
-export async function removeUpload(url: string): Promise<boolean> {
-  const local = /\/uploads\/((?:[a-z0-9-]+\/)*[a-z0-9-]+)\/([a-z0-9_-]+\.[a-z]+)$/i.exec(url);
-  const base = appUrl();
-  if (!local || !(url.startsWith("/uploads/") || (base && url.startsWith(base)))) return false;
-  await rm(path.join(UPLOADS, safeFolder(local[1]), local[2]), { force: true });
-  return true;
-}
-
-const mimeOf = (p: string) => Object.entries(EXT).find(([, e]) => p.toLowerCase().endsWith(`.${e}`) || (e === "jpg" && p.toLowerCase().endsWith(".jpeg")))?.[0] ?? "image/jpeg";
-
-const UPLOAD_PATH = /\/uploads\/((?:[a-z0-9-]+\/)*[a-z0-9-]+)\/([a-z0-9_-]+\.[a-z]+)$/i;
-
-/** One of our own uploads (`/uploads/...`, or under APP_URL): what the Channels and the dashboard store. */
-export function isOwnUpload(url: string): boolean {
-  const base = appUrl();
-  return UPLOAD_PATH.test(url) && (url.startsWith("/uploads/") || (!!base && url.startsWith(`${base}/uploads/`)));
-}
-
 const folderPart = (s: string) => s.replace(/[^a-z0-9-]/gi, "");
 
 /**
- * Is this upload one of this Group's? Folders are where saveUpload put them: `g-<groupId>` (the dashboard),
- * `tg/<chat id>` and `wa/<jid user>` (the Group's Chats). `test` / `evals` count only outside production.
+ * The Group a Channel adapter's upload folder belongs to: `g-<groupId>` (the dashboard), `tg/<chat id>` and
+ * `wa/<jid user>` (the Group's Chat). Null when no Group has that Chat.
  */
-export async function uploadBelongsTo(url: string, groupId: string): Promise<boolean> {
-  const m = UPLOAD_PATH.exec(url);
-  if (!m || !isOwnUpload(url)) return false;
-  const [top, rest] = [m[1].split("/")[0], m[1].split("/").slice(1).join("/")];
-  if (!rest && top === `g-${groupId}`) return true;
-  if (!rest && (top === "test" || top === "evals")) return process.env.NODE_ENV !== "production";
-  if (top !== "tg" && top !== "wa") return false;
+export async function groupForFolder(folder: string): Promise<string | null> {
+  const [top, ...rest] = folder.split("/").map(folderPart).filter(Boolean);
+  const g = /^g-([0-9a-f-]{36})$/i.exec(top ?? "");
+  if (g && !rest.length) return g[1];
+  const id = rest.join("");
+  if (!id || (top !== "tg" && top !== "wa")) return null;
   const { db, schema } = await import("@/db");
-  const { eq } = await import("drizzle-orm");
-  const chats = await db.select({ channel: schema.chats.channel, externalId: schema.chats.externalId }).from(schema.chats).where(eq(schema.chats.groupId, groupId));
-  return chats.some((c) => (top === "tg" ? c.channel === "telegram" && folderPart(c.externalId) === rest : c.channel === "whatsapp" && folderPart(c.externalId.split("@")[0]) === rest));
+  const { and, eq, like } = await import("drizzle-orm");
+  const { chats } = schema;
+  const where = top === "tg" ? and(eq(chats.channel, "telegram"), eq(chats.externalId, id)) : and(eq(chats.channel, "whatsapp"), like(chats.externalId, `${id}@%`));
+  const [chat] = await db.select({ groupId: chats.groupId }).from(chats).where(where).limit(1);
+  return chat?.groupId ?? null;
+}
+
+/**
+ * Keep an uploaded photo as one of the Group's Documents (services/documents.ts): unfiled (Roomie can read it; it isn't
+ * on the Docs list until someone keeps it or it becomes an Expense's receipt). `where` is the Group, or a Channel
+ * adapter's folder ("tg/-100123", "wa/<jid user>", "g-<groupId>"). `baseName` keeps a Channel's file id, so the same
+ * photo is stored once. Returns the Document id and its /api/docs link (absolute when APP_URL is set).
+ */
+export async function saveUpload(
+  where: string | { groupId: string },
+  bytes: Buffer,
+  mime: string,
+  baseName?: string,
+  opts: { uploadedBy?: string | null } = {},
+): Promise<{ id: string; path: string; url: string }> {
+  if (!EXT[mime]) throw new Error("That isn't a photo I can read (JPEG, PNG, WebP or GIF).");
+  if (bytes.length > MAX_BYTES) throw new Error("That photo is over 8 MB.");
+  const groupId = typeof where === "string" ? await groupForFolder(where) : where.groupId;
+  if (!groupId) throw new Error("I can only keep photos sent in a group's chat or uploaded on its dashboard.");
+  const doc = await fileDocument(
+    { groupId },
+    { kind: "photo", title: "Photo", bytes, contentType: mime, uploadedBy: opts.uploadedBy ?? null, filed: false, ...(baseName ? { id: stableDocId(groupId, baseName) } : {}) },
+  );
+  return { id: doc.id, path: docPath(doc.id), url: docUrl(doc.id) };
+}
+
+/** One of our own Documents' links (`/api/docs/<id>`, or under APP_URL): what the Channels and the dashboard store. */
+export const isOwnUpload = (url: string): boolean => docIdFromUrl(url) !== null;
+
+/** Is this link one of this Group's Documents? */
+export async function uploadBelongsTo(url: string, groupId: string): Promise<boolean> {
+  const id = docIdFromUrl(url);
+  return !!id && !!(await getDocument({ groupId }, id));
 }
 
 /** Throws the friendly error unless the photo was sent in (or uploaded for) this Group. */
@@ -296,14 +274,16 @@ export async function requireGroupUpload(url: string, groupId: string): Promise<
 }
 
 /**
- * Our own uploads are read from disk (the gateway can't reach localhost); with `ownOnly` nothing else is read.
+ * Our own Documents are read from the blob store (the gateway can't reach them); with `ownOnly` nothing else is read.
  * Otherwise an https image is fetched here: no redirects, and the size is checked before the body is read.
  */
 export async function imageDataUrl(url: string, opts: { ownOnly?: boolean } = {}): Promise<string> {
-  const local = UPLOAD_PATH.exec(url);
-  if (local && isOwnUpload(url)) {
-    const bytes = await readFile(path.join(UPLOADS, local[1], local[2]));
-    return `data:${mimeOf(local[2])};base64,${bytes.toString("base64")}`;
+  const id = docIdFromUrl(url);
+  if (id) {
+    const groupId = await documentGroup(id);
+    const blob = groupId ? await documentBytes(groupId, id) : null;
+    if (!blob) throw new Error("That photo isn't here anymore.");
+    return `data:${blob.contentType};base64,${blob.bytes.toString("base64")}`;
   }
   if (opts.ownOnly || !/^https:\/\//i.test(url)) throw new Error("I can only read photos sent in the chat or uploaded on the dashboard.");
   const res = await fetch(url, { signal: AbortSignal.timeout(20_000), redirect: "error" });
