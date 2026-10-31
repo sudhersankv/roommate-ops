@@ -260,19 +260,24 @@ src/
                         pickSeat (actions.ts) -> joins.claimSeat; unknown or rotated code = 404
     auth/callback/      Google sign-in return: verifier -> session cookies -> `next` (or `next?auth_error=<reason>`)
     g/[groupId]/        layout (session + GroupProvider + shell; Pending members see a waiting screen; groupView builds the
-                        nav, overflow and owned pages from the enabled manifests once), Home (doorway + Toolkits' Home
-                        sections + core's Reminders card + narration), money (+ ?tab=, [expenseId]), cart (+ ?recipe=;
-                        Recipes and Pantry in _components/recipes.tsx), house (Chores and Upkeep tabs; /chores redirects
-                        there, ?tab=reminders to /reminders), reminders (core: the Reminders page, also a tile in the More
-                        drawer), members, settings (core + Toolkits' settings sections),
-                        toolkits (the Tricks page: search, category chips, Learned / Not yet / Soon cards, detail sheet with
-                        Teach Roomie X / Forget X; ?open=<id>; also served at tricks/);
+                        nav, overflow and owned pages from the enabled manifests once), Home (doorway + Today = the Bundle
+                        on a page: todayView = each enabled Toolkit's bundle() line in post order with its accent dot +
+                        your Reminders due today, "Nothing due today." otherwise; RecentDocuments (empty until core's
+                        Documents: recentDocumentsView) + Toolkits' Home sections + Reminders coming up + narration), money
+                        (+ ?tab=, [expenseId]), cart (+ ?recipe=; Recipes and Pantry in _components/recipes.tsx), house
+                        (Chores and Upkeep tabs; /chores redirects there, ?tab=reminders to /reminders), reminders (core:
+                        Today / Coming up + Add reminder, also a tile in the More drawer), members, settings (core +
+                        Toolkits' settings sections; the Tricks list is one link row; NudgesCard in _components/nudges-card.tsx
+                        is a null slot until #25), toolkits (the Tricks page: a plain list, Learned / Not yet / Soon (#soon),
+                        detail sheet with Teach Roomie X / Forget X; ?open=<id>; also served at tricks/);
                         actions.ts = every server action; _components/data.ts = services -> screen shapes;
                         _components/sections.tsx = the Toolkits' Home/Settings sections and mood for a request;
                         _components/toolkit-off.tsx = the off state of a page whose Toolkits are all off ("Roomie hasn't learned X
-                        here yet."); _components/dock.tsx = the dock (Home, up to 3 Trick tabs, Ask Roomie centred, More) and
-                        the More drawer (every learned Trick, greyed Teach / Ask an admin slots, inert Soon slots, Teach a
-                        Trick, Reminders, Members, Settings; aria-current in both); _components/screens/*
+                        here yet."); _components/dock.tsx = the dock (Home, the first 2 learned Tricks by nav order, Ask
+                        Roomie centred, More: Home · Money · Ask · House · More for roommates; a Trick that's off leaves its
+                        slot to the next by order) and the More drawer (the learned Tricks not in the dock, greyed Teach /
+                        Ask an admin slots, one "What's coming" tile to the Tricks page's Soon list, Reminders, Members,
+                        Settings; aria-current in both); _components/screens/*
                         settings/splitwise/callback = Composio's return URL (route handler)
     design/             the design-system page (dev only unless SHOW_DESIGN_PAGE=1)
     api/auth/[...path]  Neon Auth proxy; api/chat = Ask Roomie (session Member, 401/403); api/receipts = Scan receipt;
