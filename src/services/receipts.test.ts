@@ -76,9 +76,9 @@ test("our own photos are /api/docs links (relative or under APP_URL); old /uploa
 test("an old /uploads receipt (that disk is wiped every deploy) is 'not here anymore', and shows no receipt", async () => {
   await assert.rejects(imageDataUrl("/uploads/tg/-100123/AQAD_x-1.jpg"), /^Error: That photo isn't here anymore\.$/);
   const appUrl = process.env.APP_URL;
-  process.env.APP_URL = "https://roomie.fly.dev";
+  process.env.APP_URL = "https://tryroomie.me";
   try {
-    await assert.rejects(imageDataUrl("https://roomie.fly.dev/uploads/g-4b/receipt.jpg", { ownOnly: true }), /That photo isn't here anymore\./);
+    await assert.rejects(imageDataUrl("https://tryroomie.me/uploads/g-4b/receipt.jpg", { ownOnly: true }), /That photo isn't here anymore\./);
     await assert.rejects(imageDataUrl("http://127.0.0.9:1/uploads/x/a.jpg"), /only read photos/, "someone else's host is no old receipt");
   } finally {
     if (appUrl === undefined) delete process.env.APP_URL;

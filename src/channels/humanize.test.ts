@@ -25,9 +25,9 @@ test("decimals and numbered items don't split; lists and links stay whole", () =
   assert.deepEqual(splitBubbles("Sam owes Maya $16.50. Dev's all square. Trash is next, Sam's up."), ["Sam owes Maya $16.50. Dev's all square. Trash is next, Sam's up."]);
   const list = "This week:\n1. dishes: Dev\n2. trash: Sam\n3. bathroom: Maya\nSwap if you need to, just tell me.";
   assert.deepEqual(splitBubbles(list), [list]);
-  const linked = "Here's your dashboard. Works once, expires in 24 hours. Open dashboard — https://roomie.fly.dev/claim/abc";
+  const linked = "Here's your dashboard. Works once, expires in 24 hours. Open dashboard — https://tryroomie.me/claim/abc";
   const b = splitBubbles(linked);
-  assert.equal(b.at(-1), "Open dashboard — https://roomie.fly.dev/claim/abc", JSON.stringify(b));
+  assert.equal(b.at(-1), "Open dashboard — https://tryroomie.me/claim/abc", JSON.stringify(b));
   assert.ok(!b[0].includes("https://"));
 });
 

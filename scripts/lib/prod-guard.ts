@@ -5,7 +5,7 @@
 //     branch (prod's DATABASE_URL lives only in `fly secrets`; .env points at the `dev` branch).
 import { sql } from "drizzle-orm";
 
-export const PROD_APP_URL = "https://roomie.fly.dev";
+export const PROD_APP_URL = "https://tryroomie.me";
 /** The production Telegram bot. */
 export const PROD_BOT_USERNAME = "imroomiebot";
 /** Neon project `roomie`, branch `production`. */

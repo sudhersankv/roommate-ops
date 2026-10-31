@@ -357,7 +357,7 @@ drizzle/                generated migrations (0000 baseline drops the pre-step-4
 scripts/migrate.ts      npm run db:migrate
 scripts/lib/prod-guard.ts  seed, dev-chat, evals and test:tools refuse the production Neon branch; telegram (polling) and
                         telegram:webhook --delete refuse when getMe says the token is @imroomiebot (prod), --set refuses
-                        to point it anywhere but https://roomie.fly.dev (ALLOW_PROD_BOT=1 overrides)
+                        to point it anywhere but https://tryroomie.me (ALLOW_PROD_BOT=1 overrides)
 scripts/scrub-dev.ts    npx tsx scripts/scrub-dev.ts: makes a fresh copy of prod safe (keeps only `dev` Channel Groups; drops
                         the WhatsApp login, wa_contacts, beta requests, votes, traces, unused Accounts); refuses on prod
 scripts/seed.ts         demo Group "Apt 4B" (dev Chat dev-apt-4b); prints its id, a Claim link for Maya, a Studio requestContext

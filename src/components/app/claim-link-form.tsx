@@ -36,7 +36,7 @@ export function ClaimLinkForm() {
           id="claim-link"
           inputMode="url"
           autoComplete="off"
-          placeholder="https://roomie.fly.dev/claim/…"
+          placeholder="https://tryroomie.me/claim/…"
           value={value}
           aria-invalid={invalid || undefined}
           onChange={(e) => {

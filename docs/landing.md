@@ -37,7 +37,7 @@ All in `src/app/_landing/landing.tsx` (server components). Client components: `s
 5. **How it works** (`#how`): three steps (add it to the group chat; answer one question; open the dashboard through the Join link), the two buttons, a link to `/help`, then "Speaks when spoken to" (with the dino asleep; one morning post), "Stays in your group" (who owes what is said privately), "A dashboard per group".
 6. **Dashboard peek**: three phone frames from `public/landing/dashboard-{money,home,chores}.jpg` (600x1116, `next/image` with fixed dimensions). To be retaken with the read-first dashboard (issue #28, story 28).
 7. **WhatsApp beta form** (`#whatsapp-beta`, "Want it on WhatsApp?" / "Tell us about your apartment.").
-8. **Share row**: "Know an apartment chat that needs this?" with **Send on WhatsApp** (`https://wa.me/?text=<text> <url>`), **Send on Telegram** (`https://t.me/share/url?url=<url>&text=<text>`) and **Copy link**. `<url>` is `APP_URL` when absolute, else `https://roomie.fly.dev`; `<text>` is `SHARE_TEXT` in `_landing/marks.tsx`: "Adding this to our apartment chat. It remembers who paid 🦖".
+8. **Share row**: "Know an apartment chat that needs this?" with **Send on WhatsApp** (`https://wa.me/?text=<text> <url>`), **Send on Telegram** (`https://t.me/share/url?url=<url>&text=<text>`) and **Copy link**. `<url>` is `APP_URL` when absolute, else `https://tryroomie.me`; `<text>` is `SHARE_TEXT` in `_landing/marks.tsx`: "Adding this to our apartment chat. It remembers who paid 🦖".
 9. Footer: How it works, Privacy, Sign in, GitHub, "Built with Mastra + Neon".
 
 ### Words

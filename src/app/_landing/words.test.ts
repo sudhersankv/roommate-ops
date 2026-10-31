@@ -129,7 +129,7 @@ test("the Channels' shared lines (/help, /start, the failure line)", () => {
   const lines = [
     helpText(),
     helpText(["splitting", "chores"]),
-    helpText([], { dashboard: "https://roomie.fly.dev/j/abc" }),
+    helpText([], { dashboard: "https://tryroomie.me/j/abc" }),
     startReply("Maya", 1, "telegram"),
     startReply("Maya", 1, "whatsapp"),
     startReply("Maya", 0),

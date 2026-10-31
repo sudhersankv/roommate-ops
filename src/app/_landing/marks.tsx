@@ -2,7 +2,7 @@
 import { appUrl, isAbsoluteUrl } from "@/lib/urls"
 
 export const GITHUB_URL = "https://github.com/sudhersankv/roommate-ops"
-export const PUBLIC_URL_FALLBACK = "https://roomie.fly.dev"
+export const PUBLIC_URL_FALLBACK = "https://tryroomie.me"
 
 /** Telegram's "add to group" link: opens the group picker for the bot (t.me/<bot>?startgroup=<param>). */
 export const telegramAddUrl = (username = process.env.TELEGRAM_BOT_USERNAME?.trim().replace(/^@/, "") || "imroomiebot") =>
