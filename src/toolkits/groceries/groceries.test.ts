@@ -27,3 +27,12 @@ test("the Groceries tools: a photo tool, quantities as said, no estimates promis
     assert.ok(!/estimat/i.test(d), `${id} still mentions estimates`);
   }
 });
+
+test("a Recipe offers the cart once, and only when they're shopping for it (live test #5)", async () => {
+  const { recipeAsk } = await import("./recipes");
+  assert.equal(recipeAsk(3, true), "Want the 3 missing ingredients on the list?");
+  assert.equal(recipeAsk(1, true), "Want the 1 missing ingredient on the list?");
+  assert.equal(recipeAsk(3, false), null, "an idea or a recipe to read: no offer");
+  assert.equal(recipeAsk(3, undefined), null);
+  assert.equal(recipeAsk(0, true), null, "nothing missing: nothing to offer");
+});

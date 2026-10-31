@@ -456,6 +456,27 @@ export const SCENARIOS: Scenario[] = [
     },
   },
   {
+    id: "bare-roomie-after-food-chatter",
+    area: "groceries",
+    // Live test #4: "roomie" alone got "Want me to add eggs and Pepsi?" from earlier chatter.
+    setup: [{ text: "ugh we're out of eggs again and I really want a pepsi", from: "Dev" }],
+    turn: { text: "roomie" },
+    expect: { noTools: "actions", maxLines: 2, excludes: [/cart/i, /\badd\b/i] },
+  },
+  {
+    id: "food-talk-no-cart",
+    area: "groceries",
+    // Live test #5: food talk isn't a shopping request.
+    turn: { text: "roomie I'm craving tacos so bad lol", from: "Sam" },
+    expect: { noTools: "actions", excludes: [/cart/i, /\badd\b/i, /on the list/i] },
+  },
+  {
+    id: "recipe-idea-no-offer",
+    area: "groceries",
+    turn: { text: "roomie what's a quick vegetarian dinner idea?", from: "Dev" },
+    expect: { noTools: ["cart_add", "recipe_add_to_cart"], excludes: [/cart/i, /on the list/i], long: true },
+  },
+  {
     id: "recipe-yes-add-them",
     area: "groceries",
     setup: [{ text: "roomie tacos for 5 on friday" }],
