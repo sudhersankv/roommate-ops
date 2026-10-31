@@ -47,11 +47,11 @@ export const pollTools = {
   group_decision: createTool({
     id: "group_decision",
     description:
-      "Only for a suggestion the whole group shares that the others haven't agreed to yet (a new shared chore, splitting a bill everyone pays): puts that one action to the chat as a ✅ / ❌ poll, and the first ✅ does it. Never for routine adds, something the sender asked you to just do, or admin changes. " +
-      "`tool` and `input` are the exact call, with every person named, since it runs as whoever taps ✅.",
+      "Only for a suggestion the whole group shares that the others haven't agreed to yet (a new shared chore, splitting a bill everyone pays): puts that one action to the chat as a yes / no poll, and the first yes does it. Never for routine adds, something the sender asked you to just do, or admin changes. " +
+      "`tool` and `input` are the exact call, with every person named, since it runs as whoever says yes first.",
     inputSchema: z.object({
       question: z.string().describe(`Short, as a roommate would ask: "Add Trash run, every 3 days, Sreyas first?"`),
-      tool: z.string().describe("The tool id to run on ✅, e.g. chore_add or log_expense"),
+      tool: z.string().describe("The tool id to run on yes, e.g. chore_add or log_expense"),
       input: z.record(z.string(), z.unknown()).describe("That tool's full input, exactly as you'd call it"),
     }),
     execute: async ({ question, tool, input }, context) => {
