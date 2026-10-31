@@ -23,6 +23,7 @@ describe("which tools are admin-only (from the manifests, not a list in code)", 
       "set_simplify_debts", "splitwise_connect", "splitwise_import", "splitwise_export", "splitwise_mirror",
       "chore_remove", "upkeep_remove", "rotate_join_link", "set_join_policy", "revoke_seat",
       "set_rent", "set_variable_expense",
+      "trust_sender", "release_inbox", "send_intro",
     ]));
   });
 });
