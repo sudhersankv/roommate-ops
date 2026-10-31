@@ -54,6 +54,7 @@ export function restockCandidates(
   const { minEvents, margin, freshDays } = { ...RESTOCK_DEFAULTS, ...opts };
   const habits: Habit[] = [];
   for (const e of events) {
+    if (e.occurredOn > today) continue; // not bought yet
     const scope = e.memberId ?? "shared";
     let h = habits.find((x) => x.scope === scope && sameItem(x.item, e.item));
     if (!h) habits.push((h = { item: e.item, scope, days: new Set(), latest: { day: e.occurredOn, item: e.item } }));

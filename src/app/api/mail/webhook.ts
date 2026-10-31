@@ -1,7 +1,8 @@
 // The Lease Inbox's webhook (ADR 0016): AgentMail posts every received email here. The Svix signature is checked on
 // the raw body (AGENTMAIL_WEBHOOK_SECRET; a bad or missing one is a 401), the answer is 204 at once, and the work is
 // queued per inbox (KeyedQueue: one inbox's mail in order, others don't wait). Deliveries repeat for ~27 hours and
-// arrive out of order: storeInbound dedupes on event_id. Outside production, MAIL_FAKE=1 plus the header
+// arrive out of order: processInbound takes each event_id once (one taken 10+ minutes ago and never processed is
+// taken again). Outside production, MAIL_FAKE=1 plus the header
 // `x-roomie-fake-mail: 1` skips the signature so dev-chat and tests can post. Not the route file itself (Next only
 // allows the HTTP methods there), so tests inject the handler.
 import { Webhook } from "svix";

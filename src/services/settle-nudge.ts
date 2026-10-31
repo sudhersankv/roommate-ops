@@ -13,7 +13,7 @@ import { requireAdmin } from "./authz";
 import { listMembersWithHandles } from "./members";
 import { computeSettlePlan, pairwiseDebts, type Transfer } from "./money";
 import { mayPost, sendDms, type DmOutcome, type RentDm } from "./rent";
-import { claimPost, getSchedule, groupTimezone, weeklyReportWindow } from "./schedule";
+import { claimPost, getSchedule, groupTimezone, releasePost, weeklyReportWindow } from "./schedule";
 import { dollars, type Ctx, type GroupCtx } from "./types";
 
 const { expenses, expensePayers, expenseSplits, settlements, memberNotes, groupToolkits } = schema;
@@ -179,14 +179,21 @@ export async function settleNudgeDms(ctx: GroupCtx, now = new Date()): Promise<R
 
 /**
  * The weekly Settle nudge: only in the report's day and hour, claimed as scheduled_posts "nudge.settle" for that
- * local day, then one DM per pair. Called from Money's report() (the weekly report job builds it in that hour; the
- * scheduler is untouched). Returns what happened to each DM (none when it wasn't time).
+ * local day, then one DM per pair; a failure gives the claim back. Called from Money's report() (the weekly report
+ * job builds it in that hour; the scheduler is untouched). Returns what happened to each DM (none when it wasn't
+ * time). `opts.dms` is for tests.
  */
-export async function settleNudgeJob(ctx: GroupCtx, now = new Date()): Promise<DmOutcome[]> {
+export async function settleNudgeJob(ctx: GroupCtx, now = new Date(), opts: { dms?: typeof settleNudgeDms } = {}): Promise<DmOutcome[]> {
   const [tz, sched, settings] = await Promise.all([groupTimezone(ctx.groupId), getSchedule(ctx), getNudgeSettings(ctx)]);
   if (!settings.enabled) return [];
   const w = weeklyReportWindow(now, tz, sched.reportWeekday, sched.reportHour);
   if (!w.open || !(await mayPost(ctx.groupId))) return [];
   if (!(await claimPost(ctx.groupId, "nudge.settle", w.period))) return [];
-  return sendDms(ctx.groupId, await settleNudgeDms(ctx, now), now);
+  try {
+    return await sendDms(ctx.groupId, await (opts.dms ?? settleNudgeDms)(ctx, now), now);
+  } catch (e) {
+    // Loading who to nudge (or the sends) failed: give the week's claim back so the next run in the hour tries again.
+    await releasePost(ctx.groupId, "nudge.settle", w.period).catch(() => {});
+    throw e;
+  }
 }

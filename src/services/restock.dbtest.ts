@@ -16,7 +16,7 @@ import { addDaysToDay, zonedParts, zonedTimeToUtc } from "@/lib/time";
 import { onGroupJoined } from "@/onboarding";
 import * as cart from "@/services/cart";
 import { addItems, listOpenItems, markPurchased } from "@/services/cart";
-import { deleteGroup } from "@/services/groups";
+import { deleteGroup, deleteGroupData } from "@/services/groups";
 import { logExpense } from "@/services/money";
 import * as receipts from "@/services/receipts";
 import type { Ctx } from "@/services/types";
@@ -187,11 +187,11 @@ describe("Restock against the dev DB", () => {
   });
 
   test('restockAddListed: "just the milk" adds only that, as shared, and it stops being low', async () => {
-    assert.deepEqual(await restock.restockAddListed(dev, "shared", { only: ["the milk"], now }), ["milk"]);
+    assert.deepEqual((await restock.restockAddListed(dev, "shared", { only: ["the milk"], now })).added, ["milk"]);
     const milk = (await listOpenItems({ groupId })).find((i) => i.name === "milk");
     assert.equal(milk?.shared, true);
     assert.equal(await restock.restockBundleLine({ groupId }, now), "Probably low: dish soap. Add it?");
-    assert.deepEqual(await restock.restockAddListed(sam, "mine", { now }), ["oat milk"]);
+    assert.deepEqual(await restock.restockAddListed({ ...sam, source: "dm" }, "mine", { now }), { added: ["oat milk"], say: "Added oat milk for you." });
     const oat = (await listOpenItems({ groupId })).find((i) => i.name === "oat milk");
     assert.deepEqual([oat?.shared, oat?.addedBy], [false, sam.memberId]);
   });
@@ -272,5 +272,39 @@ describe("Restock against the dev DB", () => {
     assert.equal(second.skipped, first.purchased);
     const all = await db.select().from(schema.purchaseEvents).where(and(eq(schema.purchaseEvents.groupId, groupId)));
     assert.equal(new Set(all.map((e) => e.sourceId)).size, all.length, "one event per item");
+  });
+
+  test("restock_add_listed 'mine' in the group chat adds nothing and names nothing; in Sam's DM it adds his own", async () => {
+    await clearEvents();
+    await restock.recordPurchases(maya, habit("protein bars", 7, 6, sam.memberId));
+    const inGroup = await run(restockTools.restock_add_listed, { scope: "mine" }, sam, "Sam");
+    assert.deepEqual(inGroup, { added: [], say: "Your own list stays between us: DM me and say yes there." });
+    assert.ok(!(await listOpenItems({ groupId })).some((i) => i.name === "protein bars"), "nothing went in the Cart");
+    const inDm = await run(restockTools.restock_add_listed, { scope: "mine" }, sam, "Sam", true);
+    assert.deepEqual(inDm, { added: ["protein bars"], say: "Added protein bars for you." });
+    const bars = (await listOpenItems({ groupId })).find((i) => i.name === "protein bars");
+    assert.deepEqual([bars?.shared, bars?.addedBy], [false, sam.memberId]);
+  });
+
+  test("two receipt writes for one Expense at once: one set of events", async () => {
+    const e = await logExpense(maya, { cents: 1250, description: "Jewel-Osco", category: "groceries", occurredOn: today });
+    const lines = [{ name: "Bananas" }, { name: "Greek yogurt", claimedBy: dev.memberId }];
+    const [a, b] = await Promise.all([restock.recordReceiptPurchases(maya, e.id, lines), restock.recordReceiptPurchases(dev, e.id, lines)]);
+    assert.equal(a + b, 2, `wrote ${a} + ${b}`);
+    const rows = (await eventsOf()).filter((x) => x.sourceId === e.id);
+    assert.deepEqual(rows.map((x) => [x.item, x.memberId]).sort(), [["bananas", null], ["greek yogurt", dev.memberId]]);
+  });
+
+  test("a purchase dated after today doesn't hide what's low today", async () => {
+    await clearEvents();
+    await restock.recordPurchases(maya, [...habit("coffee filters", 9, 8), { name: "coffee filters", memberId: null, occurredOn: addDaysToDay(today, 5), source: "cart", sourceId: null }]);
+    assert.deepEqual((await restock.candidates({ groupId }, now)).map((c) => [c.item, c.lastBought]), [["coffee filters", addDaysToDay(today, -8)]]);
+  });
+
+  test("delete group data takes the purchase history with it: nothing is probably low afterwards", async () => {
+    assert.ok((await eventsOf()).length > 0);
+    await deleteGroupData(maya);
+    assert.equal((await eventsOf()).length, 0);
+    assert.deepEqual(await restock.candidates({ groupId }, now), []);
   });
 });

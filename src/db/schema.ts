@@ -699,7 +699,12 @@ export const purchaseEvents = pgTable(
     sourceId: uuid("source_id"),
     createdAt: createdAt(),
   },
-  (t) => [index("purchase_events_group_item_day").on(t.groupId, t.item, t.occurredOn), index("purchase_events_source").on(t.sourceId)],
+  (t) => [
+    index("purchase_events_group_item_day").on(t.groupId, t.item, t.occurredOn),
+    index("purchase_events_source").on(t.sourceId),
+    // One event per source row, item and scope: a retried or concurrent receipt write adds nothing (migration 0024).
+    uniqueIndex("purchase_events_once").on(t.source, t.sourceId, t.item, sql`coalesce(${t.memberId}, '00000000-0000-0000-0000-000000000000'::uuid)`),
+  ],
 );
 
 /* ---------- Lease Inbox (services/lease-inbox.ts, ADR 0016) ---------- */
@@ -717,11 +722,16 @@ export const groupInboxes = pgTable("group_inboxes", {
   createdAt: createdAt(),
 });
 
-/** Webhook deliveries already handled, by AgentMail's event_id (retried for ~27 h, out of order). */
+/**
+ * Webhook deliveries by AgentMail's event_id (retried for ~27 h, out of order). Received = the row (created_at = when
+ * it was last taken); processed_at is set once the email was handled end to end. One taken over 10 minutes ago and
+ * never processed is taken again by the next delivery (migration 0024).
+ */
 export const mailEvents = pgTable("mail_events", {
   eventId: text("event_id").primaryKey(),
   groupId: uuid("group_id").references(() => groups.id, { onDelete: "cascade" }),
   createdAt: createdAt(),
+  processedAt: timestamp("processed_at", { withTimezone: true }),
 });
 
 /** Every email that reached a Group's inbox, with what Roomie made of it. */
@@ -739,6 +749,8 @@ export const mailMessages = pgTable(
     // A forward: the original sender from the quoted header block (lib/forwarded.ts) and the Member who forwarded it.
     originalFrom: text("original_from"),
     forwardedBy: uuid("forwarded_by").references(() => members.id, { onDelete: "set null" }),
+    // Where a reply goes: a forward's original sender (set on insert; migration 0024 backfilled it from original_from).
+    replyTo: text("reply_to"),
     to: jsonb("to").$type<string[]>().notNull().default([]),
     subject: text("subject").notNull().default(""),
     text: text("text").notNull().default(""),

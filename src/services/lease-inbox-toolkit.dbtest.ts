@@ -39,6 +39,8 @@ const forward = (from: string, subject: string, body: string) => `fyi\n\n-------
 const out: DevOutput[] = [];
 const memberOf = new Map<string, string>();
 const take = () => out.splice(0);
+/** The next chat line fails to send (a Channel outage halfway through a run). */
+let failChat = false;
 const chatLines = (o: DevOutput[]) => o.filter((x) => x.to === "chat").map((x) => x.msg.text);
 const dmsTo = (o: DevOutput[], memberId: string) => o.filter((x) => x.to === "private" && memberOf.get(x.userExternalId) === memberId).map((x) => x.msg.text);
 
@@ -70,7 +72,15 @@ describe("the Lease Inbox Trick against the dev DB", () => {
     setMailClient(mail);
     core.setClassifier(classifier);
     setTextReader(async (f) => (/lease/i.test(f.filename ?? "") ? LEASE_TEXT : `Text of ${f.filename}`));
-    registerChannel(new DevChannel((o) => void out.push(o)));
+    registerChannel(
+      new DevChannel((o) => {
+        if (failChat && o.to === "chat") {
+          failChat = false;
+          throw new Error("Telegram 502");
+        }
+        out.push(o);
+      }),
+    );
     const ts = Date.now();
     const people = ["Maya", "Dev", "Sam"].map((name) => ({ userExternalId: devUserId(`lit-${name}-${ts}`), name }));
     const joined = await onGroupJoined({ channel: "dev", externalId: `test-lit-${ts}`, title: `Apt 4B ${ts}` }, people, people[0]);
@@ -89,11 +99,11 @@ describe("the Lease Inbox Trick against the dev DB", () => {
   });
 
   after(async () => {
+    if (groupId) await deleteGroup(groupId);
     setMailClient(null);
     core.setClassifier(null);
     setTextReader(null);
     setLeaseAnswerer(null);
-    if (groupId) await deleteGroup(groupId);
     if (accountId) await db.delete(schema.accounts).where(eq(schema.accounts.id, accountId));
   });
 
@@ -286,6 +296,51 @@ describe("the Lease Inbox Trick against the dev DB", () => {
     assert.ok(data.address);
     assert.ok(data.mail.some((m) => m.documentIds.includes(noticeDoc)));
     assert.equal(data.workOrders[0].reportedBy, "Dev");
+  });
+
+  test("a delivery whose run failed halfway (the chat line didn't go) is processed again by a retry 10+ minutes later, once", async () => {
+    const m = receive({ from: LANDLORD, subject: "Hallway painting Nov 18", text: "Painters will be in the 4th floor hallway on Wednesday, November 18." });
+    const eventId = `evt-${m.messageId}`;
+    const classify = () => queue.push({ class: "notice", date: "2026-11-18T09:00", summary: "hallway painting Wednesday Nov 18" });
+    classify();
+    failChat = true;
+    await assert.rejects(processInbound(groupId, m, { eventId, now: MONDAY }), /Telegram 502/);
+    const [ev] = await db.select().from(schema.mailEvents).where(eq(schema.mailEvents.eventId, eventId));
+    assert.equal(ev.processedAt, null, "received, not processed");
+    assert.ok((await processInbound(groupId, m, { eventId, now: new Date(MONDAY.getTime() + 5 * 60_000) })).duplicate, "inside 10 minutes: still taken");
+    classify();
+    const r = await processInbound(groupId, m, { eventId, now: new Date(MONDAY.getTime() + 11 * 60_000) });
+    assert.ok(!r.duplicate && r.posted === "posted");
+    assert.deepEqual(chatLines(take()), ["Notice from the landlord: hallway painting Wednesday Nov 18"]);
+    const reminders = await db.select().from(schema.reminders).where(and(eq(schema.reminders.groupId, groupId), eq(schema.reminders.text, "Tomorrow: hallway painting Wednesday Nov 18")));
+    assert.equal(reminders.length, 1, "the first run's Reminder isn't set twice");
+    assert.ok((await processInbound(groupId, m, { eventId, now: new Date(MONDAY.getTime() + 30 * 60_000) })).duplicate, "processed: done");
+    assert.deepEqual(chatLines(take()), []);
+  });
+
+  test("ask_lease: a lease that couldn't be read when it came in is read when asked; still unreadable says so", async () => {
+    let failures = 2;
+    setTextReader(async (f) => {
+      if (failures-- > 0) throw new Error("gateway 502");
+      return /lease/i.test(f.filename ?? "") ? LEASE_TEXT : `Text of ${f.filename}`;
+    });
+    try {
+      const m = receive({ from: `Maya Rao <${mayaEmail}>`, subject: "Fwd: Signed renewal", text: forward(LANDLORD, "Signed renewal", "Attached is the signed renewal."), attachments: [{ filename: "Lease_Renewal_2027.pdf", contentType: "application/pdf", bytes: Buffer.from("%PDF-1.7 renewal") }] });
+      queue.push({ class: "other", summary: "the signed renewal" });
+      await processInbound(groupId, m, { now: MONDAY });
+      take();
+      const [doc] = await db.select().from(schema.documents).where(and(eq(schema.documents.groupId, groupId), eq(schema.documents.title, "Lease Renewal 2027")));
+      assert.equal(doc.text, null, "the read failed when it was filed");
+      assert.deepEqual(await askLease({ groupId }, { question: "what's the notice period?" }), { found: false, line: "I couldn't read the lease yet. Try me again in a bit." });
+      const a = await askLease({ groupId }, { question: "what's the notice period?" });
+      assert.ok(a.found);
+      if (!a.found) return;
+      assert.equal(a.document, "Lease Renewal 2027");
+      const [read] = await db.select({ text: schema.documents.text }).from(schema.documents).where(eq(schema.documents.id, doc.id));
+      assert.equal(read.text, LEASE_TEXT, "kept for next time");
+    } finally {
+      setTextReader(async (f) => (/lease/i.test(f.filename ?? "") ? LEASE_TEXT : `Text of ${f.filename}`));
+    }
   });
 
   test("forget me: Dev's name comes off the work order and the sent mail; the emails stay", async () => {

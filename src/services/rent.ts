@@ -3,22 +3,23 @@
 // line says so and each person with a Share gets their own amount in a DM, with pay links to the Payer; on the due day
 // the line comes back only while someone still owes the Payer. Never a Member's amount in the group. The day maths and
 // the texts are pure (rent.test.ts); the DB side is in money-rent.dbtest.ts.
-import { and, desc, eq, isNotNull, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import type { SplitMethod } from "@/db/enums";
 import { CantMessagePrivatelyError, type Button, type Outgoing } from "@/channels/types";
 import { roomiePaused } from "@/lib/kill-switch";
+import { daytimeHour } from "@/lib/quiet-hours";
 import { formatMoney } from "@/lib/money";
 import { payLinks } from "@/lib/pay-links";
-import { addDaysToDay, dayInZone } from "@/lib/time";
+import { addDaysToDay, dayInZone, zonedTimeToUtc } from "@/lib/time";
 import { NotAllowedError, requireActive } from "./authz";
 import { listMembersWithHandles } from "./members";
-import { getExpense, getSettlePlan, logExpense, updateExpense, type ExpenseInput, type Transfer } from "./money";
+import { getExpense, logExpense, updateExpense, type ExpenseInput } from "./money";
 import { joinNames, type ReportPart } from "./report";
 import { bundleWindow, claimPost, getSchedule, groupTimezone } from "./schedule";
 import type { Ctx, GroupCtx } from "./types";
 
-const { expenses, groups, petMoments } = schema;
+const { expenses, groups, petMoments, settlements } = schema;
 
 export type RentShare = { memberId: string; name: string; cents: number };
 export type Rent = {
@@ -88,9 +89,17 @@ export function rentDmsFor(rent: Pick<Rent, "payerId" | "payerName" | "shares">,
     });
 }
 
-/** Who still owes the Payer, from the Settle plan. */
-export function owingPayer(rent: Pick<Rent, "payerId" | "shares">, plan: readonly Transfer[]): string[] {
-  return rent.shares.filter((s) => s.memberId !== rent.payerId && plan.some((t) => t.fromId === s.memberId && t.toId === rent.payerId && t.cents > 0)).map((s) => s.name);
+/** A Settlement as the rent line reads it: who paid whom, how much, on which local day. */
+export type RentPayment = { fromId: string; toId: string; cents: number; day: string };
+
+/**
+ * Who still owes this month's rent: each Share but the Payer's that is more than what that Member has paid the Payer
+ * since `since` (the day the rent DMs went out, three days before the due day). Only this occurrence's Shares and
+ * Settlements to the Payer count: groceries owed to the Payer, or a debt the Settle plan routes elsewhere, don't.
+ */
+export function owingRent(payerId: string, shares: readonly RentShare[], paid: readonly RentPayment[], since: string): string[] {
+  const paidBy = (memberId: string) => paid.filter((p) => p.fromId === memberId && p.toId === payerId && p.day >= since).reduce((sum, p) => sum + p.cents, 0);
+  return shares.filter((s) => s.memberId !== payerId && s.cents > paidBy(s.memberId)).map((s) => s.name);
 }
 
 /* ---------- DB ---------- */
@@ -256,8 +265,35 @@ export async function rentBundleLine(ctx: GroupCtx, now = new Date()): Promise<s
   const w = rentWindows(rent.dueDay, tz, now);
   if (rent.startsOn > w.dueDay) return null;
   if (today === w.aheadDay) return rentGroupLine(rent, w.dueDay);
-  if (today === w.dueDay) return rentDueLine(rent, owingPayer(rent, await getSettlePlan(ctx)));
+  if (today === w.dueDay) {
+    const since = addDaysToDay(w.dueDay, -3);
+    const [shares, paid] = await Promise.all([occurrenceShares(ctx, rent, w.dueDay), paymentsTo(ctx.groupId, rent.payerId, tz, since)]);
+    return shares ? rentDueLine(rent, owingRent(rent.payerId, shares, paid, since)) : null;
+  }
   return null;
+}
+
+/** This month's rent Shares: its recurring copy's (the parent's until the copy is made), or null when it was deleted. */
+async function occurrenceShares(ctx: GroupCtx, rent: Rent, dueOn: string): Promise<RentShare[] | null> {
+  if (rent.startsOn === dueOn) return rent.shares;
+  const [copy] = await db
+    .select({ id: expenses.id, deletedAt: expenses.deletedAt })
+    .from(expenses)
+    .where(and(eq(expenses.groupId, ctx.groupId), eq(expenses.recurringParentId, rent.expenseId), eq(expenses.occurredOn, dueOn)));
+  if (!copy) return rent.shares;
+  if (copy.deletedAt) return null;
+  const e = await getExpense(ctx, copy.id);
+  return (e?.splits ?? []).map((s) => ({ memberId: s.memberId, name: s.name, cents: s.cents }));
+}
+
+/** Settlements to the Payer on or after the local day `since`. */
+async function paymentsTo(groupId: string, payerId: string, tz: string, since: string): Promise<RentPayment[]> {
+  const from = zonedTimeToUtc(tz, { year: Number(since.slice(0, 4)), month: Number(since.slice(5, 7)), day: Number(since.slice(8, 10)), hour: 0, minute: 0, second: 0 });
+  const rows = await db
+    .select({ fromId: settlements.fromId, toId: settlements.toId, cents: settlements.cents, at: settlements.createdAt })
+    .from(settlements)
+    .where(and(eq(settlements.groupId, groupId), eq(settlements.toId, payerId), gte(settlements.createdAt, from)));
+  return rows.map((r) => ({ fromId: r.fromId, toId: r.toId, cents: r.cents, day: dayInZone(tz, r.at) }));
 }
 
 /** Each person's rent DM for the next due day (nothing when there's no rent). */
@@ -316,7 +352,9 @@ export async function rentDmJob(ctx: GroupCtx, now = new Date()): Promise<DmOutc
   const [tz, sched] = await Promise.all([groupTimezone(ctx.groupId), getSchedule(ctx)]);
   const w = rentWindows(rent.dueDay, tz, now);
   if (rent.startsOn > w.dueDay || dayInZone(tz, now) !== w.aheadDay) return [];
-  if (!bundleWindow(now, tz, sched.nudgeHour).open || !(await mayPost(ctx.groupId))) return [];
+  // The Bundle's own hour: a nudge hour inside quiet hours goes out at 08:00 (the scheduler's bundleJob, restockDmJob).
+  const hour = sched.nudgeHour === null ? null : daytimeHour(sched.nudgeHour);
+  if (!bundleWindow(now, tz, hour).open || !(await mayPost(ctx.groupId))) return [];
   if (!(await claimPost(ctx.groupId, "rent.ahead", w.dueDay.slice(0, 7)))) return [];
   return sendDms(ctx.groupId, await rentDms(ctx, now), now);
 }

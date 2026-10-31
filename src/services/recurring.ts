@@ -196,10 +196,11 @@ export async function answerAmount(ctx: Ctx, input: { expenseId?: string; cents:
 /**
  * The Lease Inbox read a bill: the variable parent whose description matches `matchText` (case-insensitive, either
  * way round: "electric" or "ComEd electric bill") gets the amount as its month's prefill, so the ask only confirms.
- * A month already waiting first; else the next month not answered yet (a row with asks 0). Returns the parent, or null
- * when none matches.
+ * The month is the current local one (or the first month, if the bill starts later): its row if it's waiting, else a
+ * new row not asked yet (asks 0), which the due day's ask picks up. A row from an earlier month that nobody answered
+ * is left alone. A current month already answered: the next month. Returns the parent, or null when none matches.
  */
-export async function prefillAmount(groupId: string, matchText: string, cents: number): Promise<Expense | null> {
+export async function prefillAmount(groupId: string, matchText: string, cents: number, now = new Date()): Promise<Expense | null> {
   const text = billName(matchText);
   if (!Number.isInteger(cents) || cents <= 0 || !text) return null;
   const parents = await db
@@ -212,22 +213,24 @@ export async function prefillAmount(groupId: string, matchText: string, cents: n
     parents.find((p) => text.includes(billName(p.description))) ??
     parents.find((p) => billName(p.description).includes(text));
   if (!hit) return null;
-  const [latest] = await db
+  const dueDay = Number(hit.occurredOn.slice(8, 10));
+  // This month's due day (the month nextDueOnOrAfter lands in from its first day), never before the bill's first month.
+  const thisMonth = nextDueOnOrAfter(dueDay, `${localDay(now, hit.tz).slice(0, 7)}-01`);
+  let dueOn = thisMonth < hit.occurredOn ? hit.occurredOn : thisMonth;
+  const [current] = await db
     .select({ id: pendingAmounts.id, dueOn: pendingAmounts.dueOn, resolved: pendingAmounts.resolvedExpenseId })
     .from(pendingAmounts)
-    .where(eq(pendingAmounts.expenseId, hit.id))
-    .orderBy(desc(pendingAmounts.dueOn))
-    .limit(1);
-  if (latest && !latest.resolved) await db.update(pendingAmounts).set({ prefillCents: cents }).where(eq(pendingAmounts.id, latest.id));
-  else {
-    // The next month nobody has answered yet: not before today, the first month, or the day after the last answer.
-    const from = [localDay(new Date(), hit.tz), hit.occurredOn, latest ? addDaysToDay(latest.dueOn, 1) : ""].sort().at(-1)!;
-    const dueOn = nextDueOnOrAfter(Number(hit.occurredOn.slice(8, 10)), from);
-    await db
-      .insert(pendingAmounts)
-      .values({ groupId, expenseId: hit.id, period: dueOn.slice(0, 7), dueOn, asks: 0, prefillCents: cents })
-      .onConflictDoUpdate({ target: [pendingAmounts.expenseId, pendingAmounts.period], set: { prefillCents: cents }, setWhere: isNull(pendingAmounts.resolvedExpenseId) });
+    .where(and(eq(pendingAmounts.expenseId, hit.id), eq(pendingAmounts.period, dueOn.slice(0, 7))));
+  if (current && !current.resolved) {
+    await db.update(pendingAmounts).set({ prefillCents: cents }).where(eq(pendingAmounts.id, current.id));
+    return (await getExpense({ groupId }, hit.id)) ?? null;
   }
+  // This month is already answered: the bill is next month's.
+  if (current) dueOn = nextDueOnOrAfter(dueDay, addDaysToDay(current.dueOn, 1));
+  await db
+    .insert(pendingAmounts)
+    .values({ groupId, expenseId: hit.id, period: dueOn.slice(0, 7), dueOn, asks: 0, prefillCents: cents })
+    .onConflictDoUpdate({ target: [pendingAmounts.expenseId, pendingAmounts.period], set: { prefillCents: cents }, setWhere: isNull(pendingAmounts.resolvedExpenseId) });
   return (await getExpense({ groupId }, hit.id)) ?? null;
 }
 
