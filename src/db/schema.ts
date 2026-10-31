@@ -443,9 +443,12 @@ export const scheduledPosts = pgTable(
   "scheduled_posts",
   {
     groupId: uuid("group_id").notNull().references(() => groups.id, { onDelete: "cascade" }),
-    kind: text("kind", { enum: ["bundle", "urgent", "report.weekly", "rent.ahead", "nudge.settle", "restock.dm"] }).notNull(),
+    kind: text("kind", { enum: ["bundle", "urgent", "report.weekly", "rent.ahead", "nudge.settle", "restock.dm", "chore.dm", "chore.rhythm"] }).notNull(),
     // The Group's local day ("2026-10-28") for the Bundle and the urgent slot, the report's local day for the report;
-    // "<day>:<memberId>" for a personal restock DM (one per Member per day).
+    // "<day>:<memberId>" for a personal restock DM (one per Member per day); "<day>:<fromId>:<toId>" for a Settle
+    // nudge (one per debt per day, ADR 0021; older weekly claims are a bare day); "<day>:<choreId>:<memberId>" for a
+    // chore nudge (one per chore, day and person, so a pass reaches the next person the same day); "<choreId>:<day>"
+    // for the report's rhythm offer (one per chore per 30 days).
     period: text("period").notNull(),
     createdAt: createdAt(),
   },
@@ -762,6 +765,9 @@ export const mailMessages = pgTable(
     summary: text("summary"),
     // From the classifier: the notice's date (local "YYYY-MM-DD" or wall-clock), an amount, a utility's name.
     noticeDate: text("notice_date"),
+    // A notice's window and thing (#63, services/notice-window.ts NoticeFacts): local "YYYY-MM-DDTHH:mm" start / end,
+    // `what` ("water") and `off` (a shut-off). Null for other mail or a notice without them.
+    facts: jsonb("facts").$type<{ start?: string; end?: string; what?: string; off?: boolean }>(),
     amountCents: integer("amount_cents"),
     utility: text("utility"),
     // Documents filed from its attachments (ADR 0018); filled once Documents exist.

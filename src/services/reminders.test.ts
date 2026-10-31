@@ -54,6 +54,11 @@ test("reminderLine: whole group vs private, '(set by Maya)' only when set for so
   assert.ok(group.length < 80);
 });
 
+test("reminderLine: a finished 'Reminder: ...' line (a notice's night-before) goes as it is", () => {
+  const text = "Reminder: water's off tomorrow, 9 to 11. Shower tonight.";
+  for (const id of ["a", "b", "c", "d"]) assert.equal(reminderLine({ id, text, memberId: null, memberName: null, createdBy: "m", createdByName: "Maya" }), `⏰ ${text}`);
+});
+
 test("whenLabel in the Group's zone", () => {
   assert.equal(whenLabel({ dueAt: new Date("2026-11-04T02:00:00Z"), recurring: null }, CHI), "Tue Nov 3, 8:00 PM");
   assert.equal(whenLabel({ dueAt: new Date("2026-11-01T03:30:00Z"), recurring: "monthly" }, IND), "Sun Nov 1, 9:00 AM, then monthly");

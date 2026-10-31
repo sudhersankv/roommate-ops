@@ -5,9 +5,19 @@ import { WEEKDAY_NAMES } from "@/lib/time";
 import { groups, joins, schedule, toolkits as toolkitsSvc } from "@/services";
 import { learnedLine } from "@/onboarding";
 import { CATALOG, CORE_MANIFEST, TOOLKIT_IDS } from "../manifests";
+import type { ToolkitManifest } from "../types";
 import { ctxOf } from "../util";
 
-const listNames = (n: string[]) => (n.length <= 1 ? n.join("") : `${n.slice(0, -1).join(", ")} and ${n[n.length - 1]}`);
+/**
+ * The one-line answer to "what can you do?" (the launch video's "Money, groceries, chores, the leasing office. Just
+ * talk to me."): the learned Tricks by their spoken names, in post order. Pure.
+ */
+export function whatICanDo(known: readonly Pick<ToolkitManifest, "name" | "spoken">[]): string {
+  const names = known.map((m) => m.spoken ?? m.name.toLowerCase());
+  if (!names.length) return "Reminders for now. An admin can teach me more. Just talk to me.";
+  const list = names.join(", ");
+  return `${list[0].toUpperCase()}${list.slice(1)}. Just talk to me.`;
+}
 
 const NAMES = CATALOG.map((m) => m.id).join(", ");
 const SWITCHABLE = CATALOG.filter((m) => m.status !== "coming-soon").map((m) => m.id).join(", ");
@@ -101,7 +111,7 @@ export const settingsTools = {
   list_toolkits: createTool({
     id: "list_toolkits",
     description:
-      "What Roomie can do in this group ('what can you do?', 'help', 'what tricks do you know?'): the Tricks you know here (with things to try), the ones an Admin could teach you, and what's coming soon. Answer in your own voice, in 1-3 lines, built on `say`: the Tricks you know with an example or two, then what you could learn. A button to the Tricks page is attached.",
+      "What Roomie can do in this group ('what can you do?', 'help', 'what tricks do you know?'). Reply with `say` as it is (one line: \"Money, groceries, chores. Just talk to me.\"). Only when they ask for more (what else, examples, what's coming): the ones an Admin could teach you (couldLearn), things to try, coming soon, in one or two lines. A button to the Tricks page is attached.",
     inputSchema: z.object({}),
     execute: async (_input, context) => {
       const ctx = ctxOf(context);
@@ -110,11 +120,7 @@ export const settingsTools = {
       const known = all.filter((s) => s.enabled).map(line);
       const couldLearn = all.filter((s) => !s.enabled && s.manifest.status !== "coming-soon").map(line);
       const comingSoon = all.filter((s) => s.manifest.status === "coming-soon").map((s) => s.manifest.name);
-      const say = [
-        `Tricks I know here: ${listNames(known.map((t) => t.name)) || "none yet"}.`,
-        couldLearn.length ? `Could learn: ${listNames(couldLearn.map((t) => t.name))}.` : "",
-        comingSoon.length ? `Coming soon: ${listNames(comingSoon)}.` : "",
-      ].filter(Boolean).join(" ");
+      const say = whatICanDo(all.filter((s) => s.enabled).map((s) => s.manifest));
       return {
         say,
         known,
