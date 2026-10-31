@@ -65,6 +65,7 @@ export const groceries = defineToolkit(manifest, {
   onDisable: async (ctx) => {},
   bundle: (ctx, now) => restockLine(ctx, now),                                // optional: its line in the morning Bundle, or null
   report: async (ctx) => cartReportParts((await listOpenItems(ctx)).length), // optional: its sections of the weekly report
+  tick: (ctx, now) => someDmJob(ctx, now),                                    // optional: every scheduler pass (60 s), its own timed DMs
 });
 ```
 
@@ -114,6 +115,14 @@ Tools return `links` only for something the person asked to open: the Instacart 
 - **The Settle nudge** (`services/settle-nudge.ts`): Money's `report()` runs `settleNudgeJob` (claimed as `nudge.settle`, only in the report's day and hour) and its line is a count: "2 open balances; I've DM'd everyone." or "All square.". A pairwise debt over the threshold whose oldest unsettled contribution (or the last Settlement between them, if later) is at least the days old gets one DM per pair; `member_notes.note.nudges = "off"` skips that Member. Settings: `group_toolkits["splitting"].settings.nudge = { thresholdCents, thresholdDays, enabled }` (Admin; Settings' Nudges card).
 - **The offer**: `rent_status` returns `offer: true` once per Group (a `pet_moments` `rent-offer` claim), and the weekly report adds one offer line instead when nobody asked first.
 - A Toolkit may send its own DMs from `bundle()` / `report()` like this, but each send needs its own `scheduled_posts` claim and its own window check.
+- **`tick(ctx, now)`**: for DMs whose hour isn't the Bundle's or the report's. The scheduler calls it on every pass (60 s) for each enabled Toolkit of an unpaused Group (`jobs/scheduler.toolkitTicks`, naming no Toolkit; one failing doesn't stop the others). Keep it cheap (House remembers in memory when a Group has nothing left to send this hour) and idempotent: claim each send in `scheduled_posts` and send through `sendNudge` / `sendDms`.
+
+## House: chore nudges and the learned rhythm (#60, #61)
+
+- **Chore nudges** (`services/chores.choreNudgePlan`, pure; `services/house.choreDmJob`, House's `tick()`): a chore with at least one done gets a DM to whoever's turn it is (`turnFor`) on its due day at its usual local hour (the median hour of its last 10 dones, 3+ needed, clamped 08-21; otherwise the Bundle's hour), then while it's late a follow-up every `max(1, round(everyDays / 2))` days, at most three: "Morning Sam! Trash is yours today." ("Hey" from noon) -> "Trash, Sam." -> "Sam. Trash." (`choreLabel`: "Take out the trash" is "Trash"). A done ends it; a pass moves it to the next person, who starts again at the first nudge that day. Claimed as `scheduled_posts` `chore.dm`, period `<day>:<choreId>:<memberId>`; nothing while the nudge hour is off. A never-done chore has no rhythm yet and gets no DM.
+- **The Bundle's chores line** keeps only the due chores nobody hears about privately: never done, nobody's turn, or a Member `services/nudges.canNudge` says no to (nudges off, or no DM path: Telegram before Start, i.e. no `dm_context` row; WhatsApp and dev have `Channel.messagesFirst`).
+- **The cheer:** `log_chore` returns `nudged: true` when a `chore.dm` went out since the chore's last done; `winsFrom` adds a `roll` win ("Sam's on a roll."), after a 3/7/30 streak milestone when both apply.
+- **The learned rhythm** (`observedEvery`, pure: the median gap between the last 10 done days, 4+ needed): House's `report()` adds one offer, in the report's own hour, when it's off from `everyDays` by at least a day and 30%: "Trash actually goes out every 3 days. Want me to change it?"; once per chore per 30 days (`scheduled_posts` `chore.rhythm`, period `<choreId>:<day>`). The weekly report is logged as Roomie's line, so a "yes" is in the follow-up window; the skill routes it to `chore_update` (any active Member, like `chore_add`).
 
 ## Groceries
 

@@ -122,4 +122,9 @@ export type Toolkit<Id extends string = string> = Omit<ToolkitManifest<Id>, "das
   bundle?(ctx: GroupCtx, now: Date): Promise<string | null>;
   /** Its sections of the weekly Group Report, in order (none when there's nothing to report). */
   report?(ctx: GroupCtx, now: Date): Promise<ReportPart[]>;
+  /**
+   * Runs on every scheduler tick (60 s) for an unpaused Group that has it on: its own timed DMs outside the Bundle's
+   * hour (House's chore nudges at each chore's usual hour). Must be cheap and idempotent (claim in scheduled_posts).
+   */
+  tick?(ctx: GroupCtx, now: Date): Promise<void>;
 };

@@ -1,7 +1,8 @@
 // Started once from instrumentation.ts (one long-running process; DISABLE_SCHEDULER=1 skips it).
 // Every 60 s: due reminders (the whole Group's in the Chat, a Member's privately), the posts and DMs quiet hours held
 // back (pending_posts, services/urgent.ts), then per Group the morning Bundle
-// and the weekly Group Report at their local hours (services/schedule.ts), the Group style refresh
+// and the weekly Group Report at their local hours (services/schedule.ts), the enabled Toolkits' tick() (their own
+// timed DMs, e.g. chore nudges at a chore's usual hour), the Group style refresh
 // (jobs/style-note.ts, posts nothing), recurring Expenses, Splitwise mirror pushes and the daily chat retention sweep.
 // Posts Roomie makes on its own are claimed in scheduled_posts first, so each goes out once per day / week even across
 // restarts (ADR 0001: at most one Bundle per Group per day, nothing when no Toolkit has anything to say). The tick
@@ -17,6 +18,7 @@ import { claimReminder, dueReminders, releaseReminder, reminderLine, scheduleNex
 import { bundleWindow, claimPost, getSchedule, releasePost, weeklyReportWindow, type PostKind } from "@/services/schedule";
 import { runRecurring } from "@/services/recurring";
 import { runSplitwiseOutbox } from "@/services/splitwise";
+import { enabledToolkitEntries } from "@/services/toolkits";
 import { pausedGroupIds } from "@/services/operator-groups";
 import { flushPendingPosts } from "@/services/urgent";
 import { daytimeHour } from "@/lib/quiet-hours";
@@ -132,7 +134,7 @@ export async function bundleJob(g: GroupRow, now: Date): Promise<string | null> 
   const text = await groupBundle({ groupId: g.id }, now);
   if (!text) return null;
   if (!(await postOnce(g, "bundle", w.period, text))) return null;
-  // Only the Bundle is logged as Roomie's line (not the report or urgent posts): it asks things ("Add them?"), and
+  // The Bundle and the weekly report are logged as Roomie's line (urgent posts aren't): they ask things ("Add them?"), and
   // the follow-up window it opens is how a "yes" reaches the agent, with the Bundle in its earlier chat.
   await logMessage(g.id, null, text).catch((e) => console.warn(`scheduler: couldn't log ${g.name}'s Bundle`, e));
   return text;
@@ -144,7 +146,19 @@ export async function weeklyReportJob(g: GroupRow, now: Date): Promise<string | 
   const w = weeklyReportWindow(now, g.timezone, reportWeekday, reportHour);
   if (!w.open) return null;
   const text = await groupReportText(g.id, now);
-  return (await postOnce(g, "report.weekly", w.period, text)) ? text : null;
+  if (!(await postOnce(g, "report.weekly", w.period, text))) return null;
+  // Logged as Roomie's line like the Bundle: the report can ask something ("Want me to change it?"), and a "yes" right
+  // after needs the follow-up window and the report in the recent chat.
+  await logMessage(g.id, null, text).catch((e) => console.warn(`scheduler: couldn't log ${g.name}'s report`, e));
+  return text;
+}
+
+/** Each enabled Toolkit's tick() (its own timed DMs), every pass. One failing doesn't stop the others. */
+export async function toolkitTicks(g: GroupRow, now: Date): Promise<void> {
+  for (const t of await enabledToolkitEntries({ groupId: g.id })) {
+    if (!t.tick) continue;
+    await t.tick({ groupId: g.id }, now).catch((e) => console.error(`scheduler: ${t.id} tick failed for ${g.name}`, e));
+  }
 }
 
 async function runGroupJobs(now: Date, paused: ReadonlySet<string>) {
@@ -166,6 +180,11 @@ async function runGroupJobs(now: Date, paused: ReadonlySet<string>) {
       await bundleJob(g, now);
     } catch (e) {
       console.error(`scheduler: bundle failed for ${g.name}`, e);
+    }
+    try {
+      await toolkitTicks(g, now);
+    } catch (e) {
+      console.error(`scheduler: toolkit ticks failed for ${g.name}`, e);
     }
     try {
       await refreshStyleNote(g.id, g.styleNoteAt, now);
