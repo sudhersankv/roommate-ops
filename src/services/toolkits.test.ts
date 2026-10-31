@@ -2,8 +2,8 @@
 // Run: npx tsx --test src/services/toolkits.test.ts
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { manifestOf, MANIFESTS } from "@/toolkits/manifests";
-import { announcement, byPostOrder, checkRequirements, unmet, type RequirementFacts } from "./toolkits";
+import { CATALOG, manifestOf, MANIFESTS } from "@/toolkits/manifests";
+import { announcement, byPostOrder, checkRequirements, resolveToolkitSet, unmet, type RequirementFacts } from "./toolkits";
 
 const facts = (over: Partial<RequirementFacts> = {}): RequirementFacts => ({ hasEnv: () => false, enabled: [], integrations: {}, ...over });
 
@@ -43,6 +43,18 @@ describe("checkRequirements", () => {
     const reqs = checkRequirements(manifestOf("groceries")!, facts({ enabled: ["splitting"], integrations: { instacart: { ok: false, hint: "The Instacart link needs COMPOSIO_API_KEY on the server." } } }));
     assert.deepEqual(reqs.filter((r) => !r.blocking), [{ label: "Works with Instacart (through Composio)", ok: false, detail: "The Instacart link needs COMPOSIO_API_KEY on the server.", blocking: false }]);
     assert.deepEqual(unmet(reqs), []);
+  });
+});
+
+describe("resolveToolkitSet", () => {
+  test("Groceries brings Money along; the list comes back in catalog order", () => {
+    assert.deepEqual(resolveToolkitSet(["groceries"], CATALOG), ["splitting", "groceries"]);
+    assert.deepEqual(resolveToolkitSet(["house", "groceries", "splitting"], CATALOG), ["splitting", "groceries", "house"]);
+  });
+
+  test("coming-soon and unknown ids drop out; an empty list stays empty", () => {
+    assert.deepEqual(resolveToolkitSet(["house", "trips", "nonsense"], CATALOG), ["house"]);
+    assert.deepEqual(resolveToolkitSet([], CATALOG), []);
   });
 });
 

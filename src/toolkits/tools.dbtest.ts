@@ -1093,6 +1093,30 @@ describe("Roomie tools against the dev DB", () => {
     }
   });
 
+  test("set_group_settings with toolkits: [groceries] ends with Money on too, and the setup line says so", async () => {
+    const people = ["Maya", "Dev", "Sam"].map((name) => ({ userExternalId: devUserId(`list-${name}-${Date.now()}`), name }));
+    const joined = await onGroupJoined({ channel: "dev", externalId: `list-${Date.now()}`, title: "Apt 4B" }, people, people[0]);
+    const gid = joined.group.id;
+    const rc = new RequestContext<unknown>([
+      ["groupId", gid],
+      ["memberId", joined.members[0].id],
+      ["memberName", "Maya"],
+      ["role", "admin"],
+      ["status", "active"],
+      ["source", "chat"],
+    ]);
+    try {
+      const s = await run("set_group_settings", { purpose: "roommates", toolkits: ["groceries"] }, rc);
+      assert.deepEqual(s.toolkits, ["splitting", "groceries"]);
+      assert.deepEqual(await groups.enabledToolkits({ groupId: gid }), ["splitting", "groceries"]);
+      assert.match(s.learned, /^Learned Money and Groceries\./);
+      const later = await run("set_group_settings", { toolkits: ["house", "groceries"] }, rc);
+      assert.deepEqual(later.toolkits, ["splitting", "groceries", "house"], "a later list keeps Money under Groceries too");
+    } finally {
+      await deleteGroup(gid);
+    }
+  });
+
   test("migration 0012: a Group's chores / upkeep rows become one house row (on if either was on, the nudge hour kept); running it again changes nothing", async () => {
     // The migration's own SQL, as scripts/migrate.ts runs it. Idempotent, so it's safe on the dev branch (no old rows left).
     const statements = (await readFile("drizzle/0012_house.sql", "utf8")).split("--> statement-breakpoint").map((s) => s.trim()).filter(Boolean);

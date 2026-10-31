@@ -4,7 +4,7 @@ import { and, asc, eq, inArray, lt, ne, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { GROUP_PURPOSES, type ChannelName, type GroupPurpose } from "@/db/schema";
 import { resolveTimeZone } from "@/lib/time";
-import { MANIFESTS, TOOLKIT_IDS, type ToolkitId } from "@/toolkits/manifests";
+import { CATALOG, MANIFESTS, TOOLKIT_IDS, type ToolkitId } from "@/toolkits/manifests";
 import { presetFor } from "@/toolkits/presets";
 import { recordFor } from "./activity";
 import { requireAdmin } from "./authz";
@@ -152,14 +152,13 @@ export async function updateGroupSettings(ctx: Ctx, patch: SettingsPatch & { too
   const before = await getGroup(ctx.groupId);
   if (!before) throw new Error("This group doesn't exist anymore.");
   const onboarding = !before.onboardedAt;
-  const [group] = await db
-    .update(groups)
-    .set({ ...clean, ...(onboarding ? { onboardedAt: new Date() } : {}) })
-    .where(eq(groups.id, ctx.groupId))
-    .returning();
+  const set = { ...clean, ...(onboarding ? { onboardedAt: new Date() } : {}) };
+  const [group] = Object.keys(set).length ? await db.update(groups).set(set).where(eq(groups.id, ctx.groupId)).returning() : [before];
   const wasOn = await enabledToolkits(ctx);
-  if (patch.toolkits) await writeToolkits(ctx.groupId, patch.toolkits);
-  else if (onboarding && clean.purpose) await writeToolkits(ctx.groupId, defaultToolkitsFor(clean.purpose));
+  const { resolveToolkitSet } = await import("./toolkits");
+  // A full list keeps what each Toolkit requires (Groceries pulls Money in), as setToolkit does one at a time.
+  const list = patch.toolkits ?? (onboarding && clean.purpose ? defaultToolkitsFor(clean.purpose) : null);
+  if (list) await writeToolkits(ctx.groupId, resolveToolkitSet(list, CATALOG));
   const changed = Object.keys(clean);
   if (changed.length) await recordFor(ctx, "group.settings", `changed ${changed.join(", ")}`, { table: "groups", id: ctx.groupId });
   const toolkits = await enabledToolkits(ctx);
