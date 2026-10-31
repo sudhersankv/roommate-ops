@@ -1,9 +1,10 @@
 // Polls (ADR 0018) and the DM side's one switch (ADR 0020): ask_poll (who-questions only, the service sends and
-// resolves it) and set_nudges ("roomie stop nudging me" / "nudge me again"). Thin: services/polls.ts and members.ts.
+// resolves it), group_decision (a pinned call put to the whole chat as a ✅ / ❌ poll, #42) and set_nudges ("roomie stop
+// nudging me" / "nudge me again"). Thin: services/polls.ts and members.ts.
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { members } from "@/services";
-import { askPoll, MAX_POLL_OPTIONS } from "@/services/polls";
+import { askGroupDecision, askPoll, GroupDecisionError, MAX_POLL_OPTIONS } from "@/services/polls";
 import { EXPENSE_CATEGORIES } from "@/db/enums";
 import { ctxOf, memberIdByName, toCents } from "../util";
 
@@ -40,6 +41,32 @@ export const pollTools = {
         asked: true,
         ...(res.asText ? { answerWith: "a number" } : {}),
         say: "The poll is in the chat. Reply with one short line at most (e.g. 'Tap the poll'), don't repeat the options, and don't log anything: it's logged when the poll resolves.",
+      };
+    },
+  }),
+  group_decision: createTool({
+    id: "group_decision",
+    description:
+      "Only for a suggestion the whole group shares that the others haven't agreed to yet (a new shared chore, splitting a bill everyone pays): puts that one action to the chat as a yes / no poll, and the first yes does it. Never for routine adds, something the sender asked you to just do, or admin changes. " +
+      "`tool` and `input` are the exact call, with every person named, since it runs as whoever says yes first.",
+    inputSchema: z.object({
+      question: z.string().describe(`Short, as a roommate would ask: "Add Trash run, every 3 days, Sreyas first?"`),
+      tool: z.string().describe("The tool id to run on yes, e.g. chore_add or log_expense"),
+      input: z.record(z.string(), z.unknown()).describe("That tool's full input, exactly as you'd call it"),
+    }),
+    execute: async ({ question, tool, input }, context) => {
+      const ctx = ctxOf(context);
+      const rc = (context as { requestContext?: { get(key: string): unknown } } | undefined)?.requestContext;
+      if (ctx.source !== "chat" || rc?.get("isPrivate") === true) return { asked: false, say: "Group decisions are asked in the group chat. Just ask this person, or do it if they asked." };
+      try {
+        await askGroupDecision(ctx, { question, toolId: tool, input });
+      } catch (e) {
+        if (e instanceof GroupDecisionError) return { asked: false, refused: e.message };
+        throw e;
+      }
+      return {
+        asked: true,
+        say: "The poll is in the chat and nothing has changed yet. Say so in a few words at most (or nothing); don't repeat the question and don't do the action yourself: the first ✅ does it.",
       };
     },
   }),

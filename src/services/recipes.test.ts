@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { formatAmount, INSTACART_UNITS, measurementOrEach, normalizeUnit, parseAmount, toInstacartMeasurement } from "../lib/units";
-import { covers, haveNeed, recipeKey, scaleIngredients } from "./recipe-math";
+import { assumedInHouse, assumedLine, buyableAmount, covers, haveNeed, recipeAddedLine, recipeBuyList, recipeKey, scaleIngredients } from "./recipe-math";
 import { parseRecipeJson, RecipeFormatError, recipePrompt, SAMPLE_RECIPE_JSON, writeRecipe, type RecipeRequest, type RecipeWriter } from "./recipes";
 
 /* ---------- units ---------- */
@@ -171,4 +171,58 @@ test("recipeKey: changes with the ingredients, servings or title, not with anyth
   assert.notEqual(recipeKey(r), recipeKey({ ...r, servings: 6 }));
   assert.notEqual(recipeKey(r), recipeKey({ ...r, ingredients: [{ ...r.ingredients[0], quantity: 5 }] }));
   assert.match(recipeKey(r), /^[0-9a-f]{8}$/);
+});
+
+/* ---------- buyable amounts (#37) ---------- */
+
+test("buyableAmount: the taco night in buyable amounts: cloves -> a head, 4 tbsp sour cream -> a tub, weights to package sizes", () => {
+  const line = (name: string, quantity: number, unit: string) => buyableAmount({ name, quantity, unit });
+  assert.deepEqual(line("garlic", 1, "head"), { name: "garlic", qty: "1 head", quantity: 1, unit: "head" }, "2 cloves were already a head (lib/units)");
+  assert.deepEqual(line("garlic cloves", 12, "each"), { name: "garlic", qty: "2 heads", quantity: 2, unit: "head" });
+  assert.deepEqual(line("sour cream", 4, "tablespoon"), { name: "sour cream", qty: "1 tub", quantity: 1, unit: "package" });
+  assert.deepEqual(line("chicken broth", 6, "cup"), { name: "chicken broth", qty: "2 cartons", quantity: 2, unit: "package" });
+  assert.deepEqual(line("lime juice", 2, "tablespoon"), { name: "lime juice", qty: "1 bottle", quantity: 1, unit: "package" });
+  assert.deepEqual(line("ground beef", 1, "pound"), { name: "ground beef", qty: "1 lb", quantity: 1, unit: "pound" });
+  assert.deepEqual(line("ground beef", 1.5, "pound"), { name: "ground beef", qty: "2 lb", quantity: 2, unit: "pound" });
+  assert.deepEqual(line("cotija cheese", 6, "ounce"), { name: "cotija cheese", qty: "8 oz", quantity: 8, unit: "ounce" });
+  assert.deepEqual(line("cheddar", 12, "ounce"), { name: "cheddar", qty: "1 lb", quantity: 1, unit: "pound" });
+  assert.deepEqual(line("rice", 400, "gram"), { name: "rice", qty: "500 g", quantity: 500, unit: "gram" });
+  assert.deepEqual(line("chicken thighs", 1.2, "kilogram"), { name: "chicken thighs", qty: "2 kg", quantity: 2, unit: "kilogram" });
+  assert.deepEqual(line("limes", 4, "each"), { name: "limes", qty: "4", quantity: 4, unit: "each" });
+  assert.deepEqual(line("cilantro", 1, "bunch"), { name: "cilantro", qty: "1 bunch", quantity: 1, unit: "bunch" });
+});
+
+test("recipeBuyList: salt and spices are assumed in the house; the rest goes in buyable", () => {
+  const need = [
+    { name: "salt", quantity: 0.5, unit: "teaspoon" },
+    { name: "garlic", quantity: 1, unit: "head" },
+    { name: "chili powder", quantity: 1, unit: "tablespoon" },
+    { name: "ground cumin", quantity: 2, unit: "teaspoon" },
+    { name: "sour cream", quantity: 4, unit: "tablespoon" },
+    { name: "olive oil", quantity: 1, unit: "tablespoon" },
+    { name: "red bell pepper", quantity: 1, unit: "each" },
+    { name: "black pepper", quantity: 0.25, unit: "teaspoon" },
+  ];
+  const { buy, assumed } = recipeBuyList(need);
+  assert.deepEqual(assumed, ["salt", "chili powder", "ground cumin", "olive oil", "black pepper"]);
+  assert.deepEqual(buy.map((b) => [b.line.name, b.line.qty]), [["garlic", "1 head"], ["sour cream", "1 tub"], ["red bell pepper", "1"]]);
+  assert.equal(assumedLine(assumed), "I assumed you have salt, chili powder, ground cumin, olive oil and black pepper; say if you're out. Want me to keep them in the Pantry?");
+  assert.equal(assumedLine(["salt"]), "I assumed you have salt; say if you're out. Want me to keep it in the Pantry?");
+  assert.equal(assumedLine([]), null);
+});
+
+test("recipeBuyList: nothing is assumed that the Pantry says the house doesn't keep", () => {
+  const need = [{ name: "ground cumin", quantity: 2, unit: "teaspoon" }, { name: "salt", quantity: 1, unit: "teaspoon" }];
+  const { buy, assumed } = recipeBuyList(need, ["cumin", "salt"]);
+  assert.deepEqual(assumed, []);
+  assert.deepEqual(buy.map((b) => [b.line.name, b.line.qty]), [["ground cumin", "1 package"], ["salt", "1 package"]]);
+  assert.equal(assumedInHouse("water"), true);
+  assert.equal(assumedInHouse("pepper"), true);
+  assert.equal(assumedInHouse("jalapeno pepper"), false);
+});
+
+test("recipeAddedLine: what went in, then the assumed ones once", () => {
+  assert.equal(recipeAddedLine("Tacos for 5", 8, []), "Added 8 things for Tacos for 5 to the Cart.");
+  assert.equal(recipeAddedLine("Tacos for 5", 1, ["salt"]), "Added 1 thing for Tacos for 5 to the Cart. I assumed you have salt; say if you're out. Want me to keep it in the Pantry?");
+  assert.equal(recipeAddedLine("Tacos for 5", 0, []), "Nothing new to add for Tacos for 5: it's in the Cart or the Pantry.");
 });

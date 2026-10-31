@@ -141,17 +141,20 @@ export type MediaFacts = {
   inWindow?: boolean;
   /** Setup is waiting on this sender (an Admin, while Onboarding is open): their messages are for Roomie. */
   setupPending?: boolean;
+  /** The photo was skipped, and then the Gate decided to answer its caption: Roomie should see what it's answering. */
+  gateActed?: boolean;
 };
 
 /**
  * Whether Roomie downloads a photo or transcribes a voice note at all. A photo: when its caption or reply addresses
- * Roomie (@mention, reply, "roomie"), or in the follow-up window. A voice note: when it replies to Roomie or
- * @mentions it, in the follow-up window, or when setup is waiting on this Admin. Anything else is logged as
- * "(photo)" / "(voice note)" and goes no further: nothing is stored and nothing goes to the transcriber.
+ * Roomie (@mention, reply, "roomie"), in the follow-up window, or when the Gate decided to answer its caption (the
+ * pipeline asks again then). A voice note: when it replies to Roomie or @mentions it, in the follow-up window, or when
+ * setup is waiting on this Admin. Anything else is logged as "(photo)" / "(voice note)" and goes no further: nothing
+ * is stored and nothing goes to the transcriber.
  */
 export function mediaWanted(f: MediaFacts): boolean {
   if (f.isPrivate || f.mentionsRoomie || f.isReplyToRoomie || f.inWindow) return true;
-  if (f.kind === "photo") return !!f.caption && callsPet(f.caption);
+  if (f.kind === "photo") return !!f.gateActed || (!!f.caption && callsPet(f.caption));
   return !!f.setupPending;
 }
 

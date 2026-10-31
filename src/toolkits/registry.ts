@@ -146,13 +146,37 @@ export const skillsById = (): Record<string, string> => Object.fromEntries([core
 export const adminOnlyTools = () => [core, ...TOOLKITS].flatMap((tk) => Object.keys(tk.adminOnly ?? {}));
 
 /**
+ * Why `toolId` with `input` can't be put to the chat as a group decision (#42), or null when it can: it must be one of
+ * its Toolkit's `groupDecisions` (a change to shared state any active Member may make), never an admin-only tool in
+ * any manifest, and the input must be one the tool accepts (it runs later, when someone taps ✅).
+ */
+export function groupDecisionRefusal(toolId: string, input: unknown): string | null {
+  if (adminOnlyTools().includes(toolId)) return "That's an admin change: ask the admin, it isn't a group decision.";
+  const owner = [core, ...TOOLKITS].find((tk) => tk.groupDecisions?.includes(toolId) && toolId in tk.tools);
+  if (!owner) return "That isn't something the group decides with a poll: just do it, or ask the person.";
+  const schema = (owner.tools as Record<string, AnyTool>)[toolId].inputSchema as { safeParse?: (v: unknown) => { success: boolean; error?: { message: string } } } | undefined;
+  const parsed = schema?.safeParse?.(input);
+  if (parsed && !parsed.success) return `That call isn't complete yet (${parsed.error?.message.slice(0, 200) ?? "bad input"}): fix it before asking.`;
+  return null;
+}
+
+/** Which Toolkit owns `toolId` ("core" for core's tools), or null for no tool. */
+export function toolOwner(toolId: string): string | null {
+  return [core, ...TOOLKITS].find((tk) => toolId in tk.tools)?.id ?? null;
+}
+
+/**
  * Tools for one request. `toolkit` from the Gate narrows to that Toolkit (plus core); unset or "none" gives every
  * enabled Toolkit; "core" gives core only. A disabled Toolkit is never returned.
  */
 export function toolsFor(toolkit?: GateToolkit, enabled: readonly ToolkitId[] = ALL_TOOLKIT_IDS): Record<string, AnyTool> {
   const on = TOOLKITS.filter((t) => enabled.includes(t.id));
   const picked = !toolkit || toolkit === "none" ? on : on.filter((t) => t.id === toolkit);
-  return Object.assign({}, core.tools, ...picked.map((t) => t.tools));
+  // group_decision only where a picked Trick has something the group can decide (#42): a Lease Inbox run that sees it
+  // starts writing its own questions as numbered lists, and there's nothing there to put to a poll anyway.
+  const { group_decision, ...always } = core.tools as Record<string, AnyTool>;
+  const decidable = picked.some((t) => t.groupDecisions?.length);
+  return Object.assign({}, always, decidable ? { group_decision } : {}, ...picked.map((t) => t.tools));
 }
 
 /** Every tool in the registry, keyed by id, with each tool's own types. Used by tests. */

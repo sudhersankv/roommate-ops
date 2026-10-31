@@ -119,6 +119,9 @@ export const members = pgTable(
     // A Pending Member made by a Join link pick of a seat that wasn't free: the seat they said is theirs. Approving
     // them moves their Account onto it (services/members.ts approveMember). No FK: informational.
     wantsSeatId: uuid("wants_seat_id"),
+    // The two Tricks (toolkit ids, left then right) this Member keeps in the dashboard's dock; null = the first two
+    // learned ones by nav order. A UI preference, checked against what's learned each time (services/dock.ts).
+    dock: text("dock").array(),
   },
   (t) => [
     uniqueIndex("members_group_channel_user").on(t.groupId, t.channelUserId),
@@ -708,6 +711,31 @@ export const purchaseEvents = pgTable(
     // One event per source row, item and scope: a retried or concurrent receipt write adds nothing (migration 0024).
     uniqueIndex("purchase_events_once").on(t.source, t.sourceId, t.item, sql`coalesce(${t.memberId}, '00000000-0000-0000-0000-000000000000'::uuid)`),
   ],
+);
+
+// ---- grocery usuals (#36) ----
+
+/**
+ * A usual someone said (services/usuals.ts): what a bare "Pepsi" means for a Member (member_id) or the house (null),
+ * "Pepsi", "12 × 12 oz cans". Only what people told Roomie lives here (an answer to its question, "from now on", an
+ * edit on the Cart page); everything else is derived from Cart history (cart-usuals.ts usualFor). A row beats history.
+ * `item` is normalizeItem's name. Long-term, not chat: only forget me (a Member's own) and delete group data remove them.
+ */
+export const groceryUsuals = pgTable(
+  "grocery_usuals",
+  {
+    id: id(),
+    groupId: uuid("group_id").notNull().references(() => groups.id, { onDelete: "cascade" }),
+    item: text("item").notNull(),
+    memberId: uuid("member_id").references(() => members.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    // The quantity text as the Cart shows it ("12 × 12 oz cans"), with the size in it; quantity + unit for Instacart.
+    qty: text("qty").notNull(),
+    quantity: numeric("quantity"),
+    unit: text("unit"),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("grocery_usuals_one").on(t.groupId, t.item, sql`coalesce(${t.memberId}, '00000000-0000-0000-0000-000000000000'::uuid)`)],
 );
 
 /* ---------- Lease Inbox (services/lease-inbox.ts, ADR 0016) ---------- */

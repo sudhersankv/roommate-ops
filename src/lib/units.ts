@@ -126,12 +126,39 @@ export function countQuestion(name: string): string | null {
 }
 
 /**
+ * Things a wrong guess means a second trip for (#36): drinks and coffee. One short question with two picks, the way a
+ * roommate asks ("Pepsi: 12-pack of cans or a 2-liter?"); the answer becomes the usual, so it's asked once. Staples
+ * (milk, bread, paper towels) go straight in. Matched on the name's last words ("Diet Pepsi" is Pepsi), in order.
+ */
+const KIND_QUESTIONS: readonly [readonly string[], string][] = [
+  [["soda", "pop", "pepsi", "coke", "cola", "sprite", "fanta", "dr pepper", "mountain dew", "ginger ale", "root beer"], "12-pack of cans or a 2-liter?"],
+  [["la croix", "seltzer", "sparkling water", "red bull", "monster"], "a 12-pack or just a few?"],
+  [["beer"], "a 6-pack or a 12-pack?"],
+  [["water"], "a case of bottles or a gallon jug?"],
+  [["coffee"], "beans or ground?"],
+];
+
+/** "Pepsi" (no quantity) -> "Pepsi: 12-pack of cans or a 2-liter?"; null when the name alone is clear enough. */
+export function kindQuestion(name: string): string | null {
+  const n = name.trim().replace(/\s+/g, " ");
+  const words = n.toLowerCase().split(" ");
+  const endsWith = (term: string) => {
+    const t = term.split(" ");
+    const tail = words.slice(-t.length);
+    return tail.length === t.length && t.every((w, k) => tail[k] === w || (k === t.length - 1 && tail[k] === `${w}s`));
+  };
+  const hit = KIND_QUESTIONS.find(([terms]) => terms.some(endsWith));
+  return hit ? `${n}: ${hit[1]}` : null;
+}
+
+/**
  * Free-text Cart quantities, stored as people said them ("2 cartons", "12", "1 lb"), except when they can't be
  * read one way: several bare numbers for one thing ("eggs, 12, 18" arrives as "12, 18", or as two eggs lines
- * with "12" and "18"), or no quantity for something where it matters (countQuestion: "eggs" -> "12 or 18?"). Those
- * are held back with one short question each; everything else is fine as is.
+ * with "12" and "18"), or no quantity for something where it matters (countQuestion: "eggs" -> "12 or 18?";
+ * kindQuestion: "Pepsi" -> "12-pack of cans or a 2-liter?", unless `kinds` is false). Those are held back with one short
+ * question each; everything else is fine as is. This is the only place a quantity question comes from.
  */
-export function clarifyQuantities(items: QtyItem[]): { ok: QtyItem[]; questions: string[] } {
+export function clarifyQuantities<T extends QtyItem>(items: T[], opts: { kinds?: boolean } = {}): { ok: T[]; questions: string[] } {
   const key = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
   const bare = (q: string | undefined) => /^\s*\d+(?:\.\d+)?\s*$/.test(q ?? "");
   const numbersIn = (q: string | undefined) => {
@@ -140,13 +167,14 @@ export function clarifyQuantities(items: QtyItem[]): { ok: QtyItem[]; questions:
   };
   const counts = new Map<string, string[]>();
   for (const i of items) if (bare(i.qty)) counts.set(key(i.name), [...(counts.get(key(i.name)) ?? []), i.qty!.trim()]);
-  const ok: QtyItem[] = [];
+  const ok: T[] = [];
   const asked = new Map<string, string[]>();
   const countAsks = new Set<string>();
   for (const i of items) {
     const k = key(i.name);
     const several = numbersIn(i.qty) ?? (bare(i.qty) && new Set(counts.get(k)).size > 1 ? counts.get(k)! : null);
-    const howMany = !(i.qty ?? "").trim() ? countQuestion(i.name) : null;
+    const none = !(i.qty ?? "").trim();
+    const howMany = none ? (countQuestion(i.name) ?? (opts.kinds === false ? null : kindQuestion(i.name))) : null;
     if (several) asked.set(k, [...new Set([...(asked.get(k) ?? []), ...several])]);
     else if (howMany) countAsks.add(howMany);
     else ok.push(i);

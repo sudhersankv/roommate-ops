@@ -8,13 +8,13 @@ import { EXPENSE_CATEGORIES, type ExpenseCategory, type PollAbout } from "@/db/s
 import { deliver, channelFor } from "@/channels";
 import { renderPollAsText } from "@/channels/text";
 import type { PollVote } from "@/channels/types";
-import { requireActive } from "./authz";
+import { actorOf, requireActive } from "./authz";
 import { logMessage } from "./chatlog";
 import { listMembers, memberByChannelUser } from "./members";
 import { logExpense } from "./money";
 import { MAX_POLL_OPTIONS, POLL_TTL_MS, pollOutcome, whoIn, type PollReason } from "./poll-rules";
 import { moneyIn, type Ctx } from "./types";
-import { currencyOf } from "./groups";
+import { currencyOf, enabledToolkits } from "./groups";
 
 export { pollMajority, pollOutcome, whoIn, numberVote, POLL_TTL_MS, MAX_POLL_OPTIONS } from "./poll-rules";
 export type { PollAbout };
@@ -29,11 +29,29 @@ export type AskPollInput = { kind: string; question: string; options: string[]; 
  * A confirm poll (live test #10): Roomie asks one Member to confirm one pinned action with a tap instead of typing a
  * phrase. Only that Member's vote counts; Yes runs exactly `toolId` with `input` (the registry's confirmed-call path),
  * No leaves it. The runner is registered by the toolkits (toolkits/confirm.ts), so services never import tools.
+ *
+ * A group decision (#42) is the same poll with `who: "any-member"`: the first ✅ or ❌ from any active Member answers
+ * it, and ✅ runs the pinned call as that voter (the services still check what they may do). `memberId` is then who
+ * asked. Only tools the toolkits allow as group decisions (non-admin, changing shared state) can be pinned.
  */
-export type ConfirmAbout = { kind: "confirm"; toolId: string; input: unknown; memberId: string };
+export type ConfirmAbout = { kind: "confirm"; toolId: string; input: unknown; memberId: string; who?: "asked" | "any-member" };
 export const CONFIRM_OPTIONS = ["✅ Yes", "❌ No"] as const;
 export const CONFIRM_TTL_MS = 30 * 60_000;
-type ConfirmRunner = (groupId: string, about: ConfirmAbout) => Promise<string | null>;
+type ConfirmRunner = {
+  /** Run the pinned call as `voterId`; the line to post. */
+  run(groupId: string, about: ConfirmAbout, voterId: string): Promise<string | null>;
+  /** Why `toolId` with `input` can't be a group decision, or null when it can. */
+  groupDecisionRefusal(toolId: string, input: unknown): string | null;
+  /** The Toolkit that owns `toolId` ("core" for core's tools), or null. */
+  toolOwner(toolId: string): string | null;
+};
+
+/** Whether `toolId` belongs to core or to a Toolkit this Group has learned right now. */
+async function ownerLearned(groupId: string, toolId: string): Promise<boolean> {
+  const owner = confirmRunner?.toolOwner(toolId);
+  if (!owner) return false;
+  return owner === "core" || (await enabledToolkits({ groupId })).some((id) => id === owner);
+}
 let confirmRunner: ConfirmRunner | null = null;
 export function registerConfirmRunner(r: ConfirmRunner | null) {
   confirmRunner = r;
@@ -42,6 +60,20 @@ export function registerConfirmRunner(r: ConfirmRunner | null) {
 /** Ask `ctx.memberId` to confirm one action with a Yes / No poll in the Group's Chat. */
 export async function askConfirm(ctx: Ctx, input: { question: string; toolId: string; input: unknown }, now = new Date()) {
   const about: ConfirmAbout = { kind: "confirm", toolId: input.toolId, input: input.input, memberId: ctx.memberId };
+  return askPoll(ctx, { kind: "confirm", question: input.question, options: [...CONFIRM_OPTIONS], multi: false, about, ttlMs: CONFIRM_TTL_MS }, now);
+}
+
+/** That call can't be a group decision (an admin change, a read, not a tool): ask the person instead. */
+export class GroupDecisionError extends Error {
+  name = "GroupDecisionError";
+}
+
+/** Put one pinned action to the whole Group as a ✅ / ❌ poll: the first answer from any active Member decides it. */
+export async function askGroupDecision(ctx: Ctx, input: { question: string; toolId: string; input: unknown }, now = new Date()) {
+  const refusal = confirmRunner ? confirmRunner.groupDecisionRefusal(input.toolId, input.input) : "Group decisions aren't available here.";
+  if (refusal) throw new GroupDecisionError(refusal);
+  if (!(await ownerLearned(ctx.groupId, input.toolId))) throw new GroupDecisionError("That's a Trick this group hasn't learned, so it can't be a group decision here.");
+  const about: ConfirmAbout = { kind: "confirm", toolId: input.toolId, input: input.input, memberId: ctx.memberId, who: "any-member" };
   return askPoll(ctx, { kind: "confirm", question: input.question, options: [...CONFIRM_OPTIONS], multi: false, about, ttlMs: CONFIRM_TTL_MS }, now);
 }
 
@@ -131,10 +163,14 @@ async function recordMemberVote(poll: PollRow, memberId: string, optionIds: numb
     .insert(pollVotes)
     .values({ pollId: poll.id, memberId, optionIds: ids, at: now })
     .onConflictDoUpdate({ target: [pollVotes.pollId, pollVotes.memberId], set: { optionIds: ids, at: now } });
-  // A confirm poll waits for the one Member it asked; anyone else's tap changes nothing.
+  // A confirm poll waits for the one Member it asked; anyone else's tap changes nothing. A group decision takes the
+  // first answer from any active Member (a Pending one's tap never counts, whichever path it came by).
   if (poll.about.kind === "confirm") {
-    if ((poll.about as ConfirmAbout).memberId !== memberId) return { counted: true };
-    return { counted: true, resolved: "answered", line: await resolvePoll(poll.id, "answered", now) };
+    const about = poll.about as ConfirmAbout;
+    if (about.who === "any-member") {
+      if ((await actorOf({ groupId: poll.groupId, memberId }))?.status !== "active") return { counted: false };
+    } else if (about.memberId !== memberId) return { counted: true };
+    return { counted: true, resolved: "answered", line: await resolvePoll(poll.id, "answered", now, memberId) };
   }
   return { counted: true, ...(await maybeResolve(poll, now)) };
 }
@@ -150,14 +186,15 @@ async function maybeResolve(poll: PollRow, now: Date): Promise<{ resolved?: Poll
 
 /**
  * Resolve once (claimed with resolved_at): "closed" only closes it (the asker's text already said what happened);
- * otherwise the `about` runs through its service and the one line is posted. Returns the line (null = none).
+ * otherwise the `about` runs through its service and the one line is posted. Returns the line (null = none). `by` is
+ * the Member whose answer resolved a confirm poll.
  */
-export async function resolvePoll(pollId: string, reason: PollReason, now = new Date()): Promise<string | null> {
+export async function resolvePoll(pollId: string, reason: PollReason, now = new Date(), by?: string): Promise<string | null> {
   const [poll] = await db.update(polls).set({ resolvedAt: now }).where(and(eq(polls.id, pollId), isNull(polls.resolvedAt))).returning();
   if (!poll || reason === "closed") return null;
   let line: string | null = null;
   try {
-    line = poll.about.kind === "confirm" ? await runConfirm(poll, reason) : await runAbout(poll);
+    line = poll.about.kind === "confirm" ? await runConfirm(poll, reason, by) : await runAbout(poll);
   } catch (e) {
     console.error(`[polls] resolving poll ${poll.id} failed`, e);
     line =
@@ -172,14 +209,24 @@ export async function resolvePoll(pollId: string, reason: PollReason, now = new 
   return line;
 }
 
-/** A confirm poll's answer: the asked Member's Yes runs the pinned action; No or no answer leaves it. */
-async function runConfirm(poll: PollRow, reason: PollReason): Promise<string | null> {
+/**
+ * A confirm poll's answer: the asked Member's Yes runs the pinned action (a group decision: the deciding voter's, as
+ * them); No or no answer leaves it.
+ */
+async function runConfirm(poll: PollRow, reason: PollReason, by?: string): Promise<string | null> {
   const about = poll.about as ConfirmAbout;
   if (reason !== "answered") return null;
-  const [vote] = await db.select({ optionIds: pollVotes.optionIds }).from(pollVotes).where(and(eq(pollVotes.pollId, poll.id), eq(pollVotes.memberId, about.memberId)));
-  if (!vote || vote.optionIds[0] !== 0) return "Okay, leaving it as it is.";
+  const group = about.who === "any-member";
+  const voterId = group ? by : about.memberId;
+  if (!voterId) return null;
+  const [vote] = await db.select({ optionIds: pollVotes.optionIds }).from(pollVotes).where(and(eq(pollVotes.pollId, poll.id), eq(pollVotes.memberId, voterId)));
+  if (!vote || vote.optionIds[0] !== 0) return group ? "Okay, dropping that." : "Okay, leaving it as it is.";
   if (!confirmRunner) return "I couldn't do that from the poll. Say yes here and I will.";
-  return confirmRunner(poll.groupId, about);
+  // Checked again when it runs: a row that somehow pins an admin change never runs as a group decision.
+  if (group && confirmRunner.groupDecisionRefusal(about.toolId, about.input)) return "I can't do that one from a poll. Ask me in the chat.";
+  // The Trick may have been forgotten since the poll went out.
+  if (group && !(await ownerLearned(poll.groupId, about.toolId))) return "That's not something I do here anymore.";
+  return confirmRunner.run(poll.groupId, about, voterId);
 }
 
 /** The owning service for each kind of `about`. Only "who-in" (an Expense) exists today. */
