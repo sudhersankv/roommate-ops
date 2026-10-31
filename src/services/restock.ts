@@ -2,7 +2,7 @@
 // events are derived (the Cart marked bought, receipt lines), never a second ledger; the estimate is pure, in
 // restock-math.ts. Mutes ("we don't buy dish soap anymore") live next to the Pantry in the Groceries Toolkit's
 // settings (group_toolkits.settings.restockMutes). No prices anywhere.
-import { and, eq, gte, inArray, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { normalizeItem, sameItem } from "@/lib/items";
 import { groceries } from "@/toolkits/groceries/manifest";
@@ -13,7 +13,7 @@ import { requireActive } from "./authz";
 import { addItems, listOpenItems } from "./cart";
 import { listMembers } from "./members";
 import { mayPost, sendDms, type DmOutcome } from "./rent";
-import { restockCandidates, restockLine, type PurchaseEvent, type RestockCandidate } from "./restock-math";
+import { restockAddedLine, restockCandidates, restockLine, type PurchaseEvent, type RestockCandidate } from "./restock-math";
 import { bundleWindow, claimPost, getSchedule, groupTimezone } from "./schedule";
 import type { Ctx, GroupCtx } from "./types";
 
@@ -31,13 +31,17 @@ type Exec = typeof db | Tx;
 const HISTORY_DAYS = 400;
 const MAX_MUTES = 100;
 
-/** Insert purchase events (names normalized), on `exec` so the Cart's "bought" transaction can include them. */
+/**
+ * Insert purchase events (names normalized), on `exec` so the Cart's "bought" transaction can include them. One per
+ * source row, item and scope (purchase_events_once): a repeat adds nothing. Returns how many were written.
+ */
 export async function insertPurchases(exec: Exec, groupId: string, items: readonly PurchaseInput[]): Promise<number> {
   const rows = items
     .map((i) => ({ groupId, item: normalizeItem(i.name), memberId: i.memberId, occurredOn: i.occurredOn, source: i.source, sourceId: i.sourceId }))
     .filter((r) => r.item);
-  if (rows.length) await exec.insert(purchaseEvents).values(rows);
-  return rows.length;
+  if (!rows.length) return 0;
+  const written = await exec.insert(purchaseEvents).values(rows).onConflictDoNothing().returning({ id: purchaseEvents.id });
+  return written.length;
 }
 
 export async function recordPurchases(ctx: Ctx, items: readonly PurchaseInput[]): Promise<number> {
@@ -53,7 +57,7 @@ export async function localDay(groupId: string, now = new Date()): Promise<strin
 /**
  * A receipt's lines as purchases (for expense_from_receipt to call once it has logged the Expense): one event per
  * line, personal when one Member claimed it, shared otherwise, on the Expense's day. Once per Expense: a second call
- * writes nothing.
+ * writes nothing, and two at once write one set (the unique index, not the check, decides).
  */
 export async function recordReceiptPurchases(ctx: Ctx, expenseId: string, lines: readonly { name: string; claimedBy?: string | null }[]): Promise<number> {
   await requireActive(ctx);
@@ -87,11 +91,12 @@ export async function recordReceiptItems(
   return recordReceiptPurchases(ctx, expense.id, items.map((i) => ({ name: i.name, claimedBy: solo(i.memberIds) })));
 }
 
+/** The history the estimate reads: up to today (a future-dated Expense's lines aren't bought yet). */
 async function eventsOf(groupId: string, today: string): Promise<PurchaseEvent[]> {
   return db
     .select({ item: purchaseEvents.item, memberId: purchaseEvents.memberId, occurredOn: purchaseEvents.occurredOn })
     .from(purchaseEvents)
-    .where(and(eq(purchaseEvents.groupId, groupId), gte(purchaseEvents.occurredOn, addDaysToDay(today, -HISTORY_DAYS))));
+    .where(and(eq(purchaseEvents.groupId, groupId), gte(purchaseEvents.occurredOn, addDaysToDay(today, -HISTORY_DAYS)), lte(purchaseEvents.occurredOn, today)));
 }
 
 /* ---------- mutes ---------- */
@@ -209,17 +214,22 @@ export async function checkoutSuggestions(ctx: Ctx, opts: { mine?: boolean; now?
   return (await lowFor(ctx, opts)).map((c) => c.item);
 }
 
+/** A Member's own probably-low items are added only in their DM or on their dashboard, never from the group chat. */
+export const RESTOCK_MINE_IN_DM = "Your own list stays between us: DM me and say yes there.";
+
 /**
  * "Yes" after a restock line: today's candidates of that scope go in the Cart (shared ones as shared, "mine" for the
- * asker), or only the ones named in `only` ("just the milk"). Returns what went in.
+ * asker), or only the ones named in `only` ("just the milk"). "mine" from the group chat adds nothing and says to DM
+ * (the group isn't told what one person eats). Returns what went in and the line to say.
  */
-export async function restockAddListed(ctx: Ctx, scope: "shared" | "mine", opts: { only?: string[]; now?: Date } = {}): Promise<string[]> {
+export async function restockAddListed(ctx: Ctx, scope: "shared" | "mine", opts: { only?: string[]; now?: Date } = {}): Promise<{ added: string[]; say: string }> {
   await requireActive(ctx);
+  if (scope === "mine" && (ctx.source ?? "chat") === "chat") return { added: [], say: RESTOCK_MINE_IN_DM };
   const listed = (await candidates(ctx, opts.now)).filter((c) => (scope === "shared" ? c.scope === "shared" : c.scope === ctx.memberId));
   const picked = opts.only?.length ? listed.filter((c) => opts.only!.some((o) => sameItem(o, c.item))) : listed;
-  if (!picked.length) return [];
-  await addItems(ctx, { items: picked.map((c) => ({ name: c.item })), shared: scope === "shared" });
-  return picked.map((c) => c.item);
+  if (picked.length) await addItems(ctx, { items: picked.map((c) => ({ name: c.item })), shared: scope === "shared" });
+  const added = picked.map((c) => c.item);
+  return { added, say: restockAddedLine(added, scope) };
 }
 
 /** The Cart page's "Probably low" section for the signed-in Member: shared items and their own. */
