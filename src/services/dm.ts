@@ -2,7 +2,7 @@
 // prefix, asking once), what happens after a private run (the Echo rule: shared money moved -> one group line; a
 // Settlement -> one private line to the other person) and the no-DM-path fallback (one neutral group line a week).
 // The decisions are pure in dm-rules.ts.
-import { and, eq, inArray, ne } from "drizzle-orm";
+import { and, asc, eq, inArray, ne } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { channelFor, deliver, deliverPrivate } from "@/channels";
 import { CantMessagePrivatelyError, type ChannelName, type Outgoing } from "@/channels/types";
@@ -30,7 +30,8 @@ export async function dmCandidates(channel: ChannelName, userExternalId: string)
     .from(members)
     .innerJoin(groups, eq(groups.id, members.groupId))
     .innerJoin(chats, eq(chats.groupId, members.groupId))
-    .where(and(eq(chats.channel, channel), eq(members.channelUserId, userExternalId), ne(members.status, "removed")));
+    .where(and(eq(chats.channel, channel), eq(members.channelUserId, userExternalId), ne(members.status, "removed")))
+    .orderBy(asc(members.joinedAt), asc(groups.name));
   return rows.map((r) => ({ groupId: r.member.groupId, name: r.name, memberId: r.member.id, member: r.member, chatExternalId: r.chatExternalId }));
 }
 

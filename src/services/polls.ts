@@ -157,7 +157,9 @@ async function runAbout(poll: PollRow): Promise<string | null> {
   const among = whoIn({ options: poll.options, votes, members: people, payerId: about.payerId, inOption: about.inOption });
   const ctx: Ctx = { groupId: poll.groupId, memberId: poll.createdBy ?? about.payerId, source: "chat" };
   const e = await logExpense(ctx, { cents: about.cents, description: about.description, payerId: about.payerId, splitAmong: among, ...(isCategory(about.category) ? { category: about.category } : {}) });
-  const names = (e.splits ?? []).map((s) => s.name);
+  // Payer first, as the split is.
+  const inShares = new Set((e.splits ?? []).map((s) => s.memberId));
+  const names = among.filter((id) => inShares.has(id)).map((id) => people.find((p) => p.id === id)?.displayName ?? "Someone");
   const list = names.length <= 1 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
   return names.length === 1 ? `Logged ${what}, just ${list}.` : `Logged ${what}, split ${names.length} ways: ${list}.`;
 }
