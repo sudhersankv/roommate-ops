@@ -15,7 +15,9 @@ import { respond } from "@/pipeline";
 import { deleteGroup } from "./groups";
 import { getExpense, listExpenses, logExpense, settleUp } from "./money";
 import { nudgesOff, setNudges, setPaymentHandles, getNote, type Member } from "./members";
-import { askPoll, closePollsFor, expirePolls, recordVote, voteOnPoll } from "./polls";
+import { askConfirm, askPoll, closePollsFor, expirePolls, recordVote, voteOnPoll } from "./polls";
+import { currencyOf } from "./groups";
+import "@/toolkits/confirm";
 import { echoAfterPrivateRun, noteDmContext, nudgeOrHint, resolveDmGroup, runMark } from "./dm";
 import { assertNotProdDb } from "../../scripts/lib/prod-guard";
 
@@ -211,5 +213,30 @@ describe("polls and DMs against the dev DB", () => {
     assert.equal(channel.chat().length, 1);
     channel.refusePrivate = false;
     assert.equal(await nudgeOrHint(dev.id, groupId, { text: "You owe Maya $20.00" }), "private");
+  });
+
+  test("a confirm poll (live test #10): only the asked Admin's tap counts; ✅ runs exactly the pinned change, ❌ leaves it", async () => {
+    const vote = async (m: Member, option: number) => {
+      const [row] = await db.select().from(schema.polls).where(and(eq(schema.polls.groupId, groupId), eq(schema.polls.kind, "confirm"))).orderBy(schema.polls.createdAt);
+      const open = (await db.select().from(schema.polls).where(and(eq(schema.polls.groupId, groupId), eq(schema.polls.kind, "confirm")))).filter((p) => !p.resolvedAt);
+      return recordVote({ channel: "dev", chatExternalId: `pd-${ts}`, pollExternalId: (open[0] ?? row).externalId!, userExternalId: m.channelUserId!, optionIds: [option] });
+    };
+    await askConfirm(as(maya), { question: "Change the group's currency to INR?", toolId: "set_group_settings", input: { currency: "INR" } });
+    assert.deepEqual(channel.chat().at(-1)?.msg.poll, { question: "Change the group's currency to INR?", options: ["✅ Yes", "❌ No"], multi: false });
+
+    assert.deepEqual(await vote(dev, 0), { counted: true }, "Dev wasn't asked: his tap changes nothing");
+    assert.equal(await currencyOf(groupId), "USD");
+    const yes = await vote(maya, 0);
+    assert.equal(yes.resolved, "answered");
+    assert.equal(await currencyOf(groupId), "INR", "Maya's ✅ ran the pinned call");
+    assert.ok(yes.line, "one line in the chat");
+    assert.deepEqual(await vote(maya, 0), { counted: false }, "resolved once");
+
+    await askConfirm(as(maya), { question: "Change the group's currency to USD?", toolId: "set_group_settings", input: { currency: "USD" } });
+    const no = await vote(maya, 1);
+    assert.equal(no.line, "Okay, leaving it as it is.");
+    assert.equal(await currencyOf(groupId), "INR", "❌ changes nothing");
+
+    await db.update(schema.groups).set({ currency: "USD" }).where(eq(schema.groups.id, groupId));
   });
 });

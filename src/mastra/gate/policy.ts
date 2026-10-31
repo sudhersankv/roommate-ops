@@ -157,6 +157,22 @@ export function mediaWanted(f: MediaFacts): boolean {
 
 /* ---------- the [silent] last resort ---------- */
 
+/**
+ * The reply to send from a run's steps: only what Roomie said after its last tool ran (live test #11, where "Say 'add
+ * it'" written before the tool call went out glued to "Done on my end"). When nothing was said after the tools (or no
+ * tool ran), the run's whole text.
+ */
+export function replyText(steps: readonly { text?: string; toolCalls?: readonly unknown[] }[], whole: string): string {
+  const lastTool = steps.findLastIndex((s) => (s.toolCalls?.length ?? 0) > 0);
+  if (lastTool === -1) return whole;
+  const after = steps
+    .slice(lastTool + 1)
+    .map((s) => s.text ?? "")
+    .join("")
+    .trim();
+  return after || whole;
+}
+
 /** The exact token the agent may answer with in the follow-up window when the message needs no reply. */
 export const SILENT = "[silent]";
 

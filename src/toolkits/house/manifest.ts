@@ -35,8 +35,8 @@ export const house = defineManifest({
     upkeep_remove: "Stop tracking an upkeep item",
   },
   adminOnly: {
-    chore_remove: { action: String.raw`remove|delete|drop|take\b.*\boff|get rid|no more|stop`, target: "chore", ask: `Take {target} off the chart (its history goes too)? Say "roomie, yes remove {target}".` },
-    upkeep_remove: { action: String.raw`remove|delete|drop|stop|untrack|get rid|no more`, target: "item", ask: `Stop tracking {target}? Say "roomie, yes remove {target}".` },
+    chore_remove: { action: String.raw`remove|delete|drop|take\b.*\boff|get rid|no more|stop`, target: "chore", ask: `Take {target} off the chart (its history goes too)?` },
+    upkeep_remove: { action: String.raw`remove|delete|drop|stop|untrack|get rid|no more`, target: "item", ask: `Stop tracking {target}?` },
   },
   // Money, the landlord, then the house in the Bundle and the report (ADR 0017).
   postOrder: 30,

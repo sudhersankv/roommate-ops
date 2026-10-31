@@ -40,9 +40,9 @@ export const leaseInbox = defineManifest({
     release_inbox: "Admins: give up the group's email address",
   },
   adminOnly: {
-    trust_sender: { action: String.raw`\b(?:yes|yep|yeah|yup|trust\w*|landlord|building|leasing office|that'?s (?:them|ours|us))\b`, ask: `Treat that sender as the landlord from now on? Say "roomie, yes trust them".` },
-    release_inbox: { action: String.raw`\b(?:release|delete|close|shut\b.*\bdown|get rid|give up)\b`, ask: `Give up the group's email address? Mail sent to it will bounce from then on. Say "roomie, yes release the inbox".` },
-    send_intro: { action: String.raw`\b(?:intro\w*|introduce|send it)\b`, ask: `Send the landlord the intro email from all of you? Say "roomie, yes send the intro".` },
+    trust_sender: { action: String.raw`\b(?:yes|yep|yeah|yup|trust\w*|landlord|building|leasing office|that'?s (?:them|ours|us))\b`, ask: `Treat that sender as the landlord from now on?` },
+    release_inbox: { action: String.raw`\b(?:release|delete|close|shut\b.*\bdown|get rid|give up)\b`, ask: `Give up the group's email address? Mail sent to it will bounce from then on.` },
+    send_intro: { action: String.raw`\b(?:intro\w*|introduce|send it)\b`, ask: `Send the landlord the intro email from all of you?` },
   },
   offerLine: `Want me to handle the landlord's emails too? Say "roomie, learn lease inbox".`,
   // Money, the landlord, then the house (ADR 0017).

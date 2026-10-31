@@ -9,10 +9,14 @@ import { groceries } from "./groceries/server";
 import { house } from "./house/server";
 import { leaseInbox } from "./lease-inbox/server";
 import { TOOLKIT_IDS, type ToolkitId } from "./manifests";
+import { askConfirm } from "@/services/polls";
 import { checkAdminAsk, CONFIRM_TTL_MS } from "./admin-ask";
 import type { AdminAsk, AnyTool, Toolkit } from "./types";
 
 export { core };
+
+// The ✅ on a confirm poll runs its pinned call through confirm.ts (it registers itself with the polls service).
+import "./confirm";
 
 /** One entry per id in manifests.ts; a missing or extra one is a type error. */
 const BY_ID = { splitting, groceries, house, "lease-inbox": leaseInbox } satisfies Record<ToolkitId, Toolkit>;
@@ -26,8 +30,8 @@ const RELAYED = Symbol("relaysNotAllowed");
 
 type ContextReader = { get(key: string): unknown };
 
-/** Roomie asked an Admin to confirm a tool call: "<groupId>:<memberId>:<toolId>" -> the call it asked about, until when. */
-type Pending = { call: string; until: number };
+/** Roomie asked an Admin to confirm a tool call: "<groupId>:<memberId>:<toolId>" -> the call it asked about, when, until when. */
+type Pending = { call: string; at: number; until: number };
 const confirming = (): Map<string, Pending> => {
   const g = globalThis as { __roomieAdminConfirms?: Map<string, Pending> };
   return (g.__roomieAdminConfirms ??= new Map());
@@ -57,23 +61,55 @@ const NO_MESSAGE = "Admin-only changes need the admin's own message in the chat 
  * the same call (tool and input). No `latest` (Studio, a script) is refused, unless ROOMIE_ADMIN_ASK_OFF=1 outside
  * production. Non-Admins go straight to the service, which refuses them.
  */
-export function adminAskGate(toolId: string, spec: AdminAsk, input: unknown, context: unknown, now = Date.now()): { refused: "confirm"; ask: string; say: string } | null {
+export function adminAskGate(toolId: string, spec: AdminAsk, input: unknown, context: unknown, now = Date.now()): { refused: "confirm"; ask: string; say: string; fresh?: boolean } | null {
   const rc = (context as { requestContext?: ContextReader } | undefined)?.requestContext;
   if (rc?.get("role") !== "admin") return null;
+  const call = callKey(input);
+  // A tapped ✅ on Roomie's confirm poll (polls.ts -> confirm.ts) runs exactly the call it pinned (there's no typed message).
+  if (rc.get("confirmedCall") === `${toolId}:${call}`) return null;
   const latest = rc.get("latest");
   if (typeof latest !== "string") return askCheckOff() ? null : { refused: "confirm", ask: NO_MESSAGE, say: "Nothing was changed. Say this as it is." };
-  const key = `${rc.get("groupId")}:${rc.get("memberId")}:${toolId}`;
-  const call = callKey(input);
+  const who = `${rc.get("groupId")}:${rc.get("memberId")}:`;
+  const key = `${who}${toolId}`;
   const pending = confirming();
   const asked = pending.get(key);
-  const res = checkAdminAsk(spec, input, latest, !!asked && asked.until > now && asked.call === call);
+  // A plain "yes" answers only the newest thing Roomie asked this Admin to confirm.
+  const newest = !!asked && ![...pending].some(([k, p]) => k !== key && k.startsWith(who) && p.until > now && p.at > asked.at);
+  const res = checkAdminAsk(spec, input, latest, !!asked && asked.until > now && asked.call === call && newest);
   if (res.ok) {
     pending.delete(key);
     return null;
   }
-  pending.set(key, { call, until: now + CONFIRM_TTL_MS });
+  // Fresh: Roomie hasn't asked about this very call yet (so a confirm poll goes out once, not on every retry).
+  const fresh = !asked || asked.call !== call || asked.until <= now;
+  // Asking again about the same call keeps when it was first asked, so it doesn't jump ahead of a newer question.
+  pending.set(key, { call, at: fresh ? now : asked!.at, until: now + CONFIRM_TTL_MS });
   if (pending.size > 5_000) for (const [k, p] of pending) if (p.until <= now) pending.delete(k);
-  return { refused: "confirm", ask: res.ask, say: "Nothing was changed. Ask exactly this question and do nothing else until they answer." };
+  return { refused: "confirm", ask: res.ask, say: "Nothing was changed. Ask exactly this question and do nothing else until they answer.", fresh };
+}
+
+/**
+ * In the group chat, an Admin's confirmation goes out as a ✅/❌ poll they can tap (services/polls.ts askConfirm; only
+ * their vote counts and Yes runs exactly this call). A typed yes still works. Not in a DM or on the dashboard, where
+ * a poll would land in the group; if the poll can't be sent, Roomie just asks.
+ */
+async function withConfirmPoll(refused: { refused: "confirm"; ask: string; say: string }, toolId: string, input: unknown, context: unknown) {
+  const rc = (context as { requestContext?: ContextReader } | undefined)?.requestContext;
+  const groupId = rc?.get("groupId");
+  const memberId = rc?.get("memberId");
+  if (typeof groupId !== "string" || typeof memberId !== "string" || rc?.get("source") !== "chat" || rc?.get("isPrivate") === true) return refused;
+  try {
+    await askConfirm({ groupId, memberId, source: "chat" }, { question: refused.ask, toolId, input });
+  } catch (e) {
+    console.warn(`[confirm] couldn't send the poll for ${toolId}`, e);
+    return refused;
+  }
+  return {
+    refused: "confirm" as const,
+    polled: true,
+    ask: refused.ask,
+    say: "Nothing was changed yet. A Yes/No poll with this question just went to the chat for them to tap (a typed yes works too). Say so in a few words in your own voice; don't repeat the question or ask them to type anything.",
+  };
 }
 
 /**
@@ -88,7 +124,7 @@ function relayNotAllowed(tool: AnyTool, toolId: string, adminAsk?: AdminAsk): An
   tool.execute = async (input, context) => {
     if (adminAsk) {
       const refused = adminAskGate(toolId, adminAsk, input, context);
-      if (refused) return refused;
+      if (refused) return refused.fresh ? await withConfirmPoll(refused, toolId, input, context) : refused;
     }
     try {
       return await run(input, context);

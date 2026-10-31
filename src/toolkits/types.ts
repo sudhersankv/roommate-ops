@@ -45,7 +45,7 @@ export type AdminAsk = {
 };
 
 /** How a message asks for one field: its words (a regex source), or with `byValue` the value itself ("Chicago"). */
-export type AdminField = { words: string; byValue?: boolean };
+export type AdminField = { words: string; byValue?: boolean; /** Also asked for by what the value means ("ist" for Asia/Kolkata, "rupees" for INR). */ byMeaning?: "timezone" | "currency" };
 
 export type NavEntry = { label: string; href: (groupId: string) => string; icon: IconName; order: number };
 

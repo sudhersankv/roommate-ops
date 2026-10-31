@@ -16,6 +16,7 @@ import {
   THRESHOLDS,
   type Chattiness,
   type JevAnswers,
+  replyText,
 } from "./policy";
 import { parseJev, questionsFor, toolkitCriteria } from "./jev";
 import { MANIFESTS, TOOLKIT_IDS } from "@/toolkits/manifests";
@@ -409,5 +410,20 @@ describe("parseSilent", () => {
     assert.equal(parseSilent("[silent] actually wait, chips are already in the cart"), "actually wait, chips are already in the cart");
     assert.equal(parseSilent("[silent]\n\nLogged it anyway 👍"), "Logged it anyway 👍");
     assert.equal(parseSilent("[silent] - Ryan owes $20 btw"), "Ryan owes $20 btw");
+  });
+});
+
+describe("replyText: only what Roomie said after its last tool ran (live test #11)", () => {
+  test("text before a tool call is dropped when there's text after it", () => {
+    const steps = [
+      { text: 'Say "add it" and I\'ll put "Trash run" on the chart that way.', toolCalls: [{}] },
+      { text: "Trash run is on the chart: every 3 days, Sreyas first.", toolCalls: [] },
+    ];
+    assert.equal(replyText(steps, steps.map((s) => s.text).join("")), "Trash run is on the chart: every 3 days, Sreyas first.");
+  });
+  test("no text after the tools: the whole text stays; no tools: unchanged", () => {
+    assert.equal(replyText([{ text: "Added it.", toolCalls: [{}] }, { text: "", toolCalls: [] }], "Added it."), "Added it.");
+    assert.equal(replyText([{ text: "Hey!", toolCalls: [] }], "Hey!"), "Hey!");
+    assert.equal(replyText([], "Hey!"), "Hey!");
   });
 });

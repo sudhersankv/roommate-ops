@@ -5,10 +5,12 @@
 // The rule, per tool (its manifest's adminOnly entry): the message names the action (spec.action) and, when there is
 // one, the target (a word of spec.target's value). A tool with `fields` (settings) instead needs every field the call
 // would change to be asked for: its own words in the message, or for some fields the value itself ("Chicago"). Otherwise
-// the tool doesn't run and Roomie asks spec.ask. Within 10 minutes the Admin's "yes" plus the action passes, for exactly
-// the call Roomie asked about (the registry binds the confirmation to the input). The action and the target have to
+// the tool doesn't run and Roomie asks spec.ask, a plain question (or a Yes/No poll, registry.ts). Within 10 minutes the
+// Admin's plain "yes" (or "yes" plus the action) passes, for exactly the call Roomie asked about (the registry binds the
+// confirmation to the input). A value counts by meaning too: "ist" asks for Asia/Kolkata, "rupees" for INR. The action and the target have to
 // be in the same clause, and a negation earlier in the clause ("don't under any circumstances approve Priya") or on the
 // target ("approve Priya, not Sam") means it wasn't asked for.
+import { resolveTimeZone } from "@/lib/time";
 import type { AdminAsk, AdminField } from "./types";
 
 export const CONFIRM_TTL_MS = 10 * 60 * 1000;
@@ -95,8 +97,65 @@ function changedFields(input: unknown): [string, unknown][] {
   return Object.entries(input as Record<string, unknown>).filter(([, v]) => v !== undefined && !(v && typeof v === "object" && !Array.isArray(v) && !Object.keys(v).length));
 }
 
+/** Everyday names for currencies: "rupees" asks for INR as much as "INR" does. */
+const CURRENCY_NAMES: Record<string, string[]> = {
+  INR: ["rupee", "rupees", "rs", "₹"],
+  USD: ["dollar", "dollars", "bucks", "$"],
+  EUR: ["euro", "euros", "€"],
+  GBP: ["pound", "pounds", "quid", "£"],
+  IDR: ["rupiah", "rp"],
+  JPY: ["yen", "¥"],
+  AUD: ["aussie dollars"],
+  CAD: ["canadian dollars"],
+};
+
+/**
+ * Whether a clause names the value by what it means rather than how it's spelled: a time zone by any name
+ * resolveTimeZone knows ("ist", "india time", "kolkata" for Asia/Kolkata), a currency by its everyday name.
+ */
+function namesByMeaning(field: AdminField, value: unknown, clause: string): boolean {
+  if (typeof value !== "string") return false;
+  if (field.byMeaning === "timezone") {
+    const w = clause.toLowerCase().split(/[^\p{L}\p{N}/_]+/u).filter(Boolean);
+    const spans = w.flatMap((_, i) => [w[i], `${w[i]} ${w[i + 1] ?? ""}`.trim(), `${w[i]} ${w[i + 1] ?? ""} ${w[i + 2] ?? ""}`.trim()]);
+    return spans.some((x) => x.length >= 2 && resolveTimeZone(x) === value);
+  }
+  if (field.byMeaning === "currency") return (CURRENCY_NAMES[value.toUpperCase()] ?? []).some((n) => (/\w/.test(n) ? hasWord(clause, n) : clause.includes(n)));
+  return false;
+}
+
 const fieldAsked = (field: AdminField | undefined, value: unknown, text: string) =>
-  !!field && (matches(text, field.words) || (!!field.byValue && clausesOf(text).some((c) => !NEG.test(c) && namesTarget(c, leaves(value)))));
+  !!field &&
+  (matches(text, field.words) ||
+    clausesOf(text).some((c) => !NEG.test(c) && ((!!field.byValue && namesTarget(c, leaves(value))) || namesByMeaning(field, value, c))));
+
+/** How a settings field reads in Roomie's question. */
+const FIELD_LABEL: Record<string, string> = {
+  timezone: "time zone",
+  reportDay: "report day",
+  reportHour: "report hour",
+  choresNudgeHour: "morning post hour",
+  simplifyDebts: "debt simplifying",
+  toolkits: "Tricks",
+};
+const valueText = (v: unknown): string => (Array.isArray(v) ? v.map(valueText).join(", ") : typeof v === "boolean" ? (v ? "on" : "off") : v === null ? "off" : String(v));
+
+/** "currency to INR and time zone to Asia/Kolkata": the whole change, so a yes knows what it agrees to. */
+function describeChanges(changed: [string, unknown][]): string {
+  const parts = changed.map(([k, v]) => `${FIELD_LABEL[k] ?? k} to ${valueText(v)}`);
+  return parts.length <= 1 ? parts.join("") : `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
+}
+
+/** Words a plain confirmation is made of: "roomie, yes", "yep do it", "ok go ahead", "yes please". */
+const PLAIN_YES = new Set(["yes", "yep", "yeah", "yup", "ya", "yea", "sure", "ok", "okay", "k", "confirm", "confirmed", "do", "it", "go", "ahead", "please", "pls", "thanks", "thx", "thank", "you", "sounds", "good", "great", "perfect", "cool", "fine", "alright", "absolutely", "of", "course", "that", "thing", "roomie", "haan", "ha"]);
+
+/** A reply that is only a yes (and maybe the target's own name): "roomie, yes", "yes please", "yep, Eve". */
+function plainYes(latest: string, targets: string[]): boolean {
+  if (!YES.test(latest) && !/\b(?:haan|ya|yea)\b/i.test(latest)) return false;
+  const targetWords = new Set(targets.flatMap((t) => words(t).map((w) => w.toLowerCase())));
+  const rest = latest.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w && !PLAIN_YES.has(w) && !targetWords.has(w));
+  return rest.length === 0;
+}
 
 /** A clause with a negation names the field ("not the currency", "don't touch the report"): it's excluded. */
 const fieldExcluded = (field: AdminField | undefined, value: unknown, text: string) =>
@@ -116,6 +175,9 @@ const fieldExcluded = (field: AdminField | undefined, value: unknown, text: stri
  * this very call in the last 10 minutes, so "yes" plus the action or the target is enough.
  */
 export function checkAdminAsk(spec: AdminAsk, input: unknown, latest: string, confirming = false): AdminAskResult {
+  // Roomie just asked about exactly this call: a plain yes is the answer (live test #10). Anything more than a yes
+  // ("yes decline Priya", "yes but not the currency") goes through the full rules below.
+  if (confirming && plainYes(latest, spec.fields ? [] : targetValues(spec, input))) return { ok: true };
   const yes = confirming && YES.test(latest);
   if (spec.fields) {
     const changed = changedFields(input);
@@ -127,8 +189,8 @@ export function checkAdminAsk(spec: AdminAsk, input: unknown, latest: string, co
     // Confirming a settings call: "yes, change the settings" (the question named every field), or yes plus words for
     // every field the call changes. "yes currency" doesn't also confirm the report hour.
     if (yes && (namesAction(latest, spec) || (changed.length > 0 && changed.every(([k]) => !!spec.fields![k] && matches(latest, spec.fields![k].words))))) return { ok: true };
-    const shown = (unasked.length ? unasked : changed).map(([k]) => k).join(", ");
-    return { ok: false, ask: spec.ask.replaceAll("{target}", shown || "that") };
+    // A plain yes confirms the whole call, so the question shows all of it, with the values.
+    return { ok: false, ask: spec.ask.replaceAll("{target}", describeChanges(changed) || "settings") };
   }
   const values = targetValues(spec, input);
   if (asksFor(latest, spec, values)) return { ok: true };

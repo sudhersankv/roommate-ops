@@ -1,16 +1,17 @@
 // Admin-only tools need the Admin's own message to ask for them (audit H6). Pure, no DB.
 // Run: npx tsx --test src/toolkits/admin-ask.test.ts
-import { describe, test } from "node:test";
+import { beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { checkAdminAsk, namesTarget } from "./admin-ask";
 import { adminAskGate, adminOnlyTools, callKey } from "./registry";
 import { core } from "./core/manifest";
 import { house } from "./house/manifest";
 import { splitting } from "./splitting/manifest";
+import { leaseInbox } from "./lease-inbox/manifest";
 import type { AdminAsk } from "./types";
 
 const spec = (id: string): AdminAsk => {
-  const s = core.adminOnly?.[id] ?? splitting.adminOnly?.[id] ?? house.adminOnly?.[id];
+  const s = core.adminOnly?.[id] ?? splitting.adminOnly?.[id] ?? house.adminOnly?.[id] ?? leaseInbox.adminOnly?.[id];
   assert.ok(s, id);
   return s;
 };
@@ -74,16 +75,31 @@ describe("checkAdminAsk", () => {
     assert.equal(ok("promote_member", { name: "Eve" }, "roomie promote steve"), false, "whole words only");
   });
 
-  test("the ask names the action and how to confirm", () => {
+  test("the ask is a plain question: no phrase to type (live test #10)", () => {
     const r = checkAdminAsk(spec("promote_member"), { name: "Eve" }, "roomie hi");
-    assert.deepEqual(r, { ok: false, ask: `Make Eve an admin? Say "roomie, yes promote Eve".` });
+    assert.deepEqual(r, { ok: false, ask: "Make Eve an admin?" });
+    for (const id of adminOnlyTools()) assert.doesNotMatch(spec(id).ask, /say/i, `${id}'s ask scripts a phrase`);
   });
 
-  test("after Roomie asked: yes plus the action passes; a bare yes, or yes plus only the name, doesn't", () => {
-    assert.equal(ok("promote_member", { name: "Eve" }, "yes", true), false);
-    assert.equal(ok("promote_member", { name: "Eve" }, "roomie yes eve", true), false);
+  test("after Roomie asked: a plain yes confirms that call (live test #10: 'roomie yes', 'roomie, yes')", () => {
+    for (const yes of ["yes", "roomie yes", "roomie, yes", "Yep, do it", "ok go ahead", "yes please 👍", "sure thing", "roomie yes eve"])
+      assert.equal(ok("promote_member", { name: "Eve" }, yes, true), true, yes);
     assert.equal(ok("promote_member", { name: "Eve" }, "yes promote", true), true);
-    assert.equal(ok("promote_member", { name: "Eve" }, "yes promote", false), false, "only when Roomie just asked");
+    assert.equal(ok("promote_member", { name: "Eve" }, "yes", false), false, "only when Roomie just asked about this call");
+    assert.equal(ok("promote_member", { name: "Eve" }, "yes promote", false), false);
+    assert.equal(ok("promote_member", { name: "Eve" }, "yes but wait", true), false, "a yes with more to it isn't a plain yes");
+    assert.equal(ok("promote_member", { name: "Eve" }, "no", true), false);
+  });
+
+  test("the live settings ask: 'Keep this to inr and ist' asks for INR and Asia/Kolkata, and a plain yes confirms both", () => {
+    const call = { currency: "INR", timezone: "Asia/Kolkata" };
+    assert.equal(ok("set_group_settings", call, "Keep this to inr and ist"), true, "IST names Asia/Kolkata");
+    assert.equal(ok("set_group_settings", call, "roomie use rupees and india time"), true);
+    assert.equal(ok("set_group_settings", call, "roomie use rupees"), false, "the time zone wasn't asked for");
+    assert.equal(ok("set_group_settings", call, "roomie yes", true), true);
+    assert.equal(ok("set_group_settings", call, "roomie, yes", true), true);
+    assert.equal(ok("set_group_settings", { timezone: "Asia/Kolkata" }, "roomie we're in kolkata"), true);
+    assert.equal(ok("set_group_settings", { timezone: "America/Chicago" }, "roomie keep ist"), false, "IST isn't Chicago");
   });
 
   test("a reply naming the opposite action never confirms: asked to approve Priya, 'yes decline Priya' doesn't", () => {
@@ -162,9 +178,9 @@ describe("checkAdminAsk", () => {
     assert.equal(ok("set_group_settings", { reportDay: "monday", reportHour: 9 }, "roomie move the report to monday 9am"), true);
   });
 
-  test("settings: the question names what nobody asked for; 'yes change the settings' confirms it", () => {
+  test("settings: the question names the whole change with its values; 'yes change the settings' confirms it", () => {
     const r = checkAdminAsk(spec("set_group_settings"), { purpose: "roommates", toolkits: ["house"] }, "roommates");
-    assert.deepEqual(r, { ok: false, ask: `Change the group's settings (toolkits)? Say "roomie, yes change the settings".` });
+    assert.deepEqual(r, { ok: false, ask: "Change the group's purpose to roommates and Tricks to house?" }, "the whole change, since a yes confirms all of it");
     assert.equal(ok("set_group_settings", { purpose: "roommates", toolkits: ["house"] }, "roomie, yes change the settings", true), true);
   });
 
@@ -192,6 +208,8 @@ describe("checkAdminAsk", () => {
 });
 
 describe("adminAskGate (the registry wrapper)", () => {
+  // The confirmations live in one map per process; each test starts with none.
+  beforeEach(() => (globalThis as { __roomieAdminConfirms?: Map<string, unknown> }).__roomieAdminConfirms?.clear());
   const rc = (latest: string | undefined, role = "admin") => ({
     requestContext: { get: (k: string) => ({ latest, role, groupId: "g1", memberId: "m1" } as Record<string, unknown>)[k] },
   });
@@ -202,6 +220,31 @@ describe("adminAskGate (the registry wrapper)", () => {
     assert.match(first!.ask, /Make Eve an admin\?/);
     assert.equal(adminAskGate("promote_member", spec("promote_member"), { name: "Eve" }, rc("yes, promote"), 2_000), null);
     assert.notEqual(adminAskGate("promote_member", spec("promote_member"), { name: "Eve" }, rc("yes, promote"), 3_000), null, "the confirmation is used up");
+  });
+
+  test("live test #10: Roomie asks about INR and IST, 'roomie, yes' confirms it; the question shows the whole change", () => {
+    const call = { currency: "INR", timezone: "Asia/Kolkata", purpose: "roommates" };
+    const first = adminAskGate("set_group_settings", spec("set_group_settings"), call, rc("Keep this to inr and ist"), 1_000);
+    assert.equal(first?.ask, "Change the group's currency to INR, time zone to Asia/Kolkata and purpose to roommates?");
+    assert.equal(first?.fresh, true, "a new question (so a confirm poll goes out once)");
+    assert.equal(adminAskGate("set_group_settings", spec("set_group_settings"), call, rc("roomie, yes"), 2_000), null);
+  });
+
+  test("a plain yes answers only the newest thing Roomie asked this Admin", () => {
+    adminAskGate("promote_member", spec("promote_member"), { name: "Eve" }, rc("roomie hi"), 1_000);
+    adminAskGate("approve_member", spec("approve_member"), { name: "Priya" }, rc("roomie hi"), 2_000);
+    assert.notEqual(adminAskGate("promote_member", spec("promote_member"), { name: "Eve" }, rc("yes"), 3_000), null, "the newer ask was Priya's");
+    assert.equal(adminAskGate("approve_member", spec("approve_member"), { name: "Priya" }, rc("yes"), 4_000), null);
+  });
+
+  test("a tapped ✅ (confirmedCall) lets exactly that call through, nothing else", () => {
+    const tapped = (latest: string, confirmedCall: string) => ({
+      requestContext: { get: (k: string) => ({ latest, role: "admin", groupId: "g1", memberId: "m1", confirmedCall } as Record<string, unknown>)[k] },
+    });
+    const eve = `promote_member:${callKey({ name: "Eve" })}`;
+    assert.equal(adminAskGate("promote_member", spec("promote_member"), { name: "Eve" }, tapped("", eve), 1_000), null);
+    assert.notEqual(adminAskGate("promote_member", spec("promote_member"), { name: "Sam" }, tapped("", eve), 1_000), null);
+    assert.notEqual(adminAskGate("approve_member", spec("approve_member"), { name: "Eve" }, tapped("", eve), 1_000), null);
   });
 
   test("a confirmation expires after 10 minutes", () => {

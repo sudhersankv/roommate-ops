@@ -29,7 +29,7 @@ import { BREATHER, BREATHER_MEMBER, BREATHER_SHORT, caps, clipInput } from "@/li
 import { localDay } from "@/lib/dates";
 import { logPaused, roomiePaused } from "@/lib/kill-switch";
 import { effectiveDials, isPetCommand, normalizePersonality, shapeLine, winsFrom, type Personality } from "@/lib/personality";
-import { mediaWanted, type GateDecision } from "@/mastra/gate/policy";
+import { mediaWanted, replyText as finalText, type GateDecision } from "@/mastra/gate/policy";
 import type { MediaQuestion } from "@/channels/types";
 import { allSquare } from "@/services/personality";
 import { claimWins, dayGreeting, dbMoments } from "@/services/pet";
@@ -358,7 +358,7 @@ export async function respond(input: RespondInput): Promise<PipelineResult> {
 
     // "[silent]" (or nothing, with nothing done) is only honoured in the follow-up window. Otherwise never post the
     // literal token or an empty message: acknowledge instead.
-    let replyText = parseSilent(res.text ?? "");
+    let replyText = parseSilent(finalText(steps, res.text ?? ""));
     if (replyText === null) replyText = gate.mayStaySilent ? null : ACK;
     else if (!replyText) replyText = gate.mayStaySilent && !toolCalls.some(isActionTool) ? null : ACK;
 
