@@ -68,6 +68,8 @@ function shownStrings(source: string): string {
   for (const m of text.matchAll(/"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`/g)) {
     // A path or an id ("/toolkits", `${base}/toolkits`, "browse-toolkits") has a slash or a dash and no spaces: code.
     if (/[/-]/.test(m[0]) && !/\s/.test(m[0].replace(/\$\{[^}]*\}/g, ""))) continue;
+    // So is one lowercase identifier ("enabled" as a key or a type's field name); a label starts with a capital.
+    if (/^["'`][a-z][A-Za-z0-9]*["'`]$/.test(m[0])) continue;
     out.push(m[0].replace(/\$\{[^}]*\}/g, " "));
   }
   // JSX text: between a tag's ">" and the next "<", with no code characters in it (so `a > b && <X />` isn't text).
