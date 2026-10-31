@@ -211,3 +211,41 @@ export type ToolkitCardView = {
   /** Unmet requirements that keep it from going on. */
   blocked: string[]
 }
+
+/* ---------- Lease Inbox (#27) ---------- */
+
+export type InboxTab = "notices" | "rent" | "work-orders" | "other" | "new-senders"
+
+/** One email or one thing Roomie sent, in a thread on the Inbox page. */
+export type InboxItemView = {
+  id: string
+  direction: "in" | "out"
+  from: string
+  subject: string
+  summary: string | null
+  text: string
+  at: string
+  when: string
+  documents: { id: string; href: string }[]
+}
+
+/** A thread on the Inbox page: its newest email decides the tab; `canReply` = the landlord wrote in it. */
+export type InboxThreadView = {
+  threadId: string
+  tab: InboxTab
+  subject: string
+  from: string
+  summary: string | null
+  when: string
+  at: string
+  canReply: boolean
+  workOrder: { title: string; status: string; scheduledFor: string | null; reportedBy: string | null } | null
+  items: InboxItemView[]
+}
+
+export type InboxView = {
+  address: string | null
+  senders: { value: string; source: string }[]
+  threads: InboxThreadView[]
+  counts: Record<InboxTab, number>
+}

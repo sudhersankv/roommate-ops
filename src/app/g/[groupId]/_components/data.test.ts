@@ -8,7 +8,8 @@ import { PRESETS } from "@/toolkits/presets";
 import type { ToolkitManifest } from "@/toolkits/types";
 import type { GroupSession } from "@/lib/session";
 import type { Expense } from "@/services/money";
-import { NAV_TABS, expenseView, groupTricks, shellView, todayRows } from "./data";
+import type { InboxData } from "@/services/lease-inbox-toolkit";
+import { NAV_TABS, expenseView, groupTricks, inboxThreads, shellView, todayRows } from "./data";
 
 const onFor = (ids: readonly string[]) => Object.fromEntries(MANIFESTS.map((m) => [m.id, ids.includes(m.id)]));
 
@@ -17,11 +18,7 @@ const ISSUE_ORDER: Record<string, number> = { splitting: 10, house: 30, grocerie
 const withIssueOrder = (list: readonly ToolkitManifest[]) =>
   list.map((m) => (m.dashboard?.nav && ISSUE_ORDER[m.id] ? { ...m, dashboard: { ...m.dashboard, nav: { ...m.dashboard.nav, order: ISSUE_ORDER[m.id] } } } : m));
 
-/** Lease Inbox as #27 will build it: a stub of the coming-soon manifest with a nav tab at 35. */
-const leaseStub = (): ToolkitManifest => {
-  const soon = COMING_SOON.find((m) => m.id === "lease-inbox")!;
-  return { ...soon, status: "stable", dashboard: { nav: { label: "Inbox", href: (g) => `/g/${g}/inbox`, icon: "Inbox", order: 35 }, pages: ["inbox"] } };
-};
+const LEASE = "lease-inbox";
 
 const navOrder = (id: string) => MANIFESTS.find((m) => m.id === id)?.dashboard?.nav?.order ?? 0;
 
@@ -34,8 +31,9 @@ describe("shellView", () => {
     const v = shellView("g1", onFor(PRESETS.roommates), withIssueOrder(MANIFESTS));
     assert.deepEqual(v.nav.map((n) => [n.label, n.href]), [["Money", "/g/g1/money"], ["House", "/g/g1/house"]]);
     assert.deepEqual(v.drawer.learned.map((n) => n.label), ["Cart"]);
-    assert.deepEqual(v.drawer.notYet, []);
-    assert.ok(v.drawer.soon.some((s) => s.name === "Lease Inbox"));
+    // Lease Inbox is built (#27) but off by default: a slot to teach, not Soon.
+    assert.deepEqual(v.drawer.notYet.map((t) => t.name), ["Lease Inbox"]);
+    assert.ok(!v.drawer.soon.some((s) => s.name === "Lease Inbox"));
     // Reminders aren't a Trick's: the drawer's Group section has them (dock.tsx), so no manifest owns a reminders page.
     assert.ok(!v.ownedPages.some((p) => p.prefix === "reminders"));
   });
@@ -51,9 +49,7 @@ describe("shellView", () => {
   );
 
   test("Lease Inbox on, House off: Inbox takes House's slot; Cart stays in the drawer; House is a slot to teach", () => {
-    const lease = leaseStub();
-    const manifests = [...withIssueOrder(MANIFESTS), lease];
-    const v = shellView("g1", { ...onFor(["splitting", "groceries"]), [lease.id]: true }, manifests, COMING_SOON.filter((m) => m.id !== lease.id));
+    const v = shellView("g1", onFor(["splitting", "groceries", LEASE]), withIssueOrder(MANIFESTS));
     assert.deepEqual(v.nav.map((n) => [n.label, n.href]), [["Money", "/g/g1/money"], ["Inbox", "/g/g1/inbox"]]);
     assert.deepEqual(v.drawer.learned.map((n) => n.label), ["Cart"]);
     assert.deepEqual(v.drawer.notYet.map((t) => t.name), ["House"]);
@@ -61,8 +57,7 @@ describe("shellView", () => {
   });
 
   test("Lease Inbox and House both on: House (30) keeps its slot, Inbox (35) goes to the drawer before Cart", () => {
-    const lease = leaseStub();
-    const v = shellView("g1", { ...onFor(PRESETS.roommates), [lease.id]: true }, [...withIssueOrder(MANIFESTS), lease]);
+    const v = shellView("g1", onFor([...PRESETS.roommates, LEASE]), withIssueOrder(MANIFESTS));
     assert.deepEqual(v.nav.map((n) => n.label), ["Money", "House"]);
     assert.deepEqual(v.drawer.learned.map((n) => n.label), ["Inbox", "Cart"]);
   });
@@ -71,7 +66,7 @@ describe("shellView", () => {
     const v = shellView("g1", onFor(PRESETS.trip));
     assert.deepEqual(v.nav.map((n) => n.label), ["Money", "Cart"]);
     assert.deepEqual(v.drawer.learned, []);
-    assert.deepEqual(v.drawer.notYet.map((t) => t.name), ["House"]);
+    assert.deepEqual(v.drawer.notYet.map((t) => t.name), ["House", "Lease Inbox"]);
     const house = v.ownedPages.find((p) => p.prefix === "house")!;
     assert.deepEqual(house.owners.map((o) => [o.name, o.enabled]), [["House", false]]);
     assert.ok(!v.ownedPages.some((p) => p.prefix === "chores"), "the old page prefix is gone");
@@ -81,7 +76,7 @@ describe("shellView", () => {
     const v = shellView("g1", onFor([]));
     assert.deepEqual(v.nav, []);
     assert.deepEqual(v.drawer.learned, []);
-    assert.deepEqual(v.drawer.notYet.map((t) => t.name), ["Money", "Groceries", "House"]);
+    assert.deepEqual(v.drawer.notYet.map((t) => t.name), ["Money", "Groceries", "House", "Lease Inbox"]);
     assert.equal(v.drawer.soon.length, COMING_SOON.length);
   });
 });
@@ -133,5 +128,61 @@ describe("groupTricks (the Tricks page: a plain list)", () => {
     assert.deepEqual(g.learned.map((c) => c.id), ["a", "d"]);
     assert.deepEqual(g.notYet.map((c) => c.id), ["b", "e"]);
     assert.deepEqual(g.soon.map((c) => c.id), ["c"]);
+  });
+});
+
+describe("inboxThreads (the Inbox page: tabs by class)", () => {
+  const at = (iso: string) => new Date(iso);
+  const mail = (id: string, cls: InboxData["mail"][number]["class"], threadId: string, receivedAt: string, over: Partial<InboxData["mail"][number]> = {}): InboxData["mail"][number] => ({
+    id,
+    class: cls,
+    from: "leasing@brookfieldresidential.com",
+    subject: `Subject ${id}`,
+    summary: `summary ${id}`,
+    text: "Dear Resident,",
+    threadId,
+    receivedAt: at(receivedAt),
+    trusted: cls !== "new-sender",
+    documentIds: [],
+    ...over,
+  });
+  const data: InboxData = {
+    address: "apt-4b-x7k2@agentmail.to",
+    senders: [{ value: "brookfieldresidential.com", source: "forward" }],
+    mail: [
+      mail("m1", "notice", "t1", "2026-10-27T20:14:00Z", { documentIds: ["0b7e4a52-3c1d-4f6a-9e2b-5d8c7a1f0e93"] }),
+      mail("m2", "rent-lease", "t2", "2026-10-28T15:00:00Z"),
+      mail("m3", "work-order", "t3", "2026-10-29T15:00:00Z"),
+      mail("m4", "other", "t4", "2026-10-29T16:00:00Z"),
+      mail("m5", null, "t5", "2026-10-29T17:00:00Z"),
+      mail("m6", "new-sender", "t6", "2026-10-30T15:00:00Z", { from: "parking@cityparkingllc.com" }),
+    ],
+    sent: [
+      { id: "s1", threadId: "t3", summary: "reported the leaking kitchen sink", to: "leasing@brookfieldresidential.com", by: "Dev", at: at("2026-10-28T14:00:00Z") },
+      { id: "s2", threadId: "t7", summary: "reported the broken blinds", to: "leasing@brookfieldresidential.com", by: null, at: at("2026-10-30T16:00:00Z") },
+    ],
+    workOrders: [
+      { id: "w1", title: "the leaking kitchen sink", status: "scheduled", scheduledFor: "2026-11-03T10:00", lastReply: "plumber Tuesday 10am", threadId: "t3", reportedBy: "Dev" },
+      { id: "w2", title: "the broken blinds", status: "sent", scheduledFor: null, lastReply: null, threadId: "t7", reportedBy: null },
+    ],
+  };
+
+  test("each thread lands in its class's tab; a work order nobody answered yet is Work orders; unclassified is Everything else", () => {
+    const { threads, counts } = inboxThreads(data, "America/Chicago");
+    const tabOf = Object.fromEntries(threads.map((t) => [t.threadId, t.tab]));
+    assert.deepEqual(tabOf, { t1: "notices", t2: "rent", t3: "work-orders", t4: "other", t5: "other", t6: "new-senders", t7: "work-orders" });
+    assert.deepEqual(counts, { notices: 1, rent: 1, "work-orders": 2, other: 2, "new-senders": 1 });
+    assert.deepEqual(threads.map((t) => t.threadId), ["t7", "t6", "t5", "t4", "t3", "t2", "t1"], "newest first");
+  });
+
+  test("a thread reads in order with what Roomie sent; new senders can't be replied to; attachments link to Documents", () => {
+    const { threads } = inboxThreads(data, "America/Chicago");
+    const sink = threads.find((t) => t.threadId === "t3")!;
+    assert.deepEqual(sink.items.map((i) => [i.direction, i.from]), [["out", "Roomie for Dev"], ["in", "leasing@brookfieldresidential.com"]]);
+    assert.equal(sink.workOrder?.status, "scheduled");
+    assert.equal(sink.canReply, true);
+    assert.equal(threads.find((t) => t.threadId === "t6")!.canReply, false);
+    assert.equal(threads.find((t) => t.threadId === "t7")!.canReply, false, "only our own email in it: nothing from the landlord to answer");
+    assert.deepEqual(threads.find((t) => t.threadId === "t1")!.items[0].documents, [{ id: "0b7e4a52-3c1d-4f6a-9e2b-5d8c7a1f0e93", href: "/api/docs/0b7e4a52-3c1d-4f6a-9e2b-5d8c7a1f0e93" }]);
   });
 });
