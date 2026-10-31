@@ -17,12 +17,12 @@ import { envMs, SendLimiter, sleep as realSleep } from "./rate-limit";
 import { BAD_VOICE, chunkText, commandOf, helpText, MANY_GROUPS, MAX_TEXT, NO_GROUP, NO_VOICE, OOPS, startReply, wasAddressed } from "./text";
 import { logPaused, roomiePaused } from "@/lib/kill-switch";
 import { mediaWanted } from "@/mastra/gate/policy";
-import { CantMessagePrivatelyError, type Button, type Channel, type ChannelUser, type IncomingMessage, type MediaQuestion, type Outgoing } from "./types";
+import { CantMessagePrivatelyError, type Button, type Channel, type ChannelUser, type IncomingMessage, type MediaQuestion, type Outgoing, type PollVote, type Sent } from "./types";
 
 export const TELEGRAM_MAX_TEXT = MAX_TEXT;
 export { chunkText, commandOf, helpText, OOPS, startReply };
 /** The update types Roomie handles (polling and setWebhook ask for exactly these). */
-export const TELEGRAM_UPDATES = ["message", "my_chat_member"] as const;
+export const TELEGRAM_UPDATES = ["message", "my_chat_member", "poll_answer"] as const;
 
 export type TelegramDeps = {
   handleIncoming(msg: IncomingMessage): Promise<Outgoing | null>;
@@ -50,6 +50,8 @@ export type TelegramDeps = {
   mediaWanted?: (q: MediaQuestion) => Promise<boolean>;
   /** An operator paused this Chat's Group (/admin/groups): Roomie answers nothing there, /help included. */
   chatPaused?: (chatExternalId: string) => Promise<boolean>;
+  /** Someone answered (or took back) a Poll Roomie asked (the pipeline's handlePollVote). Absent: votes are dropped. */
+  onPollVote?: (vote: PollVote) => Promise<void>;
 };
 
 /* ---------- pure helpers (telegram.test.ts) ---------- */
@@ -96,6 +98,13 @@ export function keyboardFor(buttons: Button[] = []): InlineKeyboard | undefined 
   return kb;
 }
 
+/** A poll_answer update -> a PollVote (no user = an anonymous vote, which Roomie's polls never get). Empty option ids =
+ * the vote was taken back. Telegram doesn't name the Chat: `chatExternalId` is empty and the Poll's id finds it. */
+export function pollVoteFrom(a: { poll_id: string; user?: User; option_ids: number[] }): PollVote | null {
+  if (!a.user || a.user.is_bot) return null;
+  return { channel: "telegram", chatExternalId: "", pollExternalId: a.poll_id, userExternalId: String(a.user.id), optionIds: [...a.option_ids] };
+}
+
 export const dmFirstMessage = (username?: string) =>
   username ? `I can't DM you yet: tap @${username} and press Start, then ask me again.` : "I can't DM you yet: open a chat with me and press Start, then ask me again.";
 
@@ -139,6 +148,7 @@ export type TelegramChannelOptions = {
 
 export class TelegramChannel implements Channel {
   readonly name = "telegram" as const;
+  readonly nativePolls = true;
   username?: string;
   private readonly limiter: SendLimiter;
   private readonly sleep: (ms: number) => Promise<void>;
@@ -156,14 +166,14 @@ export class TelegramChannel implements Channel {
     this.replyDelayMs = opts.replyDelayMs ?? envMs("REPLY_DELAY_MS");
   }
 
-  async sendToChat(chatExternalId: string, msg: Outgoing) {
+  async sendToChat(chatExternalId: string, msg: Outgoing): Promise<Sent> {
     await this.flushIntro(chatExternalId);
-    await this.send(chatExternalId, msg);
+    return this.send(chatExternalId, msg);
   }
 
-  async sendPrivate(userExternalId: string, msg: Outgoing) {
+  async sendPrivate(userExternalId: string, msg: Outgoing): Promise<Sent> {
     try {
-      await this.send(userExternalId, msg);
+      return await this.send(userExternalId, msg);
     } catch (err) {
       // 403: the person never pressed Start (a bot can't open a 1:1 chat) or blocked Roomie.
       if (err instanceof GrammyError && (err.error_code === 403 || /chat not found/i.test(err.description))) throw new CantMessagePrivatelyError(dmFirstMessage(this.username));
@@ -222,7 +232,18 @@ export class TelegramChannel implements Channel {
     }
   }
 
-  private async send(chatId: string, msg: Outgoing) {
+  /** A Poll goes out as Telegram's own, non-anonymous (anonymous polls tell nobody who voted); its id is what
+   * poll_answer updates point at. */
+  private async sendPoll(chatId: string, poll: NonNullable<Outgoing["poll"]>): Promise<Sent> {
+    await this.api.sendChatAction(chatId, "typing").catch(() => {});
+    await this.sleep(this.replyDelayMs ?? 1_200);
+    await this.limiter.acquire(chatId);
+    const sent = await this.retryOn429(() => this.api.sendPoll(chatId, poll.question, poll.options, { is_anonymous: false, allows_multiple_answers: poll.multi }));
+    return { externalId: sent.poll.id };
+  }
+
+  private async send(chatId: string, msg: Outgoing): Promise<Sent> {
+    if (msg.poll) return this.sendPoll(chatId, msg.poll);
     const buttons = (msg.buttons ?? []).filter((b) => isButtonUrl(b.url));
     const asText = (msg.buttons ?? []).filter((b) => !isButtonUrl(b.url));
     if (asText.length && !this.warnedLocalLinks) {
@@ -242,6 +263,7 @@ export class TelegramChannel implements Channel {
         await this.retryOn429(() => this.api.sendMessage(chatId, chunk, { link_preview_options: { is_disabled: true }, ...(markup ? { reply_markup: markup } : {}) }));
       }
     }
+    return {};
   }
 
   private async retryOn429<T>(call: () => Promise<T>): Promise<T> {
@@ -378,7 +400,7 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
   }
 
   /** The pipeline, with failures logged and, when Roomie was clearly being talked to, one friendly line instead. */
-  async function pipeline(msg: IncomingMessage, reply: (out: Outgoing) => Promise<void>) {
+  async function pipeline(msg: IncomingMessage, reply: (out: Outgoing) => Promise<unknown>) {
     let out: Outgoing | null;
     try {
       out = await deps.handleIncoming(msg);
@@ -418,10 +440,11 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
       });
       return channel.sendPrivate(userId, setup ?? { text: startReply(from.first_name, chats.length) });
     }
-    if (chats.length !== 1) return channel.sendPrivate(userId, { text: chats.length ? MANY_GROUPS : NO_GROUP });
+    // In several Groups: the pipeline works out which one this DM is about (ADR 0020), `chatExternalId` is a hint.
+    if (!chats.length) return channel.sendPrivate(userId, { text: NO_GROUP });
     const content = await readContent(me, m, from, userId, chats[0], true);
     if (!content) return;
-    await pipeline({ channel: "telegram", chatExternalId: chats[0], userExternalId: userId, userName: userName(from), ...content, isPrivate: true }, (out) => channel.sendPrivate(userId, out));
+    await pipeline({ channel: "telegram", chatExternalId: chats[0], userExternalId: userId, userName: userName(from), ...content, isPrivate: true }, async (out) => void (await channel.sendPrivate(userId, out)));
   }
 
   bot.use(async (ctx, next) => {
@@ -485,6 +508,14 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
     const me = ctx.me;
     if (m.chat.type === "private") return queue.push(`dm:${from.id}`, () => privateMessage(me, m, from));
     if (m.chat.type === "group" || m.chat.type === "supergroup") queue.push(String(m.chat.id), () => groupMessage(me, m, from));
+  });
+
+  // A vote on one of Roomie's Polls (only non-anonymous polls send these). Telegram doesn't say which Chat: the Poll's
+  // id is enough. Queued per Poll so one person's quick change of mind stays in order.
+  bot.on("poll_answer", (ctx) => {
+    const vote = pollVoteFrom(ctx.pollAnswer);
+    if (!vote || !deps.onPollVote) return;
+    queue.push(`poll:${vote.pollExternalId}`, () => deps.onPollVote!(vote).catch((err) => console.error("[telegram] poll vote failed", err)));
   });
 
   bot.catch((err) => console.error("[telegram] update failed", err.error));

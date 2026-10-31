@@ -376,14 +376,16 @@ describe("private messages", () => {
     assert.equal(h.sent()[0].payload.chat_id, "12");
   });
 
-  test("no Group (or several): asked to use the group chat, nothing reaches the pipeline", async () => {
+  test("no Group: asked to add Roomie first, nothing reaches the pipeline; several: the pipeline picks the Group (ADR 0020)", async () => {
     const none = harness({ deps: { chatsOfUser: async () => [] } });
     await none.feed(message(SAM, { text: "hi" }, PRIVATE));
     assert.match(String(none.sent()[0].payload.text), /Add me to your group chat first/);
+    assert.equal(none.seen.incoming.length, 0);
     const many = harness({ deps: { chatsOfUser: async () => ["-1", "-2"] } });
-    await many.feed(message(SAM, { text: "hi" }, PRIVATE));
-    assert.match(String(many.sent()[0].payload.text), /ask me in the group chat you mean/);
-    assert.equal(none.seen.incoming.length + many.seen.incoming.length, 0);
+    await many.feed(message(SAM, { text: "for Lisbon: what do I owe" }, PRIVATE));
+    assert.equal(many.seen.incoming.length, 1);
+    assert.equal(many.seen.incoming[0].isPrivate, true);
+    assert.equal(many.seen.incoming[0].text, "for Lisbon: what do I owe");
   });
 
   test("/start: one line, no links; a Member hears DMs work now, a stranger how to get going", async () => {

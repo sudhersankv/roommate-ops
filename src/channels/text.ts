@@ -62,10 +62,23 @@ export function helpText(learned?: readonly string[], opts: { dashboard?: string
   return [
     `I'm Roomie 🦖 Say "roomie" or reply to me and I'm in.`,
     learned ? `Tricks I know here: ${joinNames(known.map((m) => m.name)) || "none yet"}.` : `Tricks I can learn: ${joinNames(known.map((m) => m.name))}, more on the way.`,
-    ...known.map((m) => `${m.name}: ${said(m)}`),
+    // Five fixed lines; the Tricks' examples get the rest of the 8.
+    ...known.slice(0, 3).map((m) => `${m.name}: ${said(m)}`),
     dashboard ? `Always: "remind everyone trash goes out Tuesday 8pm". Dashboard: ${dashboard}` : `Always: "remind everyone trash goes out Tuesday 8pm", "send me the dashboard"`,
+    DM_LINE,
     teach,
   ].join("\n");
+}
+
+/** /help's one line about DMs (ADR 0020: lightly advertised). */
+export const DM_LINE = `DM me what you'd rather not ask in the group ("what do I owe?"). In a few of my groups? Start with "for <group name>:".`;
+
+/**
+ * A Poll on a Channel without native polls (dev-chat, a text-only one): the question and numbered options; a bare
+ * number back from a Member is their vote (the pipeline maps it).
+ */
+export function renderPollAsText(poll: { question: string; options: string[]; multi: boolean }): string {
+  return [poll.question, ...poll.options.map((o, i) => `${i + 1}. ${o}`), poll.multi ? "Reply with the numbers (e.g. 1 3)." : "Reply with a number."].join("\n");
 }
 
 /** What goes into the chat when something broke while handling a message addressed to Roomie. Details go to the log. */

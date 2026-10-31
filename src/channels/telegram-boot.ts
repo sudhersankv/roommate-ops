@@ -35,7 +35,7 @@ const clip = (s: string, n = 90) => {
 };
 
 export async function telegramDeps(): Promise<TelegramDeps> {
-  const [{ respondToIncoming, mediaWantedFor }, onboarding, groups, joins, { saveUpload }, voice, kill] = await Promise.all([
+  const [{ respondToIncoming, mediaWantedFor, handlePollVote }, onboarding, groups, joins, { saveUpload }, voice, kill] = await Promise.all([
     import("@/pipeline"),
     import("@/onboarding"),
     import("@/services/groups"),
@@ -95,6 +95,7 @@ export async function telegramDeps(): Promise<TelegramDeps> {
     },
     ...(process.env.OPENROUTER_API_KEY ? { transcribe: voice.transcribe } : {}),
     mediaWanted: mediaWantedFor,
+    onPollVote: handlePollVote,
   };
 }
 
