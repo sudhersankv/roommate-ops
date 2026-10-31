@@ -2,6 +2,7 @@
 export * as groups from "./groups";
 export * as toolkits from "./toolkits";
 export * as members from "./members";
+export * as dock from "./dock";
 export * as claims from "./claims";
 export * as joins from "./joins";
 export * as activity from "./activity";

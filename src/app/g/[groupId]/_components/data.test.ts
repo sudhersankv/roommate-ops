@@ -29,10 +29,10 @@ describe("shellView", () => {
     assert.equal(NAV_TABS, 2);
   });
 
-  test("roommates, at the issue's nav orders: Money and House in the dock; Cart is a learned tile in the drawer", () => {
+  test("roommates, at the issue's nav orders: Money and House in the dock; More has every learned page, Cart too", () => {
     const v = shellView("g1", onFor(PRESETS.roommates), withIssueOrder(MANIFESTS));
     assert.deepEqual(v.nav.map((n) => [n.label, n.href]), [["Money", "/g/g1/money"], ["House", "/g/g1/house"]]);
-    assert.deepEqual(v.drawer.learned.map((n) => n.label), ["Cart"]);
+    assert.deepEqual(v.drawer.learned.map((n) => [n.label, n.href]), [["Money", "/g/g1/money"], ["House", "/g/g1/house"], ["Cart", "/g/g1/cart"]]);
     // Lease Inbox is built (#27) but off by default: a slot to teach, not Soon.
     assert.deepEqual(v.drawer.notYet.map((t) => t.name), ["Lease Inbox"]);
     assert.ok(!v.drawer.soon.some((s) => s.name === "Lease Inbox"));
@@ -46,28 +46,28 @@ describe("shellView", () => {
     () => {
       const v = shellView("g1", onFor(PRESETS.roommates));
       assert.deepEqual(v.nav.map((n) => n.label), ["Money", "House"]);
-      assert.deepEqual(v.drawer.learned.map((n) => n.label), ["Cart"]);
+      assert.deepEqual(v.drawer.learned.map((n) => n.label), ["Money", "House", "Cart"]);
     }
   );
 
-  test("Lease Inbox on, House off: Inbox takes House's slot; Cart stays in the drawer; House is a slot to teach", () => {
+  test("Lease Inbox on, House off: Inbox takes House's slot; Inbox is one tap from More; House is a slot to teach", () => {
     const v = shellView("g1", onFor(["splitting", "groceries", LEASE]), withIssueOrder(MANIFESTS));
     assert.deepEqual(v.nav.map((n) => [n.label, n.href]), [["Money", "/g/g1/money"], ["Inbox", "/g/g1/inbox"]]);
-    assert.deepEqual(v.drawer.learned.map((n) => n.label), ["Cart"]);
+    assert.deepEqual(v.drawer.learned.map((n) => n.label), ["Money", "Inbox", "Cart"]);
     assert.deepEqual(v.drawer.notYet.map((t) => t.name), ["House"]);
     assert.ok(!v.drawer.soon.some((s) => s.name === "Lease Inbox"), "a built Trick isn't Soon");
   });
 
-  test("Lease Inbox and House both on: House (30) keeps its slot, Inbox (35) goes to the drawer before Cart", () => {
+  test("Lease Inbox and House both on: House (30) keeps its dock slot; More lists Money, House, Inbox, Cart by nav order", () => {
     const v = shellView("g1", onFor([...PRESETS.roommates, LEASE]), withIssueOrder(MANIFESTS));
     assert.deepEqual(v.nav.map((n) => n.label), ["Money", "House"]);
-    assert.deepEqual(v.drawer.learned.map((n) => n.label), ["Inbox", "Cart"]);
+    assert.deepEqual(v.drawer.learned.map((n) => [n.label, n.href]), [["Money", "/g/g1/money"], ["House", "/g/g1/house"], ["Inbox", "/g/g1/inbox"], ["Cart", "/g/g1/cart"]]);
   });
 
   test("a trip: Money and Cart in the dock; House is a greyed slot; the house page shows the off state", () => {
     const v = shellView("g1", onFor(PRESETS.trip));
     assert.deepEqual(v.nav.map((n) => n.label), ["Money", "Cart"]);
-    assert.deepEqual(v.drawer.learned, []);
+    assert.deepEqual(v.drawer.learned.map((n) => n.label), ["Money", "Cart"]);
     assert.deepEqual(v.drawer.notYet.map((t) => t.name), ["House", "Lease Inbox"]);
     const house = v.ownedPages.find((p) => p.prefix === "house")!;
     assert.deepEqual(house.owners.map((o) => [o.name, o.enabled]), [["House", false]]);
@@ -80,6 +80,36 @@ describe("shellView", () => {
     assert.deepEqual(v.drawer.learned, []);
     assert.deepEqual(v.drawer.notYet.map((t) => t.name), ["Money", "Groceries", "House", "Lease Inbox"]);
     assert.equal(v.drawer.soon.length, COMING_SOON.length);
+  });
+});
+
+describe("shellView: your dock (#46)", () => {
+  const apt4b = onFor([...PRESETS.roommates, LEASE]);
+  const dockOf = (on: Record<string, boolean>, dock: string[] | null) => shellView("g1", on, withIssueOrder(MANIFESTS), COMING_SOON, dock).nav.map((n) => n.label);
+
+  test("Maya keeps Cart and Inbox in her dock, Inbox on the right; More still has all four pages", () => {
+    const v = shellView("g1", apt4b, withIssueOrder(MANIFESTS), COMING_SOON, ["groceries", LEASE]);
+    assert.deepEqual(v.nav.map((n) => [n.label, n.href]), [["Cart", "/g/g1/cart"], ["Inbox", "/g/g1/inbox"]]);
+    assert.deepEqual(v.drawer.learned.map((n) => n.label), ["Money", "House", "Inbox", "Cart"]);
+  });
+
+  test("no choice yet: the first two by nav order", () => {
+    assert.deepEqual(dockOf(apt4b, null), ["Money", "House"]);
+    assert.deepEqual(dockOf(apt4b, []), ["Money", "House"]);
+  });
+
+  test("Dev had Inbox and Cart; the Group forgets Lease Inbox: Cart stays on the right, Money takes the left", () => {
+    assert.deepEqual(dockOf(onFor(PRESETS.roommates), [LEASE, "groceries"]), ["Money", "Cart"]);
+  });
+
+  test("repeats and ids that aren't learned Tricks with a page are ignored", () => {
+    assert.deepEqual(dockOf(apt4b, ["groceries", "groceries"]), ["Cart", "Money"]);
+    assert.deepEqual(dockOf(apt4b, ["trips", "not-a-trick", "house"]), ["Money", "House"], "only two sides; the third id is never read");
+    assert.deepEqual(dockOf(apt4b, ["core", "house"]), ["Money", "House"], "core has no page of its own");
+  });
+
+  test("a Group with only Money: the dock holds Money whatever was saved", () => {
+    assert.deepEqual(dockOf(onFor(PRESETS.friends), ["groceries", "splitting"]), ["Money"]);
   });
 });
 

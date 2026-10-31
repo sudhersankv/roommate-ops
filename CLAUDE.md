@@ -38,7 +38,8 @@ src/
                         /uploads receipt_url values (hand-written, idempotent); the Lease Inbox's group_inboxes,
                         mail_events, mail_messages, landlord_senders, work_orders, sent_mail (migration 0022) and
                         documents.text (a lease or notice's text, migration 0023); mail_events.processed_at,
-                        mail_messages.reply_to and the purchase_events_once unique index (migration 0024); grocery_usuals (migration 0026)
+                        mail_messages.reply_to and the purchase_events_once unique index (migration 0024); grocery_usuals (migration 0026);
+                        members.dock (the dashboard dock's two Trick ids, null = default; migration 0027)
   db/enums.ts           categories, split methods, recurrences, sources, Group purposes, beta sizes / statuses (no drizzle
                         import: client code uses them)
   db/index.ts           db client
@@ -55,6 +56,9 @@ src/
     members.ts          list (active / active+pending), approve, decline, promote, payment handles, forgetMe, Member
                         facts (rememberAboutMe, knownAbout: your own or an Admin, peopleFacts for the instructions),
                         rekeyChannelUser (WhatsApp LID -> phone JID), fillPlaceholderName
+    dock.ts             setDock (your own dock's two Tricks; only learned Tricks with a page, repeats / unknown dropped,
+                        [] = default); dock-rules.ts = the pure rules (tricksWithPages, cleanDock, pickDock: each side
+                        keeps its choice while learned, an empty side takes the next by nav order)
     claims.ts           Claim links: issueDashboardLink, createClaimToken, consumeClaim, upsertAccount
     joins.ts            Join links (ADR 0014, docs/joining.md): ensureJoinCode / joinLink / joinLine, rotateJoinCode,
                         setJoinPolicy (Admins), rosterSize (chats.participant_count, dev = active Members, refreshed from
@@ -342,10 +346,14 @@ src/
                         nav, overflow and owned pages from the enabled manifests once), Home (doorway + Today = the Bundle
                         on a page: todayView = each enabled Toolkit's bundle() line in post order with its accent dot +
                         your Reminders due today, "Nothing due today." otherwise; RecentDocuments (empty until core's
-                        Documents: recentDocumentsView) + Toolkits' Home sections + Reminders coming up + narration), money
+                        Documents: recentDocumentsView) + Toolkits' Home sections + Reminders coming up + Recent (one card:
+                        recentView = the newest 5 Activity rows, who / what / when, "All activity")), money
                         (+ ?tab=, [expenseId]), cart (+ ?recipe=; Recipes and Pantry in _components/recipes.tsx), house
                         (Chores and Upkeep tabs; /chores redirects there, ?tab=reminders to /reminders), inbox (Lease
-                        Inbox: tabs by class, a thread view, the reply box; screens/inbox.tsx), reminders (core:
+                        Inbox, screens/inbox.tsx: filter chips by class, the thread list (sender, subject, one line, time,
+                        a dot for threads not opened in this browser, localStorage), ?thread=<id> = the open thread with
+                        the reply box under it: full screen with "All mail" on a phone, beside the list on lg, where the
+                        page's `data-wide` root widens the shell's column), reminders (core:
                         Today / Coming up + Add reminder, also a tile in the More drawer), members, settings (core +
                         Toolkits' settings sections; the Tricks list is one link row; NudgesCard in _components/nudges-card.tsx
                         is a null slot until #25), toolkits (the Tricks page: a plain list, Learned / Not yet / Soon (#soon),
@@ -353,11 +361,12 @@ src/
                         actions.ts = every server action; _components/data.ts = services -> screen shapes;
                         _components/sections.tsx = the Toolkits' Home/Settings sections and mood for a request;
                         _components/toolkit-off.tsx = the off state of a page whose Toolkits are all off ("Roomie hasn't learned X
-                        here yet."); _components/dock.tsx = the dock (Home, the first 2 learned Tricks by nav order, Ask
-                        Roomie centred, More: Home · Money · Ask · House · More for roommates; a Trick that's off leaves its
-                        slot to the next by order) and the More drawer (the learned Tricks not in the dock, greyed Teach /
-                        Ask an admin slots, one "What's coming" tile to the Tricks page's Soon list, Reminders, Members,
-                        Settings; aria-current in both); _components/screens/*
+                        here yet."); _components/dock.tsx = the dock (Home, the Member's 2 Tricks from members.dock, else the first 2
+                        learned by nav order, Ask Roomie centred, More: Home · Money · Ask · House · More for roommates; a
+                        Trick that's off leaves its side to the next by order) and the More drawer (a grid of every learned
+                        Trick's page by nav order, greyed Teach / Ask an admin slots, one "What's coming" tile to the Tricks
+                        page's Soon list, Reminders, Members, Settings; aria-current in both; "Change dock" = the editor:
+                        tap to pick two, Swap sides, Save -> saveDock -> dock.setDock); _components/screens/*
                         settings/splitwise/callback = Composio's return URL (route handler)
     design/             the design-system page (dev only unless SHOW_DESIGN_PAGE=1)
     api/auth/[...path]  Neon Auth proxy; api/chat = Ask Roomie (session Member, 401/403); api/receipts = Scan receipt;

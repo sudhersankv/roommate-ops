@@ -8,10 +8,11 @@ import { localDay } from "@/lib/dates"
 import { formatInZone } from "@/lib/time"
 import type { GroupSession } from "@/lib/session"
 import { instacartAvailability } from "@/integrations/instacart"
-import { activity, cart, chatlog, chores, groups, joins, members, money, pantry, recipes, reminders, schedule, splitwise, toolkits, upkeep } from "@/services"
+import { activity, cart, chores, groups, joins, members, money, pantry, recipes, reminders, schedule, splitwise, toolkits, upkeep } from "@/services"
 import { canChangeExpense } from "@/services/authz"
 import { guessCategory } from "@/services/categories"
 import { docPath, receiptHref } from "@/services/documents"
+import { DOCK_SLOTS, pickDock, tricksWithPages } from "@/services/dock-rules"
 import { inboxData, type InboxData } from "@/services/lease-inbox-toolkit"
 import type { Expense } from "@/services/money"
 import { haveNeed } from "@/services/recipe-math"
@@ -35,7 +36,6 @@ import type {
   InboxTab,
   InboxThreadView,
   InboxView,
-  NarrationView,
   NudgeSettingsView,
   ProbablyLowView,
   RecentDocumentView,
@@ -55,43 +55,39 @@ import type {
  * Trick tabs in the dock between Home and More: Home · 2 · Ask Roomie · 2 · More, so Ask stays centred with two a
  * side (Home · Money · Ask · House · More for roommates).
  */
-export const NAV_TABS = 2
+export const NAV_TABS = DOCK_SLOTS
 
 /**
- * The shell from the manifests. The dock: the learned Tricks' nav entries sorted by `order` (one per page, the
- * first owner wins), the first NAV_TABS of them; a Trick that's off simply leaves its slot to the next one by order
- * (Inbox at 35 takes House's 30 when House is off). The More drawer: the learned Tricks the dock had no room for,
- * then the ones not learned yet as greyed slots, and the coming-soon ones (shown as one "What's coming" tile). And
- * every owned page with its owners' on/off state. The Group's own pages (Reminders, Members, Settings) are the
- * drawer's, not a manifest's. `manifests` / `comingSoon` are for tests with stub Tricks.
+ * The shell from the manifests. The More drawer's blocks: every learned Trick with a page, by nav `order` (one per
+ * page, the first owner wins), then the ones not learned yet as greyed slots and the coming-soon ones (one "What's
+ * coming" tile); the Group's own pages (Reminders, Members, Settings) follow in the drawer, not from a manifest. The
+ * dock: the Member's two chosen Tricks (`dock`, left then right) where they're still learned, filled from nav order,
+ * so with no choice it's the first two and a forgotten Trick leaves its slot to the next one (Inbox at 35 takes
+ * House's 30 when House is off). And every owned page with its owners' on/off state. `manifests` / `comingSoon` are
+ * for tests with stub Tricks.
  */
 export function shellView(
   groupId: string,
   on: Record<string, boolean>,
   manifests: readonly ToolkitManifest[] = MANIFESTS,
-  comingSoon: readonly ToolkitManifest[] = COMING_SOON
+  comingSoon: readonly ToolkitManifest[] = COMING_SOON,
+  dock: readonly string[] | null = null
 ): Pick<GroupView, "nav" | "drawer" | "ownedPages"> {
   const icon = (name: IconName) => createElement(ToolkitIcon, { name })
-  const entries = manifests
-    .filter((m) => on[m.id] && m.dashboard?.nav)
-    .map((m) => ({ m, nav: m.dashboard!.nav! }))
-    .sort((a, b) => a.nav.order - b.nav.order)
-  const all = entries.map(({ m, nav }) => ({ toolkit: m.id, label: nav.label, href: nav.href(groupId), icon: icon(nav.icon) }))
-  const seen = new Set<string>()
-  const tabs = all.filter((item) => {
-    const path = item.href.split("?")[0]
-    if (seen.has(path)) return false
-    seen.add(path)
-    return true
+  const tabs = tricksWithPages(manifests, on).map((m) => {
+    const nav = m.dashboard!.nav!
+    return { toolkit: m.id, label: nav.label, href: nav.href(groupId), icon: icon(nav.icon) }
   })
-  const nav = tabs.slice(0, NAV_TABS)
-  const inDock = new Set(nav.map((n) => n.href.split("?")[0]))
+  const nav = pickDock(
+    tabs.map((t) => t.toolkit),
+    dock
+  ).map((id) => tabs.find((t) => t.toolkit === id)!)
   const slot = (m: ToolkitManifest) => ({ id: m.id, name: m.name, icon: icon(m.icon) })
   const prefixes = [...new Set(manifests.flatMap((m) => m.dashboard?.pages ?? []))]
   return {
     nav,
     drawer: {
-      learned: tabs.filter((n) => !inDock.has(n.href.split("?")[0])),
+      learned: tabs,
       notYet: manifests.filter((m) => !on[m.id] && m.status !== "coming-soon").map(slot),
       soon: comingSoon.map(slot),
     },
@@ -171,7 +167,7 @@ export async function groupView(s: GroupSession): Promise<GroupView> {
           .map((m) => (m.id === s.member.id ? view(m) : { ...view(m), handles: {}, hasAccount: false, seat: { state: "open" as const, accountName: null, accountImage: null, accountEmail: null, wantsSeat: null } })),
     toolkits: on,
     toolkitNames: MANIFESTS.filter((m) => on[m.id]).map((m) => m.name),
-    ...shellView(s.group.id, on),
+    ...shellView(s.group.id, on, MANIFESTS, COMING_SOON, s.member.dock),
     today: localDay(new Date(), tz),
     dev: process.env.NODE_ENV !== "production",
   }
@@ -328,9 +324,19 @@ export async function activityView(s: GroupSession): Promise<ActivityView[]> {
   }))
 }
 
-/** What Roomie said in the Chat lately, for Home. */
-export async function narrationView(s: GroupSession): Promise<NarrationView[]> {
-  return (await chatlog.roomieLines(s.group.id, 6)).map((l) => ({ id: l.id, date: localDay(l.createdAt, s.group.timezone), text: l.text }))
+/** Home's Recent card: the newest few Activity rows (what, who, and the local day and time). */
+export async function recentView(s: GroupSession, limit = 5): Promise<ActivityView[]> {
+  const base = `/g/${s.group.id}`
+  const tz = s.group.timezone
+  return (await activity.listActivity(s.ctx, limit)).map((a) => ({
+    id: a.id,
+    date: localDay(a.createdAt, tz),
+    time: formatInZone(a.createdAt, tz, { hour: "numeric", minute: "2-digit" }),
+    actor: a.actorMemberId ?? "roomie",
+    actorName: a.actorName,
+    text: a.summary,
+    href: refHref(base, a.refTable, a.refId),
+  }))
 }
 
 export async function cartView(s: GroupSession): Promise<CartItemView[]> {

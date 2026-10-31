@@ -80,9 +80,7 @@ export type ReceiptDraft = {
   tipCents: number
 }
 
-export type ActivityView = { id: string; date: string; actor: string | "roomie"; actorName: string; text: string; href?: string }
-
-export type NarrationView = { id: string; date: string; text: string; href?: string }
+export type ActivityView = { id: string; date: string; /** Local clock time ("4:10 PM"), where a row shows it (Home's Recent). */ time?: string; actor: string | "roomie"; actorName: string; text: string; href?: string }
 
 export type CartItemView = {
   id: string
