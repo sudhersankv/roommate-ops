@@ -1,7 +1,7 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { EXPENSE_CATEGORIES } from "@/db/enums";
-import { members, money, receipts } from "@/services";
+import { groups, members, money, receipts } from "@/services";
 import { expenseSummary } from "@/services/money";
 import { recordReceiptItems } from "@/services/restock";
 import { dollars } from "@/services/types";
@@ -28,7 +28,8 @@ export const receiptTools = {
     execute: async (input, context) => {
       const ctx = ctxOf(context);
       await receipts.requireGroupUpload(input.receipt_url, ctx.groupId);
-      const parsed = await receipts.parseReceipt({ url: input.receipt_url });
+      const group = await groups.getGroup(ctx.groupId);
+      const parsed = await receipts.parseReceipt({ url: input.receipt_url }, group?.currency);
       const everyone = (await members.listMembers(ctx)).map((m) => m.id);
       const payerId = input.payer ? await memberIdByName(ctx, input.payer) : ctx.memberId;
       const assignments = await Promise.all(
