@@ -357,8 +357,8 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
     }) ?? Promise.resolve(false);
 
   /** Photos and voice notes are only fetched when Roomie is being talked to (policy.ts mediaWanted). */
-  async function wanted(kind: "photo" | "voice", addressed: ReturnType<typeof readAddress>, from: User, chatId: string, isPrivate: boolean) {
-    const flags = { kind, isPrivate, mentionsRoomie: addressed.mentionsRoomie, isReplyToRoomie: addressed.isReplyToRoomie, caption: addressed.text };
+  async function wanted(kind: "photo" | "voice", addressed: ReturnType<typeof readAddress>, from: User, chatId: string, isPrivate: boolean, gateActed?: boolean) {
+    const flags = { kind, isPrivate, mentionsRoomie: addressed.mentionsRoomie, isReplyToRoomie: addressed.isReplyToRoomie, caption: addressed.text, ...(gateActed ? { gateActed } : {}) };
     // The pipeline's answer wins when it's wired in: it also knows about paused Groups.
     if (!deps.mediaWanted) return mediaWanted(flags);
     return deps.mediaWanted({ channel: "telegram", chatExternalId: chatId, userExternalId: String(from.id), ...flags }).catch((err) => {
@@ -392,11 +392,20 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
       }
     }
     if (m.photo?.length) {
-      // Not for Roomie: the caption goes on as text, the photo itself is never fetched or stored.
-      if (!(await wanted("photo", addressed, from, folderChat, isPrivate))) return { ...addressed, skippedMedia: "photo" as const };
       const largest = m.photo[m.photo.length - 1];
-      const file = await fetchFile(largest.file_id);
-      return { ...addressed, imageUrl: await deps.saveImage(folderChat, largest.file_unique_id, Buffer.from(file.bytes)) };
+      const save = async () => deps.saveImage(folderChat, largest.file_unique_id, Buffer.from((await fetchFile(largest.file_id)).bytes));
+      // Not for Roomie: the caption goes on as text, and the photo is fetched only if the Gate answers that caption.
+      if (!(await wanted("photo", addressed, from, folderChat, isPrivate))) {
+        const fetchSkippedPhoto = async () =>
+          (await wanted("photo", addressed, from, folderChat, isPrivate, true))
+            ? save().catch((err) => {
+                console.error("[telegram] photo", err);
+                return null;
+              })
+            : null;
+        return { ...addressed, skippedMedia: "photo" as const, fetchSkippedPhoto };
+      }
+      return { ...addressed, imageUrl: await save() };
     }
     if (m.text === undefined && m.caption === undefined) return null;
     if (/^\/\w+(@\w+)?/.test(m.text ?? "")) return null; // other commands (the "add to group" deep link posts /start)

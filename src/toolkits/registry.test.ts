@@ -3,7 +3,7 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { roomieInstructions } from "@/mastra/agents/instructions";
-import { allTools, core, skillsById, toolsFor, TOOLKITS } from "./registry";
+import { adminOnlyTools, allTools, core, groupDecisionRefusal, skillsById, toolsFor, TOOLKITS } from "./registry";
 import { CATALOG, COMING_SOON, findManifest, MANIFESTS, TOOLKIT_IDS } from "./manifests";
 import { PRESETS, presetFor } from "./presets";
 import { TOOLKIT_CATEGORIES } from "./types";
@@ -86,6 +86,23 @@ describe("the manifest contract", () => {
 
   test("abilities only name the Toolkit's own tools", () => {
     for (const t of TOOLKITS) for (const id of Object.keys(t.abilities ?? {})) assert.ok(id in t.tools, `${t.id}.abilities.${id} isn't one of its tools`);
+  });
+
+  test("group decisions (#42): only a Toolkit's own non-admin tools; admin changes, reads and unknown tools are refused", () => {
+    const admin = new Set(adminOnlyTools());
+    for (const t of [core, ...TOOLKITS])
+      for (const id of t.groupDecisions ?? []) {
+        assert.ok(id in t.tools, `${t.id}.groupDecisions.${id} isn't one of its tools`);
+        assert.ok(!admin.has(id), `${id} is admin-only`);
+      }
+    assert.equal(groupDecisionRefusal("chore_add", { name: "Trash run", everyDays: 3, rotation: ["Sreyas", "Maya", "Dev"] }), null);
+    assert.equal(groupDecisionRefusal("log_expense", { amount: 60, description: "internet", category: "utilities" }), null);
+    assert.match(groupDecisionRefusal("chore_remove", { chore: "Trash run" }) ?? "", /admin/, "an admin tool can't be pinned");
+    assert.match(groupDecisionRefusal("set_rent", { amount: 2400 }) ?? "", /admin/);
+    assert.ok(groupDecisionRefusal("get_balances", {}), "a read isn't a decision");
+    assert.ok(groupDecisionRefusal("cart_add", { items: ["eggs"] }), "routine adds aren't polled");
+    assert.ok(groupDecisionRefusal("no_such_tool", {}));
+    assert.match(groupDecisionRefusal("chore_add", { everyDays: 3 }) ?? "", /isn't complete/, "an input the tool would reject");
   });
 
   test("House is one Trick: both halves' tools, one nav tab, one page", () => {

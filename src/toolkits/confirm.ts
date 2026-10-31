@@ -1,10 +1,11 @@
 // A ✅ on Roomie's confirm poll (services/polls.ts, live test #10) runs the one action it pinned: the same tool with
 // the same input, as the Member who was asked, with "confirmedCall" in the RequestContext so the admin-ask gate lets
 // exactly that call through. The services still check who acts (requireAdmin), from the Member as stored now.
+// A group decision (#42) runs as whoever tapped ✅ first; only the tools the registry allows can be pinned.
 import { RequestContext } from "@mastra/core/request-context";
 import { members } from "@/services";
 import { registerConfirmRunner, type ConfirmAbout } from "@/services/polls";
-import { allTools, callKey } from "./registry";
+import { allTools, callKey, groupDecisionRefusal, toolOwner } from "./registry";
 
 /** What to say once a confirmed action ran: the tool's own ready-to-post line when it has one. */
 export function confirmedLine(result: unknown): string {
@@ -14,9 +15,9 @@ export function confirmedLine(result: unknown): string {
   return "Done ✅";
 }
 
-export async function runConfirmed(groupId: string, about: ConfirmAbout): Promise<string | null> {
+export async function runConfirmed(groupId: string, about: ConfirmAbout, voterId = about.memberId): Promise<string | null> {
   const tool = (allTools() as Record<string, { execute?: (input: unknown, context: unknown) => Promise<unknown> }>)[about.toolId];
-  const member = await members.getMember({ groupId }, about.memberId);
+  const member = await members.getMember({ groupId }, voterId);
   if (!tool?.execute || !member) return null;
   const requestContext = new RequestContext<unknown>([
     ["groupId", groupId],
@@ -27,7 +28,11 @@ export async function runConfirmed(groupId: string, about: ConfirmAbout): Promis
     ["source", "chat"],
     ["confirmedCall", `${about.toolId}:${callKey(about.input)}`],
   ]);
-  return confirmedLine(await tool.execute(about.input, { requestContext }));
+  const result = await tool.execute(about.input, { requestContext });
+  const line = confirmedLine(result);
+  const r = (result ?? {}) as Record<string, unknown>;
+  // The whole chat voted: say who decided it, unless it didn't go through.
+  return about.who === "any-member" && !r.notAllowed && !r.refused ? `${member.displayName} said yes. ${line}` : line;
 }
 
-registerConfirmRunner(runConfirmed);
+registerConfirmRunner({ run: runConfirmed, groupDecisionRefusal, toolOwner });

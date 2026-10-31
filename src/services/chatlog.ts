@@ -6,8 +6,14 @@ const { chatMessages, members } = schema;
 
 export const RETENTION_DAYS = 30;
 
-export async function logMessage(groupId: string, memberId: string | null, text: string) {
-  await db.insert(chatMessages).values({ groupId, memberId, text });
+export async function logMessage(groupId: string, memberId: string | null, text: string): Promise<string | undefined> {
+  const [row] = await db.insert(chatMessages).values({ groupId, memberId, text }).returning({ id: chatMessages.id });
+  return row?.id;
+}
+
+/** A logged line's text, corrected (a skipped photo fetched after all gets its "[photo: <url>]" link). */
+export async function relogMessage(id: string, text: string) {
+  await db.update(chatMessages).set({ text }).where(eq(chatMessages.id, id));
 }
 
 /** Recent Chat as "[Name] text" lines, oldest first. */
