@@ -817,7 +817,7 @@ export const SCENARIOS: Scenario[] = [
     id: "what-can-you-do",
     area: "core",
     turn: { text: "roomie what can you do?", from: "Sam" },
-    expect: { tools: ["list_toolkits"], noTools: "actions", replyIncludes: [/split|expense|cost/i], excludes: TOOLKIT_WORDS },
+    expect: { tools: ["list_toolkits"], noTools: "actions", replyIncludes: [/money|split|expense|cost|paid/i], excludes: TOOLKIT_WORDS },
   },
   {
     id: "what-tricks-brief",
@@ -896,35 +896,36 @@ export const SCENARIOS: Scenario[] = [
     alt: { speaks: false },
   },
 
-  /* ---------- personality (ADR 0012) ---------- */
-  // The same message under three archetypes: brevity and the emoji policy follow the vibe.
+  /* ---------- personality (ADR 0012, one voice since ADR 0020) ---------- */
+  // The same message in the one voice: brief, at most one emoji, whatever a Group stored before.
   {
-    id: "vibe-chill",
+    id: "one-voice-chill",
     area: "personality",
     turn: { text: "roomie I paid $60 for internet" },
     expect: { tools: ["log_expense"], replyIncludes: ["60"], maxLines: 2, emoji: { max: 1 } },
   },
   {
-    id: "vibe-hype",
+    id: "one-voice-ignores-stored-hype",
     area: "personality",
-    seed: async (e) => void (await personality.updatePersonality(e.ctx, { base: "hype" })),
+    seed: async (e) => void (await personality.updatePersonality(e.ctx, { base: "hype", name: "Dino", quirks: ["loves confetti"] })),
     turn: { text: "roomie I paid $60 for internet" },
-    expect: { tools: ["log_expense"], replyIncludes: ["60"], emoji: { min: 1 } },
+    expect: { tools: ["log_expense"], replyIncludes: ["60"], maxLines: 2, emoji: { max: 1 }, excludes: [/!!|🎉|🥳|let'?s go/i] },
   },
   {
-    id: "vibe-deadpan",
+    id: "one-voice-ignores-stored-deadpan",
     area: "personality",
     seed: async (e) => void (await personality.updatePersonality(e.ctx, { base: "deadpan" })),
     turn: { text: "roomie I paid $60 for internet" },
-    expect: { tools: ["log_expense"], replyIncludes: ["60"], maxLines: 1, emoji: { max: 0 } },
+    expect: { tools: ["log_expense"], replyIncludes: ["60"], maxLines: 2, emoji: { max: 1 } },
   },
+  // A stored pet name is no longer a trigger word (ADR 0020): "dino ..." is an ordinary line for the Gate.
   {
-    id: "name-dino-triggers",
+    id: "name-dino-is-not-a-trigger",
     area: "personality",
     seed: async (e) => void (await personality.updatePersonality(e.ctx, { name: "Dino" })),
     turn: { text: "dino add oat milk for me", from: "Dev" },
-    expect: { gateReason: "hard-trigger", tools: ["cart_add"], check: async (e) => fail((await cart.listOpenItems(e.ctx)).some((i) => /oat milk/i.test(i.name)), "oat milk in the cart") },
-    alt: { gateReason: "hard-trigger", asks: true, noTools: "actions" },
+    expect: { gateReason: "jev-act", tools: ["cart_add"] },
+    alt: { speaks: false },
   },
   {
     id: "nickname-not-before-3",
