@@ -11,6 +11,7 @@ import { InstacartUnavailableError, instacartClient } from "@/integrations/insta
 import { record, sourceOf } from "./activity";
 import { NotAllowedError, requireActive } from "./authz";
 import { canRemoveItem, computeCartSplits } from "./cart-split";
+import { usualFor, type PastAdd, type UsualScope } from "./cart-usuals";
 import { listMembers } from "./members";
 import { logExpense, type Expense } from "./money";
 import { insertPurchases, localDay } from "./restock";
@@ -131,14 +132,42 @@ export async function addItems(ctx: Ctx, input: { items: { name: string; qty?: s
   return rows.map((r) => toItem(r, names, new Map()));
 }
 
+/** The Group's Cart history (open and purchased), newest first, for the Usuals. */
+async function pastAdds(groupId: string): Promise<PastAdd[]> {
+  return db
+    .select({ name: cartItems.name, qty: cartItems.qty, addedBy: cartItems.addedBy, shared: cartItems.shared, createdAt: cartItems.createdAt })
+    .from(cartItems)
+    .where(eq(cartItems.groupId, groupId))
+    .orderBy(desc(cartItems.createdAt))
+    .limit(1000);
+}
+
 /**
- * What people say, added as said: items whose quantity can't be read one way ("eggs, 12, 18") are held back with one
- * short question each (lib/units clarifyQuantities); the rest go in.
+ * What people say, added as said. A said quantity always wins; an item with none takes its Usual (cart-usuals.ts: the
+ * same thing, for the same person or the house) and comes back in `usedUsual` so Roomie can say "like usual". Then
+ * items whose quantity can't be read one way ("eggs, 12, 18", or eggs with no count and no usual) are held back with
+ * one short question each (lib/units clarifyQuantities); the rest go in.
  */
-export async function addAsSaid(ctx: Ctx, input: { items: { name: string; qty?: string }[]; shared?: boolean; forMemberId?: string }): Promise<{ added: CartItem[]; needsClarification: string[] }> {
-  const { ok, questions } = clarifyQuantities(input.items);
+export async function addAsSaid(
+  ctx: Ctx,
+  input: { items: { name: string; qty?: string }[]; shared?: boolean; forMemberId?: string },
+): Promise<{ added: CartItem[]; needsClarification: string[]; usedUsual: { name: string; qty: string }[] }> {
+  const usedUsual: { name: string; qty: string }[] = [];
+  let items = input.items;
+  if (items.some((i) => !(i.qty ?? "").trim())) {
+    const history = await pastAdds(ctx.groupId);
+    const scope: UsualScope = input.shared ? { shared: true } : { memberId: input.forMemberId ?? ctx.memberId };
+    items = items.map((i) => {
+      if ((i.qty ?? "").trim()) return i;
+      const usual = usualFor(i.name, scope, history);
+      if (!usual) return i;
+      usedUsual.push({ name: i.name.trim(), qty: usual });
+      return { ...i, qty: usual };
+    });
+  }
+  const { ok, questions } = clarifyQuantities(items);
   const added = ok.length ? await addItems(ctx, { ...input, items: ok }) : [];
-  return { added, needsClarification: questions };
+  return { added, needsClarification: questions, usedUsual: usedUsual.filter((u) => ok.some((i) => i.name.trim() === u.name)) };
 }
 
 async function recordRemoved(ctx: Ctx, item: { id: string; name: string; addedBy: string }) {
