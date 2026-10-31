@@ -20,7 +20,7 @@ export type MailMessage = {
   labels: string[];
 };
 
-export type OutgoingMail = { to: string; subject: string; text: string; headers?: Record<string, string> };
+export type OutgoingMail = { to: string; cc?: string[]; subject: string; text: string; headers?: Record<string, string> };
 export type ReplyMail = { text: string; to?: string; headers?: Record<string, string> };
 export type SentRef = { messageId: string; threadId: string };
 export type AttachmentLink = { downloadUrl: string; textUrl: string | null; expiresAt: Date };
@@ -86,7 +86,7 @@ export class AgentMailClient implements MailClient {
 
   async send(inboxId: string, mail: OutgoingMail) {
     const r = await this.call("send", () =>
-      this.sdk.inboxes.messages.send(inboxId, { to: mail.to, subject: mail.subject, text: mail.text, headers: mail.headers }, { idempotencyKey: idem(mail.headers) }),
+      this.sdk.inboxes.messages.send(inboxId, { to: mail.to, ...(mail.cc?.length ? { cc: mail.cc } : {}), subject: mail.subject, text: mail.text, headers: mail.headers }, { idempotencyKey: idem(mail.headers) }),
     );
     return { messageId: r.messageId, threadId: r.threadId };
   }

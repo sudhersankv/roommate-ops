@@ -145,7 +145,7 @@ src/
                         (Admin), groupMood (worried / sleepy / happy / calm), allSquare
     pet.ts              say-once pet moments on pet_moments (MomentStore): dayGreeting, claimWins
     beta.ts             Beta requests (docs/landing.md): submitBetaRequest (honeypot, zod, 3 per IP-hash per hour, store,
-                        then notifyOperator: Telegram DM to the first ROOMIE_OPERATOR_EMAILS Account's Telegram Member, else
+                        then notifyOperator: an email from notify@ to OPERATOR_EMAIL (operator-mail.ts), else a Telegram DM to the first ROOMIE_OPERATOR_EMAILS Account's Telegram Member, else
                         a "[beta]" log line); list / setBetaStatus / delete take the operator (NotAllowedError otherwise)
     trick-votes.ts      voteForTrick (coming-soon ids only, 1 per Trick per IP-hash a day, 12 an hour) + trickVoteCounts
     operator-groups.ts  /admin/groups (operators only): listGroupsForOperator (members, last message, runs today),
