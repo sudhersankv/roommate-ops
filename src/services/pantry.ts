@@ -41,7 +41,23 @@ export async function seedPantry(ctx: GroupCtx, items: string[] = STARTER_PANTRY
     });
 }
 
-/** Add and/or remove Pantry items (names are normalized; duplicates ignored). Returns the new Pantry, A to Z. */
+/**
+ * What the Group took out of its Pantry and hasn't put back: the Pantry saying "we don't keep cumin", so a Recipe
+ * doesn't assume it's in the house (recipe-math assumedInHouse).
+ */
+export async function getNotKept(ctx: GroupCtx): Promise<string[]> {
+  const [row] = await db
+    .select({ settings: groupToolkits.settings })
+    .from(groupToolkits)
+    .where(and(eq(groupToolkits.groupId, ctx.groupId), eq(groupToolkits.toolkit, "groceries")));
+  const list = (row?.settings as { pantryNotKept?: unknown } | undefined)?.pantryNotKept;
+  return Array.isArray(list) ? list.filter((x): x is string => typeof x === "string") : [];
+}
+
+/**
+ * Add and/or remove Pantry items (names are normalized; duplicates ignored). A removal is remembered as not kept (an
+ * add takes it back). Returns the new Pantry, A to Z.
+ */
 export async function updatePantry(ctx: Ctx, input: { add?: string[]; remove?: string[] }): Promise<string[]> {
   await requireActive(ctx);
   const add = (input.add ?? []).map(pantryName).filter(Boolean);
@@ -56,7 +72,10 @@ export async function updatePantry(ctx: Ctx, input: { add?: string[]; remove?: s
       .for("update");
     const before = Array.isArray((row?.settings as { pantry?: unknown })?.pantry) ? ((row!.settings as { pantry: string[] }).pantry) : [];
     const list = [...new Set([...before.map(pantryName), ...add])].filter((x) => !remove.has(x)).sort().slice(0, MAX_ITEMS);
-    const value = { pantry: list };
+    const rawOut = (row?.settings as { pantryNotKept?: unknown } | undefined)?.pantryNotKept;
+    const out = Array.isArray(rawOut) ? rawOut.filter((x): x is string => typeof x === "string") : [];
+    const notKept = [...new Set([...out, ...remove])].filter((x) => !add.includes(x)).sort().slice(0, MAX_ITEMS);
+    const value = { pantry: list, pantryNotKept: notKept };
     await tx
       .insert(groupToolkits)
       .values({ groupId: ctx.groupId, toolkit: "groceries", enabled: true, settings: value })

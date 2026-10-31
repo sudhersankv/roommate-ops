@@ -133,10 +133,25 @@ export type ProbablyLowView = {
   scope: "shared" | "mine"
 }
 
+/** One grocery usual on the Cart page (services/cart.ts pageUsuals): the viewer's own, or the house's. */
+export type UsualView = {
+  /** The row someone said; null for one derived from Cart history ("From what you bought"). */
+  id: string | null
+  name: string
+  qty: string
+  /** Said to Roomie (edit, remove) vs derived from history (edit pins it, no remove). */
+  pinned: boolean
+  scope: "mine" | "shared"
+}
+
 export type CartPageView = {
   items: CartItemView[]
+  /** The Share list button's text, the same the chat gets (data.ts cartShareText). */
+  shareText: string
   /** Empty: the section is hidden. */
   probablyLow: ProbablyLowView[]
+  /** Yours first, then the house's. Empty: the section is hidden. */
+  usuals: UsualView[]
   recipes: RecipeView[]
   pantry: string[]
   /** Active Members in the order services/cart.ts splits with, so the "I paid" preview matches to the cent. */

@@ -129,6 +129,7 @@ describe("Roomie tools against the dev DB", () => {
         ["maintenance", schema.maintenance],
         ["cart_items", schema.cartItems],
         ["cart_checkouts", schema.cartCheckouts],
+        ["grocery_usuals", schema.groceryUsuals],
         ["recipes", schema.recipes],
         ["chat_messages", schema.chatMessages],
         ["activity", schema.activity],
@@ -751,12 +752,28 @@ describe("Roomie tools against the dev DB", () => {
   });
 
   test("cart_add: an ambiguous quantity is held back with one question; 'for Ryan' attributes to Ryan", async () => {
-    const r: CartAdd = await run("cart_add", { items: [{ name: "bread" }, { name: "eggs", qty: "12, 18" }], for: "Ryan" });
-    assert.deepEqual(r.added, [{ name: "bread", qty: "1", for: "Ryan" }]);
+    const r: CartAdd = await run("cart_add", { items: [{ name: "bagels" }, { name: "eggs", qty: "12, 18" }], for: "Ryan" });
+    assert.deepEqual(r.added, [{ name: "bagels", qty: "1", for: "Ryan" }]);
     assert.deepEqual(r.needsClarification, ["eggs: 12 and 18 what? cartons or eggs?"]);
-    assert.equal((await lastActivity()).summary, "put bread on the Cart for Ryan");
-    assert.equal(await run("cart_remove", { name: "bread" }).then((x) => x.removed), true);
-    assert.equal((await lastActivity()).summary, "took bread (Ryan's) off the Cart");
+    assert.equal((await lastActivity()).summary, "put bagels on the Cart for Ryan");
+    assert.equal(await run("cart_remove", { name: "bagels" }).then((x) => x.removed), true);
+    assert.equal((await lastActivity()).summary, "took bagels (Ryan's) off the Cart");
+  });
+
+  test("cart_add with usuals: a bare 'Pepsi' asks once; the answer (remember) is his usual; next time usedUsual, no question; Ryan's is his own", async () => {
+    type Add = CartAdd & { usedUsual?: { name: string; qty: string }[] };
+    const ask: Add = await run("cart_add", { items: [{ name: "Pepsi" }] });
+    assert.deepEqual([ask.added, ask.needsClarification], [[], ["Pepsi: 12-pack of cans or a 2-liter?"]]);
+    const answer: Add = await run("cart_add", { items: [{ name: "Pepsi", qty: "12 × 12 oz cans", remember: true }] });
+    assert.deepEqual([answer.added, answer.usedUsual], [[{ name: "Pepsi", qty: "12 × 12 oz cans", for: "Sudhersan" }], undefined]);
+    const usual: Add = await run("cart_add", { items: [{ name: "pepsi" }] });
+    assert.deepEqual([usual.added, usual.usedUsual, usual.needsClarification], [[{ name: "Pepsi", qty: "12 × 12 oz cans", for: "Sudhersan" }], [{ name: "Pepsi", qty: "12 × 12 oz cans" }], undefined]);
+    const once: CartAdd = await run("cart_add", { items: [{ name: "Pepsi", qty: "1 × 2-liter bottle", remember: false }] });
+    assert.equal(once.added[0].qty, "1 × 2-liter bottle");
+    const ryans: CartAdd = await run("cart_add", { items: [{ name: "Pepsi" }] }, contextFor(member.Ryan, "Ryan", "member", "active"));
+    assert.deepEqual(ryans.needsClarification, ["Pepsi: 12-pack of cans or a 2-liter?"], "Sudhersan's usual isn't Ryan's");
+    for (let k = 0; k < 3; k++) await run("cart_remove", { name: "Pepsi" });
+    noPrice(usual);
   });
 
   test("cart_view groups open items by who added them; no prices; the Cart page only when asked", async () => {
@@ -770,6 +787,17 @@ describe("Roomie tools against the dev DB", () => {
     noPrice(view);
     const asked: CartView = await run("cart_view", { link: true });
     if (/^https?:\/\//i.test(appUrl)) assert.deepEqual(asked.links?.map((b) => b.url), [`${appUrl}/g/${groupId}/cart`]);
+  });
+
+  test("cart_view list: the whole list ready to post, the same text the Cart page's Share button gets", async () => {
+    const { cartShareText } = await import("@/app/g/[groupId]/_components/data");
+    const group = await groups.getGroup(groupId);
+    const r = await run("cart_view", { list: true });
+    assert.equal(r.text, `${group!.name} shopping list\n☐ dish soap\n☐ chips, 3 bags (Sudhersan)`);
+    assert.equal(r.itemCount, 2);
+    assert.equal(r.links, undefined);
+    assert.equal(r.text, await cartShareText({ ctx }), "one truth for the chat and the dashboard");
+    noPrice(r);
   });
 
   test("cart_remove by name; the dashboard's remove is recorded as the dashboard", async () => {
@@ -860,21 +888,21 @@ describe("Roomie tools against the dev DB", () => {
   });
 
   test("cart_purchased: payer by name; people with nothing in the cart are left out of the split; empty cart throws", async () => {
-    await run("cart_add", { items: [{ name: "milk" }] });
+    await run("cart_add", { items: [{ name: "bananas" }] });
     const e: Expense = await run("cart_purchased", { total: 5, payer: "Ryan" });
     assert.equal(e.payerName, "Ryan");
     assert.equal(e.cents, 500);
     assert.deepEqual(
       (e.splits ?? []).map((s) => [s.name, s.cents]),
       [["Sudhersan", 500]],
-      "Sudhersan's milk, paid by Ryan: only Sudhersan owes",
+      "Sudhersan's bananas, paid by Ryan: only Sudhersan owes",
     );
     await assert.rejects(run("cart_purchased", { total: 5 }), /cart is empty/i);
     await assert.rejects(run("cart_purchased", { total: 5, payer: "Dev" }), /No member named "Dev"/);
   });
 
   test("cart_purchased: a double-click charges once; a failed purchase leaves the items open", async () => {
-    await run("cart_add", { items: [{ name: "bread" }] });
+    await run("cart_add", { items: [{ name: "tortillas" }] });
     const before = await count(schema.expenses);
     const [first, second] = await Promise.allSettled([run("cart_purchased", { total: 4 }), run("cart_purchased", { total: 4 })]);
     const ok = [first, second].filter((r) => r.status === "fulfilled");
@@ -1049,6 +1077,48 @@ describe("Roomie tools against the dev DB", () => {
     } finally {
       photos.setPhotoReader(null);
       photos.clearPhotoCache();
+    }
+  });
+
+  test("recipe_add_to_cart: buyable amounts, the spices assumed and named once, a usual wins; the recipe keeps cooking amounts; the Pantry's 'not kept' isn't assumed", async () => {
+    const beefTacos = JSON.stringify({
+      title: "Beef tacos for 4",
+      servings: 4,
+      cooking_time: 25,
+      ingredients: [
+        { name: "ground beef", quantity: 1, unit: "lb", display_text: "1 lb ground beef" },
+        { name: "garlic", quantity: 2, unit: "clove", display_text: "2 cloves garlic, minced" },
+        { name: "chili powder", quantity: 1, unit: "tbsp", display_text: "1 tbsp chili powder" },
+        { name: "ground cumin", quantity: 2, unit: "tsp", display_text: "2 tsp ground cumin" },
+        { name: "sour cream", quantity: 4, unit: "tbsp", display_text: "4 tbsp sour cream" },
+        { name: "salt", quantity: 0.5, unit: "tsp", display_text: "1/2 tsp salt" },
+        { name: "black pepper", quantity: 0.25, unit: "tsp", display_text: "1/4 tsp black pepper" },
+        { name: "corn tortillas", quantity: 12, unit: "each", display_text: "12 corn tortillas" },
+        { name: "cheddar", quantity: 6, unit: "oz", display_text: "6 oz cheddar, grated" },
+      ],
+      steps: ["Brown the beef with the garlic and spices.", "Warm the tortillas.", "Fill, top with cheddar and sour cream."],
+    });
+    recipes.setRecipeWriter({ write: async () => beefTacos });
+    try {
+      // The house always gets the big tub of sour cream.
+      await run("cart_add", { items: [{ name: "sour cream", qty: "16 oz tub", remember: true }], shared: true });
+      await run("cart_remove", { name: "sour cream" });
+      const draft = await run("recipe_draft", { request: "beef tacos for 4", servings: 4 });
+      assert.match(draft.text, /Need: 1 lb ground beef, 2 cloves garlic, minced, 1 tbsp chili powder, 2 tsp ground cumin, 4 tbsp sour cream/, "the recipe keeps cooking amounts");
+      const r = await run("recipe_add_to_cart", { recipe: "beef tacos" });
+      // The house bought 20 tortillas for the last tacos (cart_purchased taught that usual), so 20 it is.
+      assert.deepEqual(r.added.sort(), ["Cheddar (8 oz)", "Corn tortillas (20)", "Garlic (1 head)", "Ground beef (1 lb)", "Sour cream (16 oz tub)"]);
+      assert.deepEqual(r.assumed, ["chili powder", "ground cumin", "black pepper"]);
+      assert.deepEqual(r.skippedHave, ["salt"], "salt is in the Pantry: had, not assumed");
+      assert.equal(r.say, "Added 5 things for Beef tacos for 4 to the Cart. I assumed you have chili powder, ground cumin and black pepper; say if you're out. Want me to keep them in the Pantry?");
+      noPrice(r);
+      // "We don't keep cumin": out of the Pantry, so it's bought next time.
+      await run("pantry_set", { remove: ["cumin"] });
+      const again = await run("recipe_add_to_cart", { recipe: "beef tacos" });
+      assert.deepEqual([again.added, again.assumed], [["Ground cumin (1 package)"], ["chili powder", "black pepper"]]);
+      for (const i of await cart.listOpenItems(ctx)) await cart.removeItemById(ctx, { id: i.id });
+    } finally {
+      recipes.setRecipeWriter({ write: async () => recipes.SAMPLE_RECIPE_JSON });
     }
   });
 

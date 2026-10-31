@@ -2,16 +2,16 @@
 // Run: npx tsx --test src/lib/units.test.ts
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { clarifyQuantities, countQuestion, parseAmount } from "./units";
+import { clarifyQuantities, countQuestion, kindQuestion, parseAmount } from "./units";
 
 test("clarifyQuantities: plain quantities go through as said", () => {
-  const items = [{ name: "oat milk", qty: "2 cartons" }, { name: "eggs", qty: "12" }, { name: "chicken", qty: "1 lb" }, { name: "bread" }];
+  const items = [{ name: "oat milk", qty: "2 cartons" }, { name: "eggs", qty: "12" }, { name: "chicken", qty: "1 lb" }, { name: "limes" }];
   assert.deepEqual(clarifyQuantities(items), { ok: items, questions: [] });
 });
 
 test("clarifyQuantities: several bare numbers for one thing ask one question", () => {
-  const r = clarifyQuantities([{ name: "milk" }, { name: "eggs", qty: "12, 18" }]);
-  assert.deepEqual(r.ok, [{ name: "milk" }]);
+  const r = clarifyQuantities([{ name: "dish soap" }, { name: "eggs", qty: "12, 18" }]);
+  assert.deepEqual(r.ok, [{ name: "dish soap" }]);
   assert.deepEqual(r.questions, ["eggs: 12 and 18 what? cartons or eggs?"]);
   assert.deepEqual(clarifyQuantities([{ name: "Eggs", qty: "12 or 18" }]).questions, ["eggs: 12 and 18 what? cartons or eggs?"]);
 });
@@ -45,11 +45,29 @@ test("countQuestion: eggs with no count ask 12 or 18; other things don't", () =>
 });
 
 test("clarifyQuantities: eggs with no quantity ask once; with one they go in", () => {
-  const r = clarifyQuantities([{ name: "eggs" }, { name: "milk" }]);
-  assert.deepEqual(r.ok, [{ name: "milk" }]);
+  const r = clarifyQuantities([{ name: "eggs" }, { name: "dish soap" }]);
+  assert.deepEqual(r.ok, [{ name: "dish soap" }]);
   assert.deepEqual(r.questions, ["eggs: 12 or 18?"]);
   assert.deepEqual(clarifyQuantities([{ name: "eggs", qty: "18" }]).questions, []);
   assert.deepEqual(clarifyQuantities([{ name: "eggs", qty: "a dozen" }]).questions, []);
   // Twice in one message is still one question.
   assert.deepEqual(clarifyQuantities([{ name: "eggs" }, { name: "Eggs" }]).questions, ["eggs: 12 or 18?"]);
+});
+
+test("kindQuestion: drinks and coffee get one question with two picks; staples go straight in", () => {
+  assert.equal(kindQuestion("Pepsi"), "Pepsi: 12-pack of cans or a 2-liter?");
+  assert.equal(kindQuestion("Diet Pepsi"), "Diet Pepsi: 12-pack of cans or a 2-liter?");
+  assert.equal(kindQuestion("sparkling water"), "sparkling water: a 12-pack or just a few?");
+  assert.equal(kindQuestion("water"), "water: a case of bottles or a gallon jug?");
+  assert.equal(kindQuestion("coffee"), "coffee: beans or ground?");
+  // Staples: what main's examples add as is ("Added milk, 1 gal.", "Added paper towels.").
+  for (const staple of ["milk", "oat milk", "bread", "paper towels", "toilet paper", "dish soap"]) assert.equal(kindQuestion(staple), null, staple);
+  assert.equal(kindQuestion("coffee filters"), null, "the last words are the thing");
+});
+
+test("clarifyQuantities: kinds are asked about with no quantity, once; not with one; not when kinds is off (a written list)", () => {
+  const r = clarifyQuantities([{ name: "Pepsi" }, { name: "dish soap" }, { name: "whole milk", qty: "2 gallons" }]);
+  assert.deepEqual(r.questions, ["Pepsi: 12-pack of cans or a 2-liter?"]);
+  assert.deepEqual(r.ok.map((i) => i.name), ["dish soap", "whole milk"]);
+  assert.deepEqual(clarifyQuantities([{ name: "bread" }, { name: "eggs" }], { kinds: false }).questions, ["eggs: 12 or 18?"]);
 });

@@ -387,6 +387,8 @@ export async function forgetMe(ctx: Ctx): Promise<{ chatLines: number; memoryMes
   await (await import("./lease-inbox-toolkit")).anonymizeMailMember(ctx.groupId, me.id);
   // Reminders addressed to them privately (nobody to send them to now).
   await db.delete(schema.reminders).where(and(eq(schema.reminders.groupId, ctx.groupId), eq(schema.reminders.memberId, me.id)));
+  // Their grocery usuals ("my Pepsi"); the house's stay.
+  await (await import("./usuals")).forgetMemberUsuals(ctx, me.id);
 
   // Activity summaries ("Maya added Costco $40") keep what happened, not who.
   if (names.length) {

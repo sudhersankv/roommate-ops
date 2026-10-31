@@ -186,13 +186,14 @@ export async function setSimplifyDebts(ctx: Ctx, input: { on: boolean }): Promis
 }
 
 // The Lease Inbox's mail rows, work orders and landlord senders go too (sent_mail first: it points at work_orders);
-// its address is released separately (wipeGroupData: AgentMail, then group_inboxes). Restock's purchase history too.
-const DATA_TABLES = [schema.outboxJobs, schema.splitwiseLinks, schema.cartCheckouts, schema.expenses, schema.settlements, schema.cartItems, schema.purchaseEvents, schema.recipes, schema.chores, schema.reminders, schema.maintenance, schema.chatMessages, schema.activity, schema.petMoments, schema.pendingPosts, schema.sentMail, schema.workOrders, schema.mailMessages, schema.mailEvents, schema.landlordSenders] as const;
+// its address is released separately (wipeGroupData: AgentMail, then group_inboxes). Restock's purchase history and the
+// grocery usuals too.
+const DATA_TABLES = [schema.outboxJobs, schema.splitwiseLinks, schema.cartCheckouts, schema.expenses, schema.settlements, schema.cartItems, schema.purchaseEvents, schema.groceryUsuals, schema.recipes, schema.chores, schema.reminders, schema.maintenance, schema.chatMessages, schema.activity, schema.petMoments, schema.pendingPosts, schema.sentMail, schema.workOrders, schema.mailMessages, schema.mailEvents, schema.landlordSenders] as const;
 
 /**
  * Admin "delete group data" (ADR 0006): every Expense, Settlement, Cart item, chore, reminder, upkeep item, chat
  * line, Activity row, Member note, Splitwise link, Document (and its file), held quiet-hours post, trace and score,
- * purchase event, the Lease Inbox's mail and its address (released), and Roomie's memory for the Group.
+ * purchase event, grocery usual, the Lease Inbox's mail and its address (released), and Roomie's memory for the Group.
  * The Group, its Chat, Members and settings stay, so Roomie keeps working from the next message.
  */
 export async function deleteGroupData(ctx: Ctx): Promise<void> {
