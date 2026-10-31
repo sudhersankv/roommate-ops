@@ -18,6 +18,7 @@ export * as chatlog from "./chatlog";
 export * as receipts from "./receipts";
 export * as recurring from "./recurring";
 export * as splitwise from "./splitwise";
+export * as leaseInbox from "./lease-inbox";
 export * as personality from "./personality";
 export * as pet from "./pet";
 export * as beta from "./beta";

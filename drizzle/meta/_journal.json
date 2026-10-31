@@ -134,6 +134,13 @@
       "when": 1793443000000,
       "tag": "0021_purchase_events",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1793444000000,
+      "tag": "0022_lease_inbox",
+      "breakpoints": true
     }
   ]
 }
