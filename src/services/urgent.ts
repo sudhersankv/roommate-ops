@@ -79,7 +79,8 @@ export const HELD_POST_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 async function send(p: Pending, now: Date) {
   const out = { text: p.text, ...(p.buttons?.length ? { buttons: p.buttons } : {}) };
-  if (p.kind === "urgent") return deliver(p.groupId, out);
+  // "urgent" (the slot) and "line" (a Trick's event line held overnight, the Lease Inbox's) go to the Chat.
+  if (p.kind !== "dm") return deliver(p.groupId, out);
   if (!p.memberId || (await nudgesOff(p.memberId))) return;
   const [m] = await db.select({ status: members.status }).from(members).where(eq(members.id, p.memberId));
   if (m?.status !== "active") return;
