@@ -20,9 +20,7 @@ describe("skill files", () => {
       const ts = join(dir(name), "skill.ts");
       assert.ok(existsSync(ts), `${name}/skill.ts is missing: run npm run skills`);
       // Line endings aside (a Windows checkout turns LF into CRLF).
-      const lf = (t: string) => t.replace(/
-/g, "
-");
+      const lf = (t: string) => t.replace(/\r\n/g, "\n");
       assert.equal(lf(readFileSync(ts, "utf8")), lf(skillModule(readFileSync(md, "utf8"))), `${name}/skill.ts is stale: run npm run skills`);
     }
   });
