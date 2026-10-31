@@ -18,6 +18,7 @@ import { addDaysToDay, zonedTimeToUtc } from "@/lib/time";
 import { recordFor } from "./activity";
 import { requireActive, requireAdmin } from "./authz";
 import { isUrgent, nextStatus, type WorkOrderReply, type WorkOrderState } from "./lease-inbox-rules";
+import { keywordClassifier, smallModelClassifier } from "./mail-classifier";
 import { CONFLICT_WINDOW_MS, sendRule, signature, type OtherInstruction, type SendIntent } from "./send-rule";
 import type { Ctx, GroupCtx } from "./types";
 
@@ -204,11 +205,9 @@ export interface MailClassifier {
   classify(input: ClassifyInput): Promise<Classification>;
 }
 
-// TODO(lease-inbox toolkit pass): the Haiku call on the gateway (strict JSON, one retry, as recipes.ts does).
+/** The small model on the gateway (mail-classifier.ts: strict JSON, one retry, `other` on failure); keywords with MAIL_CLASSIFIER_FAKE=1. */
 export const gatewayClassifier: MailClassifier = {
-  async classify() {
-    throw new Error("classifier not wired");
-  },
+  classify: (input) => (process.env.MAIL_CLASSIFIER_FAKE === "1" ? keywordClassifier : smallModelClassifier).classify(input),
 };
 
 let classifier: MailClassifier | null = null;
