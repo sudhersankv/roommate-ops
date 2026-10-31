@@ -52,6 +52,10 @@ export class MailUnavailableError extends Error {
 
 const idem = (headers?: Record<string, string>) => headers?.["Idempotency-Key"];
 
+/** The domain Group inboxes are made on: AGENTMAIL_DOMAIN (a domain verified on the AgentMail org, e.g. tryroomie.me),
+ * else AgentMail's own agentmail.to. */
+export const mailDomain = () => process.env.AGENTMAIL_DOMAIN?.trim().toLowerCase().replace(/^@/, "") || "agentmail.to";
+
 export class AgentMailClient implements MailClient {
   readonly kind = "agentmail" as const;
   private sdk: AgentMailSdk;
@@ -71,7 +75,7 @@ export class AgentMailClient implements MailClient {
 
   async createInbox(groupId: string, username: string) {
     const inbox = await this.call("create inbox", () =>
-      this.sdk.inboxes.create({ username, displayName: "Roomie", clientId: groupId, metadata: { group_id: groupId } }),
+      this.sdk.inboxes.create({ username, domain: mailDomain(), displayName: "Roomie", clientId: groupId, metadata: { group_id: groupId } }),
     );
     return { inboxId: inbox.inboxId, address: inbox.email };
   }
@@ -159,7 +163,7 @@ export class FakeMail implements MailClient {
   async createInbox(groupId: string, username: string) {
     const have = this.inboxes.get(groupId);
     if (have) return have;
-    const address = `${username}@agentmail.to`;
+    const address = `${username}@${mailDomain()}`;
     const inbox = { inboxId: address, address };
     this.inboxes.set(groupId, inbox);
     return inbox;

@@ -349,7 +349,7 @@ src/
     api/auth/[...path]  Neon Auth proxy; api/chat = Ask Roomie (session Member, 401/403); api/receipts = Scan receipt;
                         api/docs/[id] = a Document's file (active Member of its Group, else 403; unknown 404; private cache);
                         api/telegram = Telegram webhook (401 without TELEGRAM_WEBHOOK_SECRET in the header);
-                        api/mail = AgentMail's webhook (webhook.ts: Svix on the raw body with AGENTMAIL_WEBHOOK_SECRET,
+                        api/mail = AgentMail's webhook (webhook.ts: Svix on the raw body with AGENTMAIL_WEBHOOK_SECRET; inboxes are made on AGENTMAIL_DOMAIN, else agentmail.to,
                         else 401; 204 at once; queued per inbox; MAIL_FAKE=1 + `x-roomie-fake-mail: 1` outside production);
                         api/admin/whatsapp = status JSON + start / request-pairing-code / logout (operators, else 404)
     admin/whatsapp/     the operator page: state, QR (refreshes every 5 s), pairing-code form, the linked number, Log out
