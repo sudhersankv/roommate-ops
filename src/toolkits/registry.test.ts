@@ -66,7 +66,6 @@ describe("the manifest contract", () => {
     assert.deepEqual([lease.dashboard?.nav?.label, lease.dashboard?.nav?.href("g1"), lease.dashboard?.nav?.order], ["Inbox", "/g/g1/inbox", 35]);
     assert.deepEqual(lease.dashboard?.pages, ["inbox"]);
     assert.equal(lease.postOrder, 20);
-    assert.match(lease.offerLine ?? "", /roomie, learn lease inbox/);
     for (const id of ["report_issue", "send_to_landlord", "work_order_status", "trust_sender", "send_intro", "ask_lease", "inbox_status", "release_inbox"]) assert.ok(id in lease.tools, id);
     assert.deepEqual(Object.keys(lease.adminOnly ?? {}).sort(), ["release_inbox", "send_intro", "trust_sender"]);
     assert.ok(lease.bundle && lease.report && lease.onEnable && lease.dashboard?.settings, "it speaks in the Bundle and the report, sets itself up, and has a Settings section");
@@ -138,7 +137,7 @@ describe("the manifest contract", () => {
     const groceries = skills.groceries;
     assert.ok(all.includes(splitting) && all.includes(groceries));
     assert.ok(groceriesOnly.includes(groceries) && !groceriesOnly.includes(splitting));
-    assert.match(groceriesOnly, /Not learned here yet: Money, House/);
+    assert.match(groceriesOnly, /Not learned here: Money \([^)]*\); House \(/);
     assert.match(groceriesOnly, /TRICKS\n- Tricks you know here: Groceries/);
     assert.ok(!all.includes("{TOOLKITS}"));
   });

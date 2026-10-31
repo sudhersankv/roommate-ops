@@ -109,17 +109,14 @@ test("the Onboarding copy", () => {
     learnedLine(MANIFESTS.map((m) => m.id)),
     learnedLine(["splitting"], { defaulted: true }),
     learnedLine([]),
-    // With Lease Inbox off, the wrap-up offers it in one sentence.
-    learnedLine(["splitting", "groceries", "house"]),
     approvalPrompt("Priya", ["Maya"]),
   ];
   for (const line of lines) assert.deepEqual(hits(line), [], line);
-  assert.match(learnedLine(["splitting", "groceries", "house"]), /Want me to handle the landlord's emails too\? Say "roomie, learn lease inbox"\.$/);
 });
 
-test("every manifest's name, summary, long description and offer, and every Trick's skill (Roomie may echo it)", async () => {
+test("every manifest's name, summary and long description, and every Trick's skill (Roomie may echo it)", async () => {
   for (const m of [CORE_MANIFEST, ...CATALOG]) {
-    for (const [field, value] of Object.entries({ name: m.name, summary: m.summary, longDescription: m.longDescription, offerLine: m.offerLine ?? "" })) {
+    for (const [field, value] of Object.entries({ name: m.name, summary: m.summary, longDescription: m.longDescription })) {
       assert.deepEqual(hits(value), [], `${m.id}.${field}`);
     }
   }

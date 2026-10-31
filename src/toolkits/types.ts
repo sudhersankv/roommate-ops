@@ -84,11 +84,6 @@ export type ToolkitManifest<Id extends string = string> = {
    * landlord 20, the house 30, groceries 40). Default: its nav order, then last.
    */
   postOrder?: number;
-  /**
-   * One sentence Onboarding's wrap-up line adds while this Trick is off (onboarding.ts learnedLine): for a Trick that's
-   * off by default because it needs a connection step, so people know it exists.
-   */
-  offerLine?: string;
   dashboard?: {
     nav?: NavEntry;
     /** Route prefixes under /g/<id>/ it owns ("money"); they show the off state while it's off. */

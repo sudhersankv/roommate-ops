@@ -1,7 +1,7 @@
 import { defineManifest } from "../define";
 
 // The Group's own email address for the landlord (ADR 0016). Off by default: it needs a connection step (forward the
-// lease, CC the address, or give it to the leasing office), so Onboarding only offers it (offerLine).
+// lease, CC the address, or give it to the leasing office), so Roomie mentions it when the landlord comes up and it isn't learned (#44).
 export const leaseInbox = defineManifest({
   id: "lease-inbox",
   name: "Lease Inbox",
@@ -35,7 +35,6 @@ export const leaseInbox = defineManifest({
     release_inbox: { action: String.raw`\b(?:release|delete|close|shut\b.*\bdown|get rid|give up)\b`, ask: `Give up the group's email address? Mail sent to it will bounce from then on.` },
     send_intro: { action: String.raw`\b(?:intro\w*|introduce|send it)\b`, ask: `Send the landlord the intro email from all of you?` },
   },
-  offerLine: `Want me to handle the landlord's emails too? Say "roomie, learn lease inbox".`,
   // Money, the landlord, then the house (ADR 0017).
   postOrder: 20,
   dashboard: {

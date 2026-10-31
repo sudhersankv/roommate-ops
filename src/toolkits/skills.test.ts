@@ -71,3 +71,25 @@ describe("the composer: the picked Trick's skill in full, the others as one line
     assert.doesNotMatch(t, /GROCERIES SKILL/);
   });
 });
+
+describe("Tricks not learned here are known, not advertised (#44)", () => {
+  const off = (recentReplies: string[] = []) => toolkitPersona(["splitting", "groceries", "house"], { recentReplies }).join(" ");
+
+  test("the line names them with what they do, says not to advertise, and how to answer when asked", () => {
+    const t = off();
+    assert.match(t, /Not learned here: Lease Inbox \(/);
+    assert.match(t, /Don't advertise these/);
+    assert.match(t, /only when the conversation clearly needs it/);
+    assert.match(t, /If someone asks for one, say you haven't learned it here yet/);
+    assert.doesNotMatch(t, /roomie, learn/i, "no script to type");
+  });
+
+  test("one Roomie named in its recent replies isn't brought up again unless asked", () => {
+    assert.match(off(["I could take the landlord's emails if an admin teaches me Lease Inbox."]), /You mentioned Lease Inbox recently: don't bring it up again unless someone asks/);
+    assert.doesNotMatch(off(["Added eggs."]), /You mentioned/);
+  });
+
+  test("everything learned: no line at all", () => {
+    assert.doesNotMatch(toolkitPersona(TOOLKIT_IDS).join(" "), /Not learned here/);
+  });
+});

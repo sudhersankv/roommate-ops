@@ -37,7 +37,7 @@ export type Skills = Readonly<Record<string, string>>;
  * skill is in full; the others are just named above. No pick, "none", or a Trick that isn't learned here: every
  * learned Trick's skill. "core" picked: no Trick skills. These fill composePersona's Toolkit slot.
  */
-export function toolkitPersona(enabled: readonly string[], opts: { picked?: string; skills?: Skills } = {}): string[] {
+export function toolkitPersona(enabled: readonly string[], opts: { picked?: string; skills?: Skills; recentReplies?: readonly string[] } = {}): string[] {
   const on = MANIFESTS.filter((m) => enabled.includes(m.id));
   const off = MANIFESTS.filter((m) => !enabled.includes(m.id));
   const skills = opts.skills ?? {};
@@ -45,14 +45,34 @@ export function toolkitPersona(enabled: readonly string[], opts: { picked?: stri
   const full = picked === "core" ? [] : on.some((m) => m.id === picked) ? on.filter((m) => m.id === picked) : on;
   return [
     `- Tricks you know here: ${on.map((m) => `${m.name} (${m.summary.replace(/\.$/, "")})`).join("; ") || "none yet, only the basics"}; always: ${CORE_MANIFEST.summary.replace(/\.$/, "")}.`,
-    off.length ? `- Not learned here yet: ${off.map((m) => m.name).join(", ")}. If someone asks for one, say you haven't learned it here yet and an admin can teach you ("roomie, learn ${off[0].name.toLowerCase()}", or the dashboard's Tricks page).` : "",
+    notLearnedLine(off, opts.recentReplies ?? []),
     `- Coming soon, nobody can teach you these yet: ${COMING_SOON.map((m) => m.name).join(", ")}.`,
     skills.core ?? "",
     ...full.map((m) => skills[m.id] ?? ""),
   ].filter(Boolean);
 }
 
-export const toolkitBlock = (enabled: readonly string[], opts: { picked?: string; skills?: Skills } = {}): string => toolkitPersona(enabled, opts).join("\n");
+export const toolkitBlock = (enabled: readonly string[], opts: { picked?: string; skills?: Skills; recentReplies?: readonly string[] } = {}): string => toolkitPersona(enabled, opts).join("\n");
+
+const named = (text: string, name: string) => new RegExp(`(^|[^\\p{L}])${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}($|[^\\p{L}])`, "iu").test(text);
+
+/**
+ * The Tricks not learned here (#44): Roomie knows them but doesn't advertise them. It mentions one only when the
+ * conversation clearly needs it, as a light offer; one it named in its recent replies isn't brought up again unless
+ * someone asks. Asked directly, it says it hasn't learned it here and an Admin can teach it.
+ */
+function notLearnedLine(off: readonly (typeof MANIFESTS)[number][], recentReplies: readonly string[]): string {
+  if (!off.length) return "";
+  const list = off.map((m) => `${m.name} (${m.summary.replace(/\.$/, "")})`).join("; ");
+  const recent = off.filter((m) => recentReplies.some((r) => named(r, m.name))).map((m) => m.name);
+  return [
+    `- Not learned here: ${list}. Don't advertise these or end replies with them. Bring one up only when the conversation clearly needs it (the landlord isn't answering and Lease Inbox isn't learned), once, as a light offer in your own words ("I could take the landlord's emails if an admin teaches me Lease Inbox").`,
+    `If someone asks for one, say you haven't learned it here yet and an admin can teach you (the dashboard's Tricks page, or by asking you).`,
+    recent.length ? `You mentioned ${recent.join(" and ")} recently: don't bring ${recent.length > 1 ? "them" : "it"} up again unless someone asks.` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
 
 export const PENDING = (name: string) =>
   `${name} is a Pending member: an admin hasn't approved them yet. You can chat with them and answer questions, but tools that change anything will refuse; relay that kindly.`;
@@ -71,7 +91,7 @@ export type InstructionOpts = { onboarding?: boolean; toolkits?: readonly string
 export function roomieInstructions(ctx: Partial<RoomieContext>, members: string, now = new Date(), timezone = DEFAULT_TIMEZONE, opts: InstructionOpts = {}): string {
   const { onboarding, toolkits, personality, currency = "USD", groupName, skills, ...facts } = opts;
   const blocks = [
-    composePersona({ ...facts, personality: personality ?? defaultPersonality(), timezone, toolkitPersona: toolkitPersona(toolkits ?? ctx.toolkits ?? TOOLKIT_IDS, { picked: ctx.toolkit, skills }) }),
+    composePersona({ ...facts, personality: personality ?? defaultPersonality(), timezone, toolkitPersona: toolkitPersona(toolkits ?? ctx.toolkits ?? TOOLKIT_IDS, { picked: ctx.toolkit, skills, recentReplies: facts.recentReplies }) }),
     `Group members: ${members}.${ctx.memberName ? ` You're talking with ${ctx.memberName}.` : ""}`,
     `Now (local): ${describeNow(timezone, now)}. House timezone: ${timezone}. "Today", "tonight", "Tuesday 8pm" and "this week" mean that zone. Pass times to tools as local wall-clock without an offset (2026-11-03T20:00); the tools convert.`,
     `Money in this group is ${currency} (${currencySymbol(currency)}). Amounts people say ("190", "1.5k") are ${currency}; pass them to tools as they said them. Say amounts the way the tools return them, never in another currency.`,
