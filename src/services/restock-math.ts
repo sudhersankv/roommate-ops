@@ -77,10 +77,32 @@ export function restockCandidates(
   return out.sort((a, b) => b.overdueDays - a.overdueDays || a.item.localeCompare(b.item));
 }
 
-/** "Probably low: milk, dish soap. Add them?" At most `max` names, then "+N more". No prices, no amounts. */
-export function restockLine(candidates: readonly Pick<RestockCandidate, "item">[], max = 4): string | null {
+/**
+ * "Probably low: milk, dish soap. Add them?" At most `max` names, then "+N more". No prices, no amounts. `yours` for
+ * a Member's own, in their DM ("Probably low: your oat milk. Add it?").
+ */
+export function restockLine(candidates: readonly Pick<RestockCandidate, "item">[], max = 4, opts: { yours?: boolean } = {}): string | null {
   if (!candidates.length) return null;
   const names = candidates.slice(0, max).map((c) => c.item);
   const more = candidates.length - names.length;
-  return `Probably low: ${names.join(", ")}${more ? ` +${more} more` : ""}. ${candidates.length === 1 ? "Add it?" : "Add them?"}`;
+  return `Probably low: ${opts.yours ? "your " : ""}${names.join(", ")}${more ? ` +${more} more` : ""}. ${candidates.length === 1 ? "Add it?" : "Add them?"}`;
+}
+
+const andList = (names: readonly string[]) => (names.length <= 1 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`);
+
+/** The one-line reply after "yes, add them": "Added milk and dish soap as shared." / "Added oat milk for you." */
+export function restockAddedLine(items: readonly string[], scope: "shared" | "mine"): string {
+  if (!items.length) return "Nothing to add: none of that is still low.";
+  return `Added ${andList(items)} ${scope === "shared" ? "as shared" : "for you"}.`;
+}
+
+/** Before the Instacart link: "Want me to add eggs and coffee? They're probably low." */
+export function checkoutAskLine(items: readonly string[]): string {
+  return `Want me to add ${andList(items)}? ${items.length === 1 ? "It's" : "They're"} probably low.`;
+}
+
+/** The Cart page's "last bought 9 days ago" (local days). */
+export function lastBoughtText(lastBought: string, today: string): string {
+  const days = daysBetweenDays(lastBought, today);
+  return days <= 0 ? "bought today" : days === 1 ? "last bought yesterday" : `last bought ${days} days ago`;
 }

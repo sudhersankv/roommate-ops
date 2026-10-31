@@ -1,7 +1,7 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { addDaysToDay } from "@/lib/time";
-import { restockCandidates, restockLine, type PurchaseEvent, type RestockCandidate } from "./restock-math";
+import { checkoutAskLine, lastBoughtText, restockAddedLine, restockCandidates, restockLine, type PurchaseEvent, type RestockCandidate } from "./restock-math";
 
 const SAM = "sam-member-id";
 
@@ -117,5 +117,34 @@ describe("restockLine", () => {
     const line = restockLine(["milk", "dish soap", "eggs", "coffee", "bread"].map(c))!;
     assert.doesNotMatch(line, /[$€£]|\d+\.\d|\d{2,}/);
     assert.deepEqual(line.match(/\d+/g), ["1"]); // only the "+1 more"
+  });
+
+  test("a Member's own, for their DM: 'your'", () => {
+    assert.equal(restockLine([c("oat milk")], 4, { yours: true }), "Probably low: your oat milk. Add it?");
+    assert.equal(restockLine([c("oat milk"), c("coffee")], 4, { yours: true }), "Probably low: your oat milk, coffee. Add them?");
+  });
+});
+
+describe("restockAddedLine", () => {
+  test("one line saying what went in and for whom", () => {
+    assert.equal(restockAddedLine(["milk", "dish soap"], "shared"), "Added milk and dish soap as shared.");
+    assert.equal(restockAddedLine(["milk", "dish soap", "eggs"], "shared"), "Added milk, dish soap and eggs as shared.");
+    assert.equal(restockAddedLine(["oat milk"], "mine"), "Added oat milk for you.");
+    assert.equal(restockAddedLine([], "shared"), "Nothing to add: none of that is still low.");
+  });
+});
+
+describe("checkoutAskLine", () => {
+  test("asks once, no prices", () => {
+    assert.equal(checkoutAskLine(["eggs", "coffee"]), "Want me to add eggs and coffee? They're probably low.");
+    assert.equal(checkoutAskLine(["eggs"]), "Want me to add eggs? It's probably low.");
+  });
+});
+
+describe("lastBoughtText", () => {
+  test("days since, in words", () => {
+    assert.equal(lastBoughtText("2026-10-21", "2026-10-30"), "last bought 9 days ago");
+    assert.equal(lastBoughtText("2026-10-29", "2026-10-30"), "last bought yesterday");
+    assert.equal(lastBoughtText("2026-10-30", "2026-10-30"), "bought today");
   });
 });

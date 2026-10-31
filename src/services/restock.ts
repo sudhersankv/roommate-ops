@@ -6,13 +6,15 @@ import { and, eq, gte, inArray, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { normalizeItem, sameItem } from "@/lib/items";
 import { groceries } from "@/toolkits/groceries/manifest";
+import { daytimeHour } from "@/lib/quiet-hours";
 import { addDaysToDay, dayInZone } from "@/lib/time";
 import { record, sourceOf } from "./activity";
 import { requireActive } from "./authz";
 import { addItems, listOpenItems } from "./cart";
 import { listMembers } from "./members";
+import { mayPost, sendDms, type DmOutcome } from "./rent";
 import { restockCandidates, restockLine, type PurchaseEvent, type RestockCandidate } from "./restock-math";
-import { groupTimezone } from "./schedule";
+import { bundleWindow, claimPost, getSchedule, groupTimezone } from "./schedule";
 import type { Ctx, GroupCtx } from "./types";
 
 const { purchaseEvents, groupToolkits, expenses } = schema;
@@ -64,6 +66,25 @@ export async function recordReceiptPurchases(ctx: Ctx, expenseId: string, lines:
     ctx.groupId,
     lines.map((l) => ({ name: l.name, memberId: l.claimedBy ?? null, occurredOn: e.occurredOn, source: "receipt" as const, sourceId: expenseId })),
   );
+}
+
+/** Receipts whose lines are things a Group restocks; a restaurant's "Ribeye steak" (food) isn't one. */
+const RESTOCK_CATEGORIES = new Set(["groceries", "household"]);
+
+/**
+ * expense_from_receipt's hook, once it has logged the Expense: each line with the Members it went to (receiptSplits'
+ * items). Claimed by exactly one Member -> theirs; shared, unclaimed or split between some -> shared. Only grocery and
+ * household receipts count. Returns how many events were written.
+ */
+export async function recordReceiptItems(
+  ctx: Ctx,
+  expense: { id: string; category: string },
+  items: readonly { name: string; memberIds: readonly string[] }[],
+  everyone: readonly string[],
+): Promise<number> {
+  if (!RESTOCK_CATEGORIES.has(expense.category)) return 0;
+  const solo = (ids: readonly string[]) => (ids.length === 1 && everyone.length > 1 ? ids[0] : null);
+  return recordReceiptPurchases(ctx, expense.id, items.map((i) => ({ name: i.name, claimedBy: solo(i.memberIds) })));
 }
 
 async function eventsOf(groupId: string, today: string): Promise<PurchaseEvent[]> {
@@ -153,7 +174,26 @@ export async function personalCandidates(ctx: GroupCtx, now = new Date()): Promi
     .filter((p) => p.status === "active")
     .map((p) => ({ memberId: p.id, candidates: all.filter((c) => c.scope === p.id) }))
     .filter((p) => p.candidates.length > 0)
-    .map((p) => ({ ...p, line: restockLine(p.candidates)! }));
+    .map((p) => ({ ...p, line: restockLine(p.candidates, 4, { yours: true })! }));
+}
+
+/**
+ * The personal restock DMs ("Probably low: your oat milk. Add it?"), in the Bundle's hour only (Groceries' bundle()
+ * calls this, and Home's Today calls bundle() too), claimed once per local day per Member as scheduled_posts
+ * "restock.dm" with period "<day>:<memberId>". Through core's sendNudge: quiet hours, "stop nudging me" and a paused
+ * Group apply; no DM path -> the neutral Start hint (rent.ts sendDms). A "yes" in the DM is restock_add_listed "mine".
+ */
+export async function restockDmJob(ctx: GroupCtx, now = new Date()): Promise<DmOutcome[]> {
+  const [tz, sched] = await Promise.all([groupTimezone(ctx.groupId), getSchedule(ctx)]);
+  const hour = sched.nudgeHour === null ? null : daytimeHour(sched.nudgeHour);
+  if (!bundleWindow(now, tz, hour).open || !(await mayPost(ctx.groupId))) return [];
+  const day = dayInZone(tz, now);
+  const out: DmOutcome[] = [];
+  for (const p of await personalCandidates(ctx, now)) {
+    if (!(await claimPost(ctx.groupId, "restock.dm", `${day}:${p.memberId}`))) continue;
+    out.push(...(await sendDms(ctx.groupId, [{ memberId: p.memberId, text: p.line, buttons: [] }], now)));
+  }
+  return out;
 }
 
 /**

@@ -8,18 +8,50 @@ import assert from "node:assert/strict";
 import { and, asc, eq } from "drizzle-orm";
 import { RequestContext } from "@mastra/core/request-context";
 import { db, schema } from "@/db";
-import { devUserId } from "@/channels/dev";
+import { registerChannel } from "@/channels";
+import { DevChannel, devUserId, type DevOutput } from "@/channels/dev";
+import { MemoryBlobStore, setBlobStore } from "@/integrations/blob-store";
 import { FakeInstacart, setInstacartClient } from "@/integrations/instacart";
-import { addDaysToDay } from "@/lib/time";
+import { addDaysToDay, zonedParts, zonedTimeToUtc } from "@/lib/time";
 import { onGroupJoined } from "@/onboarding";
+import * as cart from "@/services/cart";
 import { addItems, listOpenItems, markPurchased } from "@/services/cart";
 import { deleteGroup } from "@/services/groups";
 import { logExpense } from "@/services/money";
+import * as receipts from "@/services/receipts";
 import type { Ctx } from "@/services/types";
 import { cartTools } from "@/toolkits/groceries/cart";
+import { restockTools } from "@/toolkits/groceries/restock";
+import { groceries } from "@/toolkits/groceries/server";
+import { receiptTools } from "@/toolkits/splitting/receipts";
 import { backfillPurchases } from "../../scripts/backfill-purchases";
 import { assertNotProdDb } from "../../scripts/lib/prod-guard";
 import * as restock from "./restock";
+
+const outbox: DevOutput[] = [];
+registerChannel(new DevChannel((o) => outbox.push(o)));
+setBlobStore(new MemoryBlobStore());
+
+const CHI = "America/Chicago";
+const todayParts = zonedParts(CHI, new Date());
+/** A wall-clock time today in Chicago (the Group's zone). */
+const local = (hour: number, minute = 0) => zonedTimeToUtc(CHI, { year: todayParts.year, month: todayParts.month, day: todayParts.day, hour, minute });
+
+const rc = (who: Ctx, name: string, isPrivate = false) =>
+  new RequestContext<unknown>([
+    ["groupId", who.groupId],
+    ["memberId", who.memberId],
+    ["memberName", name],
+    ["role", "member"],
+    ["status", "active"],
+    ["source", isPrivate ? "dm" : "chat"],
+    ["isPrivate", isPrivate],
+  ]);
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AnyResult = Record<string, any>;
+/** Run a tool as `who` (in the group chat, or their DM). */
+const run = (tool: unknown, input: unknown, who: Ctx, name: string, isPrivate = false) =>
+  (tool as { execute: (i: unknown, c: unknown) => Promise<AnyResult> }).execute(input, { requestContext: rc(who, name, isPrivate) });
 
 let groupId: string;
 let maya: Ctx;
@@ -58,6 +90,7 @@ describe("Restock against the dev DB", () => {
 
   after(async () => {
     setInstacartClient(null);
+    setBlobStore(null);
     if (groupId) {
       await deleteGroup(groupId);
       assert.equal((await eventsOf()).length, 0, "purchase events go with the Group");
@@ -113,8 +146,22 @@ describe("Restock against the dev DB", () => {
     const personal = await restock.personalCandidates({ groupId }, now);
     assert.deepEqual(
       personal.map((p) => [p.memberId, p.candidates.map((c) => c.item), p.line]),
-      [[sam.memberId, ["oat milk"], "Probably low: oat milk. Add it?"]],
+      [[sam.memberId, ["oat milk"], "Probably low: your oat milk. Add it?"]],
     );
+  });
+
+  test("restockDmJob: Sam's own by DM, only in the Bundle's hour, once a day; nobody else hears it", async () => {
+    outbox.length = 0;
+    assert.deepEqual(await restock.restockDmJob({ groupId }, local(8, 30)), [], "before the nudge hour (9)");
+    const sent = await restock.restockDmJob({ groupId }, local(9, 5));
+    assert.deepEqual(sent.map((s) => [s.memberId, s.outcome]), [[sam.memberId, "sent"]]);
+    assert.deepEqual(outbox.map((o) => [o.to, o.msg.text]), [["private", "Probably low: your oat milk. Add it?"]]);
+    assert.deepEqual(await restock.restockDmJob({ groupId }, local(9, 40)), [], "claimed for the day");
+    const claims = await db.select().from(schema.scheduledPosts).where(and(eq(schema.scheduledPosts.groupId, groupId), eq(schema.scheduledPosts.kind, "restock.dm")));
+    assert.deepEqual(claims.map((c) => c.period), [`${today}:${sam.memberId}`]);
+    // Groceries' bundle() runs the job and still returns only the shared line.
+    assert.equal(await groceries.bundle!({ groupId }, local(9, 50)), "Probably low: milk, dish soap. Add them?");
+    assert.equal(outbox.length, 1, "no second DM");
   });
 
   test("a mute persists and the next run leaves it out; unmute brings it back", async () => {
@@ -128,23 +175,15 @@ describe("Restock against the dev DB", () => {
     assert.equal((await restock.unmute(sam, "dish soap")).unmuted, false);
   });
 
-  test("cart_checkout suggests what's probably low and not in the Cart; Sam's own only in his DM", async () => {
+  test("cart_checkout asks about what's probably low before the link; Sam's own only in his DM; skip_suggestions checks out", async () => {
     await addItems(maya, { items: [{ name: "bread" }], shared: true });
-    const rc = (who: Ctx, name: string, isPrivate = false) =>
-      new RequestContext<unknown>([
-        ["groupId", groupId],
-        ["memberId", who.memberId],
-        ["memberName", name],
-        ["role", "member"],
-        ["status", "active"],
-        ["source", "chat"],
-        ["isPrivate", isPrivate],
-      ]);
-    const checkout = cartTools.cart_checkout as unknown as { execute: (i: unknown, c: unknown) => Promise<{ suggested?: string[]; itemCount: number }> };
-    const inGroup = await checkout.execute({}, { requestContext: rc(sam, "Sam") });
-    assert.deepEqual(inGroup.suggested, ["milk", "dish soap"]);
-    const inDm = await checkout.execute({}, { requestContext: rc(sam, "Sam", true) });
+    const inGroup = await run(cartTools.cart_checkout, {}, sam, "Sam");
+    assert.deepEqual([inGroup.askFirst, inGroup.suggested, inGroup.say, inGroup.links], [true, ["milk", "dish soap"], "Want me to add milk and dish soap? They're probably low.", undefined]);
+    assert.ok(!(await cart.lastUnpaidCheckout({ groupId })), "no list before they answer");
+    const inDm = await run(cartTools.cart_checkout, {}, sam, "Sam", true);
     assert.deepEqual(inDm.suggested, ["milk", "oat milk", "dish soap"]);
+    const just = await run(cartTools.cart_checkout, { skip_suggestions: true }, sam, "Sam");
+    assert.deepEqual([just.askFirst, just.suggested, just.itemCount, just.links?.length], [undefined, undefined, 1, 1]);
   });
 
   test('restockAddListed: "just the milk" adds only that, as shared, and it stops being low', async () => {
@@ -155,6 +194,46 @@ describe("Restock against the dev DB", () => {
     assert.deepEqual(await restock.restockAddListed(sam, "mine", { now }), ["oat milk"]);
     const oat = (await listOpenItems({ groupId })).find((i) => i.name === "oat milk");
     assert.deepEqual([oat?.shared, oat?.addedBy], [false, sam.memberId]);
+  });
+
+  test("restock_add_listed: one line back; something bought since the line isn't added again", async () => {
+    await restock.recordPurchases(dev, [{ name: "Dish soap", memberId: null, occurredOn: today, source: "cart", sourceId: null }]);
+    const r = await run(restockTools.restock_add_listed, { scope: "shared" }, dev, "Dev");
+    assert.deepEqual([r.added, r.say], [[], "Nothing to add: none of that is still low."]);
+    assert.ok(!(await listOpenItems({ groupId })).some((i) => i.name === "dish soap"));
+  });
+
+  test("expense_from_receipt writes purchase events: the claimed line is Sam's, the rest shared; a restaurant receipt writes none", async () => {
+    await clearEvents();
+    receipts.setReceiptReader({
+      read: async () => ({
+        readable: true,
+        merchant: "Target",
+        date: null,
+        items: [{ name: "Dawn dish soap", price: "3.99" }, { name: "Oat milk 64 oz", price: "4.50" }, { name: "Paper towels", price: "12.00" }],
+        tax: null,
+        tip: null,
+        total: "20.49",
+      }),
+    });
+    try {
+      const photo = await receipts.saveUpload({ groupId }, Buffer.from("target receipt"), "image/jpeg");
+      const done = await run(receiptTools.expense_from_receipt, { receipt_url: photo.path, assignments: [{ item: "oat milk", who: ["Sam"] }], category: "groceries", confirm: true }, maya, "Maya");
+      assert.equal(done.logged, true);
+      const rows = (await eventsOf()).filter((e) => e.sourceId === done.id);
+      assert.deepEqual(rows.map((e) => [e.item, e.memberId, e.source]).sort(), [
+        ["dawn dish soap", null, "receipt"],
+        ["oat milk", sam.memberId, "receipt"],
+        ["paper towels", null, "receipt"],
+      ]);
+      receipts.setReceiptReader({ read: async () => receipts.SAMPLE_RECEIPT });
+      const dinner = await receipts.saveUpload({ groupId }, Buffer.from("luigi's receipt"), "image/jpeg");
+      const food = await run(receiptTools.expense_from_receipt, { receipt_url: dinner.path, confirm: true }, maya, "Maya");
+      assert.equal(food.logged, true);
+      assert.equal((await eventsOf()).filter((e) => e.sourceId === food.id).length, 0, "a restaurant's steak isn't restocked");
+    } finally {
+      receipts.setReceiptReader(null);
+    }
   });
 
   test("probablyLowView: shared items and the viewer's own", async () => {

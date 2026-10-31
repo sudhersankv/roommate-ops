@@ -7,6 +7,7 @@ import { cart } from "@/services";
 import { addPhotoToCart, photoSummary, readGroceryPhoto } from "@/services/grocery-photos";
 import { expenseSummary } from "@/services/money";
 import { checkoutSuggestions } from "@/services/restock";
+import { checkoutAskLine } from "@/services/restock-math";
 import { ctxOf, dashboardLinks, memberIdByName, toCents } from "../util";
 
 type Item = { name: string; qty: string; shared: boolean; addedByName: string; recipeTitle?: string | null };
@@ -100,14 +101,18 @@ export const cartTools = {
   cart_checkout: createTool({
     id: "cart_checkout",
     description:
-      "Someone wants to check out / order the cart / get the Instacart list. Makes an Instacart shopping list of the open cart and records the Checkout; the 'Open in Instacart' button is attached for you. Say the item count (no prices: the receipt has those). If `available` is false, relay `message`. `suggested` = probably-low items not in the Cart: ask once whether to add them before the link, unless they said 'just checkout'.",
-    inputSchema: z.object({}),
-    execute: async (_input, context) => {
+      "Someone wants to check out / order the cart / get the Instacart list. Makes an Instacart shopping list of the open cart and records the Checkout; the 'Open in Instacart' button is attached for you. Say the item count (no prices: the receipt has those). If `available` is false, relay `message`. " +
+      "If probably-low items aren't in the Cart it returns `askFirst` with `suggested` and `say` instead (no list yet): post `say` and wait. Call it again with skip_suggestions=true when they said 'just checkout' (then never ask), or after they answered (add the ones they want first).",
+    inputSchema: z.object({
+      skip_suggestions: z.boolean().optional().describe("true for 'just checkout', or once they've answered the probably-low question"),
+    }),
+    execute: async ({ skip_suggestions }, context) => {
       const ctx = ctxOf(context);
-      const c = await cart.checkout(ctx);
       const inDm = (context?.requestContext as { get(k: string): unknown } | undefined)?.get("isPrivate") === true;
-      const suggested = await checkoutSuggestions(ctx, { mine: inDm });
-      const summary = { checkoutId: c.id, itemCount: c.itemCount, ...(suggested.length ? { suggested } : {}) };
+      const suggested = skip_suggestions ? [] : await checkoutSuggestions(ctx, { mine: inDm });
+      if (suggested.length) return { askFirst: true, suggested, itemCount: (await cart.listOpenItems(ctx)).length, say: checkoutAskLine(suggested) };
+      const c = await cart.checkout(ctx);
+      const summary = { checkoutId: c.id, itemCount: c.itemCount };
       if (!c.url) return { available: false, message: `${c.unavailable ?? "The Instacart link isn't available yet."} Buy it yourselves and tell me the total.`, ...summary };
       return { available: true, ...summary, links: [{ text: "🛒 Open in Instacart", url: c.url }] };
     },
