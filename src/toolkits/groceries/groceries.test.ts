@@ -3,17 +3,18 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { groceries } from "./manifest";
+import { skill } from "./skill";
 import { cartTools } from "./cart";
 import { recipeTools } from "./recipes";
 
 const PRICE = /\$\d|estimat|price/i;
 
-test("the Groceries persona and abilities never talk prices (beyond 'no prices')", () => {
-  const persona = groceries.persona!.replace(/Groceries has no prices\. Never say a price, an estimate or a cart total/, "");
+test("the Groceries skill and abilities never talk prices (beyond 'no prices')", () => {
+  const persona = skill.replace(/Groceries has no prices\. Never say a price, an estimate or a cart total/, "");
   assert.ok(!PRICE.test(persona), persona);
   for (const [id, a] of Object.entries(groceries.abilities ?? {})) assert.ok(!PRICE.test(a), `${id}: ${a}`);
-  assert.match(groceries.persona!, /cart_from_photo/);
-  assert.match(groceries.persona!, /Don't offer the Cart page unless they ask/);
+  assert.match(skill, /cart_from_photo/);
+  assert.match(skill, /Don't offer the Cart page unless they ask/);
   assert.match(groceries.gate.criterion, /photo of a recipe or a shopping list/);
 });
 

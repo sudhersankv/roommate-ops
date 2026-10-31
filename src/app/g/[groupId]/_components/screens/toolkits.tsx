@@ -248,14 +248,6 @@ function ToolkitDetail({ toolkit: t, onToggle, pending }: { toolkit: ToolkitCard
           )}
         </section>
 
-        {t.persona ? (
-          <Collapsible className="flex flex-col gap-2">
-            <CollapsibleTrigger render={<Button variant="link" size="xs" className="self-start px-0" />}>How Roomie behaves with it</CollapsibleTrigger>
-            <CollapsibleContent>
-              <p className="type-caption whitespace-pre-line rounded-2xl bg-muted p-3 text-muted-foreground">{t.persona}</p>
-            </CollapsibleContent>
-          </Collapsible>
-        ) : null}
       </div>
       <DrawerFooter className="border-t pt-4">
         {!isAdmin && !t.enabled && !soon ? (

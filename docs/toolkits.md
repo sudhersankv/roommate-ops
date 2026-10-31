@@ -39,12 +39,17 @@ Business logic still goes in `src/services/` (CLAUDE.md, "The one rule"). Tables
 | `worksWith` | `{ integrations }`: optional extras, shown in the sheet, never blocking |
 | `status` | `stable`, `beta` (badge) or `coming-soon` (listed, can't be switched on) |
 | `gate` | `{ criterion, examples }`: `criterion` is the Jev `toolkit` choice text (which messages belong here); `examples[0]` is what Roomie suggests when it's taught ("Learned Groceries. Try: ..."), and the first two are its `/help` line |
-| `persona` | lines in the TRICKS block of Roomie's composed persona (`mastra/persona.ts`, the `/* TOOLKIT_PERSONA */` slot) while it's on. Put the Toolkit's tool-routing rules here, not in `persona.ts` `CORE_RULES` |
 | `abilities` | plain words per tool id for the sheet's "What it can do" (tools without one show their description) |
 | `offerLine` | one sentence Onboarding's wrap-up line (`learnedLine`) adds while it's off, for a Trick that's off by default because it needs a connection step (Lease Inbox: "Want me to handle the landlord's emails too? ..."). The first off one with an `offerLine` is offered; it's never the "learn X" tip |
 | `postOrder` | where its lines sit in Roomie's own posts, the morning Bundle and the weekly report (ADR 0017: money 10, the landlord 20, the house 30, groceries 40). Default: nav order, then last |
 | `dashboard.nav` | `{ label, href: (groupId) => path, icon, order }`: a dock tab. The dock is Home + the first 3 learned by `order` + More (Ask Roomie in the middle); two Toolkits pointing at the same path share one dock tab. The More drawer lists every learned one (each its own tile), a greyed slot for each one not learned yet (Teach / Ask an admin) and each coming-soon one (inert, "Soon") |
 | `dashboard.pages` | route prefixes under `/g/<id>/` it owns (`["cart"]`). While every owner is off, the page shows "Roomie hasn't learned X here yet." with Teach Roomie X / Ask an admin |
+
+## Its skill (`skill.md`, #35)
+
+How Roomie works with the Trick lives in `src/toolkits/<id>/skill.md`, written for Roomie: its tool-routing rules under `## Rules`, and any other section (`## Examples`, `## Avoid`) for good and bad replies. Put the Trick's rules here, not in `persona.ts` `CORE_RULES`. `npm run skills` turns each `skill.md` into a sibling `skill.ts` (one exported string, so every bundler loads plain TypeScript); never edit `skill.ts`, and `src/toolkits/skills.test.ts` fails when one is missing or stale. The server entry passes it as `skill`. What goes into the prompt starts at the first `## ` section (the title and intro are for people); `## Rules` is dropped and other headings become `Heading:` lines.
+
+When the Gate picks a learned Trick for a message (the same pick that narrows the tools, `TOOLKIT_MIN`), its skill and core's are in the instructions in full and the other learned Tricks are only named; with no pick, every learned Trick's skill is in (`mastra/agents/instructions.ts toolkitPersona`). Skills are server-only: the Tricks page doesn't show them.
 
 ## Server entry (`server.ts`)
 
@@ -74,7 +79,7 @@ export const groceries = defineToolkit(manifest, {
 
 ## What you get for free
 
-- **Agent:** its tools are in `toolsFor()` when it's on; its `persona` is in the instructions; "Off here: X" when it's off.
+- **Agent:** its tools are in `toolsFor()` when it's on; its `skill.md` is in the instructions (in full when the Gate picks it, or when there's no pick); "Off here: X" when it's off.
 - **Gate:** its `gate.criterion` is offered to Jev only while it's on (`gate/jev.ts questionsFor`).
 - **Chat:** `toggle_toolkit` finds it by id or name and checks `requires`; `list_toolkits` describes it.
 - **Chat copy:** its line in `/help` (`channels/text.ts`) and in the setup's "Learned ..." line (`onboarding.ts learnedLine`).
@@ -86,7 +91,8 @@ export const groceries = defineToolkit(manifest, {
 
 - [ ] `src/toolkits/<id>/manifest.ts` with every field above that applies; `status` and `defaultOn` deliberate; `requires` for any Toolkit it leans on (Groceries needs Money)
 - [ ] tools in the folder, each calling a service; tool keys equal tool ids
-- [ ] `server.ts` with tools, any dashboard sections, idempotent hooks, and `bundle` / `report` if it has something to say on its own (with a `postOrder`)
+- [ ] `skill.md` with its rules (and examples), then `npm run skills`
+- [ ] `server.ts` with tools, its `skill`, any dashboard sections, idempotent hooks, and `bundle` / `report` if it has something to say on its own (with a `postOrder`)
 - [ ] a line in `manifests.ts` (`MANIFESTS`) and `registry.ts` (`BY_ID`)
 - [ ] presets updated if a purpose should include it
 - [ ] `npm run typecheck`, `npm test` (`registry.test.ts` checks the manifest is complete, abilities name real tools, nav hrefs and pages are well formed; `coupling.test.ts` that its id stayed in its folder)

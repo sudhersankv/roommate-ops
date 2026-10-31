@@ -2,8 +2,10 @@ import { leaseBundleLine, leaseReportParts, startLeaseInbox } from "@/services/l
 import { defineToolkit } from "../define";
 import { leaseInbox as manifest } from "./manifest";
 import { leaseInboxTools } from "./tools";
+import { skill } from "./skill";
 
 export const leaseInbox = defineToolkit(manifest, {
+  skill,
   tools: leaseInboxTools,
   dashboard: {
     settings: () => import("./dashboard").then((m) => m.LeaseInboxSettings),

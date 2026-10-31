@@ -117,12 +117,14 @@ test("the Onboarding copy", () => {
   assert.match(learnedLine(["splitting", "groceries", "house"]), /Want me to handle the landlord's emails too\? Say "roomie, learn lease inbox"\.$/);
 });
 
-test("every manifest's name, summary, long description, persona and offer", () => {
+test("every manifest's name, summary, long description and offer, and every Trick's skill (Roomie may echo it)", async () => {
   for (const m of [CORE_MANIFEST, ...CATALOG]) {
-    for (const [field, value] of Object.entries({ name: m.name, summary: m.summary, longDescription: m.longDescription, persona: m.persona ?? "", offerLine: m.offerLine ?? "" })) {
+    for (const [field, value] of Object.entries({ name: m.name, summary: m.summary, longDescription: m.longDescription, offerLine: m.offerLine ?? "" })) {
       assert.deepEqual(hits(value), [], `${m.id}.${field}`);
     }
   }
+  const { skillsById } = await import("@/toolkits/registry");
+  for (const [id, skill] of Object.entries(skillsById())) assert.deepEqual(hits(skill), [], `${id} skill.md`);
 });
 
 test("the Channels' shared lines (/help, /start, the failure line)", () => {

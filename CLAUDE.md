@@ -12,7 +12,7 @@ Agent skills for this repo live in `.agents/skills/`.
 
 **All business logic lives in `src/services/`.** The agent's tools (`src/toolkits/*/`) and the dashboard (`src/app/`) are thin front doors that call the same service functions. Anything you can do in chat must be doable in the UI, and vice versa. Never put logic in a tool or a page that belongs in a service. Permissions are business logic too: they live in services, never in prompts or pages alone.
 
-**The manifest is the Toolkit contract** ([ADR 0011](docs/adr/0011-manifest-is-the-toolkit-contract.md), [docs/toolkits.md](docs/toolkits.md)). The agent's tools and persona, the Gate's toolkit choices, the dock and its More drawer, Home, Settings and the Tricks page are built from the Group's enabled manifests. Never name a Toolkit in the shell, the Gate or the persona: put it in its manifest.
+**The manifest is the Toolkit contract** ([ADR 0011](docs/adr/0011-manifest-is-the-toolkit-contract.md), [docs/toolkits.md](docs/toolkits.md)). Each Trick's instructions to Roomie are its `skill.md` next to the manifest (`npm run skills` generates `skill.ts`; the Gate-picked Trick's skill is in the prompt in full, the others only named). The agent's tools and skills, the Gate's toolkit choices, the dock and its More drawer, Home, Settings and the Tricks page are built from the Group's enabled manifests. Never name a Toolkit in the shell, the Gate or the persona: put it in its manifest.
 
 **People see Tricks, never Toolkits.** In every string a person reads (chat replies and tool results Roomie relays, the intro, `/help`, `/start`, the dashboard, Settings) a Toolkit is a **Trick**; switching one on is **teaching** Roomie ("roomie, learn trips"), off is **forgetting** it. Never "toolkit / capability / module / plugin / feature / enable" there. Code keeps "toolkit" (ids, folders, `toggle_toolkit`, the `/toolkits` route, which also answers at `/tricks`). "Pet" appears in at most two places in the app (`/pet`, the Personality subtitle), and nothing user-facing says Roomie adapts to how the group talks.
 
@@ -169,7 +169,7 @@ src/
     agents/roomie.ts    ONE agent, built once: fetches the facts (personality, mood, people, Roomie's last replies,
                         enabled Toolkits); tools = toolsFor(toolkit, enabled Toolkits)
     agents/instructions.ts  pure: roomieInstructions = composePersona(...) with its Toolkit slot filled from the enabled
-                        manifests (what's on/off + each one's persona fragment) + members + time zone + Pending /
+                        manifests (what's on/off) + core's skill + the Gate-picked Trick's skill.md (all of them with no pick) + members + time zone + Pending /
                         Onboarding (vibe + presets) / /pet / greeting / Gate blocks
     persona.ts          pure: core rules + house style + archetype voice + sliders as sentences + quirks + learned
                         style (gated by confidence) + /* TOOLKIT_PERSONA */ + mood + people (ADR 0012)
@@ -188,7 +188,7 @@ src/
   toolkits/             docs/toolkits.md: how to add one. coupling.test.ts: no Toolkit id literal outside its folder, the
                         lists below, the landing's Trick files and tests
     types.ts            the contract: ToolkitManifest (summary, longDescription, icon, category, tags, defaultOn,
-                        requires, worksWith, status, gate { criterion, examples }, persona, abilities, adminOnly, postOrder,
+                        requires, worksWith, status, gate { criterion, examples }, abilities, adminOnly, postOrder,
                         dashboard { nav, pages }) and Toolkit (+ tools, dashboard { home, settings, mood } lazy refs,
                         onEnable/onDisable, bundle(ctx, now) = its line in the morning Bundle, report(ctx, now) = its
                         sections of the weekly report)

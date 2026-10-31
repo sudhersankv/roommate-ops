@@ -6,8 +6,10 @@ import { cartTools } from "./cart";
 import { groceries as manifest } from "./manifest";
 import { recipeTools } from "./recipes";
 import { restockTools } from "./restock";
+import { skill } from "./skill";
 
 export const groceries = defineToolkit(manifest, {
+  skill,
   tools: { ...cartTools, ...recipeTools, ...restockTools },
   dashboard: {
     home: () => import("./dashboard").then((m) => m.GroceriesHome),

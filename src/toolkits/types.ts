@@ -71,8 +71,6 @@ export type ToolkitManifest<Id extends string = string> = {
   status: ToolkitStatus;
   /** The Gate's `toolkit` choice for this Toolkit: what messages belong here. */
   gate: { criterion: string; examples: string[] };
-  /** Appended to Roomie's instructions while the Toolkit is on. */
-  persona?: string;
   /** Plain-words lines for the detail sheet, by tool id. Tools without one show their own description. */
   abilities?: Record<string, string>;
   /**
@@ -113,6 +111,8 @@ export type HookCtx = { groupId: string; memberId: string | null };
 export type Toolkit<Id extends string = string> = Omit<ToolkitManifest<Id>, "dashboard"> & {
   /** Keyed by tool id. */
   tools: Record<string, AnyTool>;
+  /** How Roomie works with this Trick: its skill.md (#35), generated into skill.ts by `npm run skills`. Server-only. */
+  skill: string;
   dashboard?: NonNullable<ToolkitManifest["dashboard"]> & {
     home?: ComponentRef;
     /** Where the Home section sits (default: nav order). Home reads standing, then today, then the rest. */

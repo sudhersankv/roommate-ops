@@ -3,7 +3,7 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { roomieInstructions } from "@/mastra/agents/instructions";
-import { allTools, core, toolsFor, TOOLKITS } from "./registry";
+import { allTools, core, skillsById, toolsFor, TOOLKITS } from "./registry";
 import { CATALOG, COMING_SOON, findManifest, MANIFESTS, TOOLKIT_IDS } from "./manifests";
 import { PRESETS, presetFor } from "./presets";
 import { TOOLKIT_CATEGORIES } from "./types";
@@ -129,12 +129,13 @@ describe("the manifest contract", () => {
     assert.deepEqual(presetFor(null), MANIFESTS.filter((m) => m.defaultOn).map((m) => m.id));
   });
 
-  test("persona fragments are in the instructions only while their Toolkit is on", () => {
+  test("skills are in the instructions only while their Trick is on", () => {
     const ctx = { memberName: "Maya" };
-    const all = roomieInstructions(ctx, "Maya", new Date(0), "America/Chicago", { toolkits: TOOLKIT_IDS });
-    const groceriesOnly = roomieInstructions(ctx, "Maya", new Date(0), "America/Chicago", { toolkits: ["groceries"] });
-    const splitting = MANIFESTS.find((m) => m.id === "splitting")!.persona!;
-    const groceries = MANIFESTS.find((m) => m.id === "groceries")!.persona!;
+    const skills = skillsById();
+    const all = roomieInstructions(ctx, "Maya", new Date(0), "America/Chicago", { toolkits: TOOLKIT_IDS, skills });
+    const groceriesOnly = roomieInstructions(ctx, "Maya", new Date(0), "America/Chicago", { toolkits: ["groceries"], skills });
+    const splitting = skills.splitting;
+    const groceries = skills.groceries;
     assert.ok(all.includes(splitting) && all.includes(groceries));
     assert.ok(groceriesOnly.includes(groceries) && !groceriesOnly.includes(splitting));
     assert.match(groceriesOnly, /Not learned here yet: Money, House/);

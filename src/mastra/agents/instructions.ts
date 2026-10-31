@@ -27,25 +27,32 @@ export const DM = (name: string, groupName?: string) =>
 
 export const GREET = `This is the first message in the chat today. Start your reply with a very short hello in your voice (a few words, on the same line), then answer as usual.`;
 
+/** Each Trick's skill (its skill.md, #35) by id, plus "core". agents/roomie.ts passes them from the server entries. */
+export type Skills = Readonly<Record<string, string>>;
+
 /**
- * What Roomie does here, from the enabled Toolkits' manifests: the summary line, what's off (so "track our chores"
- * with Chores off gets "an admin can switch it on" instead of a guess), and each enabled one's persona fragment.
- * These fill composePersona's Toolkit slot.
+ * What Roomie does here: the learned Tricks by name and summary, what's off (so "track our chores" with House off
+ * gets "an admin can teach it" instead of a guess), what's coming, then the skills. Core's skill is always in. When
+ * the Gate picked a learned Trick for this message (`picked`, the same pick that narrows the tools), only that Trick's
+ * skill is in full; the others are just named above. No pick, "none", or a Trick that isn't learned here: every
+ * learned Trick's skill. "core" picked: no Trick skills. These fill composePersona's Toolkit slot.
  */
-export function toolkitPersona(enabled: readonly string[]): string[] {
+export function toolkitPersona(enabled: readonly string[], opts: { picked?: string; skills?: Skills } = {}): string[] {
   const on = MANIFESTS.filter((m) => enabled.includes(m.id));
   const off = MANIFESTS.filter((m) => !enabled.includes(m.id));
+  const skills = opts.skills ?? {};
+  const picked = opts.picked;
+  const full = picked === "core" ? [] : on.some((m) => m.id === picked) ? on.filter((m) => m.id === picked) : on;
   return [
     `- Tricks you know here: ${on.map((m) => `${m.name} (${m.summary.replace(/\.$/, "")})`).join("; ") || "none yet, only the basics"}; always: ${CORE_MANIFEST.summary.replace(/\.$/, "")}.`,
     off.length ? `- Not learned here yet: ${off.map((m) => m.name).join(", ")}. If someone asks for one, say you haven't learned it here yet and an admin can teach you ("roomie, learn ${off[0].name.toLowerCase()}", or the dashboard's Tricks page).` : "",
     `- Coming soon, nobody can teach you these yet: ${COMING_SOON.map((m) => m.name).join(", ")}.`,
-    ...(CORE_MANIFEST.persona ? [CORE_MANIFEST.persona] : []),
-    ...on.filter((m) => m.persona).map((m) => m.persona!),
-    CORE_MANIFEST.persona ?? "",
+    skills.core ?? "",
+    ...full.map((m) => skills[m.id] ?? ""),
   ].filter(Boolean);
 }
 
-export const toolkitBlock = (enabled: readonly string[]): string => toolkitPersona(enabled).join("\n");
+export const toolkitBlock = (enabled: readonly string[], opts: { picked?: string; skills?: Skills } = {}): string => toolkitPersona(enabled, opts).join("\n");
 
 export const PENDING = (name: string) =>
   `${name} is a Pending member: an admin hasn't approved them yet. You can chat with them and answer questions, but tools that change anything will refuse; relay that kindly.`;
@@ -57,14 +64,14 @@ export function describeMembers(people: { displayName: string; role: string; sta
   return `${active.join(", ") || "unknown yet"}${pending.length ? `; pending approval: ${pending.join(", ")}` : ""}`;
 }
 
-export type InstructionOpts = { onboarding?: boolean; toolkits?: readonly string[]; personality?: Personality; /** The Group's, default USD. */ currency?: string; /** Named in a DM (they may be in several Groups). */ groupName?: string } & Partial<
+export type InstructionOpts = { onboarding?: boolean; toolkits?: readonly string[]; personality?: Personality; /** The Group's, default USD. */ currency?: string; /** Named in a DM (they may be in several Groups). */ groupName?: string; /** Each Trick's skill, plus core's. */ skills?: Skills } & Partial<
   Omit<PersonaFacts, "personality" | "toolkitPersona" | "timezone">
 >;
 
 export function roomieInstructions(ctx: Partial<RoomieContext>, members: string, now = new Date(), timezone = DEFAULT_TIMEZONE, opts: InstructionOpts = {}): string {
-  const { onboarding, toolkits, personality, currency = "USD", groupName, ...facts } = opts;
+  const { onboarding, toolkits, personality, currency = "USD", groupName, skills, ...facts } = opts;
   const blocks = [
-    composePersona({ ...facts, personality: personality ?? defaultPersonality(), timezone, toolkitPersona: toolkitPersona(toolkits ?? ctx.toolkits ?? TOOLKIT_IDS) }),
+    composePersona({ ...facts, personality: personality ?? defaultPersonality(), timezone, toolkitPersona: toolkitPersona(toolkits ?? ctx.toolkits ?? TOOLKIT_IDS, { picked: ctx.toolkit, skills }) }),
     `Group members: ${members}.${ctx.memberName ? ` You're talking with ${ctx.memberName}.` : ""}`,
     `Now (local): ${describeNow(timezone, now)}. House timezone: ${timezone}. "Today", "tonight", "Tuesday 8pm" and "this week" mean that zone. Pass times to tools as local wall-clock without an offset (2026-11-03T20:00); the tools convert.`,
     `Money in this group is ${currency} (${currencySymbol(currency)}). Amounts people say ("190", "1.5k") are ${currency}; pass them to tools as they said them. Say amounts the way the tools return them, never in another currency.`,
