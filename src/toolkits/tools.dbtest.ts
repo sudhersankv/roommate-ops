@@ -1281,7 +1281,8 @@ describe("Roomie tools against the dev DB", () => {
     assert.ok(["Outings", "Cooking", "Move-out"].every((n) => list.comingSoon.includes(n)));
     assert.ok(list.couldLearn.some((t: { name: string }) => t.name === "Lease Inbox"), "built (#27): one to teach, not Soon");
     assert.ok(!list.known.concat(list.couldLearn).some((t: { name: string }) => t.name === "Core"), "core isn't a Trick");
-    assert.match(list.say, /^Tricks I know here: .*Money.*\. Could learn: .*Groceries.*\. Coming soon: /);
+    assert.match(list.say, /^Money, .*\. Just talk to me\.$/, "one line, like the launch video");
+    assert.ok(list.couldLearn.some((t: { name: string }) => t.name === "Groceries"), "what could be learned stays in the result, for when they ask");
     assert.doesNotMatch(JSON.stringify(list), /Splitting/, "the Trick is called Money");
     assert.ok(!/toolkit|feature|enable/i.test(list.say + list.whoCanTeach), "Tricks vocabulary only");
     assert.equal(list.links, undefined, "no Browse Tricks link: links only when asked");
