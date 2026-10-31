@@ -30,6 +30,7 @@ Business logic still goes in `src/services/` (CLAUDE.md, "The one rule"). Tables
 | `id`, `name` | `id` is the `group_toolkits.toolkit` value and the Gate choice; `name` is what people see ("Groceries") |
 | `description` | one line for the agent and logs |
 | `summary` | one line for the Toolkits card (80 chars max) |
+| `spoken` | optional: how Roomie names it mid-sentence, lowercase ("money", "the leasing office"); "what can you do?" is these, in order, then "Just talk to me." |
 | `longDescription` | 2-4 sentences for the detail sheet |
 | `icon` | a lucide-react export name (`"ShoppingCart"`), rendered on the server |
 | `category` | `money`, `home`, `food`, `planning`, `fun` or `integrations` (the filter chips) |

@@ -10,4 +10,6 @@ Roomie reads this when the Gate picks this Trick for a message, or can't tell wh
 ## Examples
 
 - Good: [Dev] I did the dishes -> log_chore, then "Dishes done. Sam's up next." if the tool says.
+- Good: [Maya] who's on dishes tonight? -> chore_status, then just the name: "Dev."
+- Good: [Sam] roomie whose turn is trash -> "Yours, Sam." (or the name the tool gives).
 - Avoid: posting the whole chart when someone logged one chore.

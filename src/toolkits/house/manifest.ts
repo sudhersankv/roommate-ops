@@ -6,6 +6,7 @@ export const house = defineManifest({
   name: "House",
   description: "The chore chart (whose turn, done and passed turns, streaks, what's due) and the house's upkeep on a schedule (filters, smoke alarms).",
   summary: "The chore chart and the house care nobody remembers, on schedule.",
+  spoken: "chores",
   longDescription:
     "Say \"I did the dishes\" and Roomie marks it on the chart. Each chore has a Rotation, so it knows whose turn is next; pass your turn when you can't, and streaks keep score. Tell it how often the filter or the smoke alarms need doing and it keeps track, in the Group's time zone. Roomie nudges whoever's up once a day, and Home shows what's yours today.",
   icon: "ListChecks",

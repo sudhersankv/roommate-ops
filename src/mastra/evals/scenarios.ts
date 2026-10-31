@@ -1340,6 +1340,48 @@ export const SCENARIOS: Scenario[] = [
     turn: { text: "roomie what's the notice period in our lease?", from: "Sam" },
     expect: { tools: ["ask_lease"], noTools: "actions", replyIncludes: [/60|sixty/i] },
   },
+  /* ---------- the launch video (#57, #58): short, the fact first ---------- */
+  {
+    id: "video-what-can-you-do",
+    area: "personality",
+    turn: { text: "roomie what can you do", from: "Dev" },
+    expect: { tools: ["list_toolkits"], noTools: "actions", replyIncludes: [/money/i, /just talk to me/i], maxLines: 1, excludes: [...TOOLKIT_WORDS, /https?:\/\//] },
+  },
+  {
+    id: "video-log-paper-towels",
+    area: "personality",
+    turn: { text: "roomie paid $20 for paper towels + soap" },
+    expect: { tools: ["log_expense"], replyIncludes: [/^logged/i, "20"], maxLines: 2, emoji: { max: 1 }, excludes: [/I'll log|I have logged|I've gone ahead/i] },
+  },
+  {
+    id: "video-what-do-i-owe",
+    area: "personality",
+    seed: async (e) => void (await internet(e)),
+    turn: { text: "roomie what do i owe?", from: "Sam" },
+    expect: { tools: ["get_balances"], noTools: "actions", replyIncludes: ["$20", "Maya"], maxLines: 1, excludes: [/\bDev\b/] },
+  },
+  {
+    id: "video-remind-everyone",
+    area: "personality",
+    turn: { text: "roomie remind everyone trash goes out tuesday 8pm" },
+    expect: { tools: ["set_reminder"], replyIncludes: [/tuesday/i, /8/], maxLines: 1, excludes: [/I'll set|I've set up a reminder for/i] },
+  },
+  {
+    id: "video-whose-turn-short",
+    area: "personality",
+    seed: async (e) => {
+      await chores.addChore(e.ctx, { name: "Dishes", everyDays: 1, rotation: [e.member.Maya, e.member.Dev, e.member.Sam] });
+      await chores.logChore(e.ctx, { chore: "dishes" });
+    },
+    turn: { text: "roomie who's on dishes tonight?", from: "Sam" },
+    expect: { tools: ["chore_status"], replyIncludes: ["Dev"], maxLines: 1 },
+  },
+  {
+    id: "video-rate-roommates",
+    area: "personality",
+    turn: { text: "roomie rate my roommates", from: "Sam" },
+    expect: { noTools: "actions", maxLines: 2, excludes: [/as an ai|I can't rate|owe/i] },
+  },
 ];
 
 

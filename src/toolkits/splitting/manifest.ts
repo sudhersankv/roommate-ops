@@ -6,6 +6,7 @@ export const splitting = defineManifest({
   name: "Money",
   description: "Shared Expenses (any split, several payers, receipts), Balances, settling up with pay links, and Splitwise import/export.",
   summary: "Log shared costs, split them any way, settle up with pay links.",
+  spoken: "money",
   longDescription:
     "Tell Roomie what you paid and it splits it: evenly, by exact amounts, percentages or shares, even with several payers. Send a photo of a receipt and it splits it item by item. Balances and the Settle plan are always exact, and Settle up hands out Venmo, PayPal or Cash App links with the amount filled in. Bring an old Splitwise group along, or keep one in sync.",
   icon: "Wallet",

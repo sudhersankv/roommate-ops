@@ -57,6 +57,8 @@ export type ToolkitManifest<Id extends string = string> = {
   description: string;
   /** One line for the marketplace card. */
   summary: string;
+  /** How Roomie names it mid-sentence ("what can you do?" -> "Money, groceries, chores. Just talk to me."): lowercase, a few words. */
+  spoken?: string;
   /** 2-4 sentences for the detail sheet. */
   longDescription: string;
   icon: IconName;
