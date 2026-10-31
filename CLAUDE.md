@@ -29,7 +29,10 @@ src/
                         (the landing page's WhatsApp beta form, not tied to a Group); trick_votes ("I want this" on a
                         coming-soon Trick, migration 0008); rate_counters (fixed-window cap counts) and groups.paused_at
                         (migration 0009); groups.join_code / join_code_rotated_at / join_policy, chats.participant_count
-                        (+ _at) and members.wants_seat_id (Join links, migration 0011)
+                        (+ _at) and members.wants_seat_id (Join links, migration 0011); documents (a Group's files: kind,
+                        title, storage_key in the BlobStore, source, uploaded_by, filed_at null = an unkept chat photo),
+                        expenses.receipt_document_id and pending_posts (urgent posts / DMs held through quiet hours) and
+                        scheduled_posts kind "bundle" (was "chores.nudge"), migration 0015
   db/enums.ts           categories, split methods, recurrences, sources, Group purposes, beta sizes / statuses (no drizzle
                         import: client code uses them)
   db/index.ts           db client
@@ -61,8 +64,17 @@ src/
                         getSettlePlan (simplified or pairwiseDebts per groups.simplify_debts), settleUp, debtBetween,
                         expenseSummary (ready-to-say), settleReportParts (Money's report section)
     categories.ts       guessCategory (fallback when nobody picked one)   recurring.ts  latestOccurrence + runRecurring
-    receipts.ts         photo -> parsed receipt (vision on the gateway, sums recomputed), receiptSplits, saveUpload,
-                        askVision (the one vision call), imageDataUrl
+    receipts.ts         photo -> parsed receipt (vision on the gateway, sums recomputed), receiptSplits, saveUpload (an
+                        unfiled photo Document; folder "tg/<chat>" / "wa/<user>" / "g-<id>" or { groupId } -> /api/docs/<id>),
+                        askVision (the one vision call), imageDataUrl (our Documents from the blob store)
+    documents.ts        Documents (ADR 0018): fileDocument (row + blob "g/<groupId>/<id>"), list / findDocuments (title or
+                        kind, newest first), readDocument (active Members), keepDocument ("roomie keep this"), attachReceipt,
+                        deleteDocument (uploader or Admin), documentsView (the Docs tab's data), forget me (deleteMemberPhotos,
+                        anonymizeUploader, deleteUnfiledByUrl), deleteGroupDocuments, purgeOldDocuments (unkept, 30 days)
+    urgent.ts           the urgent slot: postUrgent (one a day, "urgent" claim, held to 08:00 in quiet hours, nothing when
+                        paused), flushPendingPosts (scheduler: claim-by-delete, put back on failure), nudgesOff
+    nudges.ts           sendNudge(memberId, out, now): a private nudge; skipped when member_notes.note.nudges = "off",
+                        held to 08:00 in quiet hours
     grocery-photos.ts   a recipe / list / shelf photo -> items as written (readGroceryPhoto, cached per url;
                         setPhotoReader for tests), addPhotoToCart (a recipe is saved first), photoSummary
     splitwise.ts        connect / import / export / live mirror (ADR 0004) + runSplitwiseOutbox
@@ -87,7 +99,7 @@ src/
     report.ts           groupReport (the enabled Toolkits' report() parts in post order + core's Reminders line, naming no
                         Toolkit) + composeReport / formatGroupReport (one message; casual = sentences), dueWord, joinNames
     bundle.ts           the morning Bundle (ADR 0017): groupBundle = the enabled Toolkits' bundle() lines in post order,
-                        composeBundle (pure; no lines = no post)
+                        then core's coreBundleLine (whole-group Reminders due today); composeBundle (pure; no lines = no post)
     schedule.ts         groupTimezone, the nudge hour (on House's group_toolkits row) and report day/hour (getSchedule /
                         updateSchedule, Admin), the pure windows (bundleWindow, weeklyReportWindow), claimPost /
                         releasePost on scheduled_posts
@@ -156,12 +168,15 @@ src/
     core/               manifest.ts + server.ts; members (list, list_pending, approve/decline/promote, set_payment_handle,
                         forget_me), people (remember, what_do_you_know_about_me), settings (set_group_settings incl.
                         personality, toggle_toolkit, list_toolkits), dashboard (get_dashboard_link: forEveryone = the Join
-                        link line; rotate_join_link, set_join_policy, revoke_seat: adminOnly), reminders, report
+                        link line; rotate_join_link, set_join_policy, revoke_seat: adminOnly), reminders, report,
+                        documents (keep_document, find_documents: links only with open=true); core's persona lines
     splitting/ groceries/ house/   manifest.ts + server.ts + the tools (+ dashboard.tsx: Home/Settings sections;
                         groceries: cart.ts + recipes.ts, requires splitting; house: chores.ts + upkeep.ts, the chores and
                         upkeep Tricks as one, nav "House" at /house). splitting's manifest name is "Money" (id unchanged)
   integrations/         composio.ts (client + cached key health), splitwise.ts (SplitwiseClient: ComposioSplitwise and
-                        FakeSplitwise, splitwiseClient(), splitwiseAvailability())
+                        FakeSplitwise, splitwiseClient(), splitwiseAvailability()), blob-store.ts (BlobStore: NeonObjectStorage
+                        = the S3 API with fetch + SigV4, path-style, NEON_STORAGE_* or Neon's AWS_* env; MemoryBlobStore with
+                        BLOB_FAKE=1 or no storage env; blobStore(), setBlobStore() for tests)
   channels/types.ts     IncomingMessage { channel, chatExternalId, userExternalId, userName, text, imageUrl?, isPrivate?,
                         ... }, Outgoing, Channel, CantMessagePrivatelyError, ROSTER_GRACE_MS
   channels/index.ts     registry: registerChannel(); deliver(groupId, out) and deliverPrivate(memberId, out) go through
@@ -196,6 +211,7 @@ src/
   lib/llm.ts            model ids for the Neon AI Gateway ("neon/<id>"), the gateway embedder
   lib/urls.ts           APP_URL links (dashboardUrl, linkFor)
   lib/dates.ts          day strings and labels in the Group's time zone (client-safe)
+  lib/quiet-hours.ts    pure: inQuietHours / nextAllowed (22:00-08:00 local -> the next 08:00), daytimeHour
   lib/time.ts           Group time zones, Intl only (client-safe): zonedParts, zonedTimeToUtc (DST gap -> later, overlap ->
                         first), dayInZone, startOfDay, addDaysInZone, nextWeekday, parseInZone (bare wall-clock = Group
                         zone), formatInZone, describeNow, resolveTimeZone ("Chicago", "CST", "India" -> IANA), zonesByRegion
@@ -208,10 +224,11 @@ src/
                         slangBudget, usableNicknames, saysName, isPetCommand, moodFrom, greeting / win / preview lines
   lib/style-stats.ts    pure: the Learned style's counts (countPhrase, countNickname, mergeLearned, activeHours)
   lib/pay-links.ts      Venmo / PayPal / Cash App links with the amount (settle_up and the settle drawer)
-  jobs/scheduler.ts     60 s tick: due reminders (deliver for the Group, deliverPrivate for a Member), the morning Bundle
-                        (bundleJob: the enabled Toolkits' bundle() lines at the nudge hour, claimed under the chores
-                        nudge's scheduled_posts kind) and the weekly Group Report (once per period); Group style
-                        refresh; recurring Expenses (hourly check); Splitwise outbox; daily retention
+  jobs/scheduler.ts     60 s tick: due reminders (deliver for the Group, deliverPrivate for a Member), held posts and DMs
+                        (flushPendingPosts), the morning Bundle (bundleJob: the enabled Toolkits' bundle() lines + core's
+                        Reminders line at the nudge hour, clamped to 08:00 out of quiet hours, claimed as "bundle") and
+                        the weekly Group Report (once per period); Group style refresh; recurring Expenses (hourly
+                        check); Splitwise outbox; daily retention (also unkept chat photos)
   jobs/report-text.ts   groupReportText: the same text for the weekly post and group_report (casual from the style note)
   jobs/retention.ts     daily: chat_messages, trace spans + live scores (mastra_ai_spans, mastra_scorers) and memory-thread
                         messages older than 30 days (ADR 0006, audit B4); logs the counts
@@ -276,6 +293,7 @@ src/
                         settings/splitwise/callback = Composio's return URL (route handler)
     design/             the design-system page (dev only unless SHOW_DESIGN_PAGE=1)
     api/auth/[...path]  Neon Auth proxy; api/chat = Ask Roomie (session Member, 401/403); api/receipts = Scan receipt;
+                        api/docs/[id] = a Document's file (active Member of its Group, else 403; unknown 404; private cache);
                         api/telegram = Telegram webhook (401 without TELEGRAM_WEBHOOK_SECRET in the header);
                         api/admin/whatsapp = status JSON + start / request-pairing-code / logout (operators, else 404)
     admin/whatsapp/     the operator page: state, QR (refreshes every 5 s), pairing-code form, the linked number, Log out
@@ -314,7 +332,7 @@ scripts/studio-presets.ts  writes .mastra-presets.json for Studio (run by mastra
 - **Rules** (`services/authz.ts`): Pending members can chat and read, but every write service calls `requireActive` and refuses with "Hang on, an admin needs to approve you first. <Admin> can approve you." Members, roles, settings, Toolkits and delete-group-data call `requireAdmin`. Expenses can be changed by whoever added or paid them, anyone with a Share, or an Admin. Any active Member can add a chore and record a Settlement between two other Members (intended).
 - **Dashboard:** every page and action goes through `lib/session.ts`; nothing trusts a member id from the client. Non-Admins don't see admin controls, and the actions return 403 anyway.
 - **Dev sign-in bypass:** with `NODE_ENV !== "production"` and `DEV_AUTH_EMAIL` set, that email is the signed-in Account (loud warning in the log). For automated browser checks only.
-- **Privacy** (ADR 0006, `/privacy` must say what the code does): chat_messages, memory-thread messages, traces and live scores live 30 days; a message the Gate stayed quiet on keeps no text in traces. `forget_me` deletes a Member's chat lines, note, Claim links, reminders set for them, memory lines under every name they had (and Roomie's replies naming them; other Members' names, longer or the same, are left alone), the photos in those lines (not an Expense's receipt), the traces their messages started or that carry their "[Name]" lines (with whole scorer runs) and their `wa_contacts` row, sweeps again 90 s later (the agent's turn saves "[Name] roomie forget me" after the tool runs; retention also clears forgotten Members' traces), anonymizes their names in Activity, then makes them removed: "Former member", no `channel_user_id`, no Account (a later message makes them a new Pending Member); the last Admin leaving promotes the longest-standing active Member; ledger rows stay. "Delete group data" wipes the Group's data, memory, traces, scores and upload folders but keeps the Group, Chat and Members.
+- **Privacy** (ADR 0006, `/privacy` must say what the code does): chat_messages, memory-thread messages, traces and live scores live 30 days; a message the Gate stayed quiet on keeps no text in traces. `forget_me` deletes a Member's chat lines, note, Claim links, reminders set for them, memory lines under every name they had (and Roomie's replies naming them; other Members' names, longer or the same, are left alone), the unkept photos in those lines and every `photo` Document they uploaded (their name comes off the rest), the traces their messages started or that carry their "[Name]" lines (with whole scorer runs) and their `wa_contacts` row, sweeps again 90 s later (the agent's turn saves "[Name] roomie forget me" after the tool runs; retention also clears forgotten Members' traces), anonymizes their names in Activity, then makes them removed: "Former member", no `channel_user_id`, no Account (a later message makes them a new Pending Member); the last Admin leaving promotes the longest-standing active Member; ledger rows stay. "Delete group data" wipes the Group's data, memory, traces, scores and Documents (rows and files) but keeps the Group, Chat and Members.
 ## Splitting (step 5)
 
 - **The model passes intent, never computed cents** (ADR 0007). "50/25/25" is `percents`, "2:2:1" is `shares`, "Dev 30, Sam 15" is `exact` (as said), "Alex paid 60 and I paid 40" is `payers`. The service computes every Share; a split that doesn't add up throws a `SplitError` whose message says what's left or over, and Roomie asks.
@@ -323,7 +341,7 @@ scripts/studio-presets.ts  writes .mastra-presets.json for Studio (run by mastra
 - **Categories** are always set: Roomie picks one (`log_expense.category` is required), the dashboard guesses from the description until you choose, `guessCategory` covers old rows and imports. `occurred_on` is the day it happened in the Group's time zone; lists sort by it.
 - **Recurring** (`monthly` on the start's day of month clamped to 28, `weekly` on its weekday): the scheduler copies the parent with `recurring_parent_id`; (parent, day) is unique, so a copy is made once per period, deleted copies included.
 - **Settle plan** follows `groups.simplify_debts`: on = fewest payments (`computeSettlePlan`), off = pairwise (`pairwiseDebts`). `settle_up` with `paid: false` records nothing and returns pay buttons (`lib/pay-links.ts`) for the payee's handles; `paid: true` records a Settlement. Handles live in `member_notes.note.handles` and are merged in SQL so two saved at once both stick.
-- **Receipts:** `services/receipts.ts` sends the photo (always as a data URL; our own `/uploads/...` files are read from disk) to `RECEIPT_MODEL ?? LLM_MODEL` on the gateway's `/v1/chat/completions` with an `image_url` part (no `temperature`: claude-sonnet-5-5 rejects it). The model only transcribes; zod validates, prices are parsed as strings, the total is recomputed (items + tax + tip) and a mismatch is flagged so Roomie asks. `expense_from_receipt` builds exact Shares per item (unclaimed items shared, tax and tip proportional), shows the breakdown first unless they explicitly asked to log it. Photos go to `public/uploads/<folder>/` (gitignored). `RECEIPT_FAKE=1` (evals) or `setReceiptReader()` (tests) skip the model.
+- **Receipts:** `services/receipts.ts` sends the photo (always as a data URL; our own `/api/docs/<id>` Documents are read from the blob store) to `RECEIPT_MODEL ?? LLM_MODEL` on the gateway's `/v1/chat/completions` with an `image_url` part (no `temperature`: claude-sonnet-5-5 rejects it). The model only transcribes; zod validates, prices are parsed as strings, the total is recomputed (items + tax + tip) and a mismatch is flagged so Roomie asks. `expense_from_receipt` builds exact Shares per item (unclaimed items shared, tax and tip proportional), shows the breakdown first unless they explicitly asked to log it. Photos are Documents (`services/documents.ts`, ADR 0018): a chat photo or dashboard scan is an unfiled `photo` (Roomie can read it, the Docs list doesn't show it, retention drops it after 30 days); logging it as an Expense's receipt makes it a filed `receipt` with `source` the Expense and sets `expenses.receipt_document_id` (`receipt_url` stays the `/api/docs/<id>` link). Nothing is written under `public/uploads` any more. `RECEIPT_FAKE=1` (evals) or `setReceiptReader()` (tests) skip the model.
 - **Splitwise** (ADR 0004, 0009): `SplitwiseClient` with a Composio implementation (`composio.tools.execute(slug, { userId: accounts.id, arguments })`, `connectedAccounts.link(userId, authConfigId, { callbackUrl })` for OAuth) and `FakeSplitwise`. `splitwiseClient()` returns the fake when `SPLITWISE_FAKE=1` (tests inject one with `setSplitwiseClient`); dev-chat switches to the fake by itself when `COMPOSIO_API_KEY` is missing or rejected and says so once. A 401 / missing key / no connection is `SplitwiseNotConnectedError` ("Splitwise isn't connected yet"), relayed as text, never a crash; Settings shows the card disabled with the reason. Import maps people by email, then name, else adds them as Pending; owed_share -> exact Shares, paid_share -> Payers, payments -> Settlements, refs dedupe per Group. Export is a one-time copy of what has no ref; the live mirror queues `outbox_jobs` that the scheduler pushes (create/update/delete by ref, retried with backoff).
 
 ## Groceries (step 6)
@@ -343,7 +361,7 @@ scripts/studio-presets.ts  writes .mastra-presets.json for Studio (run by mastra
 - **Rotation:** `chores.rotation` (member ids in order, null = everyone). With one, the turn is the Member after whoever last did or passed it (inactive ids drop out; an empty result falls back to everyone); without one, whoever did or passed it least recently (never first, ties by name). A pass is a `chore_logs` row with `skipped`: it moves the turn, isn't a done (no streak, the chore stays due). Only whoever's turn it is can pass (`not-yours`). Logging for another active Member is fine; the Activity row says "for Dev".
 - **Due and streaks:** a chore is due on (last done's local day + everyDays), never done = due today; `state` is overdue / due / ok. A Streak counts a Member's own consecutive on-time dones on that chore (on time = no later than the previous done's day + everyDays); a pass or a late done ends it. Upkeep: never done = due today (due soon, not overdue), due soon = within 7 days.
 - **Reminders:** `memberId` null = the whole Group (posted with `deliver`), set = that Member privately (`deliverPrivate`), never both; if Roomie can't DM them yet it goes to the Chat once, addressed to them, with the Start hint. `created_by` gives "(set by Maya)" when set for someone else. Repeats (daily / weekly / monthly, monthly clamped to day 28) keep the local wall-clock and skip missed occurrences. The scheduler claims a reminder (sets `sent_at`) before sending and releases it on failure. Lists show only what the viewer may see (`visibleTo`); cancel = the target, the setter, anyone for a whole-group one, or an Admin.
-- **Posts Roomie makes on its own (ADR 0001, ADR 0017):** the morning Bundle at `group_toolkits["house"].settings.nudgeHour` (default 9, null = off): each enabled Toolkit's `bundle()` line in post order, nothing when none has anything to say (today that's House's chores line, only when something is due or late; the other lines are the core-slots issue); the weekly Group Report at `group_toolkits["core"].settings.report = { weekday, hour }` (default Sunday 18). Both are claimed in `scheduled_posts (group, kind, local period)` before sending (the Bundle under the chores nudge's kind), so at most one per day / week across restarts and processes; a failed send gives the claim back. Upkeep has no post of its own: it's a line in the report. The window is the whole hour; a scheduler that was off for it skips that day rather than posting late.
+- **Posts Roomie makes on its own (ADR 0001, ADR 0017):** the morning Bundle at `group_toolkits["house"].settings.nudgeHour` (default 9, null = off): each enabled Toolkit's `bundle()` line in post order, then core's line (whole-group Reminders due today), nothing when none has anything to say (today: House's chores line, only when something is due or late, and core's; Money, Groceries and Lease Inbox lines are their own issues); an hour inside quiet hours (22:00-08:00 local, `lib/quiet-hours.ts`) goes out at 08:00. One urgent post a day (`services/urgent.postUrgent`) and private nudges (`services/nudges.sendNudge`) hold to 08:00 in `pending_posts` at night; the weekly Group Report at `group_toolkits["core"].settings.report = { weekday, hour }` (default Sunday 18). Both are claimed in `scheduled_posts (group, kind, local period)` before sending (kinds `bundle`, `urgent`, `report.weekly`), so at most one per day / week across restarts and processes; a failed send gives the claim back. Upkeep has no post of its own: it's a line in the report. The window is the whole hour; a scheduler that was off for it skips that day rather than posting late.
 - **The Group Report** is one message of at most ~12 lines: each enabled Toolkit's `report()` parts in post order (Money: the Settle plan; House: chores this week, the best streak, what's up now, the chart, upkeep due soon; Groceries: the Cart's size), then core's next-week whole-group reminders. Core names no Toolkit. Emoji-led lines by default; when the Group style note's tone is casual (`isCasualStyle`) the same sentences run together without the list look. `group_report` returns the same text (`groupReportText`) and Roomie posts it verbatim.
 - **Onboarding copy:** the intro is three lines and no feature list (who Roomie is, "tell me what this group is for ... and I'll learn the right Tricks", the Admin); when setup finishes `set_group_settings` returns `learned` (`learnedLine`: "Learned Money and Groceries. Say "roomie, learn house" any time.", or "You didn't say what this group is for, so I kept the roommates set: ..."), and `say` (that line + the Join link line), which Roomie posts as it is.
 - **House's `onEnable`** (teaching it, and Onboarding presets that include it) adds the three starter chores (no Rotation, so new people join in; only on an empty chart) and the usual five upkeep items (only the missing ones), so twice adds nothing. Onboarding itself names no Toolkit.
