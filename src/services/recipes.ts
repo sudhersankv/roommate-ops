@@ -11,8 +11,10 @@ import { instacartClient } from "@/integrations/instacart";
 import { record, sourceOf } from "./activity";
 import { requireActive } from "./authz";
 import { listMembers } from "./members";
-import { getPantry } from "./pantry";
-import { coveredBy, haveNeed, recipeKey, scaleIngredients } from "./recipe-math";
+import { getNotKept, getPantry } from "./pantry";
+import { coveredBy, haveNeed, recipeBuyList, recipeKey, scaleIngredients } from "./recipe-math";
+import { matchUsual } from "./usual-rules";
+import { usualsFor } from "./usuals";
 import type { Ctx, GroupCtx } from "./types";
 
 const { recipes, cartItems, members } = schema;
@@ -316,11 +318,15 @@ export type AddRecipeResult = {
   have: string[];
   /** Already open in the Cart (from this Recipe, or a shared item with that name). */
   alreadyInCart: string[];
+  /** Left out as almost always in the house (salt, oil, the common spices), named once (recipe-math assumedLine). */
+  assumed: string[];
 };
 
 /**
  * Put a Recipe's missing ingredients in the Cart: not the Pantry's, not the ones in `skip`, not what's already
- * there. Items are shared (split evenly) unless `shared: false` and carry recipe_id; no prices.
+ * there, not what's assumed in the house (`assumed`: salt, the common spices). Each goes in as something you can buy
+ * (recipe-math buyableAmount: "1 head" of garlic, "1 tub" of sour cream), or as the usual when there is one; the Recipe
+ * keeps its cooking amounts. Items are shared (split evenly) unless `shared: false` and carry recipe_id; no prices.
  */
 export async function addRecipeToCart(ctx: Ctx, recipeId: string, opts: { skip?: string[]; shared?: boolean; forMemberId?: string } = {}): Promise<AddRecipeResult> {
   await requireActive(ctx);
@@ -337,30 +343,38 @@ export async function addRecipeToCart(ctx: Ctx, recipeId: string, opts: { skip?:
     .from(cartItems)
     .where(and(eq(cartItems.groupId, ctx.groupId), eq(cartItems.status, "open")));
   const inCart = (name: string) => open.some((o) => (o.recipeId === recipe.id || o.shared) && (coveredBy(name, [o.name]) || coveredBy(o.name, [name])));
-  const toAdd = need.filter((i) => !inCart(i.name));
   const alreadyInCart = need.filter((i) => inCart(i.name)).map((i) => i.name);
+  const { buy, assumed } = recipeBuyList(need.filter((i) => !inCart(i.name)), await getNotKept(ctx));
   const shared = opts.forMemberId ? false : (opts.shared ?? true);
-  const rows = toAdd.length
+  // A usual (#36) wins over the default buyable size: the house's for shared items, the person's for theirs.
+  const [houseUsuals, ownUsuals] = await Promise.all([usualsFor(ctx.groupId, null), usualsFor(ctx.groupId, addedBy)]);
+  const rows = buy.length
     ? await db
         .insert(cartItems)
         .values(
-          toAdd.map((i) => ({
-            groupId: ctx.groupId,
-            // Cart items read like the rest of the Cart ("Ground beef"); Recipes keep lower-case search names.
-            name: i.name.charAt(0).toUpperCase() + i.name.slice(1),
-            qty: formatAmount(i.quantity, i.unit),
-            quantity: String(roundQuantity(i.quantity)),
-            unit: i.unit,
-            addedBy,
-            shared: i.shared === false ? false : shared,
-            estCents: null,
-            recipeId: recipe.id,
-          })),
+          buy.map(({ ingredient: i, line }) => {
+            const isShared = i.shared === false ? false : shared;
+            const usual = matchUsual(isShared ? houseUsuals : ownUsuals, line.name, true);
+            const amount = usual ? { quantity: usual.quantity, unit: usual.unit } : { quantity: line.quantity, unit: line.unit };
+            const name = usual?.name ?? line.name;
+            return {
+              groupId: ctx.groupId,
+              // Cart items read like the rest of the Cart ("Ground beef"); Recipes keep lower-case search names.
+              name: name.charAt(0).toUpperCase() + name.slice(1),
+              qty: usual?.qty ?? line.qty,
+              quantity: amount.quantity === null ? null : String(roundQuantity(amount.quantity)),
+              unit: amount.unit,
+              addedBy,
+              shared: isShared,
+              estCents: null,
+              recipeId: recipe.id,
+            };
+          }),
         )
         .returning()
     : [];
   if (rows.length) await record(ctx.groupId, ctx.memberId, "cart.recipe", `put ${rows.length} ingredient${rows.length === 1 ? "" : "s"} for ${recipe.title} on the Cart${addedBy !== ctx.memberId ? ` for ${(await namesFor(ctx.groupId)).get(addedBy) ?? "someone"}` : ""}`, { table: "recipes", id: recipe.id }, sourceOf(ctx));
-  return { recipe, added: rows.map((r) => ({ id: r.id, name: r.name, qty: r.qty })), have: have.map((i) => i.name), alreadyInCart };
+  return { recipe, added: rows.map((r) => ({ id: r.id, name: r.name, qty: r.qty })), have: have.map((i) => i.name), alreadyInCart, assumed };
 }
 
 /**

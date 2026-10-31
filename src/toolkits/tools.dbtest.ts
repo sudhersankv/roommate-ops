@@ -1057,6 +1057,48 @@ describe("Roomie tools against the dev DB", () => {
     }
   });
 
+  test("recipe_add_to_cart: buyable amounts, the spices assumed and named once, a usual wins; the recipe keeps cooking amounts; the Pantry's 'not kept' isn't assumed", async () => {
+    const beefTacos = JSON.stringify({
+      title: "Beef tacos for 4",
+      servings: 4,
+      cooking_time: 25,
+      ingredients: [
+        { name: "ground beef", quantity: 1, unit: "lb", display_text: "1 lb ground beef" },
+        { name: "garlic", quantity: 2, unit: "clove", display_text: "2 cloves garlic, minced" },
+        { name: "chili powder", quantity: 1, unit: "tbsp", display_text: "1 tbsp chili powder" },
+        { name: "ground cumin", quantity: 2, unit: "tsp", display_text: "2 tsp ground cumin" },
+        { name: "sour cream", quantity: 4, unit: "tbsp", display_text: "4 tbsp sour cream" },
+        { name: "salt", quantity: 0.5, unit: "tsp", display_text: "1/2 tsp salt" },
+        { name: "black pepper", quantity: 0.25, unit: "tsp", display_text: "1/4 tsp black pepper" },
+        { name: "corn tortillas", quantity: 12, unit: "each", display_text: "12 corn tortillas" },
+        { name: "cheddar", quantity: 6, unit: "oz", display_text: "6 oz cheddar, grated" },
+      ],
+      steps: ["Brown the beef with the garlic and spices.", "Warm the tortillas.", "Fill, top with cheddar and sour cream."],
+    });
+    recipes.setRecipeWriter({ write: async () => beefTacos });
+    try {
+      // The house always gets the big tub of sour cream.
+      await run("cart_add", { items: [{ name: "sour cream", qty: "16 oz tub" }], shared: true });
+      await run("cart_remove", { name: "sour cream" });
+      const draft = await run("recipe_draft", { request: "beef tacos for 4", servings: 4 });
+      assert.match(draft.text, /Need: 1 lb ground beef, 2 cloves garlic, minced, 1 tbsp chili powder, 2 tsp ground cumin, 4 tbsp sour cream/, "the recipe keeps cooking amounts");
+      const r = await run("recipe_add_to_cart", { recipe: "beef tacos" });
+      // The house bought 20 tortillas for the last tacos (cart_purchased taught that usual), so 20 it is.
+      assert.deepEqual(r.added.sort(), ["Cheddar (8 oz)", "Corn tortillas (20)", "Garlic (1 head)", "Ground beef (1 lb)", "Sour cream (16 oz tub)"]);
+      assert.deepEqual(r.assumed, ["chili powder", "ground cumin", "black pepper"]);
+      assert.deepEqual(r.skippedHave, ["salt"], "salt is in the Pantry: had, not assumed");
+      assert.equal(r.say, "Added 5 things for Beef tacos for 4 to the Cart. I assumed you have chili powder, ground cumin and black pepper; say if you're out. Want me to keep them in the Pantry?");
+      noPrice(r);
+      // "We don't keep cumin": out of the Pantry, so it's bought next time.
+      await run("pantry_set", { remove: ["cumin"] });
+      const again = await run("recipe_add_to_cart", { recipe: "beef tacos" });
+      assert.deepEqual([again.added, again.assumed], [["Ground cumin (1 package)"], ["chili powder", "black pepper"]]);
+      for (const i of await cart.listOpenItems(ctx)) await cart.removeItemById(ctx, { id: i.id });
+    } finally {
+      recipes.setRecipeWriter({ write: async () => recipes.SAMPLE_RECIPE_JSON });
+    }
+  });
+
   test("keep_document / find_documents: 'roomie keep this, it's the lease' files the photo; find gives links only when asked to open", async () => {
     const photo = await receipts.saveUpload({ groupId }, Buffer.from("lease page 1"), "image/jpeg");
     assert.deepEqual(await run("find_documents", { query: "lease" }), { found: [] }, "an unkept photo isn't found");

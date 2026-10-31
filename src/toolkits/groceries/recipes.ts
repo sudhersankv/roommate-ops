@@ -3,6 +3,7 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { pantry, recipes } from "@/services";
+import { recipeAddedLine } from "@/services/recipe-math";
 import type { Recipe } from "@/services/recipes";
 import { InstacartUnavailableError } from "@/integrations/instacart";
 import { ctxOf } from "../util";
@@ -51,7 +52,8 @@ export const recipeTools = {
   recipe_add_to_cart: createTool({
     id: "recipe_add_to_cart",
     description:
-      "Put a saved Recipe's missing ingredients in the cart, when someone asks ('yes add them', 'add the taco stuff'). Pantry items are left out automatically; put anything they say they already have in `skip` ('we have onions' -> ['onions']). Items are shared unless they say it's just for them.",
+      "Put a saved Recipe's missing ingredients in the cart, when someone asks ('yes add them', 'add the taco stuff'), in amounts you can buy ('1 head' of garlic, '1 tub' of sour cream). Pantry items are left out automatically; put anything they say they already have in `skip` ('we have onions' -> ['onions']). Items are shared unless they say it's just for them. " +
+      "Salt, oil and the common spices are assumed to be in the house (`assumed`); post `say` as is: it names them once. 'We're out of cumin' afterwards is cart_add; 'we always have them' is pantry_set add.",
     inputSchema: z.object({
       recipe: z.string().optional().describe("Recipe id or title; omit for the newest recipe"),
       skip: z.array(z.string()).optional().describe("Ingredients they already have, e.g. ['onions']"),
@@ -66,6 +68,8 @@ export const recipeTools = {
         addedCount: r.added.length,
         skippedHave: r.have,
         alreadyInCart: r.alreadyInCart,
+        assumed: r.assumed,
+        say: recipeAddedLine(r.recipe.title, r.added.length, r.assumed),
       };
     },
   }),
