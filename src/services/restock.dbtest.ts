@@ -218,7 +218,9 @@ describe("Restock against the dev DB", () => {
     });
     try {
       const photo = await receipts.saveUpload({ groupId }, Buffer.from("target receipt"), "image/jpeg");
-      const done = await run(receiptTools.expense_from_receipt, { receipt_url: photo.path, assignments: [{ item: "oat milk", who: ["Sam"] }], category: "groceries", confirm: true }, maya, "Maya");
+      // Sam's oat milk is in the Cart, so this receipt closes it (#39): the lines it didn't have are answered here.
+      const assignments = [{ item: "oat milk", who: ["Sam"] }, { item: "dish soap", who: ["everyone"] }, { item: "paper towels", who: ["everyone"] }];
+      const done = await run(receiptTools.expense_from_receipt, { receipt_url: photo.path, assignments, category: "groceries", confirm: true }, maya, "Maya");
       assert.equal(done.logged, true);
       const rows = (await eventsOf()).filter((e) => e.sourceId === done.id);
       assert.deepEqual(rows.map((e) => [e.item, e.memberId, e.source]).sort(), [

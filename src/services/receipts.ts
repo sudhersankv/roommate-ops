@@ -152,7 +152,21 @@ export function receiptSplits(
     taken.add(i);
     who.set(i, a.memberIds.length ? a.memberIds : everyone);
   }
-  const items = receipt.items.map((item, i) => ({ name: item.name, cents: item.cents, memberIds: [...new Set(who.get(i) ?? everyone)] }));
+  return splitReceiptLines(receipt, receipt.items.map((_, i) => who.get(i) ?? everyone), payerId, totalCents);
+}
+
+/**
+ * Shares from a receipt whose lines already say who had them (`who[i]` for line i: one Member = theirs, several = split
+ * evenly between them): tax + tip (whatever `totalCents` adds on top of the items) follow each person's items, one
+ * largest-remainder pass, payer first. Always sums to exactly `totalCents`. The Cart's receipt path uses it directly.
+ */
+export function splitReceiptLines(
+  receipt: Pick<ParsedReceipt, "items">,
+  who: readonly (readonly string[])[],
+  payerId: string | undefined,
+  totalCents: number,
+): { rows: SplitRow[]; items: { name: string; cents: number; memberIds: string[] }[] } {
+  const items = receipt.items.map((item, i) => ({ name: item.name, cents: item.cents, memberIds: [...new Set(who[i] ?? [])] }));
   // Each person's exact part of the items, as an integer weight: item cents x L / (people on the item), with L a
   // common multiple of the group sizes. One largest-remainder pass over the whole total keeps it fair and exact.
   const L = items.reduce((l, it) => lcm(l, it.memberIds.length), 1);

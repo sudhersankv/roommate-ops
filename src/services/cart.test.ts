@@ -2,7 +2,7 @@
 // Run: npx tsx --test src/services/cart.test.ts
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { cartListText, computeCartSplits, itemList, lineItemFor, type SplitItem } from "./cart";
+import { cartListText, computeCartSplits, itemList, lineItemFor, matchReceiptToCart, unmatchedQuestion, type SplitItem } from "./cart";
 
 const sum = (rows: { cents: number }[]) => rows.reduce((s, r) => s + r.cents, 0);
 const by = (rows: { memberId: string; cents: number }[]) => Object.fromEntries(rows.map((r) => [r.memberId, r.cents]));
@@ -100,6 +100,38 @@ test("cartListText: the Group's name, shared things first in the order they went
 test("cartListText: quantities as stored; an empty Cart says so plainly", () => {
   assert.equal(cartListText("Apt 4B", [it("Ground beef", "1 lb", true, "Maya"), it("Limes", "4", true, "Maya")]), "Apt 4B shopping list\n☐ Ground beef, 1 lb\n☐ Limes, 4");
   assert.equal(cartListText("Apt 4B", []), "Apt 4B's Cart is empty: nothing to buy.");
+});
+
+/* ---------- the receipt closes the Cart (#39) ---------- */
+
+const line = (name: string, cents: number) => ({ name, cents });
+const TRADER_JOES = [line("PEPSI 12PK 12OZ CANS", 799), line("WHOLE MILK 1 GAL", 429), line("OAT MILK 64 OZ", 499), line("SOURDOUGH LOAF", 549), line("DORITOS NACHO", 599)];
+
+test("matchReceiptToCart: the same thing first (Restock's names), then the receipt matcher; unmatched both ways", () => {
+  const cart = [{ name: "Pepsi" }, { name: "Oat milk" }, { name: "Whole milk" }, { name: "Sourdough bread" }, { name: "Dish soap" }];
+  const m = matchReceiptToCart(TRADER_JOES, cart);
+  assert.deepEqual(m.pairs.map((p) => [TRADER_JOES[p.line].name, p.item.name]), [
+    ["PEPSI 12PK 12OZ CANS", "Pepsi"],
+    ["WHOLE MILK 1 GAL", "Whole milk"],
+    ["OAT MILK 64 OZ", "Oat milk"],
+    ["SOURDOUGH LOAF", "Sourdough bread"],
+  ]);
+  assert.deepEqual(m.unmatchedLines.map((i) => TRADER_JOES[i].name), ["DORITOS NACHO"]);
+  assert.deepEqual(m.unmatchedItems.map((i) => i.name), ["Dish soap"]);
+});
+
+test("matchReceiptToCart: 'Whole milk' isn't taken by an earlier OAT MILK line; exact names; nothing in common", () => {
+  const m = matchReceiptToCart([line("Oat milk", 450), line("Whole milk", 399)], [{ name: "milk" }, { name: "oat milk" }]);
+  assert.deepEqual(m.pairs.map((p) => [p.line, p.item.name]), [[0, "oat milk"], [1, "milk"]]);
+  const none = matchReceiptToCart([line("Ribeye steak", 3800)], [{ name: "Dish soap" }]);
+  assert.deepEqual([none.pairs, none.unmatchedLines, none.unmatchedItems.map((i) => i.name)], [[], [0], ["Dish soap"]]);
+});
+
+test("unmatchedQuestion: one question for every line the Cart didn't have", () => {
+  const usd = (c: number) => `$${(c / 100).toFixed(2)}`;
+  assert.equal(unmatchedQuestion([line("DORITOS NACHO", 599)], usd), "Not on the Cart: DORITOS NACHO ($5.99). Shared, or whose?");
+  assert.equal(unmatchedQuestion([line("Doritos", 599), line("Gum", 150)], usd), "Not on the Cart: Doritos ($5.99) and Gum ($1.50). Shared, or whose are they?");
+  assert.equal(unmatchedQuestion([], usd), null);
 });
 
 test("itemList: short lists for Activity lines", () => {

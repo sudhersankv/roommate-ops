@@ -17,6 +17,10 @@ import { insertPurchases, localDay } from "./restock";
 import type { ReportPart } from "./report";
 import { moneyIn, type Ctx, type GroupCtx } from "./types";
 import { currencyOf, getGroup } from "./groups";
+import type { ExpenseCategory } from "@/db/enums";
+import { normalizeItem, sameItem } from "@/lib/items";
+import { matchItem, splitReceiptLines, type ItemAssignment, type ParsedReceipt, type ReceiptItem } from "./receipts";
+import type { SplitRow } from "./split";
 import { addedLine, matchUsual, planAdd, usualOwner, type Usual, type UsualSource } from "./usual-rules";
 import { learnFromPurchases, saveUsual, touchUsual, usualsFor } from "./usuals";
 
@@ -319,6 +323,171 @@ export async function checkout(ctx: Ctx): Promise<Checkout> {
   const [row] = await db.insert(cartCheckouts).values({ groupId: ctx.groupId, createdBy: ctx.memberId, itemsSnapshot: items, estCents: 0, instacartUrl: url }).returning();
   await record(ctx.groupId, ctx.memberId, "cart.checkout", `made the Instacart list (${items.length} item${items.length === 1 ? "" : "s"})`, { table: "cart_checkouts", id: row.id }, sourceOf(ctx));
   return { id: row.id, url, ...(unavailable ? { unavailable } : {}), itemCount: items.length, items, createdAt: row.createdAt };
+}
+
+/* ---------- the receipt closes the Cart (#39) ---------- */
+
+export type ReceiptCartMatch<I> = { pairs: { line: number; item: I }[]; unmatchedLines: number[]; unmatchedItems: I[] };
+
+/**
+ * Receipt lines against the open Cart, one to one. First the same thing by the Pantry / Restock names (lib/items
+ * sameItem: "Oat milk" = "oat milk"), then the receipt matcher (receipts.ts matchItem: exact, contains, a word), the
+ * most specific Cart names first so "Whole milk" isn't taken by "OAT MILK". Pure.
+ */
+export function matchReceiptToCart<I extends { name: string }>(lines: readonly ReceiptItem[], open: readonly I[]): ReceiptCartMatch<I> {
+  const taken = new Set<number>();
+  const pairs: { line: number; item: I }[] = [];
+  const rest: I[] = [];
+  for (const item of open) {
+    const k = lines.findIndex((l, i) => !taken.has(i) && sameItem(l.name, item.name));
+    if (k === -1) rest.push(item);
+    else {
+      taken.add(k);
+      pairs.push({ line: k, item });
+    }
+  }
+  const words = (s: string) => s.trim().split(/\s+/).length;
+  const unmatchedItems: I[] = [];
+  for (const item of [...rest].sort((a, b) => words(b.name) - words(a.name))) {
+    let k = matchItem([...lines], item.name, taken);
+    if (k === -1 && normalizeItem(item.name) !== item.name.toLowerCase()) k = matchItem([...lines], normalizeItem(item.name), taken);
+    if (k === -1) unmatchedItems.push(item);
+    else {
+      taken.add(k);
+      pairs.push({ line: k, item });
+    }
+  }
+  pairs.sort((a, b) => a.line - b.line);
+  const order = new Map(open.map((o, k) => [o, k]));
+  unmatchedItems.sort((a, b) => order.get(a)! - order.get(b)!);
+  return { pairs, unmatchedLines: lines.map((_, i) => i).filter((i) => !taken.has(i)), unmatchedItems };
+}
+
+export type CartReceiptLine = { name: string; cents: number; memberIds: string[]; cartItem: { id: string; name: string; qty: string; shared: boolean; addedBy: string } | null; answered: boolean };
+export type CartReceiptPlan = {
+  lines: CartReceiptLine[];
+  /** Lines on neither the Cart nor in `assignments`: ask once, else they're shared. */
+  unanswered: CartReceiptLine[];
+  /** Open Cart items the receipt doesn't have: they stay in the Cart. */
+  notOnReceipt: CartItem[];
+  rows: SplitRow[];
+  everyone: string[];
+};
+
+/**
+ * What a grocery receipt does to the open Cart, without writing anything: each line matched to a Cart item goes to its
+ * owner (personal) or everyone (shared, or its adder isn't active any more); `assignments` ("the chips were Dev's")
+ * win; the rest are shared until someone answers. Shares per line, tax and tip in proportion (receipts.ts
+ * splitReceiptLines). Null when nothing on the receipt is in the Cart.
+ */
+export async function planCartReceipt(
+  ctx: Ctx,
+  input: { receipt: Pick<ParsedReceipt, "items">; totalCents: number; assignments?: ItemAssignment[]; payerId?: string },
+): Promise<CartReceiptPlan | null> {
+  const open = await listOpenItems(ctx);
+  if (!open.length) return null;
+  const match = matchReceiptToCart(input.receipt.items, open);
+  if (!match.pairs.length) return null;
+  const everyone = (await listMembers(ctx)).map((m) => m.id);
+  const active = new Set(everyone);
+  const said = new Map<number, string[]>();
+  const taken = new Set<number>();
+  for (const a of input.assignments ?? []) {
+    const i = matchItem(input.receipt.items, a.item, taken);
+    if (i === -1) throw new Error(`No item like "${a.item}" on the receipt. Items: ${input.receipt.items.map((x) => x.name).join(", ")}.`);
+    taken.add(i);
+    said.set(i, a.memberIds.length ? a.memberIds : everyone);
+  }
+  const byLine = new Map(match.pairs.map((p) => [p.line, p.item]));
+  const lines: CartReceiptLine[] = input.receipt.items.map((l, i) => {
+    const item = byLine.get(i);
+    const owner = item && !item.shared && item.addedBy && active.has(item.addedBy) ? [item.addedBy] : everyone;
+    const cartItem = item ? { id: item.id, name: item.name, qty: item.qty, shared: item.shared, addedBy: item.addedBy ?? "" } : null;
+    return { name: l.name, cents: l.cents, memberIds: said.get(i) ?? owner, cartItem, answered: said.has(i) || !!item };
+  });
+  const { rows } = splitReceiptLines(input.receipt, lines.map((l) => l.memberIds), input.payerId ?? ctx.memberId, input.totalCents);
+  return { lines, unanswered: lines.filter((l) => !l.answered), notOnReceipt: match.unmatchedItems, rows, everyone };
+}
+
+/** The one question about lines the Cart didn't have: "Not on the Cart: Doritos ($5.99). Shared, or whose?" Pure. */
+export function unmatchedQuestion(lines: readonly { name: string; cents: number }[], money: (cents: number) => string): string | null {
+  if (!lines.length) return null;
+  const parts = lines.map((l) => `${l.name} (${money(l.cents)})`);
+  const list = parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
+  return `Not on the Cart: ${list}. ${lines.length === 1 ? "Shared, or whose?" : "Shared, or whose are they?"}`;
+}
+
+/**
+ * Close the Cart with a grocery receipt, in one transaction: the matched Cart items are marked purchased FIRST (as
+ * markPurchased does: the rows that come back are the only ones this receipt may close, a second click finds none),
+ * then ONE Expense with exact Shares per line (planCartReceipt), the receipt Document linked through receiptUrl, the
+ * newest unpaid Checkout it covers marked paid, a purchase event per line (personal = the one Member it went to) and the
+ * usuals taught (usual-rules learnFromPurchase). Unanswered lines are shared. Items the receipt doesn't have stay open.
+ */
+export async function closeCartWithReceipt(
+  ctx: Ctx,
+  input: {
+    receipt: Pick<ParsedReceipt, "items" | "merchant">;
+    totalCents: number;
+    receiptUrl: string;
+    assignments?: ItemAssignment[];
+    payerId?: string;
+    description?: string;
+    category?: ExpenseCategory;
+    occurredOn?: string;
+    note?: string;
+  },
+): Promise<{ expense: Expense; purchased: number; checkoutId: string | null; notOnReceipt: CartItem[]; plan: CartReceiptPlan }> {
+  await requireActive(ctx);
+  const payerId = input.payerId ?? ctx.memberId;
+  const plan = await planCartReceipt(ctx, { ...input, payerId });
+  if (!plan) throw new Error("Nothing on that receipt is in the Cart.");
+  const matched = plan.lines.flatMap((l) => (l.cartItem ? [l.cartItem.id] : []));
+  const today = await localDay(ctx.groupId);
+  let checkoutId: string | null = null;
+  const expense = await db.transaction(async (tx) => {
+    const items = await tx
+      .update(cartItems)
+      .set({ status: "purchased" })
+      .where(and(eq(cartItems.groupId, ctx.groupId), eq(cartItems.status, "open"), inArray(cartItems.id, matched)))
+      .returning();
+    if (items.length !== matched.length) throw new Error("Someone already marked some of these bought. Look at the Cart and try again.");
+    const expense = await logExpense(ctx, {
+      payerId,
+      cents: input.totalCents,
+      description: input.description ?? input.receipt.merchant,
+      method: "exact",
+      splits: plan.rows,
+      category: input.category ?? "groceries",
+      occurredOn: input.occurredOn,
+      receiptUrl: input.receiptUrl,
+      note: input.note ?? null,
+      source: "cart",
+    });
+    const bought = new Set(matched);
+    const [c] = await tx
+      .select({ id: cartCheckouts.id, snap: cartCheckouts.itemsSnapshot })
+      .from(cartCheckouts)
+      .where(and(eq(cartCheckouts.groupId, ctx.groupId), isNull(cartCheckouts.paidAt)))
+      .orderBy(desc(cartCheckouts.createdAt))
+      .limit(1);
+    if (c && c.snap.some((s) => bought.has(s.id))) {
+      checkoutId = c.id;
+      await tx.update(cartCheckouts).set({ expenseId: expense.id, paidAt: new Date() }).where(eq(cartCheckouts.id, c.id));
+    }
+    // Restock and the usuals learn from it: the Cart's own name for a matched line, one Member's line is theirs.
+    const solo = (ids: string[]) => (ids.length === 1 && plan.everyone.length > 1 ? ids[0] : null);
+    await insertPurchases(
+      tx,
+      ctx.groupId,
+      plan.lines.map((l) => ({ name: l.cartItem?.name ?? l.name, memberId: solo(l.memberIds), occurredOn: expense.occurredOn ?? today, source: "receipt" as const, sourceId: expense.id })),
+    );
+    await learnFromPurchases(tx, ctx.groupId, items.map((i) => ({ name: i.name, qty: i.qty, memberId: i.shared ? null : i.addedBy })));
+    return expense;
+  });
+  const money = moneyIn(await currencyOf(ctx.groupId));
+  await record(ctx.groupId, ctx.memberId, "cart.purchased", `closed the Cart with the ${input.receipt.merchant} receipt (${matched.length} item${matched.length === 1 ? "" : "s"}, ${money(input.totalCents)})`, { table: "expenses", id: expense.id }, sourceOf(ctx));
+  return { expense, purchased: matched.length, checkoutId, notOnReceipt: plan.notOnReceipt, plan };
 }
 
 /** The newest Checkout nobody has paid for yet. */
