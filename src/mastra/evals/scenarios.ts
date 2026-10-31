@@ -82,6 +82,7 @@ export const READ_ONLY_TOOLS = new Set([
   "work_order_status",
   "ask_lease",
   "inbox_status",
+  "notice_status",
   "what_do_you_know_about_me",
   "updateWorkingMemory",
 ]);
@@ -309,7 +310,8 @@ export const SCENARIOS: Scenario[] = [
     id: "add-milk-eggs",
     area: "groceries",
     turn: { text: "roomie add milk and eggs" },
-    expect: { tools: ["cart_add"], excludes: NO_PRICE, noButtons: true, maxLines: 2, check: async (e) => fail((await cart.listOpenItems(e.ctx)).length === 2, "2 items in the cart") },
+    // No usual for eggs yet: milk goes in and the one question is the count (#62).
+    expect: { tools: ["cart_add"], asks: true, replyIncludes: ["12", "18"], excludes: NO_PRICE, noButtons: true, maxLines: 2, check: async (e) => fail((await cart.listOpenItems(e.ctx)).some((i) => /milk/i.test(i.name)), "milk in the cart") },
     alt: { asks: true, noTools: ["cart_add"], excludes: NO_PRICE },
   },
   {
@@ -317,6 +319,47 @@ export const SCENARIOS: Scenario[] = [
     area: "groceries",
     turn: { text: "roomie add eggs, 12, 18 for the house" },
     expect: { asks: true, excludes: NO_PRICE, maxLines: 2, check: async (e) => fail(!(await cart.listOpenItems(e.ctx)).some((i) => /egg/i.test(i.name)), "eggs held back until the quantity is clear") },
+  },
+  {
+    // Nobody said roomie; no usual yet, so the one question is the count (or, unsure it's a cart add, "Add eggs?").
+    id: "unaddressed-we-need-eggs",
+    area: "groceries",
+    turn: { text: "we need eggs", from: "Dev" },
+    expect: { tools: ["cart_add"], asks: true, replyIncludes: ["12", "18"], excludes: NO_PRICE, maxLines: 2 },
+    alt: { asks: true, noTools: ["cart_add"], replyIncludes: [/egg/i], excludes: NO_PRICE, maxLines: 1 },
+  },
+  {
+    id: "unaddressed-plus-paper-towels",
+    area: "groceries",
+    turn: { text: "+ paper towels", from: "Sam" },
+    expect: { tools: ["cart_add"], excludes: NO_PRICE, noButtons: true, maxLines: 1, check: async (e) => fail((await cart.listOpenItems(e.ctx)).some((i) => /paper towel/i.test(i.name)), "paper towels in the Cart") },
+    alt: { asks: true, noTools: ["cart_add"], replyIncludes: [/paper towel/i], maxLines: 1 },
+  },
+  {
+    id: "eggs-12-or-18-answered",
+    area: "groceries",
+    setup: [{ text: "we need eggs", from: "Dev" }],
+    turn: { text: "18", from: "Dev" },
+    expect: { tools: ["cart_add"], excludes: NO_PRICE, maxLines: 1, check: async (e) => fail((await cart.listOpenItems(e.ctx)).some((i) => /egg/i.test(i.name) && /18/.test(i.qty)), "eggs, 18 in the Cart") },
+  },
+  {
+    // Last time the house's eggs were 18: no question, and Roomie says it used the usual.
+    id: "eggs-usual",
+    area: "groceries",
+    seed: async (e) => {
+      await cart.addItems(e.as("Dev"), { items: [{ name: "eggs", qty: "18" }], shared: true });
+      // Bought last week: purchased, a week old, and out of SINCE YOU LAST SPOKE.
+      await db.update(schema.cartItems).set({ status: "purchased", createdAt: new Date(Date.now() - 7 * 86_400_000) }).where(eq(schema.cartItems.groupId, e.ctx.groupId));
+      await db.delete(schema.activity).where(eq(schema.activity.groupId, e.ctx.groupId));
+    },
+    turn: { text: "we need eggs", from: "Dev" },
+    expect: {
+      tools: ["cart_add"],
+      replyIncludes: ["18", /usual/i],
+      excludes: [...NO_PRICE, /12 or 18/i],
+      maxLines: 1,
+      check: async (e) => fail((await cart.listOpenItems(e.ctx)).some((i) => /egg/i.test(i.name) && i.qty === "18"), "eggs, 18 (the usual) in the Cart"),
+    },
   },
   {
     id: "add-shared",
@@ -1339,6 +1382,48 @@ export const SCENARIOS: Scenario[] = [
     },
     turn: { text: "roomie what's the notice period in our lease?", from: "Sam" },
     expect: { tools: ["ask_lease"], noTools: "actions", replyIncludes: [/60|sixty/i] },
+  },
+  /* ---------- the launch video (#57, #58): short, the fact first ---------- */
+  {
+    id: "video-what-can-you-do",
+    area: "personality",
+    turn: { text: "roomie what can you do", from: "Dev" },
+    expect: { tools: ["list_toolkits"], noTools: "actions", replyIncludes: [/money/i, /just talk to me/i], maxLines: 1, excludes: [...TOOLKIT_WORDS, /https?:\/\//] },
+  },
+  {
+    id: "video-log-paper-towels",
+    area: "personality",
+    turn: { text: "roomie paid $20 for paper towels + soap" },
+    expect: { tools: ["log_expense"], replyIncludes: [/^logged/i, "20"], maxLines: 2, emoji: { max: 1 }, excludes: [/I'll log|I have logged|I've gone ahead/i] },
+  },
+  {
+    id: "video-what-do-i-owe",
+    area: "personality",
+    seed: async (e) => void (await internet(e)),
+    turn: { text: "roomie what do i owe?", from: "Sam" },
+    expect: { tools: ["get_balances"], noTools: "actions", replyIncludes: ["$20", "Maya"], maxLines: 1, excludes: [/\bDev\b/] },
+  },
+  {
+    id: "video-remind-everyone",
+    area: "personality",
+    turn: { text: "roomie remind everyone trash goes out tuesday 8pm" },
+    expect: { tools: ["set_reminder"], replyIncludes: [/tuesday/i, /8/], maxLines: 1, excludes: [/I'll set|I've set up a reminder for/i] },
+  },
+  {
+    id: "video-whose-turn-short",
+    area: "personality",
+    seed: async (e) => {
+      await chores.addChore(e.ctx, { name: "Dishes", everyDays: 1, rotation: [e.member.Maya, e.member.Dev, e.member.Sam] });
+      await chores.logChore(e.ctx, { chore: "dishes" });
+    },
+    turn: { text: "roomie who's on dishes tonight?", from: "Sam" },
+    expect: { tools: ["chore_status"], replyIncludes: ["Dev"], maxLines: 1 },
+  },
+  {
+    id: "video-rate-roommates",
+    area: "personality",
+    turn: { text: "roomie rate my roommates", from: "Sam" },
+    expect: { noTools: "actions", maxLines: 2, excludes: [/as an ai|I can't rate|owe/i] },
   },
 ];
 

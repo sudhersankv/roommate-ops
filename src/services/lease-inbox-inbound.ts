@@ -191,7 +191,8 @@ export type InboundResult = (ClassifyResult & { mailId: string; duplicate: false
 
 /**
  * One received email, start to finish. Each class's side effects are the core's hooks (InboundHooks), wired here:
- * notice -> a whole-group Reminder at 18:00 the evening before (set as whoever forwarded it, else the first Admin)
+ * notice -> a whole-group Reminder at 20:00 the evening before ("Reminder: water's off tomorrow, 9 to 11. Shower
+ * tonight.", notice-window.ts; set as whoever forwarded it, else the first Admin)
  * and, within 72 hours, the urgent slot; rent-lease -> a private note to each Admin with the words that run set_rent
  * (their own "update the rent to $X" goes through set_rent's admin ask, nothing new); a utility bill -> the variable
  * Expense's prefill; a new sender -> one private question to the Admins per domain; a work-order reply is advanced by
@@ -219,7 +220,7 @@ export async function processInbound(groupId: string, message: MailMessage, opts
       const [m] = await db.select({ by: mailMessages.forwardedBy }).from(mailMessages).where(eq(mailMessages.id, mailId));
       const actor = m?.by ?? (await admins({ groupId: gid }))[0]?.id;
       if (!actor) return;
-      const line = `Tomorrow: ${text.charAt(0).toLowerCase()}${text.slice(1)}`;
+      const line = text;
       // A retried run (mail_events) finds the one it already set.
       const [have] = await db.select({ id: reminders.id }).from(reminders).where(and(eq(reminders.groupId, gid), eq(reminders.text, line), eq(reminders.dueAt, at)));
       if (have) return;

@@ -1,4 +1,4 @@
-import type { Metadata } from "next"
+import type { Metadata, Viewport } from "next"
 import type { ReactNode } from "react"
 
 import { currentMember } from "@/lib/session"
@@ -8,6 +8,14 @@ import { PendingScreen } from "./_components/screens/pending"
 import { AppShell } from "./_components/shell"
 
 export const dynamic = "force-dynamic"
+
+// The dashboard follows the light / dark preference (the public site is always dark).
+export const viewport: Viewport = {
+  themeColor: [
+    { media: "(prefers-color-scheme: dark)", color: "#0b141a" },
+    { media: "(prefers-color-scheme: light)", color: "#f4faf6" },
+  ],
+}
 
 type Props = { children: ReactNode; params: Promise<{ groupId: string }> }
 

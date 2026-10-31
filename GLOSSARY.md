@@ -103,7 +103,7 @@ _Avoid_: Alert, push
 _Avoid_: Do not disturb, mute
 
 **Settle nudge**:
-The private weekly DM to a Member who has owed the same person more than $20 for more than 7 days, with their pay link. Never in the group ("so nobody has to be that guy"). "stop nudging me" turns it off for that Member.
+The private DM to a Member who owes someone more than $5: a few hours after the debt appears, then every couple of days (Admin-set) until it's settled, at most five times, shorter each time and with the pay link (ADR 0021). Never in the group ("so nobody has to be that guy"). "stop nudging me" turns it off for that Member.
 _Avoid_: Debt reminder, dunning, chaser
 
 **Poll**:

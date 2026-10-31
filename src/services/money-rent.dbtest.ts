@@ -202,37 +202,50 @@ describe("rent, utilities and the Settle nudge against the dev DB", () => {
 
   // ---------- the Settle nudge ----------
 
-  test("the Settle nudge DMs the right people once a week and skips the opted-out Member", async () => {
+  test("the Settle nudge (ADR 0021): the Bundle's hour, every 2 days while owed, shorter each time, never the opted-out Member", async () => {
     const { id, as } = B;
-    await logExpense(as("Maya"), { cents: 9000, description: "groceries", category: "groceries", occurredOn: "2026-10-30" });
+    await logExpense(as("Maya"), { cents: 9000, description: "Groceries", category: "groceries", occurredOn: "2026-10-30" });
     await logExpense(as("Dev"), { cents: 1500, description: "pizza", category: "food", occurredOn: "2026-11-13", splitAmong: [id.Dev, id.Sam] });
     await setNudges(id.Sam, "off");
-    assert.deepEqual(await getNudgeSettings(B), { thresholdCents: 2000, thresholdDays: 7, enabled: true });
+    assert.deepEqual(await getNudgeSettings(B), { thresholdCents: 500, everyDays: 2, enabled: true });
 
     inbox();
-    const sunday = local(11, 15, 18, 10); // the report's default day and hour
-    assert.deepEqual(await settleNudgeJob(B, local(11, 15, 17, 10)), [], "outside the report's hour");
-    assert.deepEqual(await settleNudgeJob(B, sunday), [{ memberId: id.Dev, outcome: "sent" }]);
-    assert.deepEqual(await settleNudgeJob(B, local(11, 15, 18, 40)), [], "once a week");
+    const at9 = (day: number, minute = 10) => local(11, day, 9, minute); // the Bundle's default hour
+    assert.deepEqual(await settleNudgeJob(B, local(11, 15, 8, 10)), [], "outside the Bundle's hour");
+    assert.deepEqual(await settleNudgeJob(B, at9(15)), [{ memberId: id.Dev, outcome: "sent" }], "Sam owes over $5 too, but opted out");
+    assert.deepEqual(await settleNudgeJob(B, at9(15, 40)), [], "once a day");
+    assert.deepEqual(await settleNudgeJob(B, at9(16)), [], "not the next day");
+    assert.deepEqual(await settleNudgeJob(B, at9(17)), [{ memberId: id.Dev, outcome: "sent" }]);
+    assert.deepEqual(await settleNudgeJob(B, at9(19)), [{ memberId: id.Dev, outcome: "sent" }]);
     const got = inbox();
-    assert.deepEqual(got.map((s) => s.memberId), [id.Dev], "Sam opted out; Sam's $7.50 to Dev is under the line");
-    assert.equal(got[0].out.text, `Quick one: you owe Maya $30.00. Tap to pay, then say "paid" here.`);
-    assert.deepEqual(got[0].out.buttons, [{ text: "Pay Maya on Venmo", url: "https://venmo.com/u/maya-k?txn=pay&amount=30.00" }]);
+    assert.deepEqual(got.map((s) => s.memberId), [id.Dev, id.Dev, id.Dev]);
+    assert.deepEqual(
+      got.map((s) => s.out.text),
+      ["Hey Dev, quick one: $30.00 to Maya for groceries. Whenever you can.", "Still $30.00 to Maya.", "Friendly nudge: $30.00 to Maya."],
+    );
+    for (const s of got) assert.deepEqual(s.out.buttons, [{ text: "Pay Maya on Venmo", url: "https://venmo.com/u/maya-k?txn=pay&amount=30.00" }]);
+    const claims = await db.select().from(schema.scheduledPosts).where(and(eq(schema.scheduledPosts.groupId, B.groupId), eq(schema.scheduledPosts.kind, "nudge.settle")));
+    assert.deepEqual(claims.map((c) => c.period).sort(), ["2026-11-15", "2026-11-17", "2026-11-19"].map((d) => `${d}:${id.Dev}:${id.Maya}`));
 
     const report = await groupReport(B, local(11, 15, 18, 45));
     const money = report.parts.map((p) => p.text);
-    assert.ok(money.includes("2 open balances; I've DM'd everyone."), money.join(" | "));
+    assert.ok(money.includes("2 open balances; I'm nudging people privately."), money.join(" | "));
     assert.ok(!money.some((t) => /Dev|Sam|\$30/.test(t) && /owe|pays/.test(t)), "no names or amounts");
     assert.ok(money.some((t) => /keep track of rent/.test(t)), "the rent offer, once");
     assert.ok(!(await groupReport(B, local(11, 15, 18, 50))).parts.some((p) => /keep track of rent/.test(p.text)), "not twice");
     assert.equal((await rentStatus(B)).offer, false, "already offered");
   });
 
-  test("nudge settings: Admin only; off means no DMs and a plain count", async () => {
+  test("a Settlement ends it; nudge settings: Admin only; off means no DMs and a plain count", async () => {
+    await settleUp(B.as("Dev"), { toId: B.id.Maya, cents: 3000 });
+    inbox();
+    assert.deepEqual(await settleNudgeJob(B, local(11, 21, 9, 10)), [], "Dev paid: nothing more for him; Sam's still opted out");
     await assert.rejects(updateNudgeSettings(B.as("Dev"), { enabled: false }), NotAllowedError);
-    assert.deepEqual(await updateNudgeSettings(B.as("Maya"), { enabled: false, thresholdCents: 1000 }), { thresholdCents: 1000, thresholdDays: 7, enabled: false });
-    assert.deepEqual(await settleNudgeJob(B, local(11, 22, 18, 10)), []);
+    assert.deepEqual(await updateNudgeSettings(B.as("Maya"), { enabled: false, thresholdCents: 1000 }), { thresholdCents: 1000, everyDays: 2, enabled: false });
+    await setNudges(B.id.Sam, "on");
+    assert.deepEqual(await settleNudgeJob(B, local(11, 23, 9, 10)), [], "off for the Group");
     assert.ok((await groupReport(B, local(11, 22, 18, 15))).parts.some((p) => p.text === "2 open balances."));
+    assert.equal(inbox().length, 0);
   });
 
   // ---------- an early nudge hour, and a nudge run that fails ----------
@@ -247,16 +260,17 @@ describe("rent, utilities and the Settle nudge against the dev DB", () => {
     assert.equal(inbox().length, 2);
   });
 
-  test("the Settle nudge: a failed run gives the week's claim back, so the next run in the hour sends", async () => {
+  test("the Settle nudge: 08:00 for a nudge hour of 7; a run that fails claims nothing, so the next run in the hour sends", async () => {
     const c = C!;
     await logExpense(c.as("Maya"), { cents: 9000, description: "Costco", category: "groceries", occurredOn: "2026-10-30" });
     inbox();
-    const sunday = local(11, 15, 18, 10);
-    await assert.rejects(settleNudgeJob(c, sunday, { dms: async () => { throw new Error("the ledger read timed out"); } }), /timed out/);
-    const claims = await db.select().from(schema.scheduledPosts).where(and(eq(schema.scheduledPosts.groupId, c.groupId), eq(schema.scheduledPosts.kind, "nudge.settle")));
-    assert.equal(claims.length, 0, "the claim was given back");
-    const sent = await settleNudgeJob(c, local(11, 15, 18, 20));
+    assert.deepEqual(await settleNudgeJob(c, local(11, 15, 7, 10)), [], "07:00 is quiet hours");
+    await assert.rejects(settleNudgeJob(c, local(11, 15, 8, 10), { dms: async () => { throw new Error("the ledger read timed out"); } }), /timed out/);
+    const claims = () => db.select().from(schema.scheduledPosts).where(and(eq(schema.scheduledPosts.groupId, c.groupId), eq(schema.scheduledPosts.kind, "nudge.settle")));
+    assert.equal((await claims()).length, 0, "nothing claimed");
+    const sent = await settleNudgeJob(c, local(11, 15, 8, 20));
     assert.deepEqual(outcomes(sent), [`${c.id.Dev}:sent`, `${c.id.Sam}:sent`].sort());
-    assert.deepEqual(await settleNudgeJob(c, local(11, 15, 18, 40)), [], "then once a week, as before");
+    assert.equal((await claims()).length, 2, "one claim per pair");
+    assert.deepEqual(await settleNudgeJob(c, local(11, 15, 8, 40)), [], "once a day");
   });
 });

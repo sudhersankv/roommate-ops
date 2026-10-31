@@ -14,7 +14,7 @@ export { DEFAULT_TIMEZONE };
 
 export const MAY_STAY_SILENT = `This message was not addressed to you by name. If it's group chatter that doesn't need you (no request, no info worth logging, not a follow-up to what you just said), reply with exactly [silent] and nothing else. If it continues the conversation with you or asks/tells you something you can act on, respond normally.`;
 
-export const UNPROMPTED = `Nobody asked you directly: you're chiming in. Don't log or change anything yet. Ask in one short line whether they want it logged, with the details you'd use ("Want me to log $40 pizza, split 4 ways?"). Questions you can answer by reading (balances, the cart, chores) you may just answer.`;
+export const UNPROMPTED = `Nobody asked you directly: you're chiming in. Don't log or change anything yet. Ask in one short line whether they want it logged, with the details you'd use ("Want me to log $40 pizza, split 4 ways?"). Questions you can answer by reading (balances, the cart, chores) you may just answer. The one exception: when a Trick's rules under TRICKS say a kind of unaddressed message is acted on at once (someone stating what the house needs), do that and say it in one line.`;
 
 export const CLARIFY = `Something here is worth acting on but a detail is missing or ambiguous. Ask one short question to fill it in; don't log anything until you have it.`;
 
