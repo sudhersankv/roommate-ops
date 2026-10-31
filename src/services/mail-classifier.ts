@@ -59,8 +59,8 @@ export function parseClassification(text: string): Classification {
   };
 }
 
-/** Never "nothing": a broken answer files the email quietly as other. */
-export const FALLBACK = (input: Pick<ClassifyInput, "subject">): Classification => ({ class: "other", summary: input.subject.trim() || "an email" });
+/** Never "nothing": a broken answer files the email quietly as other, marked uncertain so nothing about it reaches the chat. */
+export const FALLBACK = (input: Pick<ClassifyInput, "subject">): Classification => ({ class: "other", summary: input.subject.trim() || "an email", uncertain: true });
 
 export function classifierPrompt(input: ClassifyInput, feedback?: string): string {
   const today = formatInZone(input.now, input.timezone, { weekday: "long", year: "numeric", month: "long", day: "numeric" });

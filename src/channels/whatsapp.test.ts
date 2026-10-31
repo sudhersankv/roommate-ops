@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { aesEncryptGCM, hmacSign, proto, sha256, type GroupMetadata, type WAMessage } from "baileys";
 import type { IncomingMessage } from "./types";
+import { Coalescer } from "./coalesce";
 import { helpText, NO_GROUP, NO_VOICE } from "./text";
 import { makeAuthState, type AuthRows } from "./whatsapp-auth";
 import {
@@ -116,7 +117,7 @@ const groupMeta = (participants: GroupMetadata["participants"], extra: Partial<G
 
 type Harness = ReturnType<typeof harness>;
 
-function harness(opts: { deps?: Partial<WhatsAppDeps>; contacts?: WaContact[]; lidMap?: [string, string][]; meta?: GroupMetadata; transcribe?: boolean } = {}) {
+function harness(opts: { deps?: Partial<WhatsAppDeps>; contacts?: WaContact[]; lidMap?: [string, string][]; meta?: GroupMetadata; transcribe?: boolean; mergeWindowMs?: number } = {}) {
   const meta = new Map<string, GroupMetadata>([
     [
       GROUP,
@@ -199,6 +200,7 @@ function harness(opts: { deps?: Partial<WhatsAppDeps>; contacts?: WaContact[]; l
     replyDelayMs: 0,
     sleep,
     limiter: whatsappLimiter({ clock, sleep }),
+    coalescer: new Coalescer({ windowMs: opts.mergeWindowMs ?? 0, clock, sleep }),
   });
   const sock = () => sockets.at(-1)!;
   const settle = async () => {
@@ -278,7 +280,7 @@ describe("incoming messages", () => {
     await h.open();
     await h.feed([msg()]);
     assert.deepEqual(h.seen.incoming, [
-      { channel: "whatsapp", chatExternalId: GROUP, chatTitle: "Apt 4B", userExternalId: MAYA.pn, userName: "Maya", text: "roomie hi", mentionsRoomie: false, isReplyToRoomie: false },
+      { channel: "whatsapp", chatExternalId: GROUP, chatTitle: "Apt 4B", userExternalId: MAYA.pn, userName: "Maya", text: "roomie hi", mentionsRoomie: false, isReplyToRoomie: false, receivedAt: new Date(NOW) },
     ]);
     assert.deepEqual(h.sock().sent, [{ jid: GROUP, text: "ok roomie hi" }]);
     assert.equal(h.sock().read.length, 1);
@@ -412,13 +414,52 @@ describe("incoming messages", () => {
     assert.deepEqual(h.sock().sent.map((s) => s.text), [helpText(["splitting"])]);
   });
 
+  test("two quick texts from one Member -> ONE pipeline run with both, one reply; the first's arrival is the run's (#41)", async () => {
+    const h = harness({ mergeWindowMs: 4_000 });
+    h.markKnown();
+    await h.open();
+    await h.feed([msg({ message: { conversation: "we need to make tacos tonight, what do we need" } }), msg({ message: { conversation: "roomie suggest" } })]);
+    assert.equal(h.seen.incoming.length, 1);
+    assert.equal(h.seen.incoming[0].text, "we need to make tacos tonight, what do we need\nroomie suggest");
+    assert.equal(h.seen.incoming[0].merged, 2);
+    assert.deepEqual(h.seen.incoming[0].receivedAt, new Date(NOW));
+    assert.equal(h.sock().sent.length, 1, "one reply");
+  });
+
+  test("another Member's message in between is never merged: Maya, Dev, Maya are three runs, in order", async () => {
+    const h = harness({ mergeWindowMs: 4_000 });
+    h.markKnown();
+    await h.open();
+    await h.feed([
+      msg({ message: { conversation: "roomie add milk" } }),
+      msg({ key: { participant: DEV.lid, participantAlt: undefined }, pushName: "Dev", message: { conversation: "roomie add eggs" } }),
+      msg({ message: { conversation: "and bread" } }),
+    ]);
+    assert.deepEqual(
+      h.seen.incoming.map((m) => [m.userName, m.text, m.merged]),
+      [
+        ["Maya", "roomie add milk", undefined],
+        ["Dev", "roomie add eggs", undefined],
+        ["Maya", "and bread", undefined],
+      ],
+    );
+  });
+
+  test("a photo after a text isn't merged into it", async () => {
+    const h = harness({ mergeWindowMs: 4_000 });
+    h.markKnown();
+    await h.open();
+    await h.feed([msg({ message: { conversation: "roomie here's the receipt" } }), msg({ message: { imageMessage: { caption: "roomie split this", mimetype: "image/jpeg" } } })]);
+    assert.deepEqual(h.seen.incoming.map((m) => [m.text, !!m.imageUrl]), [["roomie here's the receipt", false], ["roomie split this", true]]);
+  });
+
   test("a 1:1 message from a Member of one Group -> isPrivate, answered in the DM", async () => {
     const h = harness();
     h.markKnown();
     await h.open();
     await h.feed([msg({ key: { remoteJid: SAM.lid, remoteJidAlt: SAM.pn, participant: undefined, participantAlt: undefined }, pushName: "Sam", message: { conversation: "send me the dashboard" } })]);
     assert.deepEqual(h.seen.incoming, [
-      { channel: "whatsapp", chatExternalId: GROUP, userExternalId: SAM.pn, userName: "Sam", text: "send me the dashboard", mentionsRoomie: false, isReplyToRoomie: false, isPrivate: true },
+      { channel: "whatsapp", chatExternalId: GROUP, userExternalId: SAM.pn, userName: "Sam", text: "send me the dashboard", mentionsRoomie: false, isReplyToRoomie: false, receivedAt: new Date(NOW), isPrivate: true },
     ]);
     assert.deepEqual(h.sock().sent, [{ jid: SAM.pn, text: "ok send me the dashboard" }], "a LID chat is answered at the phone JID");
   });

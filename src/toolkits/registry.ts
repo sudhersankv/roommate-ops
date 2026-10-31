@@ -139,6 +139,9 @@ function relayNotAllowed(tool: AnyTool, toolId: string, adminAsk?: AdminAsk): An
 
 for (const tk of [core, ...TOOLKITS]) for (const [id, t] of Object.entries(tk.tools)) relayNotAllowed(t, id, tk.adminOnly?.[id]);
 
+/** Every Trick's skill (its skill.md, #35) by id, plus core's: what the instructions put in for a message. */
+export const skillsById = (): Record<string, string> => Object.fromEntries([core, ...TOOLKITS].map((tk) => [tk.id, tk.skill]));
+
 /** Tool ids the manifests mark admin-only (tests, docs). */
 export const adminOnlyTools = () => [core, ...TOOLKITS].flatMap((tk) => Object.keys(tk.adminOnly ?? {}));
 

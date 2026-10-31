@@ -156,3 +156,16 @@ test("notify falls back to a [beta] log line: no Telegram, no operator Member, o
 test("only operators can read the list", async () => {
   await assert.rejects(listBetaRequests(null), (e) => e instanceof NotAllowedError && e.code === "operator-only");
 });
+
+test("notify emails the operator first (subject with the name, the summary, the link through /signin); Telegram only when email isn't possible", async () => {
+  const mails: { subject: string; text: string }[] = [];
+  const tg: string[] = [];
+  const sentMail = async (subject: string, text: string) => (mails.push({ subject, text }), "sent" as const);
+  const result = await notifyOperator(fakeRow(), async (to) => void tg.push(to), async () => "4242", sentMail);
+  assert.equal(result, "email");
+  assert.equal(tg.length, 0, "no Telegram DM when the email went out");
+  assert.match(mails[0].subject, /^Roomie beta request: /);
+  assert.match(mails[0].text, /\/signin\?next=%2Fadmin%2Fbeta|\/signin\?next=\/admin\/beta/);
+  const skipped = await notifyOperator(fakeRow(), async (to) => void tg.push(to), async () => "4242", async () => "skipped" as const);
+  assert.equal(skipped, "telegram");
+});

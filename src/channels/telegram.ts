@@ -12,6 +12,7 @@ import { Api, Bot, GrammyError, InlineKeyboard } from "grammy";
 import type { ChatMember, Message, User, UserFromGetMe } from "grammy/types";
 import type { ChatRef } from "@/onboarding";
 import { KeyedQueue } from "./queue";
+import { Coalescer, mergeableText, withMerged, type Merged } from "./coalesce";
 import { planDelivery } from "./humanize";
 import { envMs, SendLimiter, sleep as realSleep } from "./rate-limit";
 import { BAD_VOICE, chunkText, commandOf, helpText, MANY_GROUPS, MAX_TEXT, NO_GROUP, NO_VOICE, OOPS, startReply, wasAddressed } from "./text";
@@ -287,6 +288,8 @@ export type TelegramBotOptions = {
   channel?: TelegramChannel;
   /** Default JOIN_DELAY_MS, else 60 s. */
   joinDelayMs?: number;
+  /** Joins quick consecutive texts from one person into one run (default: MERGE_WINDOW_MS, else 4 s). */
+  coalescer?: Coalescer;
   /** Fetch a file by its Telegram file_path (tests stub it). */
   download?: (filePath: string) => Promise<ArrayBuffer>;
 } & Omit<TelegramChannelOptions, "username">;
@@ -307,6 +310,7 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
       return res.arrayBuffer();
     });
   const queue = new KeyedQueue("telegram");
+  const coalesce = opts.coalescer ?? new Coalescer();
   const toldNoVoice = new Set<string>();
 
   async function fetchFile(fileId: string) {
@@ -421,7 +425,7 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
     if (out) await reply(out);
   }
 
-  async function groupMessage(me: UserFromGetMe, m: Message, from: User) {
+  async function groupMessage(me: UserFromGetMe, m: Message, from: User, merged: Merged) {
     const chatId = String(m.chat.id);
     if (commandOf(m.text, me.username) === "help") {
       if (await paused(chatId)) return;
@@ -430,12 +434,12 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
     const content = await readContent(me, m, from, chatId, chatId);
     if (!content) return;
     await pipeline(
-      { channel: "telegram", chatExternalId: chatId, chatTitle: "title" in m.chat ? m.chat.title : undefined, userExternalId: String(from.id), userName: userName(from), ...content },
+      { channel: "telegram", chatExternalId: chatId, chatTitle: "title" in m.chat ? m.chat.title : undefined, userExternalId: String(from.id), userName: userName(from), ...withMerged(content, merged) },
       (out) => channel.sendToChat(chatId, out),
     );
   }
 
-  async function privateMessage(me: UserFromGetMe, m: Message, from: User) {
+  async function privateMessage(me: UserFromGetMe, m: Message, from: User, merged: Merged) {
     const userId = String(from.id);
     const command = commandOf(m.text, me.username);
     const chats = await deps.chatsOfUser(userId);
@@ -453,7 +457,7 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
     if (!chats.length) return channel.sendPrivate(userId, { text: NO_GROUP });
     const content = await readContent(me, m, from, userId, chats[0], true);
     if (!content) return;
-    await pipeline({ channel: "telegram", chatExternalId: chats[0], userExternalId: userId, userName: userName(from), ...content, isPrivate: true }, async (out) => void (await channel.sendPrivate(userId, out)));
+    await pipeline({ channel: "telegram", chatExternalId: chats[0], userExternalId: userId, userName: userName(from), ...withMerged(content, merged), isPrivate: true }, async (out) => void (await channel.sendPrivate(userId, out)));
   }
 
   bot.use(async (ctx, next) => {
@@ -515,8 +519,17 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
     // Other bots, posts sent as a channel or an anonymous admin, and channel auto-forwards are not people.
     if (!from || from.is_bot || m.sender_chat || m.is_automatic_forward) return;
     const me = ctx.me;
-    if (m.chat.type === "private") return queue.push(`dm:${from.id}`, () => privateMessage(me, m, from));
-    if (m.chat.type === "group" || m.chat.type === "supergroup") queue.push(String(m.chat.id), () => groupMessage(me, m, from));
+    const isPrivate = m.chat.type === "private";
+    if (!isPrivate && m.chat.type !== "group" && m.chat.type !== "supergroup") return;
+    // Noted on arrival, so a quick second text from the same person joins this one (channels/coalesce.ts).
+    const key = isPrivate ? `dm:${from.id}` : String(m.chat.id);
+    const plain = mergeableText(m.text);
+    const arrival = coalesce.arrive(key, String(from.id), plain);
+    queue.push(key, async () => {
+      const merged = await coalesce.take(arrival, plain ? readAddress(me, m) : { text: "" });
+      if (!merged) return; // it went along with this person's next text
+      return isPrivate ? privateMessage(me, m, from, merged) : groupMessage(me, m, from, merged);
+    });
   });
 
   // A vote on one of Roomie's Polls (only non-anonymous polls send these). Telegram doesn't say which Chat: the Poll's

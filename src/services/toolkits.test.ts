@@ -3,7 +3,7 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { CATALOG, manifestOf, MANIFESTS } from "@/toolkits/manifests";
-import { announcement, byPostOrder, checkRequirements, resolveToolkitSet, unmet, type RequirementFacts } from "./toolkits";
+import { announcement, byPostOrder, checkRequirements, learnedSay, resolveToolkitSet, unmet, type RequirementFacts } from "./toolkits";
 
 const facts = (over: Partial<RequirementFacts> = {}): RequirementFacts => ({ hasEnv: () => false, enabled: [], integrations: {}, ...over });
 
@@ -66,7 +66,7 @@ test("byPostOrder: money, the landlord, the house, then groceries (ADR 0017), wh
   assert.deepEqual(sorted.map((m) => m.id), ["nav", "post", "late"]);
 });
 
-test("announcement: one line with the first example, in Tricks words", () => {
-  assert.equal(announcement(manifestOf("groceries")!), `Learned Groceries. Try: "roomie, tacos for 5 friday"`);
-  assert.equal(announcement({ name: "X", gate: { criterion: "", examples: [] } }), "Learned X.");
+test("announcement: one line saying what Roomie can do now, no phrase to type (#44)", () => {
+  assert.equal(announcement(manifestOf("groceries")!), "Learned Groceries: one shared Cart, recipes for the group, and an Instacart list.", "what it does now, no phrase to type");
+  assert.equal(learnedSay({ name: "Lease Inbox", summary: "Your group's own email address for the landlord." }), "Learned Lease Inbox: your group's own email address for the landlord.");
 });

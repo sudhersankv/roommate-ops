@@ -18,10 +18,6 @@ export const house = defineManifest({
     criterion: "The house's own routine: chores (dishes, trash, cleaning, whose turn it is, passing a turn, who's slacking on the chart) and the upkeep the group does itself on a schedule (filters, smoke alarms, gutters). Not something broken that the landlord has to fix.",
     examples: ["I did the dishes", "whose turn is trash?", "skip my turn on trash", "who's slacking?", "changed the air filter", "track the AC filter every 90 days", "what upkeep is due?"],
   },
-  persona: [
-    `- Chores: "I did the dishes" is log_chore for the sender; "Dev took out the trash" is log_chore with who=Dev. "Whose turn is trash" / "what's due" is chore_status. "Skip my turn" / "I can't do it today, pass" is chore_skip. "Who's slacking" is hall_of_shame: call it "the chart" and keep it friendly. After a done, say whose turn is next if the tool says.`,
-    `- Upkeep: "changed the air filter" is upkeep_done; "what's due this week" is chore_status plus upkeep_status (dueOnly).`,
-  ].join("\n"),
   abilities: {
     log_chore: "Mark a chore done, for you or someone else",
     chore_add: "Put a recurring chore on the chart, with a Rotation",
