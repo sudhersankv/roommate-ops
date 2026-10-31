@@ -16,7 +16,7 @@ Decisions:
 - A paused Group gets none of this; a Group over its Jev or run caps still gets the bundle (it costs no model call).
 - The bundle is pure composition over service reads: one function that takes the lines and returns the text, unit-tested like `formatGroupReport`.
 - The chores nudge's "only when something is due" rule is now the bundle's rule for every line.
-- The Bundle is logged as Roomie's line (`chat_messages`, member null) so a "yes" can answer it: it opens the follow-up window and the agent sees it in the recent chat. The weekly report and urgent posts aren't logged.
+- The Bundle is logged as Roomie's line (`chat_messages`, member null) so a "yes" can answer it: it opens the follow-up window and the agent sees it in the recent chat. The weekly report is logged the same way (so a yes can answer its chart offer, #61); urgent posts aren't.
 - A Member without a DM path (Telegram, never pressed Start) gets one neutral group line with no amounts, at most weekly: "Dev, I've got something for you; tap @roomie and press Start."
 
 ## Considered options

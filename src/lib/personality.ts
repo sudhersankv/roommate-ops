@@ -66,6 +66,7 @@ export const ARCHETYPES: Record<ArchetypeId, Archetype> = {
       square: ["everyone's square. love that for us", "all square. peace restored"],
       streak: ["{n} in a row for {who}. quietly impressive", "{who}: {n} {chore} in a row. noted"],
       checkout: ["cart's checked out. fridge says thanks", "order's in. nice"],
+      roll: ["{who}'s on a roll."],
     },
     petted: "mm. good day. nobody owes anybody anything wild, so i've just been vibing",
   },
@@ -88,6 +89,7 @@ export const ARCHETYPES: Record<ArchetypeId, Archetype> = {
       square: ["EVERYONE'S SQUARE! 🎉🎉", "All square!! Look at us 🥳"],
       streak: ["{n} in a row, {who}!! 🔥", "{who} is on a {n}-{chore} streak! 🏆"],
       checkout: ["Cart checked out! 🛒🎉", "Order's in, let's gooo 🛒"],
+      roll: ["{who}'s on a roll! 🔥"],
     },
     petted: "Best day ever!! Someone said my name AND petted me 🥹🎉",
   },
@@ -110,6 +112,7 @@ export const ARCHETYPES: Record<ArchetypeId, Archetype> = {
       square: ["Everyone is square. Remarkable.", "All square. Mark the date."],
       streak: ["{who}: {n} in a row. Noted.", "{n} {chore} in a row, {who}. Fine."],
       checkout: ["Cart checked out.", "Order placed. Groceries pending."],
+      roll: ["{who}'s on a roll."],
     },
     petted: "Acceptable.",
   },
@@ -132,6 +135,7 @@ export const ARCHETYPES: Record<ArchetypeId, Archetype> = {
       square: ["Everyone's square, I'm so proud of you all 💛", "All square. That's my group."],
       streak: ["{n} in a row, {who}! Look at you 💛", "{who}, {n} {chore} in a row. So proud."],
       checkout: ["Groceries ordered. Now eat something green, please", "Cart's checked out 💛 good job"],
+      roll: ["{who}'s on a roll 💛"],
     },
     petted: "Aw, hi sweetie 💛 Busy day keeping track of everyone. Did you eat?",
   },
@@ -154,6 +158,7 @@ export const ARCHETYPES: Record<ArchetypeId, Archetype> = {
       square: ["everyone's square?? who allowed this 😈", "all square. suspicious. very suspicious 👀"],
       streak: ["{n} in a row, {who}?? framing this 😈", "{who} with {n} {chore} in a row, who are you 👀"],
       checkout: ["cart checked out. snacks incoming 😈", "order's in, i didn't add anything weird. probably 👀"],
+      roll: ["{who}'s on a roll. suspicious 👀"],
     },
     petted: "hehe. been plotting all day (to remind you about chores) 😈",
   },
@@ -176,6 +181,7 @@ export const ARCHETYPES: Record<ArchetypeId, Archetype> = {
       square: ["Everyone is square. Splendid.", "All accounts settled. Most civilised."],
       streak: ["{n} in a row, {who}. Admirable.", "{who} has done {chore} {n} times running. Splendid."],
       checkout: ["The order has been placed.", "Groceries are on their way, as it were."],
+      roll: ["{who} is on a roll."],
     },
     petted: "Most kind. A quiet day, which is how I prefer them.",
   },
@@ -431,7 +437,8 @@ export function moodFrom({ maxOwedCents, allSquare, lastMessageAt, now = new Dat
 
 /* ---------- lines without an LLM: greetings, wins, preview ---------- */
 
-export type WinKind = "square" | "streak" | "checkout";
+/** roll: a chore done after Roomie's private nudge about it ("Sam's on a roll."). */
+export type WinKind = "square" | "streak" | "checkout" | "roll";
 export type Win = { kind: WinKind; key: string; who?: string; n?: number; chore?: string };
 export const STREAK_MILESTONES = [3, 7, 30] as const;
 
@@ -502,6 +509,12 @@ export function winsFrom(results: { tool: string; args?: unknown; result: unknow
       const chore = str(r.chore);
       const who = str((args as { who?: unknown } | undefined)?.who).trim() || opts.senderName;
       wins.push({ kind: "streak", key: `streak:${chore.toLowerCase()}:${who.toLowerCase()}:${r.streak}:${opts.day}`, n: r.streak, chore, who });
+    }
+    // Done after the nudge: the streak milestone (above) wins when both apply, since the pipeline says one.
+    if (tool === "log_chore" && r.nudged === true) {
+      const chore = str(r.chore);
+      const who = (str((args as { who?: unknown } | undefined)?.who).trim() || opts.senderName).split(/\s+/)[0];
+      wins.push({ kind: "roll", key: `roll:${chore.toLowerCase()}:${who.toLowerCase()}:${opts.day}`, chore, who });
     }
     if (tool === "settle_up" && r.recorded === true && opts.allSquareAfter) wins.push({ kind: "square", key: `square:${opts.day}` });
     if (tool === "cart_checkout" && r.available === true && typeof r.checkoutId === "string") wins.push({ kind: "checkout", key: `checkout:${r.checkoutId}` });

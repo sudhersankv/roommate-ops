@@ -8,7 +8,7 @@ export const house = defineManifest({
   summary: "The chore chart and the house care nobody remembers, on schedule.",
   spoken: "chores",
   longDescription:
-    "Say \"I did the dishes\" and Roomie marks it on the chart. Each chore has a Rotation, so it knows whose turn is next; pass your turn when you can't, and streaks keep score. Tell it how often the filter or the smoke alarms need doing and it keeps track, in the Group's time zone. Roomie nudges whoever's up once a day, and Home shows what's yours today.",
+    "Say \"I did the dishes\" and Roomie marks it on the chart. Each chore has a Rotation, so it knows whose turn is next; pass your turn when you can't, and streaks keep score. Tell it how often the filter or the smoke alarms need doing and it keeps track, in the Group's time zone. Whoever's up gets a private nudge on the day it's due, at the time the group usually does it, and Home shows what's yours today.",
   icon: "ListChecks",
   category: "home",
   // "chores" and "upkeep" stay as words people say ("roomie, learn chores" finds House).
@@ -22,6 +22,7 @@ export const house = defineManifest({
   abilities: {
     log_chore: "Mark a chore done, for you or someone else",
     chore_add: "Put a recurring chore on the chart, with a Rotation",
+    chore_update: "Change how often a chore comes around",
     chore_remove: "Admins: take a chore off the chart",
     chore_status: "Say whose turn it is and what's due or overdue",
     chore_skip: "Pass your turn to the next person",

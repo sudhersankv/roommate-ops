@@ -33,6 +33,7 @@ import { readFile } from "node:fs/promises";
 import { runRetention } from "@/jobs/retention";
 import { expenseSummary } from "@/services/money";
 import * as restock from "@/services/restock";
+import * as house from "@/services/house";
 import { FakeMail, setMailClient } from "@/integrations/mail";
 import * as leaseInbox from "@/services/lease-inbox";
 import { processInbound } from "@/services/lease-inbox-inbound";
@@ -544,6 +545,17 @@ describe("Roomie tools against the dev DB", () => {
     assert.equal(rows[0].daysSinceLastChore, null);
     assert.equal(rows[2].choresThisWeek, 3);
     assert.equal(line, "The chart this week: Ryan 0 (none yet), Alex 1, Sudhersan 3.");
+  });
+
+  test("chore_update: a new cycle for a chore on the chart, fuzzy by name; the Rotation stays; Activity says so", async () => {
+    const r = await run("chore_update", { chore: "trash", everyDays: 3 });
+    assert.deepEqual({ name: r.name, everyDays: r.everyDays }, { name: "Take out trash", everyDays: 3 });
+    const trash = (await chores.choreStatus({ groupId })).find((c) => c.name === "Take out trash")!;
+    assert.equal(trash.everyDays, 3);
+    assert.deepEqual(trash.order.map((p) => p.name), ["Ryan", "Alex", "Sudhersan"]);
+    const [act] = await db.select().from(schema.activity).where(and(eq(schema.activity.groupId, groupId), eq(schema.activity.kind, "chore.changed"))).orderBy(desc(schema.activity.createdAt)).limit(1);
+    assert.equal(act.summary, "changed Take out trash to every 3 days");
+    await assert.rejects(run("chore_update", { chore: "gutters", everyDays: 3 }), /No chore matches "gutters"/);
   });
 
   test("chore_remove: Admins only; the chore and its history go, Activity keeps a line", async () => {
@@ -2002,6 +2014,82 @@ describe("Lease Inbox tools (#27, FakeMail)", () => {
     const r = await run("release_inbox", {}, rc("Maya", "roomie release the inbox"));
     assert.equal(r.released, true);
     assert.equal(mail.inboxes.size, 0);
+  });
+});
+
+// The chore nudges (#60) and the rhythm offer (#61), in their own throwaway Group (Maya the Admin, Dev, Sam) so the
+// chart is exactly what's seeded here. Days are the Group's real local today in Chicago.
+describe("House: chore nudges and the learned rhythm", () => {
+  const CHI = "America/Chicago";
+  const sent: DevOutput[] = [];
+  let gid: string;
+  let ids: Record<"Maya" | "Dev" | "Sam", string>;
+  let trashId: string;
+  const todayParts = zonedParts(CHI, new Date());
+  const local = (hour: number, minute = 0, dayOffset = 0) =>
+    zonedTimeToUtc(CHI, { year: todayParts.year, month: todayParts.month, day: todayParts.day + dayOffset, hour, minute });
+  const as = (name: keyof typeof ids): Ctx => ({ groupId: gid, memberId: ids[name], source: "chat" });
+
+  before(async () => {
+    registerChannel(new DevChannel((o) => sent.push(o)));
+    const ts = Date.now();
+    const people = (["Maya", "Dev", "Sam"] as const).map((name) => ({ userExternalId: devUserId(`nudge-${name}-${ts}`), name }));
+    const joined = await onGroupJoined({ channel: "dev", externalId: `test-nudge-${ts}`, title: `Nudge Group ${ts}` }, [...people], people[0]);
+    gid = joined.group.id;
+    await db.update(schema.groups).set({ timezone: CHI }).where(eq(schema.groups.id, gid));
+    ids = Object.fromEntries(joined.members.map((m) => [m.displayName, m.id])) as typeof ids;
+    await db.delete(schema.chores).where(eq(schema.chores.groupId, gid));
+    const trash = await chores.addChore(as("Maya"), { name: "Take out the trash", everyDays: 3, rotation: [ids.Maya, ids.Sam, ids.Dev] });
+    trashId = trash.choreId;
+    // Every 3 days at 7 PM: Sam, Dev, Maya; so it's Sam's, due today.
+    await db.insert(schema.choreLogs).values([
+      { choreId: trashId, memberId: ids.Sam, doneAt: local(19, 0, -9) },
+      { choreId: trashId, memberId: ids.Dev, doneAt: local(19, 10, -6) },
+      { choreId: trashId, memberId: ids.Maya, doneAt: local(19, 20, -3) },
+    ]);
+    await chores.addChore(as("Maya"), { name: "Mop the floor", everyDays: 7 });
+  });
+
+  after(async () => {
+    if (gid) await deleteGroup(gid);
+  });
+
+  test("the Bundle leaves out what Sam hears privately; a never-done chore stays on the group line", async () => {
+    const line = await house.houseBundleLine({ groupId: gid }, local(9, 5));
+    assert.match(line ?? "", /mop the floor/);
+    assert.doesNotMatch(line ?? "", /trash/i);
+    await members.setNudges(as("Sam"), { on: false });
+    assert.match((await house.houseBundleLine({ groupId: gid }, local(9, 6))) ?? "", /take out the trash \(Sam\)/, "nudges off: back on the group line");
+    await members.setNudges(as("Sam"), { on: true });
+  });
+
+  test("choreDmJob: Sam, privately, once the usual hour (7 PM) comes; once a day", async () => {
+    sent.length = 0;
+    assert.deepEqual(await house.choreDmJob({ groupId: gid }, local(10)), [], "before the usual hour");
+    const r = await house.choreDmJob({ groupId: gid }, local(19, 5));
+    assert.deepEqual(r.map((o) => [o.memberId, o.outcome]), [[ids.Sam, "sent"]]);
+    assert.deepEqual(sent.map((o) => [o.to, o.msg.text]), [["private", "Hey Sam! Trash is yours today."]]);
+    assert.deepEqual(await house.choreDmJob({ groupId: gid }, local(20, 30)), [], "claimed for the day");
+    const claims = await db.select().from(schema.scheduledPosts).where(and(eq(schema.scheduledPosts.groupId, gid), eq(schema.scheduledPosts.kind, "chore.dm")));
+    assert.deepEqual(claims.map((c) => c.period), [`${dayInZone(CHI, local(12))}:${trashId}:${ids.Sam}`]);
+  });
+
+  test("log_chore after the nudge says nudged (the cheer: 'Sam's on a roll.'); the next done doesn't", async () => {
+    const first = await chores.logChore(as("Sam"), { chore: "trash" });
+    assert.equal(first.nudged, true);
+    assert.equal((await chores.logChore(as("Sam"), { chore: "trash" })).nudged, false);
+  });
+
+  test("the rhythm offer: in the report's hour, once per chore per 30 days; chore_update takes the yes", async () => {
+    await chores.updateChore(as("Maya"), { choreId: trashId, everyDays: 7 });
+    await schedule.updateSchedule(as("Maya"), { reportWeekday: todayParts.weekday, reportHour: 18 });
+    assert.deepEqual(await house.rhythmOfferParts({ groupId: gid }, local(12)), [], "outside the report's hour");
+    const parts = await house.rhythmOfferParts({ groupId: gid }, local(18, 10));
+    assert.deepEqual(parts.map((p) => p.text), ["Trash actually goes out every 3 days. Want me to change it?"]);
+    assert.deepEqual(await house.rhythmOfferParts({ groupId: gid }, local(18, 20)), [], "offered already");
+    const r = await chores.updateChore(as("Dev"), { chore: "trash", everyDays: 3 });
+    assert.equal(r.everyDays, 3);
+    assert.deepEqual(await chores.rhythmMismatches({ groupId: gid }), []);
   });
 });
 
