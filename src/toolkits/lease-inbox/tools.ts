@@ -33,11 +33,12 @@ export const leaseInboxTools = {
       "\"The sink's leaking, tell them\": email the landlord a work order (a repair or a problem in the apartment) at once, signed with the sender's name, and follow it. `what` is the problem in a few words (\"the leaking kitchen sink\"). Returns `say` (post it as it is) or `ask` (nothing was sent: ask those questions).",
     inputSchema: z.object({
       what: z.string().min(2).describe("The problem in a few words, e.g. 'the leaking kitchen sink'"),
+      details: z.string().optional().describe("Anything else they said about it, in their words ('it's under the cabinet, getting worse'); no amounts or dates they didn't say"),
       confirmed: z.boolean().optional().describe("Only after you asked the questions from `ask` and they said yes"),
     }),
-    execute: async ({ what, confirmed }, context) => {
+    execute: async ({ what, details, confirmed }, context) => {
       const instruction = latestOf(context) ?? `tell them ${what}`;
-      const r = await reportIssue(ctxOf(context), { what, instruction, confirmed: confirmedBy(context, confirmed) });
+      const r = await reportIssue(ctxOf(context), { what, details, instruction, confirmed: confirmedBy(context, confirmed) });
       return sendOut(r);
     },
   }),
