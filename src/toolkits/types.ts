@@ -19,7 +19,7 @@ export type AnyTool = ToolAction<any, any, any, any, any, any>;
 export const TOOLKIT_CATEGORIES = ["money", "home", "food", "planning", "fun", "integrations"] as const;
 export type ToolkitCategory = (typeof TOOLKIT_CATEGORIES)[number];
 export type ToolkitStatus = "stable" | "beta" | "coming-soon";
-export type Integration = "composio" | "instacart" | "splitwise";
+export type Integration = "composio" | "instacart" | "splitwise" | "agentmail";
 /** A lucide-react icon, by its PascalCase export name ("Wallet", "ShoppingCart"). Rendered on the server. */
 export type IconName = keyof typeof icons;
 
@@ -86,6 +86,11 @@ export type ToolkitManifest<Id extends string = string> = {
    * landlord 20, the house 30, groceries 40). Default: its nav order, then last.
    */
   postOrder?: number;
+  /**
+   * One sentence Onboarding's wrap-up line adds while this Trick is off (onboarding.ts learnedLine): for a Trick that's
+   * off by default because it needs a connection step, so people know it exists.
+   */
+  offerLine?: string;
   dashboard?: {
     nav?: NavEntry;
     /** Route prefixes under /g/<id>/ it owns ("money"); they show the off state while it's off. */

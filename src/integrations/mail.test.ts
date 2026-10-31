@@ -1,6 +1,6 @@
 import { afterEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { AgentMailClient, FakeMail, mailClient, setMailClient } from "./mail";
+import { AgentMailClient, FakeMail, mailAvailability, mailClient, setMailClient } from "./mail";
 
 const GROUP = "6f1c2a7e-0000-4000-8000-000000000001";
 
@@ -95,4 +95,22 @@ describe("mailClient()", () => {
     setMailClient(mine);
     assert.equal(mailClient(), mine);
   });
+
+  test("mailAvailability (the manifest's requirement): a key, or the fake on purpose; nothing is unmet", () => {
+    delete process.env.MAIL_FAKE;
+    delete process.env.AGENTMAIL_API_KEY;
+    assert.deepEqual(mailAvailability(), { ready: false, kind: "none", hint: "AGENTMAIL_API_KEY isn't set on the server." });
+    process.env.MAIL_FAKE = "1";
+    assert.deepEqual(mailAvailability(), { ready: true, kind: "fake" });
+    delete process.env.MAIL_FAKE;
+    process.env.AGENTMAIL_API_KEY = "am_test_key";
+    assert.deepEqual(mailAvailability(), { ready: true, kind: "agentmail" });
+  });
+});
+
+test("FakeMail.deleteInbox releases the Group's address", async () => {
+  const mail = new FakeMail();
+  const { inboxId } = await mail.createInbox("g1", "apt-4b-x7k2");
+  await mail.deleteInbox(inboxId);
+  assert.equal(mail.inboxes.size, 0);
 });

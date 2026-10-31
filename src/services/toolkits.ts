@@ -37,6 +37,7 @@ const INTEGRATION_LABEL: Record<Integration, string> = {
   composio: "Needs a Composio key",
   instacart: "Instacart (through Composio)",
   splitwise: "Splitwise (through Composio)",
+  agentmail: "Needs an email service (AgentMail)",
 };
 
 /** Every requirement of a manifest with a red/green state. `blocking` ones stop it being switched on. */
@@ -103,6 +104,14 @@ export async function requirementFacts(groupId: string, needed: Iterable<Integra
       import("@/integrations/splitwise").then(async ({ splitwiseAvailability }) => {
         const a = await splitwiseAvailability();
         integrations.splitwise = { ok: a.ready, ...(a.hint ? { hint: a.hint } : {}) };
+      }),
+    );
+  }
+  if (wanted.has("agentmail")) {
+    tasks.push(
+      import("@/integrations/mail").then(({ mailAvailability }) => {
+        const a = mailAvailability();
+        integrations.agentmail = { ok: a.ready, ...(a.hint ? { hint: a.hint } : {}) };
       }),
     );
   }

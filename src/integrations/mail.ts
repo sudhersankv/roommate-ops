@@ -29,6 +29,8 @@ export interface MailClient {
   readonly kind: "agentmail" | "fake";
   /** Idempotent per Group: asking again for the same Group returns the inbox it already has. */
   createInbox(groupId: string, username: string): Promise<{ inboxId: string; address: string }>;
+  /** Release the address (an Admin's "Release address"); mail to it bounces from then on. */
+  deleteInbox(inboxId: string): Promise<void>;
   send(inboxId: string, mail: OutgoingMail): Promise<SentRef>;
   /** In the thread of `messageId`, to its sender (or `to`: a follow-up on a message we sent). */
   reply(inboxId: string, messageId: string, mail: ReplyMail): Promise<SentRef>;
@@ -72,6 +74,10 @@ export class AgentMailClient implements MailClient {
       this.sdk.inboxes.create({ username, displayName: "Roomie", clientId: groupId, metadata: { group_id: groupId } }),
     );
     return { inboxId: inbox.inboxId, address: inbox.email };
+  }
+
+  async deleteInbox(inboxId: string) {
+    await this.call("delete inbox", () => this.sdk.inboxes.delete(inboxId));
   }
 
   async send(inboxId: string, mail: OutgoingMail) {
@@ -157,6 +163,10 @@ export class FakeMail implements MailClient {
     const inbox = { inboxId: address, address };
     this.inboxes.set(groupId, inbox);
     return inbox;
+  }
+
+  async deleteInbox(inboxId: string) {
+    for (const [groupId, inbox] of this.inboxes) if (inbox.inboxId === inboxId) this.inboxes.delete(groupId);
   }
 
   async send(inboxId: string, mail: OutgoingMail) {
@@ -248,4 +258,15 @@ export function mailClient(): MailClient {
   if (override) return override;
   if (process.env.MAIL_FAKE === "1" || !process.env.AGENTMAIL_API_KEY) return (fake ??= new FakeMail());
   return (real ??= new AgentMailClient());
+}
+
+/**
+ * Whether Lease Inbox can be taught here (the manifest's `requires.integrations: ["agentmail"]`): a key, or the
+ * fake on purpose (MAIL_FAKE=1: dev-chat, tests, evals). No key and no MAIL_FAKE is unmet, so production never
+ * hands out a fake address.
+ */
+export function mailAvailability(): { ready: boolean; kind: "agentmail" | "fake" | "none"; hint?: string } {
+  if (process.env.MAIL_FAKE === "1") return { ready: true, kind: "fake" };
+  if (process.env.AGENTMAIL_API_KEY?.trim()) return { ready: true, kind: "agentmail" };
+  return { ready: false, kind: "none", hint: "AGENTMAIL_API_KEY isn't set on the server." };
 }
