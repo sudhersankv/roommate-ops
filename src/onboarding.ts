@@ -20,6 +20,7 @@ import { newJoinCode } from "@/services/joins";
 import { chatFor, initToolkits, type Chat, type Group } from "@/services/groups";
 import { addMember, admins, memberByChannelUser, type Member } from "@/services/members";
 import { MANIFESTS } from "@/toolkits/manifests";
+import type { ToolkitManifest } from "@/toolkits/types";
 
 export type ChatRef = { channel: ChannelName; externalId: string; title?: string };
 
@@ -93,15 +94,19 @@ export async function setupDmFor(channel: ChannelName, userExternalId: string): 
 
 /**
  * The one line after the setup answer: the Tricks Roomie learned, and what to say next. `defaulted`: nobody said
- * what the group is for, so it kept the roommates set, and says so.
+ * what the group is for, so it kept the roommates set, and says so. A built Trick that's off by default and has an
+ * `offerLine` (one that needs a connection step) isn't the "learn X" tip: the first of them that's off adds its own
+ * sentence instead. Names no Trick: it's all from the manifests.
  */
-export function learnedLine(on: readonly string[], opts: { defaulted?: boolean } = {}): string {
-  const names = MANIFESTS.filter((m) => on.includes(m.id)).map((m) => m.name);
+export function learnedLine(on: readonly string[], opts: { defaulted?: boolean } = {}, manifests: readonly ToolkitManifest[] = MANIFESTS): string {
+  const names = manifests.filter((m) => on.includes(m.id)).map((m) => m.name);
   const learned = names.length ? `${opts.defaulted ? "learned" : "Learned"} ${joinNames(names)}.` : `${opts.defaulted ? "no" : "No"} Tricks yet.`;
   const lead = opts.defaulted ? `You didn't say what this group is for, so I kept the ${DEFAULT_PURPOSE} set: ` : "";
-  const next = MANIFESTS.find((m) => !on.includes(m.id));
+  const offered = (m: ToolkitManifest) => !m.defaultOn && !!m.offerLine;
+  const next = manifests.find((m) => !on.includes(m.id) && !offered(m));
   const tip = next ? `Say "roomie, learn ${next.name.toLowerCase()}" any time.` : `Say "roomie, what can you do?" any time.`;
-  return `${lead}${learned} ${tip}`;
+  const offer = manifests.find((m) => !on.includes(m.id) && offered(m) && m.status !== "coming-soon")?.offerLine;
+  return `${lead}${learned} ${tip}${offer ? ` ${offer}` : ""}`;
 }
 
 /** Asked in the Chat when someone new shows up. */
