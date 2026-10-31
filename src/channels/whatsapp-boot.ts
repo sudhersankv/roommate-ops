@@ -89,7 +89,7 @@ export async function whatsappDeps(): Promise<WhatsAppDeps> {
       const saved = await saveUpload(`wa/${jid.split("@")[0]}`, bytes, mime, messageId);
       return saved.url || saved.path;
     },
-    ...(process.env.OPENROUTER_API_KEY ? { transcribe: voice.transcribe } : {}),
+    ...(voice.voiceAvailable() ? { transcribe: voice.transcribe } : {}),
     mediaWanted: mediaWantedFor,
     admission: whatsappAdmission,
     // The poll's messageSecret lives in the polls row (whatsapp-store.ts), so votes after a restart still decrypt.

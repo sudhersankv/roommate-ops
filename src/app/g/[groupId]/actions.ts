@@ -234,7 +234,7 @@ export async function updateSettings(groupId: string, patch: SettingsPatch) {
 export async function setToolkit(groupId: string, toolkit: ToolkitId, enabled: boolean) {
   return act(groupId, async (ctx) => {
     const res = await toolkits.setToolkit(ctx, { toolkit, enabled })
-    return { name: res.name, enabled: res.enabled, changed: res.changed, tryThis: res.tryThis ?? null }
+    return { name: res.name, enabled: res.enabled, changed: res.changed }
   })
 }
 

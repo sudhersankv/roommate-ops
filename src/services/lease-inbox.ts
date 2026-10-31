@@ -18,7 +18,7 @@ import { addressOf, domainOf, parseForwarded } from "@/lib/forwarded";
 import { addDaysToDay, zonedTimeToUtc } from "@/lib/time";
 import { recordFor } from "./activity";
 import { NotAllowedError, requireActive, requireAdmin } from "./authz";
-import { isUrgent, nextStatus, pickWorkOrder, saysYes, type WorkOrderReply, type WorkOrderState } from "./lease-inbox-rules";
+import { isUrgent, mailLine, nextStatus, pickWorkOrder, saysYes, senderName, type WorkOrderReply, type WorkOrderState } from "./lease-inbox-rules";
 import { keywordClassifier, smallModelClassifier } from "./mail-classifier";
 import { CONFLICT_WINDOW_MS, sendRule, signature, type OtherInstruction, type SendIntent } from "./send-rule";
 import type { Ctx, GroupCtx } from "./types";
@@ -265,6 +265,8 @@ export const ClassificationSchema = z.object({
   /** For a work-order reply: how far it says the repair got. */
   reply: z.enum(["acknowledged", "scheduled", "done", "other"]).optional(),
   summary: z.string().min(1),
+  /** The classifier failed and this is the fallback: filed, never posted (its summary is just the subject). */
+  uncertain: z.boolean().optional(),
 });
 export type Classification = z.infer<typeof ClassificationSchema>;
 
@@ -352,8 +354,10 @@ export async function classifyInbound(groupId: string, mailId: string, opts: { n
   await hooks.fileDocuments?.(groupId, m.id);
   if (c.utility && c.amountCents !== undefined) await hooks.prefillUtility?.(groupId, c.utility, c.amountCents);
 
+  // A forward's From is the Member who forwarded it, so it reads as the landlord.
+  const sender = senderName(m.originalFrom ? null : m.fromHeader);
   if (c.class === "notice") {
-    const line = `Notice from the landlord: ${c.summary}`;
+    const line = mailLine({ class: "notice", sender, summary: c.summary });
     const reminderAt = c.date ? eveningBefore(c.date, timezone) : null;
     if (reminderAt && reminderAt > now) await hooks.remind?.(groupId, reminderAt, capitalized(c.summary));
     const urgent = !!c.date && isUrgent(c.date, now, timezone);
@@ -362,14 +366,16 @@ export async function classifyInbound(groupId: string, mailId: string, opts: { n
   }
   if (c.class === "rent-lease") {
     await hooks.proposeRent?.(groupId, m.id, c.amountCents ?? null);
-    return { ...none, class: "rent-lease", line: "The landlord emailed about the rent or the lease. An admin has the details." };
+    return { ...none, class: "rent-lease", line: mailLine({ class: "rent-lease", sender, summary: c.summary }) };
   }
   if (c.class === "work-order" && order) {
     const reply: WorkOrderReply = c.reply === "scheduled" ? { kind: "scheduled", date: c.date ?? "" } : { kind: c.reply ?? "other" };
     await advanceWorkOrder(groupId, order.id, reply, c.summary, now);
-    return { ...none, class: "work-order", line: `Update on ${order.title}: ${c.summary}`, workOrderId: order.id };
+    return { ...none, class: "work-order", line: mailLine({ class: "work-order", sender, summary: c.summary, title: order.title }), workOrderId: order.id };
   }
-  return { ...none, class: c.class };
+  // Everything else from the landlord is one line too (and filed), like a notification. A utility bill isn't: its
+  // payer is asked privately, with the amount pre-filled.
+  return { ...none, class: c.class, line: c.summary && !c.utility && !c.uncertain ? mailLine({ class: "other", sender, summary: c.summary }) : null };
 }
 
 /* ---------- work orders ---------- */

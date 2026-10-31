@@ -215,7 +215,6 @@ export type ToolkitCardView = {
   /** Things to say in the chat (the Gate's examples). */
   examples: string[]
   requirements: { label: string; ok: boolean; detail?: string; blocking: boolean }[]
-  persona: string | null
   /** Its dashboard page, when it has one. */
   href: string | null
   /** Unmet requirements that keep it from going on. */

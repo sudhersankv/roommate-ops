@@ -16,6 +16,9 @@ import {
   THRESHOLDS,
   type Chattiness,
   type JevAnswers,
+  replyText,
+  staleReply,
+  onlyAQuestion,
 } from "./policy";
 import { parseJev, questionsFor, toolkitCriteria } from "./jev";
 import { MANIFESTS, TOOLKIT_IDS } from "@/toolkits/manifests";
@@ -409,5 +412,61 @@ describe("parseSilent", () => {
     assert.equal(parseSilent("[silent] actually wait, chips are already in the cart"), "actually wait, chips are already in the cart");
     assert.equal(parseSilent("[silent]\n\nLogged it anyway 👍"), "Logged it anyway 👍");
     assert.equal(parseSilent("[silent] - Ryan owes $20 btw"), "Ryan owes $20 btw");
+  });
+});
+
+describe("replyText: only what Roomie said after its last tool ran (live test #11)", () => {
+  test("text before a tool call is dropped when there's text after it", () => {
+    const steps = [
+      { text: 'Say "add it" and I\'ll put "Trash run" on the chart that way.', toolCalls: [{}] },
+      { text: "Trash run is on the chart: every 3 days, Sreyas first.", toolCalls: [] },
+    ];
+    assert.equal(replyText(steps, steps.map((s) => s.text).join("")), "Trash run is on the chart: every 3 days, Sreyas first.");
+  });
+  test("no text after the tools: the whole text stays; no tools: unchanged", () => {
+    assert.equal(replyText([{ text: "Added it.", toolCalls: [{}] }, { text: "", toolCalls: [] }], "Added it."), "Added it.");
+    assert.equal(replyText([{ text: "Hey!", toolCalls: [] }], "Hey!"), "Hey!");
+    assert.equal(replyText([], "Hey!"), "Hey!");
+  });
+});
+
+describe("staleReply (#41): Roomie already answered this Member since their message came in", () => {
+  // The live example: the tacos recipe went out while "roomie suggest" waited its turn; its own run then asked.
+  const recipe = "Tacos for 3: tortillas, beef, onion, cheese, salsa. Add the 12 missing ingredients to the cart?";
+
+  test("a question after Roomie answered them: dropped", () => {
+    assert.equal(staleReply({ reply: "Suggest what, sudhersan? A different dinner than tacos, or something else?", changed: false, answeredSince: [recipe] }), true);
+  });
+
+  test("a repeat of what Roomie just said (case, spacing and punctuation aside): dropped", () => {
+    assert.equal(staleReply({ reply: "tacos for 3:  tortillas, beef, onion, cheese, salsa", changed: false, answeredSince: [recipe] }), true);
+  });
+
+  test("nothing said to them since: sent, question or not", () => {
+    assert.equal(staleReply({ reply: "Suggest what?", changed: false, answeredSince: [] }), false);
+  });
+
+  test("the run changed something (a tool ran): always sent", () => {
+    assert.equal(staleReply({ reply: "Added the 12 taco ingredients. Anything else?", changed: true, answeredSince: [recipe] }), false);
+  });
+
+  test("a new statement (no question, not a repeat): sent", () => {
+    assert.equal(staleReply({ reply: "Dev owes you $12.50.", changed: false, answeredSince: [recipe] }), false);
+  });
+});
+
+describe("staleReply review fixes (#51)", () => {
+  const recipe = "Tacos for 3: tortillas, beef, onion, cheese, salsa. Want the missing ones on the list?";
+  test("a full new answer that ends with a question is sent", () => {
+    assert.equal(staleReply({ reply: "Dev owes you $12.50 and Sam is square. Want me to nudge Dev?", changed: false, answeredSince: [recipe] }), false);
+  });
+  test("only a short single question counts as 'only a question'", () => {
+    assert.equal(onlyAQuestion("Suggest what, sudhersan? A different dinner than tacos, or something else?"), true);
+    assert.equal(onlyAQuestion("Dev owes you $12.50. Want me to nudge him?"), false);
+    assert.equal(onlyAQuestion("Added eggs."), false);
+  });
+  test("a repeat is whole words: 'ok' doesn't repeat 'book'", () => {
+    assert.equal(staleReply({ reply: "ok", changed: false, answeredSince: ["I'll book it."] }), false);
+    assert.equal(staleReply({ reply: "tortillas, beef", changed: false, answeredSince: [recipe] }), true);
   });
 });

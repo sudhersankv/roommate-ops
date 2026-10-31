@@ -1,7 +1,7 @@
 // Pure helpers only; no network. Run: npx tsx --test src/lib/voice.test.ts
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildTranscriptionRequest, cleanTranscript, DEFAULT_STT_MODEL, formatFromMime, TRANSCRIBE_PROMPT } from "./voice";
+import { buildTranscriptionRequest, cleanTranscript, DEFAULT_STT_MODEL, formatFromMime, sttModel, TRANSCRIBE_PROMPT } from "./voice";
 
 test("formatFromMime: voice notes (ogg/opus) -> ogg, and the default is ogg", () => {
   assert.equal(formatFromMime("audio/ogg"), "ogg");
@@ -23,23 +23,31 @@ test("formatFromMime: common types", () => {
   assert.equal(formatFromMime("AUDIO/WAV"), "wav");
 });
 
-test("buildTranscriptionRequest: OpenRouter input_audio shape, temperature 0, default model", () => {
+test("buildTranscriptionRequest: the Neon AI Gateway's audio_url shape (a data URL), Gemini by default, room to think", () => {
   const req = buildTranscriptionRequest("QUJD", "ogg");
   assert.equal(req.model, DEFAULT_STT_MODEL);
-  assert.equal(req.temperature, 0);
+  assert.equal(DEFAULT_STT_MODEL, "gemini-3-5-flash");
+  assert.ok(req.max_tokens >= 1000, "Gemini spends tokens reasoning before the transcript");
+  assert.equal("temperature" in req, false);
   assert.equal(req.messages.length, 1);
   assert.equal(req.messages[0].role, "user");
   const [text, audio] = req.messages[0].content;
   assert.deepEqual(text, { type: "text", text: TRANSCRIBE_PROMPT });
-  assert.deepEqual(audio, { type: "input_audio", input_audio: { data: "QUJD", format: "ogg" } });
+  assert.deepEqual(audio, { type: "audio_url", audio_url: { url: "data:audio/ogg;base64,QUJD" } });
   assert.match(TRANSCRIBE_PROMPT, /verbatim/i);
 });
 
+test("sttModel: an OpenRouter-style id (an old STT_MODEL secret) falls back to the gateway's Gemini", () => {
+  assert.equal(sttModel(undefined), "gemini-3-5-flash");
+  assert.equal(sttModel("google/gemini-2.5-flash"), "gemini-3-5-flash");
+  assert.equal(sttModel("gemini-3-7-flash"), "gemini-3-7-flash");
+});
+
 test("buildTranscriptionRequest: explicit model and format are passed through", () => {
-  const req = buildTranscriptionRequest("AAAA", "wav", "google/gemini-2.5-flash-lite");
-  assert.equal(req.model, "google/gemini-2.5-flash-lite");
-  assert.equal(req.messages[0].content[1].input_audio?.format, "wav");
-  assert.equal(JSON.parse(JSON.stringify(req)).messages[0].content[1].input_audio.data, "AAAA", "serialises cleanly");
+  const req = buildTranscriptionRequest("AAAA", "wav", "gemini-3-5-flash-lite");
+  assert.equal(req.model, "gemini-3-5-flash-lite");
+  assert.equal(req.messages[0].content[1].audio_url?.url, "data:audio/wav;base64,AAAA");
+  assert.equal(JSON.parse(JSON.stringify(req)).messages[0].content[1].audio_url.url, "data:audio/wav;base64,AAAA", "serialises cleanly");
 });
 
 test("cleanTranscript: trims and strips one layer of wrapping quotes", () => {

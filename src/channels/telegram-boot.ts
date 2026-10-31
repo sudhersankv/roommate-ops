@@ -93,7 +93,7 @@ export async function telegramDeps(): Promise<TelegramDeps> {
       const saved = await saveUpload(`tg/${chatId}`, bytes, "image/jpeg", fileUniqueId);
       return saved.url || saved.path;
     },
-    ...(process.env.OPENROUTER_API_KEY ? { transcribe: voice.transcribe } : {}),
+    ...(voice.voiceAvailable() ? { transcribe: voice.transcribe } : {}),
     mediaWanted: mediaWantedFor,
     onPollVote: handlePollVote,
   };

@@ -57,7 +57,7 @@ describe("classifyWith", () => {
     const c = await classifyWith(async () => (calls++, `{"class":"urgent"}`), input());
     assert.equal(calls, 2);
     assert.deepEqual(c, FALLBACK(input()));
-    assert.deepEqual(c, { class: "other", summary: "Annual Unit Inspection - November 3" });
+    assert.deepEqual(c, { class: "other", summary: "Annual Unit Inspection - November 3", uncertain: true }, "filed, never posted");
   });
 
   test("a failed call -> other", async () => {

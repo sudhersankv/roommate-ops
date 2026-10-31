@@ -9,7 +9,7 @@ import { roomieRecentTexts } from "@/services/chatlog";
 import { enabledToolkits, getGroup } from "@/services/groups";
 import { listGroupMembers, peopleFacts } from "@/services/members";
 import { getPersonality, groupMood } from "@/services/personality";
-import { toolsFor } from "@/toolkits/registry";
+import { skillsById, toolsFor } from "@/toolkits/registry";
 import { roomieContextSchema } from "../context";
 import { memory } from "../memory";
 import { liveScorers } from "../scorers";
@@ -41,6 +41,7 @@ export const roomie = new Agent({
       onboarding: !!group && !group.onboardedAt,
       currency: group?.currency,
       groupName: group?.name,
+      skills: skillsById(),
       toolkits,
       personality,
       mood,

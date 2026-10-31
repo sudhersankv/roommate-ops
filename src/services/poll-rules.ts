@@ -9,7 +9,8 @@ export const MAX_POLL_OPTIONS = 4;
 /** Distinct voters that resolve a Poll among `activeCount` active Members: more than half (2 of 2, 2 of 3, 3 of 4, 3 of 5). */
 export const pollMajority = (activeCount: number) => Math.floor(Math.max(0, activeCount) / 2) + 1;
 
-export type PollReason = "majority" | "expired" | "closed";
+/** "answered": a confirm poll's asked Member tapped Yes or No. */
+export type PollReason = "majority" | "expired" | "closed" | "answered";
 
 /**
  * Whether a Poll resolves now, and why: the asker's own text closed it (it wins), a majority voted, or its 2 hours are

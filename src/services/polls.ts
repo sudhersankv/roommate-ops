@@ -23,7 +23,27 @@ const { polls, pollVotes } = schema;
 const isCategory = (c: unknown): c is ExpenseCategory => (EXPENSE_CATEGORIES as readonly unknown[]).includes(c);
 type PollRow = typeof polls.$inferSelect;
 
-export type AskPollInput = { kind: string; question: string; options: string[]; multi: boolean; about: PollAbout };
+export type AskPollInput = { kind: string; question: string; options: string[]; multi: boolean; about: PollAbout; ttlMs?: number };
+
+/**
+ * A confirm poll (live test #10): Roomie asks one Member to confirm one pinned action with a tap instead of typing a
+ * phrase. Only that Member's vote counts; Yes runs exactly `toolId` with `input` (the registry's confirmed-call path),
+ * No leaves it. The runner is registered by the toolkits (toolkits/confirm.ts), so services never import tools.
+ */
+export type ConfirmAbout = { kind: "confirm"; toolId: string; input: unknown; memberId: string };
+export const CONFIRM_OPTIONS = ["✅ Yes", "❌ No"] as const;
+export const CONFIRM_TTL_MS = 30 * 60_000;
+type ConfirmRunner = (groupId: string, about: ConfirmAbout) => Promise<string | null>;
+let confirmRunner: ConfirmRunner | null = null;
+export function registerConfirmRunner(r: ConfirmRunner | null) {
+  confirmRunner = r;
+}
+
+/** Ask `ctx.memberId` to confirm one action with a Yes / No poll in the Group's Chat. */
+export async function askConfirm(ctx: Ctx, input: { question: string; toolId: string; input: unknown }, now = new Date()) {
+  const about: ConfirmAbout = { kind: "confirm", toolId: input.toolId, input: input.input, memberId: ctx.memberId };
+  return askPoll(ctx, { kind: "confirm", question: input.question, options: [...CONFIRM_OPTIONS], multi: false, about, ttlMs: CONFIRM_TTL_MS }, now);
+}
 
 /**
  * Ask the Group's Chat a Poll: sent through its Channel (a native poll where there is one, numbered options
@@ -56,7 +76,7 @@ export async function askPoll(ctx: Ctx, input: AskPollInput, now = new Date()): 
       multi: input.multi,
       about: input.about,
       secret: sent.secret ? Buffer.from(sent.secret) : null,
-      resolvesAt: new Date(now.getTime() + POLL_TTL_MS),
+      resolvesAt: new Date(now.getTime() + (input.ttlMs ?? POLL_TTL_MS)),
       createdBy: ctx.memberId,
     })
     .returning({ id: polls.id, channel: polls.channel });
@@ -111,6 +131,11 @@ async function recordMemberVote(poll: PollRow, memberId: string, optionIds: numb
     .insert(pollVotes)
     .values({ pollId: poll.id, memberId, optionIds: ids, at: now })
     .onConflictDoUpdate({ target: [pollVotes.pollId, pollVotes.memberId], set: { optionIds: ids, at: now } });
+  // A confirm poll waits for the one Member it asked; anyone else's tap changes nothing.
+  if (poll.about.kind === "confirm") {
+    if ((poll.about as ConfirmAbout).memberId !== memberId) return { counted: true };
+    return { counted: true, resolved: "answered", line: await resolvePoll(poll.id, "answered", now) };
+  }
   return { counted: true, ...(await maybeResolve(poll, now)) };
 }
 
@@ -132,16 +157,29 @@ export async function resolvePoll(pollId: string, reason: PollReason, now = new 
   if (!poll || reason === "closed") return null;
   let line: string | null = null;
   try {
-    line = await runAbout(poll);
+    line = poll.about.kind === "confirm" ? await runConfirm(poll, reason) : await runAbout(poll);
   } catch (e) {
     console.error(`[polls] resolving poll ${poll.id} failed`, e);
-    line = `I couldn't log ${poll.question.replace(/\?$/, "")} from the poll. Mind telling me who was in?`;
+    line =
+      poll.about.kind === "confirm"
+        ? "That didn't go through. Mind asking me again?"
+        : `I couldn't log ${poll.question.replace(/\?$/, "")} from the poll. Mind telling me who was in?`;
   }
   if (line) {
     await deliver(poll.groupId, { text: line });
     await logMessage(poll.groupId, null, line);
   }
   return line;
+}
+
+/** A confirm poll's answer: the asked Member's Yes runs the pinned action; No or no answer leaves it. */
+async function runConfirm(poll: PollRow, reason: PollReason): Promise<string | null> {
+  const about = poll.about as ConfirmAbout;
+  if (reason !== "answered") return null;
+  const [vote] = await db.select({ optionIds: pollVotes.optionIds }).from(pollVotes).where(and(eq(pollVotes.pollId, poll.id), eq(pollVotes.memberId, about.memberId)));
+  if (!vote || vote.optionIds[0] !== 0) return "Okay, leaving it as it is.";
+  if (!confirmRunner) return "I couldn't do that from the poll. Say yes here and I will.";
+  return confirmRunner(poll.groupId, about);
 }
 
 /** The owning service for each kind of `about`. Only "who-in" (an Expense) exists today. */

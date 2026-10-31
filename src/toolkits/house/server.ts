@@ -3,8 +3,10 @@ import { defineToolkit } from "../define";
 import { choreTools } from "./chores";
 import { house as manifest } from "./manifest";
 import { upkeepTools } from "./upkeep";
+import { skill } from "./skill";
 
 export const house = defineToolkit(manifest, {
+  skill,
   tools: { ...choreTools, ...upkeepTools },
   dashboard: {
     // Home: Today right after your standing (Money), before the Cart.

@@ -29,7 +29,7 @@ import { BREATHER, BREATHER_MEMBER, BREATHER_SHORT, caps, clipInput } from "@/li
 import { localDay } from "@/lib/dates";
 import { logPaused, roomiePaused } from "@/lib/kill-switch";
 import { effectiveDials, isPetCommand, normalizePersonality, shapeLine, winsFrom, type Personality } from "@/lib/personality";
-import { mediaWanted, type GateDecision } from "@/mastra/gate/policy";
+import { mediaWanted, replyText as finalText, staleReply, type GateDecision } from "@/mastra/gate/policy";
 import type { MediaQuestion } from "@/channels/types";
 import { allSquare } from "@/services/personality";
 import { claimWins, dayGreeting, dbMoments } from "@/services/pet";
@@ -54,6 +54,11 @@ export type RespondInput = {
   isPrivate?: boolean;
   /** A photo or voice note nobody addressed to Roomie (IncomingMessage.skippedMedia). */
   skippedMedia?: "photo" | "voice";
+  /** When the message reached the adapter (IncomingMessage.receivedAt): the stale-reply rule looks at what Roomie said
+   * to this Member since then. */
+  receivedAt?: Date;
+  /** How many quick texts `text` joins (channels/coalesce.ts), for the trace. */
+  merged?: number;
 };
 
 export type PipelineResult = {
@@ -166,6 +171,8 @@ export async function respondToIncoming(msg: IncomingMessage): Promise<PipelineR
     mentionsRoomie: msg.mentionsRoomie,
     isPrivate: msg.isPrivate,
     skippedMedia: msg.skippedMedia,
+    receivedAt: msg.receivedAt,
+    merged: msg.merged,
   });
 }
 
@@ -206,6 +213,25 @@ export async function mediaWantedFor(q: MediaQuestion): Promise<boolean> {
 /** Setup is unfinished and this is the Admin, within a day of Roomie joining: what they say in the Chat is for Roomie. */
 const setupPendingFor = (group: { onboardedAt: Date | null; createdAt: Date }, member: Pick<Member, "role">) =>
   !group.onboardedAt && member.role === "admin" && Date.now() - group.createdAt.getTime() < SETUP_WINDOW_MS;
+
+/**
+ * The stale-reply rule's "Roomie already answered this Member" (#41): the replies this pipeline handed back for a
+ * Member's own messages, in this process, for 10 minutes. Not the chat log: the Bundle, polls, echoes and other posts
+ * Roomie makes on its own are never answers to anyone (#51 review).
+ */
+const REPLY_MEMORY_MS = 10 * 60_000;
+const replies = (): Map<string, { at: number; text: string }[]> => {
+  const g = globalThis as { __roomieRepliesTo?: Map<string, { at: number; text: string }[]> };
+  return (g.__roomieRepliesTo ??= new Map());
+};
+function noteReplyTo(groupId: string, memberId: string, text: string, now = Date.now()) {
+  const key = `${groupId}:${memberId}`;
+  const kept = (replies().get(key) ?? []).filter((r) => now - r.at < REPLY_MEMORY_MS).slice(-4);
+  replies().set(key, [...kept, { at: now, text }]);
+}
+function repliesTo(groupId: string, memberId: string, since: number): string[] {
+  return (replies().get(`${groupId}:${memberId}`) ?? []).filter((r) => r.at > since).map((r) => r.text);
+}
 
 export async function respond(input: RespondInput): Promise<PipelineResult> {
   if (roomiePaused()) {
@@ -270,7 +296,7 @@ export async function respond(input: RespondInput): Promise<PipelineResult> {
   const jevOk = await limits.jev(groupId, source);
   if (!jevOk) console.log(`[caps] group ${groupId} used its Jev calls for today: hard triggers only`);
 
-  const root = startSpan("roomie message", { text: line }, { channel: input.channel, source, groupId, memberId: member.id, role: member.role, status: member.status });
+  const root = startSpan("roomie message", { text: line }, { channel: input.channel, source, groupId, memberId: member.id, role: member.role, status: member.status, ...(input.merged ? { merged: input.merged } : {}) });
   const gateSpan = root?.createChildSpan({ type: SpanType.GENERIC, name: "gate", input: { latest: line, hardTrigger, inWindow } });
   const gate = await runGate({
     latest: line,
@@ -358,7 +384,7 @@ export async function respond(input: RespondInput): Promise<PipelineResult> {
 
     // "[silent]" (or nothing, with nothing done) is only honoured in the follow-up window. Otherwise never post the
     // literal token or an empty message: acknowledge instead.
-    let replyText = parseSilent(res.text ?? "");
+    let replyText = parseSilent(finalText(steps, res.text ?? ""));
     if (replyText === null) replyText = gate.mayStaySilent ? null : ACK;
     else if (!replyText) replyText = gate.mayStaySilent && !toolCalls.some(isActionTool) ? null : ACK;
 
@@ -366,13 +392,27 @@ export async function respond(input: RespondInput): Promise<PipelineResult> {
       root?.end({ output: { replied: false, silent: true }, metadata: gateMeta });
       return { out: null, gate, toolCalls, traceId: root?.traceId };
     }
+    // Messages run one at a time per Chat: while this one waited, Roomie may have answered this Member already (#41).
+    // A reply that changed nothing and only asks again or repeats itself then stays unsaid, like "[silent]".
+    const changed = toolCalls.some(isActionTool);
+    if (chat && input.receivedAt && !changed) {
+      const answeredSince = repliesTo(groupId, member.id, input.receivedAt.getTime());
+      if (staleReply({ reply: replyText, changed, answeredSince })) {
+        console.log(`[roomie] stale reply dropped in group ${groupId}: Roomie answered ${member.displayName} since their message came in`);
+        root?.end({ output: { replied: false, stale: true, dropped: replyText }, metadata: gateMeta });
+        return { out: null, gate, toolCalls, traceId: root?.traceId };
+      }
+    }
     // A win (everyone square, a 3/7/30 streak, a Checkout) gets one short line in the pet's voice, once.
     const cheer = await winCheer(groupId, member.displayName, group?.timezone, personality, steps).catch((e) => {
       console.warn("[pipeline] win check failed", e);
       return null;
     });
     if (cheer) replyText = `${replyText} ${cheer}`;
-    if (chat) await logMessage(groupId, null, replyText);
+    if (chat) {
+      await logMessage(groupId, null, replyText);
+      noteReplyTo(groupId, member.id, replyText);
+    }
     const out: Outgoing = { text: replyText, ...(buttons.length ? { buttons } : {}) };
     root?.end({ output: out, metadata: gateMeta });
     return { out, gate, toolCalls, traceId: root?.traceId };

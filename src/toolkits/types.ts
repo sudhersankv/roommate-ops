@@ -45,7 +45,7 @@ export type AdminAsk = {
 };
 
 /** How a message asks for one field: its words (a regex source), or with `byValue` the value itself ("Chicago"). */
-export type AdminField = { words: string; byValue?: boolean };
+export type AdminField = { words: string; byValue?: boolean; /** Also asked for by what the value means ("ist" for Asia/Kolkata, "rupees" for INR). */ byMeaning?: "timezone" | "currency" };
 
 export type NavEntry = { label: string; href: (groupId: string) => string; icon: IconName; order: number };
 
@@ -71,8 +71,6 @@ export type ToolkitManifest<Id extends string = string> = {
   status: ToolkitStatus;
   /** The Gate's `toolkit` choice for this Toolkit: what messages belong here. */
   gate: { criterion: string; examples: string[] };
-  /** Appended to Roomie's instructions while the Toolkit is on. */
-  persona?: string;
   /** Plain-words lines for the detail sheet, by tool id. Tools without one show their own description. */
   abilities?: Record<string, string>;
   /**
@@ -86,11 +84,6 @@ export type ToolkitManifest<Id extends string = string> = {
    * landlord 20, the house 30, groceries 40). Default: its nav order, then last.
    */
   postOrder?: number;
-  /**
-   * One sentence Onboarding's wrap-up line adds while this Trick is off (onboarding.ts learnedLine): for a Trick that's
-   * off by default because it needs a connection step, so people know it exists.
-   */
-  offerLine?: string;
   dashboard?: {
     nav?: NavEntry;
     /** Route prefixes under /g/<id>/ it owns ("money"); they show the off state while it's off. */
@@ -113,6 +106,8 @@ export type HookCtx = { groupId: string; memberId: string | null };
 export type Toolkit<Id extends string = string> = Omit<ToolkitManifest<Id>, "dashboard"> & {
   /** Keyed by tool id. */
   tools: Record<string, AnyTool>;
+  /** How Roomie works with this Trick: its skill.md (#35), generated into skill.ts by `npm run skills`. Server-only. */
+  skill: string;
   dashboard?: NonNullable<ToolkitManifest["dashboard"]> & {
     home?: ComponentRef;
     /** Where the Home section sits (default: nav order). Home reads standing, then today, then the rest. */

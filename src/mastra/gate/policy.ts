@@ -157,6 +157,22 @@ export function mediaWanted(f: MediaFacts): boolean {
 
 /* ---------- the [silent] last resort ---------- */
 
+/**
+ * The reply to send from a run's steps: only what Roomie said after its last tool ran (live test #11, where "Say 'add
+ * it'" written before the tool call went out glued to "Done on my end"). When nothing was said after the tools (or no
+ * tool ran), the run's whole text.
+ */
+export function replyText(steps: readonly { text?: string; toolCalls?: readonly unknown[] }[], whole: string): string {
+  const lastTool = steps.findLastIndex((s) => (s.toolCalls?.length ?? 0) > 0);
+  if (lastTool === -1) return whole;
+  const after = steps
+    .slice(lastTool + 1)
+    .map((s) => s.text ?? "")
+    .join("")
+    .trim();
+  return after || whole;
+}
+
 /** The exact token the agent may answer with in the follow-up window when the message needs no reply. */
 export const SILENT = "[silent]";
 
@@ -176,4 +192,28 @@ export function parseSilent(text: string): string | null {
   const rest = text.slice(m[0].length);
   if (ONLY_FILLER.test(rest)) return null;
   return rest.replace(/^[\s\p{P}]+/u, "").trim();
+}
+
+/** A reply's words only: lower case, punctuation and runs of spaces gone (for "is this a repeat?"). */
+const words = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}$]+/gu, " ").trim();
+
+/**
+ * The stale-reply rule (#41). Messages in a Chat run one at a time, so a run can finish after Roomie already answered
+ * the same Member (their earlier message's run, say, while the "Yes" after it waited). Such a reply is dropped, the
+ * `[silent]` way, when the run changed nothing (no tool besides working memory ran) and it's only a question or a
+ * repeat of a line Roomie said to them since their message arrived (`answeredSince`). Anything that did something, or
+ * says something new, is sent.
+ */
+export function staleReply(i: { reply: string; changed: boolean; answeredSince: readonly string[] }): boolean {
+  if (i.changed || !i.answeredSince.length) return false;
+  if (onlyAQuestion(i.reply)) return true;
+  const said = words(i.reply);
+  // A whole-word repeat: "ok" doesn't repeat "book".
+  return !!said && i.answeredSince.some((line) => ` ${words(line)} `.includes(` ${said} `));
+}
+
+/** A short clarifying question and nothing else: one line, at most 160 characters, ending in "?", no full stop or "!" before it. A full answer that ends with a question isn't one. */
+export function onlyAQuestion(reply: string): boolean {
+  const t = reply.trim();
+  return !!t && t.length <= 160 && !t.includes("\n") && t.endsWith("?") && !/[.!]\s/.test(t);
 }

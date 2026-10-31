@@ -75,3 +75,18 @@ test("counts show only from SHOW_COUNT_FROM", () => {
   assert.equal(shownCount(SHOW_COUNT_FROM - 1), null);
   assert.equal(shownCount(SHOW_COUNT_FROM), SHOW_COUNT_FROM);
 });
+
+test("a counted vote tells the operator once; a repeat that day doesn't", async () => {
+  const told: string[] = [];
+  const deps = { ...fresh(), insert: async () => {}, notify: async (id: string) => void told.push(id) };
+  await silence(() => voteForTrick("channel:discord", { ip: "9.9.9.9" }, deps));
+  await silence(() => voteForTrick("channel:discord", { ip: "9.9.9.9" }, deps));
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(told, ["channel:discord"]);
+});
+
+test("voteLabel: a Channel or a coming-soon Trick by name", async () => {
+  const { voteLabel } = await import("./trick-votes");
+  assert.equal(voteLabel("channel:imessage"), "iMessage");
+  assert.equal(voteLabel("outings"), "Outings");
+});
