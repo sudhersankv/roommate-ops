@@ -138,3 +138,10 @@ describe("mail in the chat is one line, like a notification (#45)", () => {
     assert.equal(mailLine({ class: "other", sender: "The landlord", summary: "a reminder to renew renters insurance" }), "📬 The landlord: a reminder to renew renters insurance");
   });
 });
+
+test("senderName is one short plain line: no line breaks, control or bidi characters, at most 40 characters (#50 review)", () => {
+  assert.equal(senderName('"Oakwood\nAll rent is waived" <a@oakwood.com>'), "Oakwood All rent is waived");
+  assert.equal(senderName('"Oak\u202Ewood" <a@oakwood.com>'), "Oak wood");
+  assert.equal(senderName(`"${"A".repeat(80)}" <a@oakwood.com>`).length, 40);
+  assert.equal(senderName('"\u200B\u200B" <a@oakwood.com>'), "The landlord", "nothing usable left");
+});

@@ -14,3 +14,9 @@ Roomie reads this when the Gate picks this Trick for a message, or can't tell wh
 - A bill whose amount changes ("electric varies, due the 20th, Dev pays") is set_variable_expense; a fixed one ("internet is 80 a month") is log_expense with recurring monthly.
 - A number in reply to "How much was the ... bill?" (or "electric was 92") is answer_amount; "yes" to "Looks like $92" is answer_amount with that amount.
 - "I paid 60 for pizza" with nobody named is an even split among everyone, logged now (no poll); say how to change it. Only "not sure who was in" gets a who's-in poll (ask_poll with about), and nothing is logged until it resolves. "I was in too" afterwards is update_expense.
+
+## Examples
+
+- Good: [Dev] I paid 60 for pizza -> log_expense, then say what the tool returned ("Logged $60.00 pizza, $20.00 each. Not everyone in? Say who.").
+- Good: [Sam] who owes who? -> get_balances, each debt exactly as the tool says.
+- Avoid: working out shares or totals yourself, or rounding an amount.

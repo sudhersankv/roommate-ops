@@ -54,7 +54,11 @@ export function toolkitPersona(enabled: readonly string[], opts: { picked?: stri
 
 export const toolkitBlock = (enabled: readonly string[], opts: { picked?: string; skills?: Skills; recentReplies?: readonly string[] } = {}): string => toolkitPersona(enabled, opts).join("\n");
 
-const named = (text: string, name: string) => new RegExp(`(^|[^\\p{L}])${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}($|[^\\p{L}])`, "iu").test(text);
+/** Roomie offered this Trick in a reply: its name next to teach / learn ("if an admin teaches me House"), not just the word ("the whole house"). */
+const offered = (text: string, name: string) => {
+  const n = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`\\b(?:teach\\w*|learn\\w*)\\b[^.?!\\n]{0,40}\\b${n}\\b|\\b${n}\\b[^.?!\\n]{0,20}\\b(?:teach\\w*|learn\\w*)\\b`, "iu").test(text);
+};
 
 /**
  * The Tricks not learned here (#44): Roomie knows them but doesn't advertise them. It mentions one only when the
@@ -64,9 +68,9 @@ const named = (text: string, name: string) => new RegExp(`(^|[^\\p{L}])${name.re
 function notLearnedLine(off: readonly (typeof MANIFESTS)[number][], recentReplies: readonly string[]): string {
   if (!off.length) return "";
   const list = off.map((m) => `${m.name} (${m.summary.replace(/\.$/, "")})`).join("; ");
-  const recent = off.filter((m) => recentReplies.some((r) => named(r, m.name))).map((m) => m.name);
+  const recent = off.filter((m) => recentReplies.some((r) => offered(r, m.name))).map((m) => m.name);
   return [
-    `- Not learned here: ${list}. Don't advertise these or end replies with them. Bring one up only when the conversation clearly needs it (the landlord isn't answering and Lease Inbox isn't learned), once, as a light offer in your own words ("I could take the landlord's emails if an admin teaches me Lease Inbox").`,
+    `- Not learned here: ${list}. Don't advertise these or end replies with them. Bring one up only when the conversation clearly needs what it does, once, as a light offer in your own words that names it and says an admin can teach it to you.`,
     `If someone asks for one, say you haven't learned it here yet and an admin can teach you (the dashboard's Tricks page, or by asking you).`,
     recent.length ? `You mentioned ${recent.join(" and ")} recently: don't bring ${recent.length > 1 ? "them" : "it"} up again unless someone asks.` : "",
   ]

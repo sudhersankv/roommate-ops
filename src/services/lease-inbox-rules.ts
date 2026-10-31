@@ -148,10 +148,23 @@ export function attachmentKind(mailClass: string | null, utility: string | null,
 
 /* ---------- the chat line for a landlord email (#45) ---------- */
 
-/** Who an email is from, as the chat says it: the From header's display name, else "The landlord". */
+/** The longest sender label the chat shows. */
+const SENDER_MAX = 40;
+
+/**
+ * Who an email is from, as the chat says it: the From header's display name, else "The landlord". The name is the
+ * sender's own text, so it's made one short plain line: control, formatting and bidirectional characters and line
+ * breaks go, spaces collapse, at most 40 characters; nothing usable left (or an address) is "The landlord".
+ */
 export function senderName(fromHeader: string | null | undefined): string {
-  const name = /^\s*"?([^"<]+?)"?\s*</.exec(fromHeader ?? "")?.[1]?.trim();
-  return name && !name.includes("@") ? name : "The landlord";
+  const raw = /^\s*"?([^"<]+?)"?\s*</.exec(fromHeader ?? "")?.[1] ?? "";
+  const name = raw
+    .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, SENDER_MAX)
+    .trim();
+  return name && !name.includes("@") && /\p{L}/u.test(name) ? name : "The landlord";
 }
 
 /**

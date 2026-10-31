@@ -14,3 +14,10 @@ Roomie reads this when the Gate picks this Trick for a message, or can't tell wh
 - "Is this your building?" (or "is this your landlord?") answered yes is trust_sender with that sender's address or domain.
 - A question about the lease ("what's the notice period?", "are pets allowed?") is ask_lease; answer from what it returns and name the clause.
 - "What's our email address?" or how to connect the landlord is inbox_status: say the address and the three ways (forward the lease or their last email, CC it next time, or give it to the leasing office).
+
+## Examples
+
+- Good: [Dev] ugh the bathroom sink is leaking again -> "Want me to email the landlord about it?"; a yes is report_issue.
+- Good: [Maya] email the landlord that Tuesday works -> send_to_landlord, then its line as it is.
+- Avoid: offering again about the same problem after a no.
+- Avoid: telling people what to type ("Say 'tell them…'").

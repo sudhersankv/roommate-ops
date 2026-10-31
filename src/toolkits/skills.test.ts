@@ -79,7 +79,7 @@ describe("Tricks not learned here are known, not advertised (#44)", () => {
     const t = off();
     assert.match(t, /Not learned here: Lease Inbox \(/);
     assert.match(t, /Don't advertise these/);
-    assert.match(t, /only when the conversation clearly needs it/);
+    assert.match(t, /only when the conversation clearly needs what it does/);
     assert.match(t, /If someone asks for one, say you haven't learned it here yet/);
     assert.doesNotMatch(t, /roomie, learn/i, "no script to type");
   });
@@ -91,5 +91,17 @@ describe("Tricks not learned here are known, not advertised (#44)", () => {
 
   test("everything learned: no line at all", () => {
     assert.doesNotMatch(toolkitPersona(TOOLKIT_IDS).join(" "), /Not learned here/);
+  });
+});
+
+describe("the not-learned line names no Trick of its own, and 'mentioned' needs a teach/learn context (#50 review)", () => {
+  const off = (recentReplies: string[] = []) => toolkitPersona(["splitting"], { recentReplies }).join(" ");
+  test("the guidance itself names no Trick (only the generated list does)", () => {
+    const guidance = off().split("Don't advertise")[1] ?? "";
+    for (const m of MANIFESTS) assert.ok(!guidance.includes(m.name), `${m.name} named in the guidance`);
+  });
+  test("an everyday 'house' or 'money' isn't an offer; 'an admin can teach me House' is", () => {
+    assert.doesNotMatch(off(["For you or the whole house?", "The money's in."]), /You mentioned/);
+    assert.match(off(["I could keep the chart if an admin teaches me House."]), /You mentioned House recently/);
   });
 });
