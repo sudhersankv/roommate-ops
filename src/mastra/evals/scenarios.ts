@@ -82,6 +82,7 @@ export const READ_ONLY_TOOLS = new Set([
   "work_order_status",
   "ask_lease",
   "inbox_status",
+  "notice_status",
   "what_do_you_know_about_me",
   "updateWorkingMemory",
 ]);

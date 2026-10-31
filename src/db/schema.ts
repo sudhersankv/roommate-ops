@@ -762,6 +762,9 @@ export const mailMessages = pgTable(
     summary: text("summary"),
     // From the classifier: the notice's date (local "YYYY-MM-DD" or wall-clock), an amount, a utility's name.
     noticeDate: text("notice_date"),
+    // A notice's window and thing (#63, services/notice-window.ts NoticeFacts): local "YYYY-MM-DDTHH:mm" start / end,
+    // `what` ("water") and `off` (a shut-off). Null for other mail or a notice without them.
+    facts: jsonb("facts").$type<{ start?: string; end?: string; what?: string; off?: boolean }>(),
     amountCents: integer("amount_cents"),
     utility: text("utility"),
     // Documents filed from its attachments (ADR 0018); filled once Documents exist.

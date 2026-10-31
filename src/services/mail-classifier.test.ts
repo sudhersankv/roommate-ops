@@ -2,7 +2,7 @@
 // email is filed as other. No model, no DB. Run: npx tsx --test src/services/mail-classifier.test.ts
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { classifierPrompt, classifyWith, FALLBACK, keywordClassifier, parseClassification } from "./mail-classifier";
+import { classifierPrompt, classifyWith, FALLBACK, keywordClassifier, parseClassification, windowFromText } from "./mail-classifier";
 import type { ClassifyInput } from "./lease-inbox";
 
 const input = (over: Partial<ClassifyInput> = {}): ClassifyInput => ({
@@ -74,6 +74,47 @@ describe("classifyWith", () => {
     const p = classifierPrompt(input({ workOrderTitle: "the leaking kitchen sink" }));
     assert.match(p, /Today is Friday, October 30, 2026/);
     assert.match(p, /"the leaking kitchen sink"/);
+  });
+});
+
+describe("a notice's window (#63)", () => {
+  test("start, end, what and off are kept; the date follows the start", () => {
+    const c = parseClassification(`{"class":"notice","start":"2026-11-03T09:00","end":"2026-11-03T11:00","what":"Water","off":true,"summary":"water's off Tue, 9 to 11 AM"}`);
+    assert.deepEqual(c, { class: "notice", summary: "water's off Tue, 9 to 11 AM", date: "2026-11-03T09:00", start: "2026-11-03T09:00", end: "2026-11-03T11:00", what: "water", off: true });
+  });
+
+  test("a bad start, an end before the start, a non-boolean off: dropped", () => {
+    const c = parseClassification(`{"class":"notice","date":"2026-11-03","start":"9am","end":"2026-11-03T08:00","off":"yes","summary":"x"}`);
+    assert.deepEqual(c, { class: "notice", summary: "x", date: "2026-11-03" });
+    const d = parseClassification(`{"class":"notice","start":"2026-11-03T09:00","end":"2026-11-03T08:00","summary":"x"}`);
+    assert.equal(d.end, undefined);
+  });
+
+  test("the prompt asks for them", () => {
+    const p = classifierPrompt(input());
+    assert.match(p, /"start": for a notice with a time window/);
+    assert.match(p, /"off": true when/);
+  });
+
+  test("windowFromText: the ways a notice says it", () => {
+    const day = "2026-11-03";
+    assert.deepEqual(windowFromText("between 9:00 AM and 11:00 AM", day), { start: `${day}T09:00`, end: `${day}T11:00` });
+    assert.deepEqual(windowFromText("from 9am-11am", day), { start: `${day}T09:00`, end: `${day}T11:00` });
+    assert.deepEqual(windowFromText("from 9 to 11 a.m.", day), { start: `${day}T09:00`, end: `${day}T11:00` });
+    assert.deepEqual(windowFromText("11 to 1 PM", day), { start: `${day}T11:00`, end: `${day}T13:00` });
+    assert.deepEqual(windowFromText("1:30 to 3 PM", day), { start: `${day}T13:30`, end: `${day}T15:00` });
+    assert.deepEqual(windowFromText("on 2026-11-03, 9am to noon", day), { start: `${day}T09:00`, end: `${day}T12:00` });
+    assert.equal(windowFromText("on 2026-11-03 all day", day), null);
+  });
+
+  test("keywordClassifier: a water shut-off with its window", async () => {
+    const c = await keywordClassifier.classify(input({ subject: "NOTICE TO ALL RESIDENTS", text: "Water will be shut off on 2026-11-03 from 9:00 AM to 11:00 AM for riser repairs." }));
+    assert.deepEqual(
+      [c.class, c.date, c.start, c.end, c.what, c.off],
+      ["notice", "2026-11-03T09:00", "2026-11-03T09:00", "2026-11-03T11:00", "water", true],
+    );
+    const insp = await keywordClassifier.classify(input({ text: "Smoke detector inspection on 2026-11-03 between 9:00 AM and 12:00 PM." }));
+    assert.deepEqual([insp.what, insp.off, insp.end], ["smoke detector inspection", false, "2026-11-03T12:00"]);
   });
 });
 
