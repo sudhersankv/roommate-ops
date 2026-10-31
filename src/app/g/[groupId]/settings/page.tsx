@@ -4,6 +4,7 @@ import { LearnedReset } from "@/components/app/learned-reset"
 import { zonesByRegion } from "@/lib/time"
 import { currentMember } from "@/lib/session"
 import { scheduleView } from "../_components/data"
+import { NudgesCard } from "../_components/nudges-card"
 import { SettingsScreen } from "../_components/screens/settings"
 import { settingsSections } from "../_components/sections"
 
@@ -20,7 +21,7 @@ export default async function SettingsPage({ params }: Props) {
   const admin = s.member.role === "admin" && s.member.status === "active"
   const [schedule, sections] = await Promise.all([scheduleView(s), s.member.status === "active" ? settingsSections(s) : null])
   return (
-    <SettingsScreen zones={admin ? zonesByRegion() : []} schedule={schedule} learned={<LearnedReset groupId={groupId} />}>
+    <SettingsScreen zones={admin ? zonesByRegion() : []} schedule={schedule} learned={<LearnedReset groupId={groupId} />} nudges={<NudgesCard session={s} isAdmin={admin} />}>
       {sections}
     </SettingsScreen>
   )

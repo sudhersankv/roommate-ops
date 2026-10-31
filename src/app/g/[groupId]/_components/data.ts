@@ -2,8 +2,10 @@
 // services (balances, settle plan, shares, chores) and are only reshaped and dated in the Group's time zone.
 import { cache, createElement } from "react"
 
+import { accentOf } from "@/app/_landing/tricks"
 import { ToolkitIcon } from "@/components/app/toolkit-icon"
 import { localDay } from "@/lib/dates"
+import { formatInZone } from "@/lib/time"
 import type { GroupSession } from "@/lib/session"
 import { instacartAvailability } from "@/integrations/instacart"
 import { activity, cart, chatlog, chores, groups, joins, members, money, pantry, recipes, reminders, schedule, splitwise, toolkits, upkeep } from "@/services"
@@ -14,23 +16,50 @@ import { haveNeed } from "@/services/recipe-math"
 import type { Recipe } from "@/services/recipes"
 import { toolkitStates } from "@/toolkits/catalog"
 import { toolkitById } from "@/toolkits/registry"
-import { CATALOG, COMING_SOON, MANIFESTS, TOOLKIT_IDS, type ToolkitId } from "@/toolkits/manifests"
-import type { IconName } from "@/toolkits/types"
+import { COMING_SOON, MANIFESTS, TOOLKIT_IDS, type ToolkitId } from "@/toolkits/manifests"
+import type { IconName, ToolkitManifest } from "@/toolkits/types"
 import type { GroupView, MemberView } from "./group-context"
-import type { ActivityView, CartItemView, CartPageView, ChoreView, ExpenseView, NarrationView, RecipeView, ReminderView, ScheduleView, SplitwiseView, ToolkitCardView, Transfer, UpkeepView } from "./types"
+import type {
+  ActivityView,
+  CartItemView,
+  CartPageView,
+  ChoreView,
+  ExpenseView,
+  NarrationView,
+  RecentDocumentView,
+  RecipeView,
+  ReminderView,
+  ScheduleView,
+  SplitwiseView,
+  TodayRowView,
+  ToolkitCardView,
+  Transfer,
+  UpkeepView,
+} from "./types"
 
-/** Trick tabs in the dock between Home and More. Home + 3 + More, with the Ask Roomie button in the middle. */
-export const NAV_TABS = 3
+/**
+ * Trick tabs in the dock between Home and More: Home · 2 · Ask Roomie · 2 · More, so Ask stays centred with two a
+ * side (Home · Money · Ask · House · More for roommates).
+ */
+export const NAV_TABS = 2
 
 /**
  * The shell from the manifests. The dock: the learned Tricks' nav entries sorted by `order` (one per page, the
- * first owner wins), at most NAV_TABS. The More drawer: every learned Trick (its own tab), then the ones not learned
- * yet and the coming-soon ones as greyed slots. And every owned page with its owners' on/off state. The Group's own
- * pages (Reminders, Members, Settings) are the dock's, not a manifest's.
+ * first owner wins), the first NAV_TABS of them; a Trick that's off simply leaves its slot to the next one by order
+ * (Inbox at 35 takes House's 30 when House is off). The More drawer: the learned Tricks the dock had no room for,
+ * then the ones not learned yet as greyed slots, and the coming-soon ones (shown as one "What's coming" tile). And
+ * every owned page with its owners' on/off state. The Group's own pages (Reminders, Members, Settings) are the
+ * drawer's, not a manifest's. `manifests` / `comingSoon` are for tests with stub Tricks.
  */
-export function shellView(groupId: string, on: Record<string, boolean>): Pick<GroupView, "nav" | "drawer" | "ownedPages"> {
+export function shellView(
+  groupId: string,
+  on: Record<string, boolean>,
+  manifests: readonly ToolkitManifest[] = MANIFESTS,
+  comingSoon: readonly ToolkitManifest[] = COMING_SOON
+): Pick<GroupView, "nav" | "drawer" | "ownedPages"> {
   const icon = (name: IconName) => createElement(ToolkitIcon, { name })
-  const entries = MANIFESTS.filter((m) => on[m.id] && m.dashboard?.nav)
+  const entries = manifests
+    .filter((m) => on[m.id] && m.dashboard?.nav)
     .map((m) => ({ m, nav: m.dashboard!.nav! }))
     .sort((a, b) => a.nav.order - b.nav.order)
   const all = entries.map(({ m, nav }) => ({ toolkit: m.id, label: nav.label, href: nav.href(groupId), icon: icon(nav.icon) }))
@@ -41,18 +70,20 @@ export function shellView(groupId: string, on: Record<string, boolean>): Pick<Gr
     seen.add(path)
     return true
   })
-  const slot = (m: (typeof CATALOG)[number]) => ({ id: m.id, name: m.name, icon: icon(m.icon) })
-  const prefixes = [...new Set(MANIFESTS.flatMap((m) => m.dashboard?.pages ?? []))]
+  const nav = tabs.slice(0, NAV_TABS)
+  const inDock = new Set(nav.map((n) => n.href.split("?")[0]))
+  const slot = (m: ToolkitManifest) => ({ id: m.id, name: m.name, icon: icon(m.icon) })
+  const prefixes = [...new Set(manifests.flatMap((m) => m.dashboard?.pages ?? []))]
   return {
-    nav: tabs.slice(0, NAV_TABS),
+    nav,
     drawer: {
-      learned: all,
-      notYet: MANIFESTS.filter((m) => !on[m.id]).map(slot),
-      soon: COMING_SOON.map(slot),
+      learned: tabs.filter((n) => !inDock.has(n.href.split("?")[0])),
+      notYet: manifests.filter((m) => !on[m.id] && m.status !== "coming-soon").map(slot),
+      soon: comingSoon.map(slot),
     },
     ownedPages: prefixes.map((prefix) => ({
       prefix,
-      owners: MANIFESTS.filter((m) => m.dashboard?.pages?.includes(prefix)).map((m) => ({ id: m.id, name: m.name, summary: m.summary, enabled: !!on[m.id], icon: createElement(ToolkitIcon, { name: m.icon }) })),
+      owners: manifests.filter((m) => m.dashboard?.pages?.includes(prefix)).map((m) => ({ id: m.id, name: m.name, summary: m.summary, enabled: !!on[m.id], icon: createElement(ToolkitIcon, { name: m.icon }) })),
     })),
   }
 }
@@ -139,8 +170,21 @@ const plainLine = (description: string) => {
   return `${admin ? "Admins: " : ""}${first.charAt(0).toUpperCase()}${first.slice(1)}`
 }
 
-/** The marketplace: every catalog entry with this Group's on/off, requirements and the detail sheet's content. */
-export async function marketplaceView(s: GroupSession): Promise<ToolkitCardView[]> {
+/** The Tricks page as three plain lists, in catalog order: Learned, Not yet (can be taught), Soon. */
+export function groupTricks<T extends Pick<ToolkitCardView, "enabled" | "status">>(cards: readonly T[]): { learned: T[]; notYet: T[]; soon: T[] } {
+  return {
+    learned: cards.filter((t) => t.enabled && t.status !== "coming-soon"),
+    notYet: cards.filter((t) => !t.enabled && t.status !== "coming-soon"),
+    soon: cards.filter((t) => t.status === "coming-soon"),
+  }
+}
+
+/** The Tricks page: every catalog entry with this Group's on/off, requirements and the detail sheet's content. */
+export async function tricksView(s: GroupSession): Promise<ReturnType<typeof groupTricks<ToolkitCardView>>> {
+  return groupTricks(await trickCardsView(s))
+}
+
+async function trickCardsView(s: GroupSession): Promise<ToolkitCardView[]> {
   const catalog = await toolkits.catalogFor(s.ctx)
   return catalog.map(({ manifest: m, enabled, requirements }) => {
     const server = toolkitById(m.id)
@@ -152,8 +196,6 @@ export async function marketplaceView(s: GroupSession): Promise<ToolkitCardView[
       summary: m.summary,
       longDescription: m.longDescription,
       icon: createElement(ToolkitIcon, { name: m.icon }),
-      category: m.category,
-      tags: m.tags,
       status: m.status,
       enabled,
       abilities,
@@ -349,6 +391,7 @@ export async function remindersView(s: GroupSession): Promise<ReminderView[]> {
     id: r.id,
     text: r.text,
     when: reminders.whenLabel({ dueAt: r.dueAt, recurring: null }, tz),
+    time: formatInZone(r.dueAt, tz, { hour: "numeric", minute: "2-digit" }),
     day: localDay(r.dueAt, tz),
     for: r.memberId,
     setBy: r.createdBy,
@@ -359,4 +402,47 @@ export async function remindersView(s: GroupSession): Promise<ReminderView[]> {
 
 export async function scheduleView(s: GroupSession): Promise<ScheduleView> {
   return schedule.getSchedule(s.ctx)
+}
+
+/** A Trick's line for the morning Bundle as Home reads it: its id and page, and what it would say (null: nothing). */
+export type BundleLine = { id: string; name: string; href: string | null; line: string | null }
+
+/**
+ * Home's Today strip, pure: the Tricks' Bundle lines in the order given (post order), then the viewer's Reminders due
+ * today. A line with nothing to say drops out; no rows at all means a quiet day.
+ */
+export function todayRows(lines: readonly BundleLine[], upcoming: readonly ReminderView[], today: string, base: string): TodayRowView[] {
+  const said: TodayRowView[] = lines
+    .filter((l) => !!l.line?.trim())
+    .map((l) => ({ id: l.id, text: l.line!.trim(), trick: l.id, accent: accentOf(l.id), href: l.href }))
+  const due: TodayRowView[] = upcoming
+    .filter((r) => r.day === today)
+    .map((r) => ({ id: `reminder-${r.id}`, text: `${r.text}, ${r.time}`, trick: null, accent: null, href: `${base}/reminders` }))
+  return [...said, ...due]
+}
+
+/**
+ * The Bundle on a page: the same source as the morning post (each enabled Toolkit's `bundle(ctx, now)`, in post
+ * order, services/bundle.ts) plus core's Reminders due today for this viewer. A Trick whose line fails is left out.
+ */
+export async function todayView(s: GroupSession, upcoming?: ReminderView[]): Promise<TodayRowView[]> {
+  const now = new Date()
+  const [entries, rem] = await Promise.all([toolkits.enabledToolkitEntries(s.ctx), upcoming ?? remindersView(s)])
+  const lines = await Promise.all(
+    entries.map(async (t): Promise<BundleLine> => ({
+      id: t.id,
+      name: t.name,
+      href: t.dashboard?.nav?.href(s.group.id) ?? null,
+      line: t.bundle ? await t.bundle(s.ctx, now).catch((e) => (console.error("[today]", t.id, e), null)) : null,
+    }))
+  )
+  return todayRows(lines, rem, localDay(now, s.group.timezone), `/g/${s.group.id}`)
+}
+
+/**
+ * Home's "Recent documents" strip. Empty until core's Documents land (the core-slots work adds `documentsView`);
+ * then this maps its newest few to RecentDocumentView and the strip shows up by itself.
+ */
+export async function recentDocumentsView(_s: GroupSession): Promise<RecentDocumentView[]> {
+  return []
 }

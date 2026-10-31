@@ -1,8 +1,8 @@
 "use client"
 
 import Link from "next/link"
-import { useMemo, useState, useTransition } from "react"
-import { CheckIcon, SearchIcon, XIcon } from "lucide-react"
+import { useState, useTransition } from "react"
+import { CheckIcon, XIcon } from "lucide-react"
 import { cn } from "cn"
 
 import { Badge } from "@/components/ui/badge"
@@ -10,25 +10,13 @@ import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Drawer, DrawerClose, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/ui/drawer"
-import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty"
-import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group"
 import { Spinner } from "@/components/ui/spinner"
 import { toast } from "@/components/ui/toast"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import type { ToolkitCategory, ToolkitId } from "@/toolkits/types"
+import type { ToolkitId } from "@/toolkits/types"
 import { setToolkit } from "../../actions"
 import { useGroup } from "../group-context"
 import { PageHeader, TopBar } from "../shell"
 import type { ToolkitCardView } from "../types"
-
-const CATEGORY_LABEL: Record<ToolkitCategory, string> = {
-  money: "Money",
-  home: "Home",
-  food: "Food",
-  planning: "Planning",
-  fun: "Fun",
-  integrations: "Integrations",
-}
 
 /** Admins teach Roomie a Trick or make it forget one; everyone else browses. The services check the role again. */
 function useToggle() {
@@ -50,25 +38,15 @@ function useToggle() {
   return { toggle, pending }
 }
 
-export function ToolkitsScreen({ cards, openId }: { cards: ToolkitCardView[]; openId: string | null }) {
+type TrickLists = { learned: ToolkitCardView[]; notYet: ToolkitCardView[]; soon: ToolkitCardView[] }
+
+/** The Tricks page: a plain list (Learned, Not yet, Soon) and the detail sheet. `?open=<id>` opens a sheet; #soon jumps. */
+export function TricksScreen({ tricks, openId }: { tricks: TrickLists; openId: string | null }) {
   const { group, isAdmin, active } = useGroup()
-  const [query, setQuery] = useState("")
-  const [category, setCategory] = useState<ToolkitCategory | "all">("all")
   const [open, setOpen] = useState<string | null>(openId)
   const { toggle, pending } = useToggle()
   const admins = active.filter((m) => m.role === "admin").map((m) => m.name)
-
-  const categories = useMemo(() => (Object.keys(CATEGORY_LABEL) as ToolkitCategory[]).filter((c) => cards.some((t) => t.category === c)), [cards])
-  const shown = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    return cards.filter(
-      (t) => (category === "all" || t.category === category) && (!q || [t.name, t.summary, t.longDescription, ...t.tags, ...t.examples].some((s) => s.toLowerCase().includes(q)))
-    )
-  }, [cards, query, category])
-  const on = shown.filter((t) => t.enabled)
-  const available = shown.filter((t) => !t.enabled && t.status !== "coming-soon")
-  const soon = shown.filter((t) => t.status === "coming-soon")
-  const current = cards.find((t) => t.id === open) ?? null
+  const current = [...tricks.learned, ...tricks.notYet, ...tricks.soon].find((t) => t.id === open) ?? null
 
   return (
     <>
@@ -80,44 +58,10 @@ export function ToolkitsScreen({ cards, openId }: { cards: ToolkitCardView[]; op
         </p>
       </PageHeader>
 
-      <div className="flex flex-col gap-4 px-5 pb-2">
-        <InputGroup>
-          <InputGroupAddon>
-            <SearchIcon aria-hidden />
-          </InputGroupAddon>
-          <InputGroupInput aria-label="Search Tricks" placeholder="Search: recipes, Splitwise, chores…" autoComplete="off" value={query} onChange={(e) => setQuery(e.target.value)} />
-        </InputGroup>
-        <div className="-mx-5 overflow-x-auto px-5 [scrollbar-width:none]">
-          <ToggleGroup
-            variant="outline"
-            size="sm"
-            spacing={2}
-            value={[category]}
-            onValueChange={(v) => setCategory((v[0] as ToolkitCategory | "all" | undefined) ?? "all")}
-            aria-label="Category"
-          >
-            <ToggleGroupItem value="all">All</ToggleGroupItem>
-            {categories.map((c) => (
-              <ToggleGroupItem key={c} value={c}>
-                {CATEGORY_LABEL[c]}
-              </ToggleGroupItem>
-            ))}
-          </ToggleGroup>
-        </div>
-      </div>
-
-      <div className="flex flex-col gap-8 px-5 pt-4 pb-6">
-        {shown.length === 0 ? (
-          <Empty>
-            <EmptyHeader>
-              <EmptyTitle>No Trick matches “{query}”</EmptyTitle>
-              <EmptyDescription>Try another word, or tell Roomie in the chat what you&apos;d like it to do.</EmptyDescription>
-            </EmptyHeader>
-          </Empty>
-        ) : null}
-        <CardGrid title="Learned" cards={on} onOpen={setOpen} onToggle={toggle} pending={pending} />
-        <CardGrid title="Not yet" cards={available} onOpen={setOpen} onToggle={toggle} pending={pending} />
-        <CardGrid title="Soon" cards={soon} onOpen={setOpen} onToggle={toggle} pending={pending} />
+      <div className="flex flex-col gap-8 px-5 pt-2 pb-6">
+        <CardGrid id="learned" title="Learned" cards={tricks.learned} onOpen={setOpen} onToggle={toggle} pending={pending} />
+        <CardGrid id="not-yet" title="Not yet" cards={tricks.notYet} onOpen={setOpen} onToggle={toggle} pending={pending} />
+        <CardGrid id="soon" title="Soon" note="Roomie is learning these next." cards={tricks.soon} onOpen={setOpen} onToggle={toggle} pending={pending} />
       </div>
 
       <Drawer open={!!current} onOpenChange={(o) => !o && setOpen(null)}>
@@ -128,25 +72,31 @@ export function ToolkitsScreen({ cards, openId }: { cards: ToolkitCardView[]; op
 }
 
 function CardGrid({
+  id,
   title,
+  note,
   cards,
   onOpen,
   onToggle,
   pending,
 }: {
+  id: string
   title: string
+  note?: string
   cards: ToolkitCardView[]
   onOpen: (id: string) => void
   onToggle: (t: ToolkitCardView, enabled: boolean) => void
   pending: boolean
 }) {
   if (!cards.length) return null
-  const id = `tk-${title.toLowerCase().replace(/\s+/g, "-")}`
   return (
-    <section aria-labelledby={id} className="flex flex-col gap-3">
-      <h2 id={id} className="type-heading">
-        {title}
-      </h2>
+    <section id={id} aria-labelledby={`${id}-title`} className="flex scroll-mt-20 flex-col gap-3">
+      <div className="flex flex-col gap-0.5">
+        <h2 id={`${id}-title`} className="type-heading">
+          {title}
+        </h2>
+        {note ? <p className="type-caption text-muted-foreground">{note}</p> : null}
+      </div>
       <ul className="grid grid-cols-2 gap-3">
         {cards.map((t) => (
           <li key={t.id}>
@@ -202,8 +152,7 @@ function ToolkitCard({ toolkit: t, onOpen, onToggle, pending }: { toolkit: Toolk
         </span>
         <span className="line-clamp-3 text-[0.8125rem] text-muted-foreground">{t.summary}</span>
       </button>
-      <div className="relative z-10 flex items-center justify-between gap-2">
-        <Badge variant="outline">{CATEGORY_LABEL[t.category]}</Badge>
+      <div className="relative z-10 flex items-center justify-end gap-2 empty:hidden">
         {soon ? null : isAdmin ? (
           t.enabled ? (
             <Button size="xs" variant="outline" disabled={pending} onClick={() => onToggle(false)} aria-label={`Make Roomie forget ${t.name}`}>

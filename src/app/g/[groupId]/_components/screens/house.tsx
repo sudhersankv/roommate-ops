@@ -63,7 +63,9 @@ export function HouseScreen({ initialTab = "chores", chores, upkeep }: { initial
   return (
     <>
       <TopBar title="House" />
-      <PageHeader title="House" />
+      <PageHeader title="House">
+        <p className="type-body text-muted-foreground">Whose turn it is, and what the place needs next.</p>
+      </PageHeader>
 
       <section aria-label="Your turn" className="mx-4 flex items-center gap-4 rounded-3xl bg-card p-4">
         <Roomie size={76} mood={yours.length ? "calm" : "happy"} animated cheer={cheering} />

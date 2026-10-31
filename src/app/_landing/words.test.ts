@@ -11,7 +11,7 @@ import { BAD_VOICE, MANY_GROUPS, NO_GROUP, NO_VOICE, OOPS, helpText, startReply 
 import { approvalPrompt, introMessage, learnedLine, setupDmText } from "@/onboarding";
 import { CATALOG, CORE_MANIFEST, MANIFESTS } from "@/toolkits/manifests";
 
-export const FORBIDDEN = /\b(?:AI|bot|brain|assistant|smart|toolkit|feature|enable|vibe)\b/i;
+export const FORBIDDEN = /\b(?:AI|bots?|brains?|assistants?|smart|toolkits?|features?|enabled?|enabling|vibes?|marketplace)\b/i;
 
 /**
  * Phrases a file may contain anyway, each with why. /privacy has to say what the code does (audit B4): the models and
@@ -49,6 +49,54 @@ test("the landing page, /help and /privacy sources (comments and imports aside)"
     let text = renderable(readFileSync(join(root, file), "utf8"));
     for (const phrase of ALLOWED[file]?.phrases ?? []) text = text.split(phrase).join(" ");
     assert.deepEqual(hits(text), [], file);
+  }
+});
+
+/** Every .ts/.tsx under a folder (tests aside), recursively. */
+const tree = (dir: string): string[] =>
+  readdirSync(join(root, dir), { withFileTypes: true }).flatMap((e) =>
+    e.isDirectory() ? tree(`${dir}/${e.name}`) : /\.tsx?$/.test(e.name) && !/\.test\.tsx?$/.test(e.name) ? [`${dir}/${e.name}`] : []
+  );
+
+/**
+ * What a dashboard file could show a person: its string literals and JSX text (comments and imports stripped first).
+ * Identifiers, props and paths ("toolkits", `t.toolkit`) are code and stay out of the scan.
+ */
+function shownStrings(source: string): string {
+  const text = renderable(source);
+  const out: string[] = [];
+  for (const m of text.matchAll(/"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`/g)) {
+    // A path or an id ("/toolkits", `${base}/toolkits`, "browse-toolkits") has a slash or a dash and no spaces: code.
+    if (/[/-]/.test(m[0]) && !/\s/.test(m[0].replace(/\$\{[^}]*\}/g, ""))) continue;
+    // So is one lowercase identifier ("enabled" as a key or a type's field name); a label starts with a capital.
+    if (/^["'`][a-z][A-Za-z0-9]*["'`]$/.test(m[0])) continue;
+    out.push(m[0].replace(/\$\{[^}]*\}/g, " "));
+  }
+  // JSX text: between a tag's ">" and the next "<", with no code characters in it (so `a > b && <X />` isn't text).
+  for (const m of text.matchAll(/>([^<>{}=;()&|]*[A-Za-z][^<>{}=;()&|]*)</g)) out.push(m[1]);
+  return out.join("\n");
+}
+
+/**
+ * Strings in the dashboard that may contain a word anyway, each with why. Keys and route segments are code, not copy.
+ */
+const DASHBOARD_ALLOWED: Record<string, { phrases: string[]; why: string }> = {};
+
+test("the dashboard's strings (src/app/g, src/components/app)", () => {
+  const found: Record<string, string[]> = {};
+  for (const file of [...tree("src/app/g"), ...tree("src/components/app")]) {
+    let text = shownStrings(readFileSync(join(root, file), "utf8"));
+    for (const phrase of DASHBOARD_ALLOWED[file]?.phrases ?? []) text = text.split(phrase).join(" ");
+    const h = hits(text);
+    if (h.length) found[file] = h;
+  }
+  assert.deepEqual(found, {});
+});
+
+test("the dashboard allowlist only names files that exist and phrases they still use", () => {
+  for (const [file, { phrases }] of Object.entries(DASHBOARD_ALLOWED)) {
+    const source = readFileSync(join(root, file), "utf8");
+    for (const p of phrases) assert.ok(source.includes(p), `${file} no longer says "${p}": drop it from the allowlist`);
   }
 });
 

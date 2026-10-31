@@ -19,6 +19,8 @@ import {
 import { Button } from "@/components/ui/button"
 import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel, FieldLegend, FieldSeparator, FieldSet, FieldTitle } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import { Item, ItemActions, ItemContent, ItemDescription, ItemTitle } from "@/components/ui/item"
+import { ChevronRightIcon } from "lucide-react"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
@@ -75,10 +77,24 @@ const chattiness = {
 const withCurrent = (list: { label: string; value: string }[], value: string) => (list.some((x) => x.value === value) ? list : [...list, { label: value, value }])
 
 /**
- * Core settings (Group, Chattiness, "Reset what it's learned", which Toolkits are on, Appearance, Danger zone) with each
+ * Core settings (Group, Chattiness, Nudges, Joining, the weekly report, "Reset what it's learned", a Tricks link row,
+ * Appearance, Danger zone) with each
  * enabled Toolkit's own settings section (children, from the manifests) in between.
  */
-export function SettingsScreen({ zones, schedule, learned, children }: { zones: ZoneGroup[]; schedule: ScheduleView; learned?: ReactNode; children?: ReactNode }) {
+export function SettingsScreen({
+  zones,
+  schedule,
+  learned,
+  nudges,
+  children,
+}: {
+  zones: ZoneGroup[]
+  schedule: ScheduleView
+  learned?: ReactNode
+  /** The Nudges card (_components/nudges-card.tsx): nothing until #25 adds its service. */
+  nudges?: ReactNode
+  children?: ReactNode
+}) {
   const { group, isAdmin, active } = useGroup()
   const admins = active.filter((m) => m.role === "admin").map((m) => m.name)
   return (
@@ -90,10 +106,10 @@ export function SettingsScreen({ zones, schedule, learned, children }: { zones: 
         </p>
       </PageHeader>
       <div className="flex flex-col gap-10 px-5 pb-6">
-        {isAdmin ? <AdminSettings zones={zones} schedule={schedule} /> : null}
+        {isAdmin ? <AdminSettings zones={zones} schedule={schedule} nudges={nudges} /> : null}
         {/* "Reset what it's learned": a self-contained server component (components/app/learned-reset.tsx), Admins only */}
         {learned}
-        <ToolkitsSummary />
+        <TricksLink />
         {children}
         <Appearance />
         {isAdmin ? <DangerZone /> : null}
@@ -102,22 +118,19 @@ export function SettingsScreen({ zones, schedule, learned, children }: { zones: 
   )
 }
 
-/** Which Tricks Roomie knows here, and the way to the Tricks page (teaching happens there). */
-function ToolkitsSummary() {
-  const { base, toolkitNames, isAdmin } = useGroup()
+/** One row to the Tricks page: teaching and forgetting happen there, not here. */
+function TricksLink() {
+  const { base, toolkitNames } = useGroup()
   return (
-    <FieldSet>
-      <FieldLegend className="type-heading">Tricks</FieldLegend>
-      <Field orientation="horizontal">
-        <FieldContent>
-          <FieldLabel htmlFor="browse-toolkits">{toolkitNames.length ? `Learned: ${toolkitNames.join(", ")}` : "No Tricks learned yet"}</FieldLabel>
-          <FieldDescription>What Roomie knows in this Group. {isAdmin ? "Teach it more or make it forget one on the Tricks page." : "Admins teach Roomie new Tricks."}</FieldDescription>
-        </FieldContent>
-        <Button id="browse-toolkits" variant="outline" size="sm" nativeButton={false} render={<Link href={`${base}/tricks`} />}>
-          Browse
-        </Button>
-      </Field>
-    </FieldSet>
+    <Item variant="muted" render={<Link href={`${base}/tricks`} />} className="rounded-2xl">
+      <ItemContent>
+        <ItemTitle className="type-heading">Tricks</ItemTitle>
+        <ItemDescription>{toolkitNames.length ? `Learned: ${toolkitNames.join(", ")}.` : "Nothing learned yet."}</ItemDescription>
+      </ItemContent>
+      <ItemActions>
+        <ChevronRightIcon className="size-4 text-muted-foreground" aria-hidden />
+      </ItemActions>
+    </Item>
   )
 }
 
@@ -159,7 +172,7 @@ export function SplittingSettingsSection({ splitwise }: { splitwise: SplitwiseVi
   )
 }
 
-function AdminSettings({ zones, schedule }: { zones: ZoneGroup[]; schedule: ScheduleView }) {
+function AdminSettings({ zones, schedule, nudges }: { zones: ZoneGroup[]; schedule: ScheduleView; nudges?: ReactNode }) {
   const { group } = useGroup()
   const [name, setName] = useState(group.name)
   const [, start] = useTransition()
@@ -292,6 +305,8 @@ function AdminSettings({ zones, schedule }: { zones: ZoneGroup[]; schedule: Sche
         </p>
       </FieldSet>
 
+      {nudges}
+
       <JoinPolicySettings />
 
       <ScheduleSettings schedule={schedule} />
@@ -355,7 +370,7 @@ function useSaveSchedule() {
 
 const zoneWords = (timezone: string) => `${(timezone.split("/").pop() ?? timezone).replace(/_/g, " ")} time`
 
-/** House's settings section (Admins): the hour of the morning chores nudge, in the Group's time zone. */
+/** House's settings section (Admins): the hour of the morning post (the Bundle, ADR 0017), in the Group's time zone. */
 export function HouseSettingsSection({ schedule }: { schedule: ScheduleView }) {
   const { group } = useGroup()
   const save = useSaveSchedule()
@@ -363,13 +378,13 @@ export function HouseSettingsSection({ schedule }: { schedule: ScheduleView }) {
   return (
     <FieldSet>
       <FieldLegend className="type-heading">House</FieldLegend>
-      <FieldDescription>At most one chores nudge a day, only when something is due or late. Times are {zoneWords(group.timezone)}.</FieldDescription>
+      <FieldDescription>One morning post a day, only when something is due. Times are {zoneWords(group.timezone)}.</FieldDescription>
       <Field>
-        <FieldLabel htmlFor="nudge-hour">Chores nudge</FieldLabel>
+        <FieldLabel htmlFor="nudge-hour">Morning post</FieldLabel>
         <Select
           items={nudgeItems}
           value={schedule.nudgeHour === null ? "off" : String(schedule.nudgeHour)}
-          onValueChange={(v) => v && save({ nudgeHour: v === "off" ? null : Number(v) }, v === "off" ? "Chores nudge off" : `Chores nudge at ${hourLabel(Number(v))}`)}
+          onValueChange={(v) => v && save({ nudgeHour: v === "off" ? null : Number(v) }, v === "off" ? "Morning post off" : `Morning post at ${hourLabel(Number(v))}`)}
         >
           <SelectTrigger id="nudge-hour" className="w-full">
             <SelectValue />
@@ -384,7 +399,7 @@ export function HouseSettingsSection({ schedule }: { schedule: ScheduleView }) {
             </SelectGroup>
           </SelectContent>
         </Select>
-        <FieldDescription>Roomie names whose turn it is on anything due or late.</FieldDescription>
+        <FieldDescription>Roomie names whose turn it is on anything due or late. Nothing to say, no post.</FieldDescription>
       </Field>
     </FieldSet>
   )
