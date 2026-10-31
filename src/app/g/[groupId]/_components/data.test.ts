@@ -8,7 +8,9 @@ import { PRESETS } from "@/toolkits/presets";
 import type { ToolkitManifest } from "@/toolkits/types";
 import type { GroupSession } from "@/lib/session";
 import type { Expense } from "@/services/money";
-import { NAV_TABS, expenseView, groupTricks, shellView, todayRows } from "./data";
+import { addDaysToDay } from "@/lib/time";
+import { restockCandidates } from "@/services/restock-math";
+import { NAV_TABS, expenseView, groupTricks, probablyLowRows, shellView, todayRows } from "./data";
 
 const onFor = (ids: readonly string[]) => Object.fromEntries(MANIFESTS.map((m) => [m.id, ids.includes(m.id)]));
 
@@ -123,6 +125,19 @@ describe("todayRows (Home's Today = the Bundle on a page)", () => {
     assert.deepEqual(todayRows([{ ...lines[2] }, { ...lines[0], line: "   " }], [], "2026-10-30", "/g/g1"), []);
   });
 });
+
+test("probablyLowRows: the Cart page's Probably low is restockCandidates' answer, with when it was last bought", () => {
+  const every = (item: string, gap: number, last: string, memberId: string | null = null) =>
+    [0, 1, 2, 3].map((k) => ({ item, memberId, occurredOn: addDaysToDay(last, -gap * k) }))
+  const today = "2026-10-30"
+  const events = [...every("milk", 9, "2026-10-22"), ...every("oat milk", 7, "2026-10-24", "sam"), ...every("eggs", 10, "2026-10-28")]
+  const low = restockCandidates(events, [], [], today).map((c) => ({ item: c.item, lastBought: c.lastBought, scope: c.scope === "shared" ? ("shared" as const) : ("mine" as const) }))
+  assert.deepEqual(probablyLowRows(low, today), [
+    { item: "milk", when: "last bought 8 days ago", scope: "shared" },
+    { item: "oat milk", when: "last bought 6 days ago", scope: "mine" },
+  ])
+  assert.deepEqual(probablyLowRows([], today), [], "nothing low: the section is hidden")
+})
 
 describe("groupTricks (the Tricks page: a plain list)", () => {
   const card = (id: string, enabled: boolean, status: "stable" | "beta" | "coming-soon" = "stable") => ({ id, enabled, status });

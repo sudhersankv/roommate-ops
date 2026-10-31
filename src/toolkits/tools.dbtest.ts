@@ -902,6 +902,10 @@ describe("Roomie tools against the dev DB", () => {
     assert.ok(!(await run("restock_status", {})).items.includes("sparkling water"));
     assert.equal((await run("restock_unmute", { item: "Sparkling Water" })).say, "OK, I'll mention sparkling water again.");
     assert.ok((await run("restock_status", {})).items.includes("sparkling water"));
+    const added = await run("restock_add_listed", { scope: "shared", only: ["the sparkling water"] }, ryanRc());
+    assert.deepEqual([added.added, added.say], [["sparkling water"], "Added sparkling water as shared."]);
+    assert.ok(!(await run("restock_status", {})).items.includes("sparkling water"), "in the Cart: not low");
+    assert.equal((await run("cart_remove", { name: "sparkling water" }, ryanRc())).removed, true);
   });
 
   let tacosId: string;
@@ -981,7 +985,9 @@ describe("Roomie tools against the dev DB", () => {
 
   test("cart_purchased after a checkout: exact Shares by item, recipe items shared, personal to the adder", async () => {
     await run("cart_add", { items: [{ name: "greek yogurt" }] }, ryanRc());
-    const checkout = await run("cart_checkout", {});
+    const ask = await run("cart_checkout", {});
+    assert.deepEqual([ask.askFirst, ask.suggested, ask.links], [true, ["sparkling water"], undefined], "asks about what's probably low first");
+    const checkout = await run("cart_checkout", { skip_suggestions: true });
     assert.equal(checkout.itemCount, 9);
     const open = await cart.listOpenItems(ctx);
     const expected = cart.computeCartSplits(open.map((i) => ({ addedBy: i.addedBy!, shared: i.shared, estCents: i.estCents })), (await members.listMembers(ctx)).map((m) => m.id), 8400, member.Sudhersan);

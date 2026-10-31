@@ -11,6 +11,7 @@ import { parseInZone } from "@/lib/time"
 import { cart, chores, groups, isNotAllowed, joins, members, money, pantry, recipes, reminders, schedule, splitwise, toolkits, upkeep, type Ctx } from "@/services"
 import type { SettingsPatch } from "@/services/groups"
 import { setRent, type RentInput } from "@/services/rent"
+import { mute as muteRestock, restockAddListed } from "@/services/restock"
 import { updateNudgeSettings, type NudgeSettings } from "@/services/settle-nudge"
 import type { ToolkitId } from "@/toolkits/types"
 import type { ActionResult } from "./_components/group-context"
@@ -82,6 +83,16 @@ export async function addCartItem(groupId: string, input: { name: string; qty?: 
 
 export async function removeCartItem(groupId: string, itemId: string) {
   return act(groupId, (ctx) => cart.removeItemById(ctx, { id: itemId }))
+}
+
+/** "Probably low" -> Add: that one item into the Cart, shared or as the viewer's own (what restock listed). */
+export async function addProbablyLow(groupId: string, item: string, scope: "shared" | "mine") {
+  return act(groupId, (ctx) => restockAddListed(ctx, scope === "mine" ? "mine" : "shared", { only: [item] }))
+}
+
+/** "Probably low" -> Mute: "we don't buy that anymore". */
+export async function muteProbablyLow(groupId: string, item: string) {
+  return act(groupId, async (ctx) => (await muteRestock(ctx, item)).item)
 }
 
 export async function purchaseCart(groupId: string, totalCents: number) {

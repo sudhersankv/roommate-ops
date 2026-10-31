@@ -1,6 +1,6 @@
 import { cartReportParts, listOpenItems } from "@/services/cart";
 import { seedPantry } from "@/services/pantry";
-import { restockBundleLine } from "@/services/restock";
+import { restockBundleLine, restockDmJob } from "@/services/restock";
 import { defineToolkit } from "../define";
 import { cartTools } from "./cart";
 import { groceries as manifest } from "./manifest";
@@ -15,8 +15,12 @@ export const groceries = defineToolkit(manifest, {
   },
   // A Pantry to start from (salt, pepper, oil), only if the Group never had one.
   onEnable: (ctx) => seedPantry(ctx),
-  // The morning Bundle says what's probably low (shared items only; a Member's own go to their DM).
-  bundle: (ctx, now) => restockBundleLine(ctx, now),
+  // The morning Bundle says what's probably low (shared items only); a Member's own go to their DM from here, once a
+  // day each (claimed as restock.dm, only in the Bundle's hour).
+  bundle: async (ctx, now) => {
+    await restockDmJob(ctx, now).catch((e) => console.error("[groceries] restock DMs failed", e));
+    return restockBundleLine(ctx, now);
+  },
   // The weekly report says how full the Cart is (no prices).
   report: async (ctx) => cartReportParts((await listOpenItems(ctx)).length),
 });

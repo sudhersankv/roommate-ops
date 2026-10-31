@@ -125,8 +125,18 @@ export type RecipeDraftView = {
   need: string[]
 }
 
+/** One "Probably low" row on the Cart page (services/restock.ts probablyLowView): shared, or the viewer's own. */
+export type ProbablyLowView = {
+  item: string
+  /** "last bought 9 days ago" */
+  when: string
+  scope: "shared" | "mine"
+}
+
 export type CartPageView = {
   items: CartItemView[]
+  /** Empty: the section is hidden. */
+  probablyLow: ProbablyLowView[]
   recipes: RecipeView[]
   pantry: string[]
   /** Active Members in the order services/cart.ts splits with, so the "I paid" preview matches to the cent. */

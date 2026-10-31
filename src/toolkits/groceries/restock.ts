@@ -2,8 +2,8 @@
 // In the group chat only shared items are named; a Member's own come up only in their DM (isPrivate).
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
-import { lowFor, mute, unmute } from "@/services/restock";
-import { restockLine } from "@/services/restock-math";
+import { lowFor, mute, restockAddListed, unmute } from "@/services/restock";
+import { restockAddedLine, restockLine } from "@/services/restock-math";
 import { ctxOf } from "../util";
 
 const inDm = (context: unknown) => (context as { requestContext?: { get(k: string): unknown } } | undefined)?.requestContext?.get("isPrivate") === true;
@@ -18,6 +18,19 @@ export const restockTools = {
       const ctx = ctxOf(context);
       const low = await lowFor(ctx, { mine: inDm(context) });
       return { items: low.map((c) => c.item), say: restockLine(low) ?? "Nothing looks low right now." };
+    },
+  }),
+  restock_add_listed: createTool({
+    id: "restock_add_listed",
+    description:
+      "'Yes' / 'add them' / 'just the milk' right after Roomie's 'Probably low: …' line (the morning post, restock_status, or the DM 'Probably low: your …'): puts today's probably-low items in the Cart. scope 'shared' in the group chat; 'mine' in a DM about the sender's own. `only` = the ones they picked, as they said them. Post `say` as it is. No prices.",
+    inputSchema: z.object({
+      scope: z.enum(["shared", "mine"]),
+      only: z.array(z.string().min(1)).optional().describe("Just these, e.g. ['milk']; omit for all of them"),
+    }),
+    execute: async ({ scope, only }, context) => {
+      const added = await restockAddListed(ctxOf(context), scope, { only });
+      return { added, say: restockAddedLine(added, scope) };
     },
   }),
   restock_mute: createTool({

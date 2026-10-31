@@ -3,6 +3,7 @@ import { z } from "zod";
 import { EXPENSE_CATEGORIES } from "@/db/enums";
 import { members, money, receipts } from "@/services";
 import { expenseSummary } from "@/services/money";
+import { recordReceiptItems } from "@/services/restock";
 import { dollars } from "@/services/types";
 import { ctxOf, memberIdByName, toCents } from "../util";
 
@@ -64,6 +65,8 @@ export const receiptTools = {
         receiptUrl: input.receipt_url,
         note: items.map((i) => `${i.name} ${dollars(i.cents)}`).join(", ").slice(0, 500),
       });
+      // Restock learns from what was bought (grocery and household receipts; claimed lines are that Member's).
+      await recordReceiptItems(ctx, { id: e.id, category: e.category ?? "" }, items, everyone).catch((err) => console.warn("[receipts] restock events failed", err));
       return { logged: true, ...expenseSummary(e) };
     },
   }),

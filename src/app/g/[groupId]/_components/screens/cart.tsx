@@ -15,11 +15,11 @@ import { toast } from "@/components/ui/toast"
 import { Amount, useFormatMoney } from "@/components/app/money-bits"
 import { currencySymbol, parseMoney } from "@/lib/money"
 import { computeCartSplits } from "@/services/cart-split"
-import { addCartItem, checkoutCart, purchaseCart, removeCartItem } from "../../actions"
+import { addCartItem, addProbablyLow, checkoutCart, muteProbablyLow, purchaseCart, removeCartItem } from "../../actions"
 import { useGroup } from "../group-context"
 import { PantryCard, RecipesSection } from "../recipes"
 import { PageHeader, TopBar } from "../shell"
-import type { CartItemView, CartPageView } from "../types"
+import type { CartItemView, CartPageView, ProbablyLowView } from "../types"
 
 export function CartScreen({ view, openRecipeId }: { view: CartPageView; openRecipeId: string | null }) {
   const { group } = useGroup()
@@ -87,6 +87,8 @@ export function CartScreen({ view, openRecipeId }: { view: CartPageView; openRec
           </Field>
         </form>
 
+        <ProbablyLowSection rows={view.probablyLow} />
+
         {items.length === 0 ? (
           <Empty className="rounded-3xl bg-card">
             <EmptyHeader>
@@ -123,6 +125,56 @@ export function CartScreen({ view, openRecipeId }: { view: CartPageView; openRec
       </div>
       <PaidDrawer open={paying} onOpenChange={setPaying} items={items} splitMemberIds={view.splitMemberIds} />
     </>
+  )
+}
+
+/** What's probably low, from how often the group buys it: Add puts it in the Cart, Mute stops Roomie mentioning it. */
+function ProbablyLowSection({ rows }: { rows: ProbablyLowView[] }) {
+  const { group } = useGroup()
+  const [pending, start] = useTransition()
+  if (rows.length === 0) return null
+  const add = (r: ProbablyLowView) =>
+    start(async () => {
+      const res = await addProbablyLow(group.id, r.item, r.scope)
+      if (!res.ok) return void toast.add({ title: "Couldn't add it", description: res.error, type: "error" })
+      if (!res.data?.length) return void toast.add({ title: `${r.item} isn't low anymore` })
+      toast.add({ title: `Added ${r.item}`, description: r.scope === "shared" ? "Shared, so it's split evenly." : "Personal, so it's on you." })
+    })
+  const mute = (r: ProbablyLowView) =>
+    start(async () => {
+      const res = await muteProbablyLow(group.id, r.item)
+      if (!res.ok) return void toast.add({ title: "Couldn't mute it", description: res.error, type: "error" })
+      toast.add({ title: `Roomie won't mention ${r.item}`, description: "Say “actually we do buy it” to bring it back." })
+    })
+  return (
+    <section aria-labelledby="cart-probably-low" className="flex flex-col gap-2">
+      <div className="flex items-baseline justify-between px-1">
+        <h2 id="cart-probably-low" className="type-heading">
+          Probably low
+        </h2>
+        <span className="type-caption text-muted-foreground">From how often you buy it</span>
+      </div>
+      <ItemGroup className="gap-0 rounded-3xl bg-card py-1">
+        {rows.map((r) => (
+          <Item key={`${r.scope}-${r.item}`} className="py-2 pr-1.5">
+            <ItemContent className="min-w-0">
+              <ItemTitle className="truncate">{r.item.charAt(0).toUpperCase() + r.item.slice(1)}</ItemTitle>
+              <ItemDescription>
+                {r.when.charAt(0).toUpperCase() + r.when.slice(1)} · {r.scope === "shared" ? "Shared" : "Yours"}
+              </ItemDescription>
+            </ItemContent>
+            <ItemActions className="gap-1">
+              <Button variant="ghost" size="sm" disabled={pending} aria-label={`Stop mentioning ${r.item}`} onClick={() => mute(r)}>
+                Mute
+              </Button>
+              <Button variant="outline" size="sm" disabled={pending} aria-label={`Add ${r.item} to the Cart`} onClick={() => add(r)}>
+                Add
+              </Button>
+            </ItemActions>
+          </Item>
+        ))}
+      </ItemGroup>
+    </section>
   )
 }
 
