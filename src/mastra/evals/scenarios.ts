@@ -1012,4 +1012,42 @@ export const SCENARIOS: Scenario[] = [
     turn: { text: "roomie what do you know about Dev?", from: "Sam" },
     expect: { excludes: [/vegan/i, /peanut/i] },
   },
+  // ---------- rent and bills (#25) ----------
+  {
+    id: "set-rent",
+    area: "splitting",
+    turn: { text: "roomie rent is 2400 on the 1st, I pay it" },
+    expect: {
+      tools: ["set_rent"],
+      maxLines: 2,
+      check: async (e) => {
+        const { getRent } = await import("@/services/rent");
+        const r = await getRent(e.ctx);
+        return fail(!!r && r.cents === 240000 && r.dueDay === 1 && r.payerId === e.member.Maya, `rent $2,400 on the 1st paid by Maya, got ${r ? `${r.cents} on ${r.dueDay}` : "none"}`);
+      },
+    },
+  },
+  {
+    id: "rent-status",
+    area: "splitting",
+    seed: async (e) => {
+      const { setRent } = await import("@/services/rent");
+      await setRent(e.ctx, { cents: 240000, dueDay: 1 });
+    },
+    turn: { text: "roomie what's our rent?", from: "Sam" },
+    expect: { tools: ["rent_status"], replyIncludes: ["2,400"], maxLines: 2 },
+  },
+  {
+    id: "answer-amount",
+    area: "splitting",
+    seed: async (e) => {
+      const { runRecurring, setVariableExpense } = await import("@/services/recurring");
+      const { zonedTimeToUtc } = await import("@/lib/time");
+      const bill = await setVariableExpense(e.as("Dev"), { description: "Electric", dueDay: 20 });
+      const [year, month, day] = bill.occurredOn!.split("-").map(Number);
+      await runRecurring(zonedTimeToUtc("America/Chicago", { year, month, day, hour: 10, minute: 0 }), { groupId: e.ctx.groupId, deliver: async () => {} });
+    },
+    turn: { text: "roomie electric was 92", from: "Dev" },
+    expect: { tools: ["answer_amount"], replyIncludes: ["92"] },
+  },
 ];
