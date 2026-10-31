@@ -216,7 +216,6 @@ async function trickCardsView(s: GroupSession): Promise<ToolkitCardView[]> {
       abilities,
       examples: m.gate.examples,
       requirements,
-      persona: m.persona ?? null,
       href: nav ? nav.href(s.group.id) : null,
       blocked: toolkits.unmet(requirements).map((r) => r.label),
     }

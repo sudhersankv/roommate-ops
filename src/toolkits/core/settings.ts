@@ -81,14 +81,16 @@ export const settingsTools = {
   }),
   toggle_toolkit: createTool({
     id: "toggle_toolkit",
-    description: `Admin only: learn or forget a Trick by name ("roomie, learn chores" = enabled true; "forget groceries" = enabled false; "turn on/off ..." means the same). Learnable: ${SWITCHABLE}. Coming soon, can't be learned yet: ${SOON}. Forgetting deletes nothing. Coming-soon ones and ones missing something they need come back with notAvailable + message: relay it, and don't offer another coming-soon one instead. Otherwise say the result's \`say\` line in your voice (it says what you learned or forgot, with something to try).`,
+    description: `Admin only: learn or forget a Trick by name ("roomie, learn chores" = enabled true; "forget groceries" = enabled false; "turn on/off ..." means the same). Learnable: ${SWITCHABLE}. Coming soon, can't be learned yet: ${SOON}. Forgetting deletes nothing. Coming-soon ones and ones missing something they need come back with notAvailable + message: relay it, and don't offer another coming-soon one instead. Otherwise say the result's \`say\` line in your voice (it says what you learned or forgot); don't add a phrase for them to try.`,
     inputSchema: z.object({ toolkit: z.string().describe(`The Trick, one of: ${NAMES}`), enabled: z.boolean().describe("true = learn, false = forget") }),
     execute: async (input, context) => {
       try {
         const r = await toolkitsSvc.setToolkit(ctxOf(context), input);
         const say = r.enabled
-          ? `${r.changed ? "Learned" : "Already know"} ${r.name}.${r.tryThis ? ` Try: "roomie, ${r.tryThis}"` : ""}`
-          : `${r.changed ? "Forgot" : "Didn't know"} ${r.name}${r.changed ? `. Nothing's deleted: "roomie, learn ${r.name.toLowerCase()}" brings it back.` : " here anyway."}`;
+          ? r.changed
+            ? toolkitsSvc.learnedSay(r)
+            : `Already know ${r.name}.`
+          : `${r.changed ? "Forgot" : "Didn't know"} ${r.name}${r.changed ? ". Nothing's deleted, so it's all still there if an admin teaches me again." : " here anyway."}`;
         return { ...r, say };
       } catch (e) {
         if (e instanceof toolkitsSvc.ToolkitUnavailableError) return { notAvailable: true, reason: e.code, message: e.message };

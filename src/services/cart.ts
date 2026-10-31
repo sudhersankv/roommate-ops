@@ -423,6 +423,9 @@ export function unmatchedQuestion(lines: readonly { name: string; cents: number 
  * then ONE Expense with exact Shares per line (planCartReceipt), the receipt Document linked through receiptUrl, the
  * newest unpaid Checkout it covers marked paid, a purchase event per line (personal = the one Member it went to) and the
  * usuals taught (usual-rules learnFromPurchase). Unanswered lines are shared. Items the receipt doesn't have stay open.
+ * A second click or a retry gets fewer rows back from the open-status update and throws before anything is logged; as in
+ * markPurchased, logExpense commits on its own connection, so the one remaining window is the outer commit failing after
+ * the Expense committed: the items stay open with an Expense logged, which is visible and fixable, never a double charge.
  */
 export async function closeCartWithReceipt(
   ctx: Ctx,

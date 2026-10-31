@@ -7,8 +7,10 @@ import { moneyTools } from "./money";
 import { receiptTools } from "./receipts";
 import { rentTools } from "./rent";
 import { splitwiseTools } from "./splitwise";
+import { skill } from "./skill";
 
 export const splitting = defineToolkit(manifest, {
+  skill,
   tools: { ...moneyTools, ...rentTools, ...receiptTools, ...splitwiseTools },
   dashboard: {
     home: () => import("./dashboard").then((m) => m.SplittingHome),

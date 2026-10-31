@@ -943,14 +943,14 @@ describe("Roomie tools against the dev DB", () => {
 
   test("recipe_draft: writes and saves a Recipe for 5 (fake writer), have/need from the Pantry, cart untouched", async () => {
     const openBefore = (await cart.listOpenItems(ctx)).length;
-    const r = await run("recipe_draft", { request: "tacos for 5 on friday", servings: 5, plannedFor: "2026-10-30" });
+    const r = await run("recipe_draft", { request: "tacos for 5 on friday", servings: 5, plannedFor: "2026-10-30", shopping: true });
     tacosId = r.recipeId;
     assert.equal(r.title, "Tacos for 5");
     assert.equal(r.servings, 5);
     assert.equal(r.plannedFor, "2026-10-30");
     assert.equal(r.haveCount, 2, "salt and the oil are in the Pantry");
     assert.equal(r.missingCount, 9);
-    assert.equal(r.askToAdd, "Add the 9 missing ingredients to the cart?");
+    assert.equal(r.askToAdd, "Want the 9 missing ingredients on the list?", "planning it for a day: one offer (#43)");
     assert.match(r.text, /^Tacos for 5 \(serves 5, 30 min\)/);
     assert.match(r.text, /Need: 20 corn tortillas, 2 lb ground turkey/);
     assert.match(r.text, /Have: 1 tbsp oil, 1 tsp salt/);
@@ -1174,7 +1174,7 @@ describe("Roomie tools against the dev DB", () => {
     assert.equal(s.currency, "EUR");
     assert.equal(s.timezone, "Europe/Berlin");
     assert.deepEqual([...s.toolkits].sort(), ["groceries", "splitting"]);
-    assert.equal(s.learned, `Learned Money and Groceries. Say "roomie, learn house" any time. Want me to handle the landlord's emails too? Say "roomie, learn lease inbox".`, "the one setup line, with Lease Inbox's offer");
+    assert.equal(s.learned, "Learned Money and Groceries.", "the one setup line: what was learned, no tip or offer (#44)");
     const [g] = await db.select().from(schema.groups).where(eq(schema.groups.id, groupId));
     assert.ok(g.onboardedAt, "Onboarding is done");
     await assert.rejects(run("set_group_settings", { timezone: "Mars/Olympus" }), /don't know the time zone "Mars\/Olympus"\. Which city/);
@@ -1345,14 +1345,14 @@ describe("Roomie tools against the dev DB", () => {
     assert.equal(list.links, undefined, "no Browse Tricks link: links only when asked");
 
     const learned = await run("toggle_toolkit", { toolkit: "groceries", enabled: true });
-    assert.match(learned.say, /^Learned Groceries\. Try: "roomie, /);
+    assert.equal(learned.say, "Learned Groceries: one shared Cart, recipes for the group, and an Instacart list.");
     const forgot = await run("toggle_toolkit", { toolkit: "groceries", enabled: false });
     assert.match(forgot.say, /^Forgot Groceries\. Nothing's deleted/);
 
     const ui = { groupId, memberId: member.Sudhersan, source: "ui" as const };
-    const said = async () => (await chatlog.roomieLines(groupId, 50)).filter((l) => l.text === `Learned Groceries. Try: "roomie, tacos for 5 friday"`).length;
+    const said = async () => (await chatlog.roomieLines(groupId, 50)).filter((l) => l.text === "Learned Groceries: one shared Cart, recipes for the group, and an Instacart list.").length;
     const on = await toolkitsSvc.setToolkit(ui, { toolkit: "groceries", enabled: true });
-    assert.deepEqual([on.changed, on.enabled, on.tryThis], [true, true, "tacos for 5 friday"]);
+    assert.deepEqual([on.changed, on.enabled, on.summary], [true, true, "One shared Cart, recipes for the group, and an Instacart list."]);
     assert.equal(await said(), 1, "Roomie says it once in the chat");
     await toolkitsSvc.setToolkit(ui, { toolkit: "groceries", enabled: false });
     await toolkitsSvc.setToolkit(ui, { toolkit: "groceries", enabled: true });
@@ -1910,7 +1910,7 @@ describe("Join links and seats", () => {
   test("setup answered in a DM: the learned line and the Join link go to the group chat too", async () => {
     const s = await run("set_group_settings", { purpose: "friends", currency: "USD" }, as("Maya", [["isPrivate", true]]));
     assert.equal(s.postedInGroup, true);
-    assert.match(s.say, /^Learned Money\. Say "roomie, learn groceries" any time\. Want me to handle the landlord's emails too\? Say "roomie, learn lease inbox"\.\nEveryone: your dashboard is at .*\/j\//);
+    assert.match(s.say, /^Learned Money\.\nEveryone: your dashboard is at .*\/j\//);
     const lines = (await chatlog.roomieLines(gid, 20)).map((l) => l.text);
     assert.ok(lines.includes(s.say), "posted (and logged) in the group");
   });

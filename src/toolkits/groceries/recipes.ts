@@ -21,16 +21,21 @@ export function recipeText(r: Pick<Recipe, "title" | "servings" | "cookingTimeMi
     .join("\n");
 }
 
+/** The one cart offer after a Recipe (live test #5): only when they're shopping for it and something's missing. */
+export const recipeAsk = (missing: number, shopping?: boolean): string | null =>
+  shopping && missing ? `Want the ${missing} missing ingredient${missing === 1 ? "" : "s"} on the list?` : null;
+
 export const recipeTools = {
   recipe_draft: createTool({
     id: "recipe_draft",
     description:
-      "Write and save a Recipe for the group ('tacos for 5 friday', 'something vegetarian for dinner'). Servings default to the group's size. Returns `text` (title, servings, need / have, how many steps), ready to post as is (no lists, don't write out the steps unless asked), and `askToAdd`. It does NOT touch the cart: post the text, then ask `askToAdd` unless they explicitly asked to add the ingredients in the same message (then call recipe_add_to_cart).",
+      "Write and save a Recipe for the group ('tacos for 5 friday', 'something vegetarian for dinner'). Servings default to the group's size. Returns `text` (title, servings, need / have, how many steps), ready to post as is (no lists, don't write out the steps unless asked), and `askToAdd` (null unless shopping=true). It does NOT touch the cart: post the text, then ask `askToAdd` once if there is one, unless they explicitly asked to add the ingredients in the same message (then call recipe_add_to_cart).",
     inputSchema: z.object({
       request: z.string().min(1).describe("The dish and anything that matters, in their words"),
       servings: z.number().int().positive().max(100).optional().describe("How many people; omit for everyone in the group"),
       constraints: z.string().optional().describe("Diet, budget, time ('vegetarian', 'under 30 minutes')"),
       plannedFor: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("The day it's for in the group's time zone, YYYY-MM-DD ('friday' -> the coming Friday)"),
+      shopping: z.boolean().optional().describe("true when they're planning to make it (a day, 'tonight', 'what do we need') or mention buying; false for an idea or a recipe to read"),
     }),
     execute: async (input, context) => {
       const ctx = ctxOf(context);
@@ -44,7 +49,7 @@ export const recipeTools = {
         text: recipeText(saved, have, need),
         haveCount: have.length,
         missingCount: need.length,
-        askToAdd: need.length ? `Add the ${need.length} missing ingredient${need.length === 1 ? "" : "s"} to the cart?` : null,
+        askToAdd: recipeAsk(need.length, input.shopping),
         steps: saved.steps,
       };
     },
