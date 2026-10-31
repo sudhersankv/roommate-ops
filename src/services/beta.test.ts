@@ -157,7 +157,11 @@ test("only operators can read the list", async () => {
   await assert.rejects(listBetaRequests(null), (e) => e instanceof NotAllowedError && e.code === "operator-only");
 });
 
-test("notify emails the operator first (subject with the name, the summary, the link through /signin); Telegram only when email isn't possible", async () => {
+test("notify emails the operator first (subject with the name, the summary, the link through /signin); Telegram only when email isn't possible", async (t) => {
+  // The admin link needs an absolute APP_URL (CI has no .env).
+  const before = process.env.APP_URL;
+  process.env.APP_URL = "https://roomie.test";
+  t.after(() => (before === undefined ? delete process.env.APP_URL : (process.env.APP_URL = before)));
   const mails: { subject: string; text: string }[] = [];
   const tg: string[] = [];
   const sentMail = async (subject: string, text: string) => (mails.push({ subject, text }), "sent" as const);
