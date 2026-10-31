@@ -76,6 +76,14 @@ describe("decideGate with recorded Jev answers (normal chattiness)", () => {
     assert.equal(gate(REC.milk).toolkit, "groceries");
   });
 
+  test("a photo never narrows the tools: a receipt is Money, a list is Groceries, and only the tools can tell", () => {
+    const sure = jev(0.9, 0.1, 0, 0, 0.9, "splitting", 0.97); // "[Dev] [photo] roomie all common"
+    assert.equal(gate(sure, { hardTrigger: true }).toolkit, "splitting", "without a photo Jev's pick stands");
+    const d = decideGate({ hardTrigger: true, inWindow: false, jev: sure, chattiness: "normal", hasPhoto: true });
+    assert.equal(d.speak, true);
+    assert.equal(d.toolkit, undefined);
+  });
+
   test("chatter between people is ignored", () => {
     for (const j of [REC.game, REC.seeYou]) {
       const d = gate(j);

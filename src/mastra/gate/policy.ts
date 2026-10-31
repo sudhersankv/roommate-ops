@@ -44,6 +44,8 @@ export type GateFacts = {
   inWindow: boolean;
   jev: JevAnswers | null;
   chattiness: Chattiness;
+  /** The message carries a photo: a receipt or a shopping list, and Jev can't tell which, so the tools stay wide. */
+  hasPhoto?: boolean;
 };
 
 export type GateDecision = {
@@ -57,8 +59,9 @@ export type GateDecision = {
   toolkit?: GateToolkit;
 };
 
-export function decideGate({ hardTrigger, inWindow, jev, chattiness }: GateFacts): GateDecision {
-  const toolkit = jev && jev.toolkit.p >= TOOLKIT_MIN && jev.toolkit.choice !== "none" ? jev.toolkit.choice : undefined;
+export function decideGate({ hardTrigger, inWindow, jev, chattiness, hasPhoto }: GateFacts): GateDecision {
+  // A photo is a receipt (Money) or a list / recipe / shelf (Groceries) and only the tools can tell: never narrow.
+  const toolkit = !hasPhoto && jev && jev.toolkit.p >= TOOLKIT_MIN && jev.toolkit.choice !== "none" ? jev.toolkit.choice : undefined;
   const quiet = (reason: GateDecision["reason"]): GateDecision => ({ speak: false, decision: "ignore", reason, unprompted: false, mayStaySilent: false });
 
   if (hardTrigger) return { speak: true, decision: "act", reason: "hard-trigger", unprompted: false, mayStaySilent: false, toolkit };

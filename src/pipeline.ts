@@ -281,6 +281,7 @@ export async function respond(input: RespondInput): Promise<PipelineResult> {
     chattiness: (group?.chattiness ?? "normal") as Chattiness,
     toolkits,
     skipJev: !jevOk,
+    hasPhoto: !!input.imageUrl,
   });
   const gateMeta = {
     gateDecision: gate.decision,

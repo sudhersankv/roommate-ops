@@ -20,6 +20,8 @@ export async function runGate(input: {
   toolkits?: readonly ToolkitId[];
   /** The Group used up its Jev calls for the day (lib/caps.ts): no call, hard triggers only. */
   skipJev?: boolean;
+  /** The message carries a photo: the agent keeps every enabled Toolkit's tools (policy.ts). */
+  hasPhoto?: boolean;
 }): Promise<GateRun> {
   const started = Date.now();
   let jev: JevAnswers | null = null;
@@ -32,6 +34,6 @@ export async function runGate(input: {
       jevError = e instanceof Error ? e.message : String(e);
       console.warn(`[gate] Jev unavailable, hard triggers only: ${jevError.slice(0, 160)}`);
     }
-  const decision = decideGate({ hardTrigger: input.hardTrigger, inWindow: input.inWindow, jev, chattiness: input.chattiness });
+  const decision = decideGate({ hardTrigger: input.hardTrigger, inWindow: input.inWindow, jev, chattiness: input.chattiness, hasPhoto: input.hasPhoto });
   return { ...decision, jev, jevMs: Date.now() - started, ...(jevError ? { jevError } : {}) };
 }
