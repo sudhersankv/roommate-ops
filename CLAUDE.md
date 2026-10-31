@@ -335,7 +335,10 @@ src/
                         Documents: recentDocumentsView) + Toolkits' Home sections + Reminders coming up + narration), money
                         (+ ?tab=, [expenseId]), cart (+ ?recipe=; Recipes and Pantry in _components/recipes.tsx), house
                         (Chores and Upkeep tabs; /chores redirects there, ?tab=reminders to /reminders), inbox (Lease
-                        Inbox: tabs by class, a thread view, the reply box; screens/inbox.tsx), reminders (core:
+                        Inbox, screens/inbox.tsx: filter chips by class, the thread list (sender, subject, one line, time,
+                        a dot for threads not opened in this browser, localStorage), ?thread=<id> = the open thread with
+                        the reply box under it: full screen with "All mail" on a phone, beside the list on lg, where the
+                        page's `data-wide` root widens the shell's column), reminders (core:
                         Today / Coming up + Add reminder, also a tile in the More drawer), members, settings (core +
                         Toolkits' settings sections; the Tricks list is one link row; NudgesCard in _components/nudges-card.tsx
                         is a null slot until #25), toolkits (the Tricks page: a plain list, Learned / Not yet / Soon (#soon),
