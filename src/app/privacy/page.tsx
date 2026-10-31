@@ -69,7 +69,7 @@ export default function PrivacyPage() {
           <li>
             <strong>With Lease Inbox, until you delete them:</strong> the emails that reach the group&apos;s address (sender, subject, text and what Roomie made of
             them), their attachments and the text read from a lease or notice, the landlord addresses it trusts, work orders, and every email Roomie sent with who
-            asked for it. Emails go through AgentMail, which keeps the inbox until an Admin releases the address.
+            asked for it. Emails go through AgentMail, which keeps the inbox until an Admin releases the address or deletes the group&apos;s data.
           </li>
           <li>
             <strong>Who&apos;s who:</strong> each Member&apos;s name and Telegram id, or on WhatsApp their phone number (that&apos;s their WhatsApp id) and the number
@@ -103,7 +103,8 @@ export default function PrivacyPage() {
         </p>
         <p>
           An Admin can delete the whole group&apos;s data from the dashboard&apos;s Settings: every Expense, list, chat message, note, photo, email, work order, debug record and
-          Roomie&apos;s memory for that group. The group, its Members, settings and email address stay, so Roomie keeps working.
+          Roomie&apos;s memory for that group, and its email address is given up (mail sent to it bounces). The group, its Members and settings stay, so Roomie keeps
+          working.
         </p>
       </Part>
 

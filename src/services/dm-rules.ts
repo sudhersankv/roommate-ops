@@ -86,19 +86,19 @@ export type AfterPrivateRun = {
  * item, a reminder for me, a fact about me) stays private.
  */
 export function afterPrivateRun(changes: readonly RunChange[], currency = "USD"): AfterPrivateRun {
-  const dollars = moneyIn(currency);
+  const amount = moneyIn(currency);
   const parts: string[] = [];
   let actor: string | null = null;
   const privately: { memberId: string; text: string }[] = [];
   for (const c of changes) {
     if (c.kind.startsWith("expense.") && c.expense && c.expense.shareCount > 1) {
       actor ??= c.actorName;
-      parts.push(c.kind === "expense.added" ? `logged ${dollars(c.expense.cents)} ${c.expense.description}, split ${c.expense.shareCount} ways` : c.summary);
+      parts.push(c.kind === "expense.added" ? `logged ${amount(c.expense.cents)} ${c.expense.description}, split ${c.expense.shareCount} ways` : c.summary);
     } else if (c.kind.startsWith("settlement.") && c.settlement) {
       const s = c.settlement;
       const other = s.toId !== c.actorId ? s.toId : s.fromId;
       if (other === c.actorId) continue;
-      const text = other === s.toId ? `${s.fromName} paid you ${dollars(s.cents)}.` : `${c.actorName} noted you paid them ${dollars(s.cents)}.`;
+      const text = other === s.toId ? `${s.fromName} paid you ${amount(s.cents)}.` : `${c.actorName} noted you paid them ${amount(s.cents)}.`;
       privately.push({ memberId: other, text });
     }
   }

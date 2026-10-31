@@ -11,7 +11,7 @@ import { formatInZone } from "@/lib/time";
 import { recordFor } from "./activity";
 import { requireAdmin } from "./authz";
 import { logMessage } from "./chatlog";
-import { askedSender, ensureInbox, inboxOf, knownSenders, NO_INBOX, sendToLandlord, trustSender, workOrderStatus, type SendResult } from "./lease-inbox";
+import { askedSender, ensureInbox, inboxOf, knownSenders, NO_INBOX, sendToLandlord, trustSender, workOrderStatus, type SendApproval, type SendResult } from "./lease-inbox";
 import { leaseBundleText, leaseReportText, type QuietOrder } from "./lease-inbox-rules";
 import { admins } from "./members";
 import type { ReportPart } from "./report";
@@ -106,7 +106,8 @@ export type MemberSend = {
   summary: string;
   /** The Member's own words (the RequestContext's latest message). */
   instruction: string;
-  confirmed?: boolean;
+  /** The Member's yes to a held send: their latest message, or the dashboard's confirm token. */
+  approval?: SendApproval;
   /** A thread picked on the dashboard. */
   threadId?: string;
 };
@@ -123,7 +124,7 @@ export async function sendForMember(ctx: Ctx, input: MemberSend, now = new Date(
       body: input.body,
       instruction: input.instruction,
       summary: input.summary.replace(/\.$/, ""),
-      confirmed: input.confirmed,
+      ...(input.approval ? { approval: input.approval } : {}),
       ...(order ? { workOrderId: order } : {}),
     },
     now,
@@ -134,9 +135,13 @@ export async function sendForMember(ctx: Ctx, input: MemberSend, now = new Date(
 }
 
 /** "What's up with the sink?" as one line. */
-export async function workOrderLine(ctx: GroupCtx, what?: string): Promise<{ found: boolean; line: string; status?: string; lastReply?: string | null; scheduledFor?: string | null }> {
+export async function workOrderLine(ctx: GroupCtx, what?: string): Promise<{ found: boolean; line: string; choices?: string[]; status?: string; lastReply?: string | null; scheduledFor?: string | null }> {
   const s = await workOrderStatus(ctx, { what });
   if (!s) return { found: false, line: what ? `I haven't reported anything about ${what}.` : "No work orders yet." };
+  if ("choices" in s) {
+    const list = s.choices.length <= 1 ? s.choices.join("") : `${s.choices.slice(0, -1).join(", ")} or ${s.choices.at(-1)}`;
+    return { found: false, choices: s.choices, line: `Which one: ${list}?` };
+  }
   const tz = await groupTimezone(ctx.groupId);
   const when = formatInZone(s.lastActivityAt, tz, { weekday: "short", month: "short", day: "numeric" });
   const state =

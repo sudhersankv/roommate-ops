@@ -148,6 +148,13 @@
       "when": 1793445000000,
       "tag": "0023_lease_inbox_toolkit",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1793446000000,
+      "tag": "0024_lease_restock_fixes",
+      "breakpoints": true
     }
   ]
 }

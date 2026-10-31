@@ -19,6 +19,7 @@ import { answerAmount, prefillAmount, runRecurring, setVariableExpense } from ".
 import { getRent, rentBundleLine, rentDmJob, rentStatus, setRent, type DmOutcome } from "./rent";
 import { groupReport } from "./report";
 import { getNudgeSettings, settleNudgeJob, updateNudgeSettings } from "./settle-nudge";
+import { updateSchedule } from "./schedule";
 import type { Ctx } from "./types";
 import { NotAllowedError } from "./authz";
 import { assertNotProdDb } from "../../scripts/lib/prod-guard";
@@ -46,6 +47,7 @@ async function apt(tag: string) {
 
 let A: Awaited<ReturnType<typeof apt>>;
 let B: Awaited<ReturnType<typeof apt>>;
+let C: Awaited<ReturnType<typeof apt>> | undefined;
 
 describe("rent, utilities and the Settle nudge against the dev DB", () => {
   before(async () => {
@@ -58,7 +60,7 @@ describe("rent, utilities and the Settle nudge against the dev DB", () => {
   });
 
   after(async () => {
-    for (const g of [A, B]) if (g) await deleteGroup(g.groupId);
+    for (const g of [A, B, C]) if (g) await deleteGroup(g.groupId);
     for (const g of [A, B]) if (g) assert.equal((await db.select().from(schema.pendingAmounts).where(eq(schema.pendingAmounts.groupId, g.groupId))).length, 0, "pending_amounts go with the Group");
   });
 
@@ -115,8 +117,10 @@ describe("rent, utilities and the Settle nudge against the dev DB", () => {
     await deleteExpense(as("Maya"), { expenseId: (await getRent(B))!.expenseId });
   });
 
-  test("the due day with Dev settled: only Sam is named", async () => {
+  test("the due day with Dev settled: only Sam is named, though Dev still owes Maya for groceries", async () => {
     await settleUp(A.as("Dev"), { toId: A.id.Maya, cents: 80000 });
+    // Not rent: the Settle plan has Dev owing Maya $30, and the rent line doesn't care.
+    await logExpense(A.as("Maya"), { cents: 9000, description: "Trader Joe's", category: "groceries", occurredOn: "2026-10-30" });
     assert.equal(await rentBundleLine(A, local(11, 1, 9, 5)), "🏠 Rent is due today. Maya's still waiting on Sam.");
     assert.equal(await rentBundleLine(A, local(11, 2, 9)), null, "nothing after the due day");
   });
@@ -176,13 +180,24 @@ describe("rent, utilities and the Settle nudge against the dev DB", () => {
     await assert.rejects(answerAmount(A.as("Dev"), { cents: 9200 }), /already logged \(\$92\.00\)/);
   });
 
-  test("prefillAmount: the bill's amount for the next month, and the ask only confirms it", async () => {
-    assert.equal(await prefillAmount(A.groupId, "water", 5000), null, "no water bill");
-    const hit = await prefillAmount(A.groupId, "ComEd electric bill", 9500);
+  test("prefillAmount: November is answered, so the bill is December's, and the ask only confirms it", async () => {
+    assert.equal(await prefillAmount(A.groupId, "water", 5000, local(11, 25, 10)), null, "no water bill");
+    const hit = await prefillAmount(A.groupId, "ComEd electric bill", 9500, local(11, 25, 10));
     assert.equal(hit?.description, "Electric");
     inbox();
     await runRecurring(local(12, 20, 10), { groupId: A.groupId });
     assert.deepEqual(inbox().map((s) => s.out.text), ["How much was the electric bill? Looks like $95 (from the bill). Right?"]);
+  });
+
+  test("prefillAmount after a skipped month: January's bill goes on January, not on December's unanswered ask", async () => {
+    await runRecurring(local(12, 21, 10), { groupId: A.groupId }); // December's re-ask; nobody answers
+    inbox();
+    const jan = (month: number, day: number, hour: number) => zonedTimeToUtc(TZ, { year: 2027, month, day, hour, minute: 0 });
+    await prefillAmount(A.groupId, "electric", 10150, jan(1, 5, 10));
+    const rows = await db.select().from(schema.pendingAmounts).where(eq(schema.pendingAmounts.groupId, A.groupId));
+    assert.deepEqual(rows.map((r) => [r.period, r.asks, r.prefillCents]).sort(), [["2026-11", 2, null], ["2026-12", 2, 9500], ["2027-01", 0, 10150]]);
+    await runRecurring(jan(1, 20, 10), { groupId: A.groupId });
+    assert.deepEqual(inbox().map((s) => s.out.text), ["How much was the electric bill? Looks like $101.50 (from the bill). Right?"]);
   });
 
   // ---------- the Settle nudge ----------
@@ -218,5 +233,30 @@ describe("rent, utilities and the Settle nudge against the dev DB", () => {
     assert.deepEqual(await updateNudgeSettings(B.as("Maya"), { enabled: false, thresholdCents: 1000 }), { thresholdCents: 1000, thresholdDays: 7, enabled: false });
     assert.deepEqual(await settleNudgeJob(B, local(11, 22, 18, 10)), []);
     assert.ok((await groupReport(B, local(11, 22, 18, 15))).parts.some((p) => p.text === "2 open balances."));
+  });
+
+  // ---------- an early nudge hour, and a nudge run that fails ----------
+
+  test("a nudge hour inside quiet hours (7): the rent DMs go at 08:00, with the Bundle", async () => {
+    C = await apt("c");
+    await setRent(C.as("Maya"), { cents: 240000, dueDay: 1 }, local(10, 29, 6));
+    await updateSchedule(C.as("Maya"), { nudgeHour: 7 });
+    inbox();
+    assert.deepEqual(await rentDmJob(C, local(10, 29, 7, 5)), [], "07:00 is quiet hours; the Bundle waits for 08:00");
+    assert.deepEqual(outcomes(await rentDmJob(C, local(10, 29, 8, 5))), [`${C.id.Dev}:sent`, `${C.id.Sam}:sent`].sort());
+    assert.equal(inbox().length, 2);
+  });
+
+  test("the Settle nudge: a failed run gives the week's claim back, so the next run in the hour sends", async () => {
+    const c = C!;
+    await logExpense(c.as("Maya"), { cents: 9000, description: "Costco", category: "groceries", occurredOn: "2026-10-30" });
+    inbox();
+    const sunday = local(11, 15, 18, 10);
+    await assert.rejects(settleNudgeJob(c, sunday, { dms: async () => { throw new Error("the ledger read timed out"); } }), /timed out/);
+    const claims = await db.select().from(schema.scheduledPosts).where(and(eq(schema.scheduledPosts.groupId, c.groupId), eq(schema.scheduledPosts.kind, "nudge.settle")));
+    assert.equal(claims.length, 0, "the claim was given back");
+    const sent = await settleNudgeJob(c, local(11, 15, 18, 20));
+    assert.deepEqual(outcomes(sent), [`${c.id.Dev}:sent`, `${c.id.Sam}:sent`].sort());
+    assert.deepEqual(await settleNudgeJob(c, local(11, 15, 18, 40)), [], "then once a week, as before");
   });
 });

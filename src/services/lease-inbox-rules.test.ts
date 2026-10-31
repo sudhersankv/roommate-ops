@@ -1,6 +1,6 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { isUrgent, nextStatus, type WorkOrderState } from "./lease-inbox-rules";
+import { isUrgent, nextStatus, pickWorkOrder, topicWords, type WorkOrderState } from "./lease-inbox-rules";
 
 const at = (status: WorkOrderState["status"], scheduledFor: string | null = null): WorkOrderState => ({ status, scheduledFor });
 
@@ -87,5 +87,38 @@ describe("isUrgent: a notice dated within 72 hours", () => {
     const now = new Date("2026-10-30T15:00:00Z");
     assert.equal(isUrgent("2026-11-01T12:00:00Z", now, CHI), true);
     assert.equal(isUrgent("next week sometime", now, CHI), false);
+  });
+});
+
+describe("pickWorkOrder: which work order a question means", () => {
+  const sink = { title: "the leaking kitchen sink", status: "scheduled" };
+  const weather = { title: "the weather stripping on the balcony door", status: "sent" };
+  const heat = { title: "no heat in the back bedroom", status: "done" };
+
+  test("filler words don't match: 'what's up with the sink?' is the sink, not the weather stripping", () => {
+    assert.deepEqual(topicWords("what's up with the sink?"), ["sink"]);
+    assert.deepEqual(pickWorkOrder([weather, sink], "what's up with the sink?"), { order: sink });
+  });
+
+  test("whole words only: 'heat' isn't 'weather'", () => {
+    assert.deepEqual(pickWorkOrder([weather, sink, heat], "any update on the heat?"), { order: heat });
+  });
+
+  test("the only open work order wins, whatever was said", () => {
+    assert.deepEqual(pickWorkOrder([heat, sink], "how's it going?"), { order: sink });
+    assert.deepEqual(pickWorkOrder([heat, sink], "what about the heat"), { order: sink });
+  });
+
+  test("several open and nothing (or several) matching: the open ones, to ask which", () => {
+    assert.deepEqual(pickWorkOrder([weather, sink, heat], "any news from them?"), { choices: [weather, sink] });
+    const door = { title: "the sticky balcony door", status: "sent" };
+    assert.deepEqual(pickWorkOrder([door, weather, sink], "the balcony door"), { choices: [door, weather, sink] });
+  });
+
+  test("nothing open: the newest without words, a match by its words, else nothing", () => {
+    assert.deepEqual(pickWorkOrder([heat], undefined), { order: heat });
+    assert.deepEqual(pickWorkOrder([heat], "the heat"), { order: heat });
+    assert.equal(pickWorkOrder([heat], "the dishwasher"), null);
+    assert.equal(pickWorkOrder([], undefined), null);
   });
 });

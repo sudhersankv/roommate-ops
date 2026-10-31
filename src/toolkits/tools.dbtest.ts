@@ -1915,9 +1915,9 @@ describe("Lease Inbox tools (#27, FakeMail)", () => {
     inboxId = (await leaseInbox.ensureInbox({ groupId: lgid, memberId: people.Maya, source: "chat" })).inboxId;
   });
   after(async () => {
+    if (lgid) await deleteGroup(lgid);
     setMailClient(null);
     leaseInbox.setClassifier(null);
-    if (lgid) await deleteGroup(lgid);
   });
 
   test("inbox_status: the address and the three ways to connect", async () => {
@@ -1948,16 +1948,16 @@ describe("Lease Inbox tools (#27, FakeMail)", () => {
     assert.equal(mail.sent.at(-1)!.threadId, reply.threadId);
   });
 
-  test("send_to_landlord: not renewing asks first; a yes in the Member's own words sends; the model's confirmed alone doesn't", async () => {
+  test("send_to_landlord: not renewing asks first; asking again without a yes still asks; the Member's own yes sends", async () => {
     const before = mail.sent.length;
     const input = { intent: "new" as const, body: "We will not be renewing our lease.", summary: "told them we're not renewing" };
     const ask = await run("send_to_landlord", input, rc("Sam", "roomie tell them we're not renewing"));
     assert.equal(ask.sent, false);
     assert.ok(ask.ask.length >= 1);
-    const sneaky = await run("send_to_landlord", { ...input, confirmed: true }, rc("Sam", "roomie tell them we're not renewing"));
-    assert.equal(sneaky.sent, false, "confirmed without the Member's yes is ignored");
+    const sneaky = await run("send_to_landlord", { ...input, confirmed: true } as typeof input, rc("Sam", "roomie tell them we're not renewing"));
+    assert.equal(sneaky.sent, false, "the model's confirmed is ignored: no yes from Sam");
     assert.equal(mail.sent.length, before);
-    const yes = await run("send_to_landlord", { ...input, confirmed: true }, rc("Sam", "yes send it"));
+    const yes = await run("send_to_landlord", input, rc("Sam", "yes send it"));
     assert.equal(yes.sent, true);
   });
 

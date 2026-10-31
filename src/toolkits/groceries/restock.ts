@@ -3,7 +3,7 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { lowFor, mute, restockAddListed, unmute } from "@/services/restock";
-import { restockAddedLine, restockLine } from "@/services/restock-math";
+import { restockLine } from "@/services/restock-math";
 import { ctxOf } from "../util";
 
 const inDm = (context: unknown) => (context as { requestContext?: { get(k: string): unknown } } | undefined)?.requestContext?.get("isPrivate") === true;
@@ -28,10 +28,7 @@ export const restockTools = {
       scope: z.enum(["shared", "mine"]),
       only: z.array(z.string().min(1)).optional().describe("Just these, e.g. ['milk']; omit for all of them"),
     }),
-    execute: async ({ scope, only }, context) => {
-      const added = await restockAddListed(ctxOf(context), scope, { only });
-      return { added, say: restockAddedLine(added, scope) };
-    },
+    execute: async ({ scope, only }, context) => restockAddListed(ctxOf(context), scope, { only }),
   }),
   restock_mute: createTool({
     id: "restock_mute",

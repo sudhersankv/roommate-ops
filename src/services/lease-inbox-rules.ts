@@ -92,13 +92,49 @@ export function leaseReportText(notices: number, others: number): string | null 
 
 /**
  * A Member's own words confirm a send Roomie asked about ("yes", "send it", "go ahead"), and don't take it back
- * ("no", "don't send", "wait"). The tool passes `confirmed` through only when this holds for their latest message.
+ * ("no", "don't send", "wait"). sendToLandlord reads it on the Member's latest message, and only to release a send it
+ * held for that Member and that exact draft.
  */
 export function saysYes(latest: string | undefined | null): boolean {
   if (!latest) return false;
   const text = latest.toLowerCase().replace(/\broomie\b[,:]?/g, " ");
   if (/\b(?:no|nope|don'?t|do not|wait|hold on|stop|cancel|never mind)\b/.test(text)) return false;
   return /\b(?:yes|yep|yeah|yup|sure|ok(?:ay)?|send it|go ahead|do it|confirm(?:ed)?|that'?s right|correct)\b/.test(text);
+}
+
+/** Words that say nothing about which work order: "what's up with the sink?" is about "sink". */
+const FILLER = new Set([
+  "the", "what", "whats", "with", "up", "is", "how", "about", "going", "on", "my", "our", "status", "they", "them", "their",
+  "there", "that", "this", "these", "those", "news", "update", "updates", "landlord", "work", "order", "orders", "happening",
+  "happened", "when", "where", "coming", "still", "from", "have", "been", "does", "doing", "anything", "someone", "fixed",
+  "fixing", "repair", "please", "roomie", "hear", "heard", "back",
+]);
+
+/** The words of a question that could name a work order: 4+ letters, not filler. */
+export function topicWords(text: string): string[] {
+  return [...new Set((text.toLowerCase().replace(/['’]/g, "").match(/[a-z0-9]+/g) ?? []).filter((w) => w.length >= 4 && !FILLER.has(w)))];
+}
+
+const sameWord = (a: string, b: string) => a === b || a === `${b}s` || b === `${a}s`;
+
+export type OrderPick<T> = { order: T } | { choices: T[] } | null;
+
+/**
+ * "What's up with the sink?": which work order (newest first in `orders`). One open order: that one, whatever was
+ * said. Otherwise the one whose title has a word of the question as a whole word (one open match beats a closed one);
+ * several or none with more than one open: the open ones, to ask which. No open orders and no words: the newest.
+ */
+export function pickWorkOrder<T extends { title: string; status: string }>(orders: readonly T[], what: string | undefined): OrderPick<T> {
+  const open = orders.filter((o) => o.status !== "done");
+  if (open.length === 1) return { order: open[0] };
+  const words = topicWords(what ?? "");
+  const hits = words.length ? orders.filter((o) => topicWords(o.title).some((t) => words.some((w) => sameWord(w, t)))) : [];
+  const openHits = hits.filter((o) => o.status !== "done");
+  if (openHits.length === 1) return { order: openHits[0] };
+  if (hits.length === 1) return { order: hits[0] };
+  if (open.length > 1) return { choices: open };
+  if (hits.length) return { order: hits[0] };
+  return words.length || !orders.length ? null : { order: orders[0] };
 }
 
 /** Which kind of Document an email's attachment is (ADR 0018): a lease by its name, else by the email's class. */

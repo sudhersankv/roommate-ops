@@ -137,7 +137,7 @@ function ProbablyLowSection({ rows }: { rows: ProbablyLowView[] }) {
     start(async () => {
       const res = await addProbablyLow(group.id, r.item, r.scope)
       if (!res.ok) return void toast.add({ title: "Couldn't add it", description: res.error, type: "error" })
-      if (!res.data?.length) return void toast.add({ title: `${r.item} isn't low anymore` })
+      if (!res.data?.added.length) return void toast.add({ title: `${r.item} isn't low anymore` })
       toast.add({ title: `Added ${r.item}`, description: r.scope === "shared" ? "Shared, so it's split evenly." : "Personal, so it's on you." })
     })
   const mute = (r: ProbablyLowView) =>

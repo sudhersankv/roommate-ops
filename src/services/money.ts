@@ -661,16 +661,16 @@ export async function getExpense(ctx: GroupCtx, expenseId: string): Promise<Expe
 
 /** What the model reads back about an Expense (Money's tools, the Cart's "I paid"): names and ready-made amounts in the Group's currency, so it never formats or adds cents itself. */
 export function expenseSummary(e: Expense, currency = "USD") {
-  const dollars = moneyIn(currency);
+  const amount = moneyIn(currency);
   return {
     id: e.id,
     description: e.description,
-    total: e.variable ? "asked on the due day" : dollars(e.cents),
+    total: e.variable ? "asked on the due day" : amount(e.cents),
     date: e.occurredOn,
     category: e.category,
     method: e.method,
-    paidBy: (e.payers ?? []).map((p) => ({ name: p.name, paid: dollars(p.cents) })),
-    shares: (e.splits ?? []).map((s) => ({ name: s.name, ...(e.variable ? {} : { owes: dollars(s.cents) }), ...(s.weight != null ? { [e.method === "percent" ? "percent" : "shares"]: s.weight } : {}) })),
+    paidBy: (e.payers ?? []).map((p) => ({ name: p.name, paid: amount(p.cents) })),
+    shares: (e.splits ?? []).map((s) => ({ name: s.name, ...(e.variable ? {} : { owes: amount(s.cents) }), ...(s.weight != null ? { [e.method === "percent" ? "percent" : "shares"]: s.weight } : {}) })),
     ...(e.note ? { note: e.note } : {}),
     ...(e.recurring ? { repeats: e.recurring } : {}),
     ...(receiptHref(e.receiptUrl) ? { hasReceipt: true } : {}),

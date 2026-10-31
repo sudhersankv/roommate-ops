@@ -308,15 +308,16 @@ export async function updateNudges(groupId: string, patch: Partial<NudgeSettings
 
 /**
  * The Inbox page's reply box: the same send rule and signature as the chat (sendForMember). A complex draft comes back
- * as `{ sent: false, ask }` and the screen shows the questions as a confirm step; "Send anyway" there is the Member's
- * own yes (`confirmed`).
+ * as `{ sent: false, ask, confirmToken }` and the screen shows the questions as a confirm step; "Send anyway" sends
+ * the token back, which releases only the send the service held for this Member and this exact draft.
  */
-export async function replyToLandlord(groupId: string, input: { threadId: string; body: string; confirmed?: boolean }) {
+export async function replyToLandlord(groupId: string, input: { threadId: string; body: string; confirmToken?: string }) {
   return act(groupId, async (ctx) => {
     const body = input.body.trim()
     if (!body) throw new Error("Write something to send.")
-    const r = await sendForMember({ ...ctx, source: "ui" }, { intent: "reply", threadId: input.threadId, body, instruction: body, summary: `replied: ${body.length > 60 ? `${body.slice(0, 57)}...` : body}`, confirmed: input.confirmed === true })
-    return r.sent ? { sent: true as const, line: r.line } : { sent: false as const, ask: r.ask }
+    const approval = typeof input.confirmToken === "string" && input.confirmToken ? { token: input.confirmToken } : undefined
+    const r = await sendForMember({ ...ctx, source: "ui" }, { intent: "reply", threadId: input.threadId, body, instruction: body, summary: `replied: ${body.length > 60 ? `${body.slice(0, 57)}...` : body}`, approval })
+    return r.sent ? { sent: true as const, line: r.line } : { sent: false as const, ask: r.ask, confirmToken: r.confirmToken ?? null }
   })
 }
 

@@ -42,6 +42,11 @@ describe("restockCandidates", () => {
     assert.equal(at(events, addDaysToDay(last, 10)).length, 0);
   });
 
+  test("a purchase dated after today doesn't count yet: it can't hide what's low today", () => {
+    const events = [...bought("milk", "2026-10-03", [9, 9, 9]), { item: "milk", memberId: null, occurredOn: "2026-11-15" }];
+    assert.deepEqual(at(events, "2026-11-07").map((c) => [c.item, c.lastBought]), [["milk", "2026-10-30"]]);
+  });
+
   test("two purchases on one day count once", () => {
     const events = [...bought("milk", "2026-10-01", [9, 9]), { item: "milk 2%", memberId: null, occurredOn: "2026-10-19" }];
     assert.deepEqual(at(events, "2026-10-30").map((c) => c.lastBought), ["2026-10-19"]);

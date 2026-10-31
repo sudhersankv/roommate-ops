@@ -6,11 +6,11 @@
 import "@/lib/env";
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { devUserId } from "@/channels/dev";
 import { onGroupJoined } from "@/onboarding";
-import { deleteGroup } from "@/services/groups";
+import { deleteGroup, deleteGroupData } from "@/services/groups";
 import { NotAllowedError } from "@/services/authz";
 import type { Ctx } from "@/services/types";
 import { FakeMail, setMailClient } from "@/integrations/mail";
@@ -42,6 +42,8 @@ let sam: Ctx;
 let inboxId: string;
 let mayaEmail: string;
 const classified: leaseInbox.Classification[] = [];
+/** The thread of Maya's forward from the concierge (replies to it go to the concierge, not to Maya). */
+let forwardThread: string;
 
 /** The fake classifier answers from a queue the test fills; every call is recorded. */
 const nextClassifications: leaseInbox.Classification[] = [];
@@ -76,9 +78,9 @@ describe("Lease Inbox services against the dev DB", () => {
   });
 
   after(async () => {
+    if (groupId) await deleteGroup(groupId);
     setMailClient(null);
     leaseInbox.setClassifier(null);
-    if (groupId) await deleteGroup(groupId);
     if (accountId) await db.delete(schema.accounts).where(eq(schema.accounts.id, accountId));
     if (groupId) {
       for (const t of [schema.groupInboxes, schema.mailMessages, schema.landlordSenders, schema.workOrders, schema.sentMail, schema.mailEvents]) {
@@ -87,10 +89,12 @@ describe("Lease Inbox services against the dev DB", () => {
     }
   });
 
-  const deliver = async (input: Parameters<FakeMail["receive"]>[1], eventId = `evt-${Math.random()}`) => {
+  const deliver = async (input: Parameters<FakeMail["receive"]>[1], labels?: string[]) => {
     const m = mail.receive(inboxId, input);
-    return { m, result: await leaseInbox.storeInbound(groupId, m, { eventId }) };
+    if (labels) m.labels = labels;
+    return { m, result: await leaseInbox.storeInbound(groupId, m) };
   };
+  const senders = async () => (await db.select({ value: schema.landlordSenders.value }).from(schema.landlordSenders).where(eq(schema.landlordSenders.groupId, groupId))).map((r) => r.value).sort();
 
   test("teach: the inbox is provisioned once; asking again is a no-op", async () => {
     const first = await leaseInbox.ensureInbox(maya);
@@ -142,7 +146,7 @@ describe("Lease Inbox services against the dev DB", () => {
   });
 
   test("a Member's own forward teaches the landlord (source: forward)", async () => {
-    const { result } = await deliver({
+    const { m, result } = await deliver({
       from: `Maya Rao <${mayaEmail}>`,
       subject: "Fwd: Package room hours",
       text: `---------- Forwarded message ---------\nFrom: Brookfield Concierge <concierge@brookfieldmgmt.com>\nSubject: Package room hours\n\nClosed at 6pm this week.`,
@@ -150,21 +154,50 @@ describe("Lease Inbox services against the dev DB", () => {
     assert.equal(result.trusted, true);
     const [row] = await db.select().from(schema.mailMessages).where(eq(schema.mailMessages.id, result.id!));
     assert.equal(row.forwardedBy, maya.memberId);
+    assert.equal(row.replyTo, "concierge@brookfieldmgmt.com", "replies go to whoever wrote it, not to Maya");
     const [sender] = await db
       .select()
       .from(schema.landlordSenders)
       .where(and(eq(schema.landlordSenders.groupId, groupId), eq(schema.landlordSenders.value, "brookfieldmgmt.com")));
     assert.equal(sender.source, "forward");
+    forwardThread = m.threadId;
   });
 
-  test("the same event_id twice: duplicate, one row", async () => {
+  test("a spoofed forward (Maya's address on the envelope, labelled unauthenticated) teaches nothing: a new sender", async () => {
+    const before = await senders();
+    const { result } = await deliver(
+      {
+        from: `Maya Rao <${mayaEmail}>`,
+        subject: "Fwd: Updated payment portal",
+        text: `---------- Forwarded message ---------\nFrom: Brookfield Payments <payments@brookfield-rent-portal.com>\nSubject: Updated payment portal\n\nPlease pay this month's rent at our new portal.`,
+      },
+      ["received", "unauthenticated"],
+    );
+    assert.deepEqual([result.stored, result.trusted, result.sender], [true, false, "payments@brookfield-rent-portal.com"]);
+    assert.deepEqual(await senders(), before, "landlord_senders unchanged");
+    const [row] = await db.select().from(schema.mailMessages).where(eq(schema.mailMessages.id, result.id!));
+    assert.deepEqual([row.class, row.forwardedBy], ["new-sender", null]);
+  });
+
+  test("the same email twice: a duplicate pointing at the one row", async () => {
     const m = mail.receive(inboxId, { from: LANDLORD, subject: "Pool closing Sunday", text: "The pool closes for the season on Sunday." });
-    const a = await leaseInbox.storeInbound(groupId, m, { eventId: "evt-pool-1" });
-    const b = await leaseInbox.storeInbound(groupId, m, { eventId: "evt-pool-1" });
-    assert.deepEqual([a.duplicate, b.duplicate], [false, true]);
-    assert.equal(b.stored, false);
+    const a = await leaseInbox.storeInbound(groupId, m);
+    const b = await leaseInbox.storeInbound(groupId, m);
+    assert.deepEqual([a.duplicate, b.duplicate, b.stored], [false, true, false]);
+    assert.equal(b.id, a.id);
     const rows = await db.select().from(schema.mailMessages).where(and(eq(schema.mailMessages.groupId, groupId), eq(schema.mailMessages.messageId, m.messageId)));
     assert.equal(rows.length, 1);
+  });
+
+  test("an event_id: fresh, busy while it runs, taken again after 10 minutes unprocessed, done once finished", async () => {
+    const t0 = new Date("2026-11-02T16:00:00Z");
+    const later = (min: number) => new Date(t0.getTime() + min * 60_000);
+    assert.equal(await leaseInbox.claimMailEvent(groupId, "evt-pool-1", t0), "fresh");
+    assert.equal(await leaseInbox.claimMailEvent(groupId, "evt-pool-1", later(3)), "busy");
+    assert.equal(await leaseInbox.claimMailEvent(groupId, "evt-pool-1", later(11)), "retry");
+    assert.equal(await leaseInbox.claimMailEvent(groupId, "evt-pool-1", later(12)), "busy", "the retry holds it now");
+    await leaseInbox.finishMailEvent("evt-pool-1", later(13));
+    assert.equal(await leaseInbox.claimMailEvent(groupId, "evt-pool-1", later(40)), "done");
   });
 
   test("a dated notice: one line, the evening-before Reminder time, urgent inside 72 hours, hooks called", async () => {
@@ -224,7 +257,7 @@ describe("Lease Inbox services against the dev DB", () => {
     assert.equal(out.class, "work-order");
     assert.equal(out.line, "Update on the leaking kitchen sink: plumber Tuesday 10-12");
     const status = await leaseInbox.workOrderStatus({ groupId }, { what: "sink" });
-    assert.ok(status);
+    assert.ok(status && "status" in status);
     assert.deepEqual([status.status, status.scheduledFor, status.lastReply], ["scheduled", "2026-11-03T10:00", "plumber Tuesday 10-12"]);
   });
 
@@ -272,6 +305,75 @@ describe("Lease Inbox services against the dev DB", () => {
     assert.equal((await db.select().from(schema.sentMail).where(eq(schema.sentMail.instruction, "roomie tell them we're not renewing"))).length, 0);
   });
 
+  const notRenewing = { intent: "other" as const, body: "Hi, we wanted to let you know we won't be renewing our lease in July.", summary: "told them we're not renewing" };
+
+  test('a question or two first: "ok" before any question still gets them; after the ask, the same Member\'s yes sends it', async () => {
+    const before = mail.sent.length;
+    const first = await leaseInbox.sendToLandlord(sam, { ...notRenewing, instruction: "ok roomie tell them we're not renewing", approval: { latest: "ok roomie tell them we're not renewing" } });
+    assert.equal(first.sent, false, "a first message with ok, nothing held: questions");
+    const otherMember = await leaseInbox.sendToLandlord(dev, { ...notRenewing, instruction: "yes", approval: { latest: "yes" } });
+    assert.equal(otherMember.sent, false, "Dev's yes doesn't release what Sam was asked");
+    const yes = await leaseInbox.sendToLandlord(sam, { ...notRenewing, instruction: "yes send it", approval: { latest: "yes send it" } });
+    assert.equal(yes.sent, true);
+    assert.equal(mail.sent.length, before + 1);
+    assert.equal(mail.sent.at(-1)!.to, "leasing@brookfieldresidential.com");
+    const [row] = await db.select().from(schema.sentMail).where(eq(schema.sentMail.messageId, mail.sent.at(-1)!.messageId));
+    assert.equal(row.instruction, "ok roomie tell them we're not renewing", "the record keeps what Sam asked, not his yes");
+    const again = await leaseInbox.sendToLandlord(sam, { ...notRenewing, instruction: "yes send it", approval: { latest: "yes send it" } });
+    assert.equal(again.sent, false, "a yes releases one email");
+  });
+
+  test("a changed draft after the ask gets the questions again; the dashboard's token releases only the draft it came with", async () => {
+    const before = mail.sent.length;
+    const ask = await leaseInbox.sendToLandlord(maya, { ...notRenewing, instruction: "tell them we're not renewing" });
+    assert.ok(!ask.sent && ask.confirmToken);
+    if (ask.sent) return;
+    const changed = await leaseInbox.sendToLandlord(maya, { ...notRenewing, body: "We won't renew, and we'd like the deposit back by August 1.", instruction: "yes", approval: { latest: "yes" } });
+    assert.equal(changed.sent, false, "another body: ask again");
+    assert.equal(mail.sent.length, before);
+    if (changed.sent) return;
+    const stale = await leaseInbox.sendToLandlord(maya, { ...notRenewing, instruction: notRenewing.body, approval: { token: ask.confirmToken! } });
+    assert.equal(stale.sent, false, "the first token went with the first ask");
+    const fresh = stale.sent ? null : stale.confirmToken;
+    const sent = await leaseInbox.sendToLandlord(maya, { ...notRenewing, instruction: notRenewing.body, approval: { token: fresh! } });
+    assert.equal(sent.sent, true);
+    assert.equal(mail.sent.length, before + 1);
+  });
+
+  test("a reply on a forwarded thread goes to the original sender, not the Member who forwarded it", async () => {
+    const r = await leaseInbox.sendToLandlord(sam, { threadId: forwardThread, intent: "reply", body: "Thanks, noted.", instruction: "tell them thanks", summary: "thanked them" });
+    assert.equal(r.sent, true);
+    const email = mail.sent.at(-1)!;
+    assert.deepEqual([email.to, email.threadId], ["concierge@brookfieldmgmt.com", forwardThread]);
+  });
+
+  test("a thread from a sender who isn't trusted is refused, approval or not; trust_sender first opens it", async () => {
+    const { m } = await deliver({ from: "Two Guys Moving <quotes@twoguysmoving.biz>", subject: "Moving quote for Apt 4B", text: "Reply to confirm your July move." });
+    const reply = { threadId: m.threadId, intent: "reply" as const, body: "Thanks, we got it.", instruction: "tell them thanks, we got it", summary: "thanked them", approval: { latest: "yes" } };
+    const before = mail.sent.length;
+    await assert.rejects(leaseInbox.sendToLandlord(dev, reply), (e) => e instanceof NotAllowedError && /only reply to the landlord/.test(e.message));
+    assert.equal(mail.sent.length, before);
+    await leaseInbox.trustSender(maya, "quotes@twoguysmoving.biz", "admin");
+    assert.equal((await leaseInbox.sendToLandlord(dev, reply)).sent, true);
+    assert.equal(mail.sent.at(-1)!.to, "Two Guys Moving <quotes@twoguysmoving.biz>");
+    await db.delete(schema.landlordSenders).where(and(eq(schema.landlordSenders.groupId, groupId), inArray(schema.landlordSenders.value, ["quotes@twoguysmoving.biz", "twoguysmoving.biz"])));
+  });
+
+  test("work orders: whole words, filler ignored; the only open one wins; several open and no match -> which one", async () => {
+    const weather = await leaseInbox.createWorkOrder(dev, { title: "the weather stripping on the balcony door", threadId: "wo-thread-weather" });
+    const ask = await leaseInbox.workOrderStatus({ groupId }, { what: "what's up with the sink?" });
+    assert.ok(ask && "status" in ask);
+    assert.equal(ask.title, "the leaking kitchen sink", "'the' / 'with' don't match the weather stripping");
+    const which = await leaseInbox.workOrderStatus({ groupId }, { what: "any news from them?" });
+    assert.deepEqual(which, { choices: ["the weather stripping on the balcony door", "the leaking kitchen sink"] });
+    await db.update(schema.workOrders).set({ status: "done" }).where(and(eq(schema.workOrders.groupId, groupId), eq(schema.workOrders.title, "the leaking kitchen sink")));
+    const only = await leaseInbox.workOrderStatus({ groupId }, { what: "how's the sink going?" });
+    assert.ok(only && "title" in only);
+    assert.equal(only.title, weather.title, "the only open one, whatever was said");
+    await db.delete(schema.workOrders).where(eq(schema.workOrders.id, weather.id));
+    await db.update(schema.workOrders).set({ status: "scheduled" }).where(and(eq(schema.workOrders.groupId, groupId), eq(schema.workOrders.title, "the leaking kitchen sink")));
+  });
+
   test("the intro email goes once per landlord domain, signed with everyone's first name", async () => {
     const first = await leaseInbox.sendIntro(sam);
     assert.equal(first.sent, true);
@@ -292,5 +394,28 @@ describe("Lease Inbox services against the dev DB", () => {
     await assert.rejects(leaseInbox.sendToLandlord(ctx, { intent: "maintenance", body: "Hi", instruction: "x", summary: "x" }), NotAllowedError);
     await assert.rejects(leaseInbox.sendIntro(ctx), NotAllowedError);
     await assert.rejects(leaseInbox.ensureInbox(ctx), NotAllowedError);
+  });
+
+  test("delete group data releases the address; a mail service that fails to delete it doesn't stop the deletion", async () => {
+    class FailingMail extends FakeMail {
+      async deleteInbox(): Promise<void> {
+        throw new Error("AgentMail 503");
+      }
+    }
+    setMailClient(new FailingMail());
+    try {
+      await deleteGroupData(maya);
+    } finally {
+      setMailClient(mail);
+    }
+    assert.equal((await db.select().from(schema.groupInboxes).where(eq(schema.groupInboxes.groupId, groupId))).length, 0, "the address row is gone");
+    assert.equal((await db.select().from(schema.mailMessages).where(eq(schema.mailMessages.groupId, groupId))).length, 0);
+    // The failed release left the inbox at the mail service (logged); with it working, the address goes there too
+    // (deleteGroup runs the same wipe).
+    assert.equal(mail.inboxes.size, 1);
+    await leaseInbox.ensureInbox(maya);
+    await deleteGroupData(maya);
+    assert.equal(mail.inboxes.size, 0, "released at the mail service");
+    assert.equal((await db.select().from(schema.groupInboxes).where(eq(schema.groupInboxes.groupId, groupId))).length, 0);
   });
 });
