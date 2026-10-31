@@ -15,6 +15,7 @@ test("isLineFrom and senderOf read the pipeline's sender tags", () => {
 test("lineBody makes a memory line and its chat log row compare equal", () => {
   assert.equal(lineBody("[Maya] [photo: /uploads/tg/-1/a.jpg] split this"), "split this");
   assert.equal(lineBody("(photo) split this"), "split this");
+  assert.equal(lineBody("(photo) [photo: /api/docs/abc] split this"), "split this", "a fetched photo's chat line keeps its link");
   assert.equal(lineBody("[voice note from Sam] buy milk"), lineBody("(voice) buy milk"));
   assert.equal(lineBody("  plain  "), "plain");
 });

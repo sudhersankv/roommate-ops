@@ -18,14 +18,15 @@ export const senderOf = (text: string): string | null => {
 
 /**
  * What was said, without the sender tag, the photo tag or the chat log's "(voice)" / "(photo)" marker, so a memory line
- * ("[Maya] [photo: /uploads/x.jpg] split this") and its chat_messages row ("(photo) split this") compare equal.
+ * ("[Maya] [photo: /uploads/x.jpg] split this") and its chat_messages row ("(photo) [photo: /uploads/x.jpg] split this",
+ * or "(photo) split this" for a photo nobody fetched) compare equal.
  */
 export const lineBody = (text: string) =>
   text
     .trim()
-    .replace(/^\[(?:voice note from )?[^\]]+\]\s*/i, "")
-    .replace(/^\[photo: [^\]]*\]\s*/i, "")
+    .replace(/^\[(?:voice note from )?(?!photo: )[^\]]+\]\s*/i, "")
     .replace(/^\((?:voice|photo)\)\s*/i, "")
+    .replace(/^\[photo: [^\]]*\]\s*/i, "")
     .trim();
 
 /** The photo URLs a memory line carries ("[photo: <url>]"). */

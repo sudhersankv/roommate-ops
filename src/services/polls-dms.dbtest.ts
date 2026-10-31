@@ -5,7 +5,7 @@
 import "@/lib/env";
 import { after, before, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { registerChannel } from "@/channels";
 import { devUserId } from "@/channels/dev";
@@ -15,8 +15,9 @@ import { respond } from "@/pipeline";
 import { deleteGroup } from "./groups";
 import { getExpense, listExpenses, logExpense, settleUp } from "./money";
 import { nudgesOff, setNudges, setPaymentHandles, getNote, type Member } from "./members";
-import { askConfirm, askPoll, closePollsFor, expirePolls, recordVote, voteOnPoll } from "./polls";
+import { askConfirm, askGroupDecision, askPoll, closePollsFor, expirePolls, GroupDecisionError, recordVote, resolvePoll, voteOnPoll } from "./polls";
 import { currencyOf } from "./groups";
+import { setToolkit } from "./toolkits";
 import "@/toolkits/confirm";
 import { echoAfterPrivateRun, noteDmContext, nudgeOrHint, resolveDmGroup, runMark } from "./dm";
 import { assertNotProdDb } from "../../scripts/lib/prod-guard";
@@ -238,5 +239,96 @@ describe("polls and DMs against the dev DB", () => {
     assert.equal(await currencyOf(groupId), "INR", "❌ changes nothing");
 
     await db.update(schema.groups).set({ currency: "USD" }).where(eq(schema.groups.id, groupId));
+  });
+
+  describe("a group decision (#42): the first ✅ from any active Member does it", () => {
+    const open = async () => (await db.select().from(schema.polls).where(and(eq(schema.polls.groupId, groupId), eq(schema.polls.kind, "confirm")))).filter((p) => !p.resolvedAt).at(-1);
+    const tap = async (externalId: string, userExternalId: string, option: number) =>
+      recordVote({ channel: "dev", chatExternalId: `pd-${ts}`, pollExternalId: externalId, userExternalId, optionIds: [option] });
+    const trashRuns = async () => (await db.select().from(schema.chores).where(and(eq(schema.chores.groupId, groupId), eq(schema.chores.name, "Trash run")))).length;
+    const TRASH = { name: "Trash run", everyDays: 3, rotation: ["Sam", "Maya", "Dev"] };
+
+    test("Dev (not the asker, not an Admin) taps ✅: the chore is added once, as Dev; Sam's second ✅ adds nothing", async () => {
+      await askGroupDecision(as(maya), { question: "Add Trash run, every 3 days, Sam first?", toolId: "chore_add", input: TRASH });
+      assert.deepEqual(channel.chat().at(-1)?.msg.poll, { question: "Add Trash run, every 3 days, Sam first?", options: ["✅ Yes", "❌ No"], multi: false });
+      const poll = (await open())!;
+      assert.equal(await trashRuns(), 0, "nothing until someone answers");
+      const yes = await tap(poll.externalId!, dev.channelUserId!, 0);
+      assert.equal(yes.resolved, "answered");
+      assert.match(yes.line ?? "", /^Dev said yes\./);
+      assert.equal(channel.chat().at(-1)?.msg.text, yes.line, "one line in the chat");
+      assert.equal(await trashRuns(), 1);
+      const [added] = await db.select().from(schema.activity).where(and(eq(schema.activity.groupId, groupId), eq(schema.activity.kind, "chore.added"))).orderBy(desc(schema.activity.createdAt));
+      assert.equal(added?.actorMemberId, dev.id, "run as the voter");
+      assert.deepEqual(await tap(poll.externalId!, sam.channelUserId!, 0), { counted: false }, "resolved once");
+      assert.equal(await trashRuns(), 1, "two ✅, one Trash run");
+    });
+
+    test("a Pending Member's tap is ignored; ❌ from an active Member drops it", async () => {
+      const [priya] = await db
+        .insert(schema.members)
+        .values({ groupId, displayName: "Priya", role: "member", status: "pending", channelUserId: devUserId(`pd-Priya-${ts}`) })
+        .returning();
+      const before = (await listExpenses({ groupId })).length;
+      await askGroupDecision(as(sam), { question: "Split the $60 internet three ways?", toolId: "log_expense", input: { amount: 60, description: "internet", category: "utilities", payer: "Sam" } });
+      const poll = (await open())!;
+      assert.deepEqual(await tap(poll.externalId!, priya.channelUserId!, 0), { counted: false }, "Pending: doesn't count");
+      assert.deepEqual(await voteOnPoll(poll.id, priya.id, [0]), { counted: false }, "not by the numbered path either");
+      assert.equal((await listExpenses({ groupId })).length, before);
+      assert.equal((await open())?.id, poll.id, "still open");
+      const no = await tap(poll.externalId!, dev.channelUserId!, 1);
+      assert.equal(no.resolved, "answered");
+      assert.equal(no.line, "Okay, dropping that.");
+      assert.equal((await listExpenses({ groupId })).length, before, "❌ logs nothing");
+      assert.deepEqual(await tap(poll.externalId!, maya.channelUserId!, 0), { counted: false }, "a later ✅ can't bring it back");
+      assert.equal((await listExpenses({ groupId })).length, before);
+    });
+
+    test("nobody answers: it lapses after 30 minutes and does nothing", async () => {
+      const before = channel.chat().length;
+      await askGroupDecision(as(maya), { question: "Add Recycling, every 7 days?", toolId: "chore_add", input: { name: "Recycling", everyDays: 7 } });
+      const poll = (await open())!;
+      assert.ok(Math.abs(poll.resolvesAt.getTime() - poll.createdAt.getTime() - 30 * 60_000) < 5_000, "30 minutes, like a confirm poll");
+      // What expirePolls does for it after 30 minutes (called directly: the dev DB is shared, other tests' polls stay open).
+      assert.equal(await resolvePoll(poll.id, "expired", new Date(Date.now() + 31 * 60_000)), null);
+      const [row] = await db.select().from(schema.polls).where(eq(schema.polls.id, poll.id));
+      assert.ok(row.resolvedAt);
+      assert.equal((await db.select().from(schema.chores).where(and(eq(schema.chores.groupId, groupId), eq(schema.chores.name, "Recycling")))).length, 0);
+      assert.equal(channel.chat().length, before + 1, "just the poll, no line after it");
+    });
+
+    test("a Group without House can't pin chore_add (nothing is sent)", async () => {
+      await setToolkit(as(maya), { toolkit: "house", enabled: false });
+      try {
+        const before = channel.chat().length;
+        await assert.rejects(askGroupDecision(as(dev), { question: "Add Mopping, every 7 days?", toolId: "chore_add", input: { name: "Mopping", everyDays: 7 } }), GroupDecisionError);
+        assert.equal(channel.chat().length, before);
+      } finally {
+        await setToolkit(as(maya), { toolkit: "house", enabled: true });
+      }
+    });
+
+    test("House forgotten between the ask and the tap: ✅ adds nothing and says so in one line", async () => {
+      await askGroupDecision(as(dev), { question: "Add Mopping, every 7 days?", toolId: "chore_add", input: { name: "Mopping", everyDays: 7 } });
+      const poll = (await open())!;
+      await setToolkit(as(maya), { toolkit: "house", enabled: false });
+      try {
+        const yes = await tap(poll.externalId!, sam.channelUserId!, 0);
+        assert.equal(yes.resolved, "answered");
+        assert.equal(yes.line, "That's not something I do here anymore.");
+        assert.equal(channel.chat().at(-1)?.msg.text, yes.line);
+        assert.equal((await db.select().from(schema.chores).where(and(eq(schema.chores.groupId, groupId), eq(schema.chores.name, "Mopping")))).length, 0);
+      } finally {
+        await setToolkit(as(maya), { toolkit: "house", enabled: true });
+      }
+    });
+
+    test("an admin change can't be pinned as a group decision (nothing is sent)", async () => {
+      const before = channel.chat().length;
+      await assert.rejects(askGroupDecision(as(maya), { question: "Take the dishes off the chart?", toolId: "chore_remove", input: { chore: "dishes" } }), GroupDecisionError);
+      await assert.rejects(askGroupDecision(as(maya), { question: "Change the rent?", toolId: "set_rent", input: { amount: 2400 } }), GroupDecisionError);
+      await assert.rejects(askGroupDecision(as(maya), { question: "Add eggs?", toolId: "cart_add", input: { items: ["eggs"] } }), GroupDecisionError, "routine adds aren't group decisions");
+      assert.equal(channel.chat().length, before);
+    });
   });
 });
