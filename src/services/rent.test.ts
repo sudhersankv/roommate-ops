@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { zonedTimeToUtc } from "@/lib/time";
-import { rentDmsFor, rentGroupLine, rentWindows, shortMoney } from "./rent";
+import { owingRent, rentDmsFor, rentGroupLine, rentWindows, shortMoney } from "./rent";
 
 const TZ = "America/Chicago";
 const at = (month: number, day: number, hour: number, minute = 0) => zonedTimeToUtc(TZ, { year: 2026, month, day, hour, minute });
@@ -59,4 +59,20 @@ test("rentDmsFor: no handle, no button, and the text says how to add one", () =>
   assert.deepEqual(dev.buttons, []);
   assert.match(dev.text, /\$800/);
   assert.match(dev.text, /no pay link yet: Maya can tell me their Venmo, PayPal or Cash App/);
+});
+
+test("owingRent: only this month's Shares against what was paid the Payer since the DMs went out", () => {
+  const since = "2026-10-29";
+  // Dev paid his $800 on the ahead day; Sam paid $200 of $600, and earlier $600 last month (before `since`).
+  const paid = [
+    { fromId: "dev", toId: "maya", cents: 80000, day: "2026-10-29" },
+    { fromId: "sam", toId: "maya", cents: 20000, day: "2026-10-31" },
+    { fromId: "sam", toId: "maya", cents: 60000, day: "2026-10-01" },
+  ];
+  assert.deepEqual(owingRent("maya", rent.shares, paid, since), ["Sam"]);
+  // Sam pays the rest on the due day: nobody's named.
+  assert.deepEqual(owingRent("maya", rent.shares, [...paid, { fromId: "sam", toId: "maya", cents: 40000, day: "2026-11-01" }], since), []);
+  // Sam paying Dev (the Settle plan routing a debt elsewhere) doesn't pay Maya's rent.
+  assert.deepEqual(owingRent("maya", rent.shares, [{ fromId: "sam", toId: "dev", cents: 60000, day: "2026-11-01" }], since), ["Dev", "Sam"]);
+  assert.deepEqual(owingRent("maya", rent.shares, [], since), ["Dev", "Sam"], "never the Payer");
 });
