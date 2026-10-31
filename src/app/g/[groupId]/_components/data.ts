@@ -16,6 +16,8 @@ import type { Expense } from "@/services/money"
 import { haveNeed } from "@/services/recipe-math"
 import type { Recipe } from "@/services/recipes"
 import { getRent, rentWindows } from "@/services/rent"
+import { probablyLowView } from "@/services/restock"
+import { lastBoughtText } from "@/services/restock-math"
 import { getNudgeSettings } from "@/services/settle-nudge"
 import { toolkitStates } from "@/toolkits/catalog"
 import { toolkitById } from "@/toolkits/registry"
@@ -30,6 +32,7 @@ import type {
   ExpenseView,
   NarrationView,
   NudgeSettingsView,
+  ProbablyLowView,
   RecentDocumentView,
   RecipeView,
   RentCardView,
@@ -355,10 +358,24 @@ function recipeView(r: Recipe, pantryList: string[], items: CartItemView[]): Rec
   }
 }
 
+/** The Cart page's "Probably low" rows from probablyLowView, with "last bought N days ago" for the Group's local today. */
+export function probablyLowRows(rows: readonly { item: string; lastBought: string; scope: "shared" | "mine" }[], today: string): ProbablyLowView[] {
+  return rows.map((r) => ({ item: r.item, when: lastBoughtText(r.lastBought, today), scope: r.scope }))
+}
+
 export async function cartPageView(s: GroupSession): Promise<CartPageView> {
-  const [items, list, pantryList, people, ic] = await Promise.all([cartView(s), recipes.listRecipes(s.ctx, 12), pantry.getPantry(s.ctx), members.listMembers(s.ctx), instacartAvailability()])
+  const now = new Date()
+  const [items, list, pantryList, people, ic, low] = await Promise.all([
+    cartView(s),
+    recipes.listRecipes(s.ctx, 12),
+    pantry.getPantry(s.ctx),
+    members.listMembers(s.ctx),
+    instacartAvailability(),
+    probablyLowView(s.ctx, now),
+  ])
   return {
     items,
+    probablyLow: probablyLowRows(low, localDay(now, s.group.timezone)),
     recipes: list.map((r) => recipeView(r, pantryList, items)),
     pantry: pantryList,
     splitMemberIds: people.map((m) => m.id),
