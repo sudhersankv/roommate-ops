@@ -14,14 +14,14 @@ import { SHOW_COUNT_FROM, SOON_CHANNELS } from "@/services/trick-votes"
 import { BetaForm } from "./beta-form"
 import { ChatWindow, cuesFor } from "./chat"
 import { DEMOS, HERO } from "./demos"
-import { GITHUB_URL, TelegramMark, WhatsAppMark, linkClass, shareLinks, telegramAddUrl } from "./marks"
+import { TelegramMark, WhatsAppMark, linkClass, shareLinks, telegramAddUrl } from "./marks"
 import { CopyLink } from "./share-row"
 import { Stage } from "./stage"
 import { accentOf, builtTricks, comingSoonTricks } from "./tricks"
 import { VoteButton } from "./vote-button"
 import "./landing.css"
 
-export { GITHUB_URL, telegramAddUrl } from "./marks"
+export { telegramAddUrl } from "./marks"
 
 /** The words (ADR 0015). The headline is also the metadata's and the share image's (scripts/og-image.ts keeps its own copy). */
 export const HEADLINE = "The roommate who actually keeps track."
@@ -516,7 +516,7 @@ function Footer({ signedIn }: { signedIn: boolean }) {
       <div className="mx-auto flex max-w-6xl flex-col gap-6 px-5 py-10 sm:flex-row sm:items-center sm:justify-between sm:px-8">
         <div className="flex items-center gap-3">
           <Roomie size={36} decorative />
-          <p className="type-caption m-0 text-muted-foreground">Free while in beta. Built with Mastra + Neon.</p>
+          <p className="type-caption m-0 text-muted-foreground">Free while in beta.</p>
         </div>
         <nav aria-label="Footer" className="flex flex-wrap gap-x-6 gap-y-2 text-[0.9375rem]">
           <Link href="/help" className={linkClass}>
@@ -529,9 +529,6 @@ function Footer({ signedIn }: { signedIn: boolean }) {
             {signedIn ? "Open dashboard" : "Sign in"}
           </Link>
           {signedIn ? <SignOutLink className={linkClass} /> : null}
-          <a href={GITHUB_URL} target="_blank" rel="noopener noreferrer" className={linkClass}>
-            GitHub
-          </a>
         </nav>
       </div>
     </footer>

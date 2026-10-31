@@ -23,6 +23,11 @@ export type IncomingMessage = {
   /** A 1:1 message to Roomie from a Member of the Group (`chatExternalId` is still the Group's Chat): always
    * addressed, and not logged as a line of the group chat. */
   isPrivate?: boolean;
+  /** When the message (the first of a merged run) reached the adapter. A reply that only asks again after Roomie
+   * already answered this Member since then isn't sent (the pipeline's stale-reply rule, #41). */
+  receivedAt?: Date;
+  /** How many quick consecutive texts from this sender `text` joins (channels/coalesce.ts); absent = one. */
+  merged?: number;
 };
 
 export type Button = { text: string; url: string };

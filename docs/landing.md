@@ -38,7 +38,7 @@ All in `src/app/_landing/landing.tsx` (server components). Client components: `s
 6. **Dashboard peek**: three phone frames from `public/landing/dashboard-{money,home,chores}.jpg` (600x1116, `next/image` with fixed dimensions). To be retaken with the read-first dashboard (issue #28, story 28).
 7. **WhatsApp beta form** (`#whatsapp-beta`, "Want it on WhatsApp?" / "Tell us about your apartment.").
 8. **Share row**: "Know an apartment chat that needs this?" with **Send on WhatsApp** (`https://wa.me/?text=<text> <url>`), **Send on Telegram** (`https://t.me/share/url?url=<url>&text=<text>`) and **Copy link**. `<url>` is `APP_URL` when absolute, else `https://tryroomie.me`; `<text>` is `SHARE_TEXT` in `_landing/marks.tsx`: "Adding this to our apartment chat. It remembers who paid 🦖".
-9. Footer: How it works, Privacy, Sign in, GitHub, "Built with Mastra + Neon".
+9. Footer: How it works, Privacy, Sign in, "Free while in beta." No stack, no GitHub link.
 
 ### Words
 
@@ -91,8 +91,8 @@ The ember palette (`--ember-1/2/3`: `#ffb547` amber, `#ff7a59` coral, `#ff4f9a` 
 
 1. The form posts to the server action `requestBeta` (`_landing/actions.ts`), which reads the IP (`fly-client-ip`, else the first `x-forwarded-for`) and the user agent and calls `submitBetaRequest` in `src/services/beta.ts`.
 2. The service: a filled honeypot field (`website`, invisible) gets a fake success and nothing is stored; zod validates (name, email, group size `2 | 3-4 | 5-8 | 9-15 | 16+`, purpose = the Group purposes, an optional phone with 7-15 digits stored as `+digits`, notes up to 1000 characters); then at most **3 requests per IP per hour** (`WindowLimiter`, in memory, so a restart forgets); then one row in `beta_requests` (migration 0007) with an HMAC of the IP (`ip_hash`, keyed by `NEON_AUTH_COOKIE_SECRET`), never the IP itself.
-3. After the response (`after()`), the operator is told: the Account of the first `ROOMIE_OPERATOR_EMAILS` address -> its Member in a Telegram Group -> `channel_user_id` -> `telegramChannel().sendPrivate(...)` with a three- or four-line summary and an "Open beta requests" button (`APP_URL/admin/beta`). If there's no Telegram token, no such Member, or the DM fails (the operator never pressed Start on @imroomiebot), it logs `[beta] … ` with the same summary instead, so it shows in `fly logs`.
-4. The visitor sees "Got it. You'll hear from us within a day or two." There is no mailer: the operator writes back by hand.
+3. After the response (`after()`), the operator is told by email (`services/operator-mail.ts`): from `notify@<AGENTMAIL_DOMAIN>` (an AgentMail inbox made once, idempotent by its client id) to `OPERATOR_EMAIL` (a Fly secret, comma-separated: the first is To, the rest CC; personal addresses never go in the code or on the site), subject "Roomie beta request: <name>", the summary and a link to `/admin/beta` through `/signin`. Without `OPERATOR_EMAIL` or an AgentMail key, the old path: a Telegram DM to the first `ROOMIE_OPERATOR_EMAILS` Account's Telegram Member, else a `[beta] …` log line in `fly logs`. Every counted "I want this" vote is emailed the same way ("Roomie vote: <Trick> (n so far)"), in the background.
+4. The visitor sees "Got it. You'll hear from us within a day or two." The operator writes back by hand.
 5. The operator works the list at `/admin/beta` (status: new / contacted / onboarded / declined; `setBetaStatus` checks the operator again). The phone links to `wa.me`.
 
 For the DM to arrive, the operator must be a Member of some Telegram Group with Roomie (claimed with their operator Google account, so the Account exists) and must have pressed Start in a DM once.

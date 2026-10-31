@@ -11,6 +11,7 @@ import { dashboardUrl } from "@/lib/urls";
 import { WindowLimiter } from "@/lib/window-limit";
 import type { Outgoing } from "@/channels/types";
 import { NotAllowedError } from "./authz";
+import { mailOperator } from "./operator-mail";
 
 export type BetaRequest = typeof schema.betaRequests.$inferSelect;
 
@@ -141,11 +142,20 @@ export async function operatorTelegramUserId(email = operatorEmails()[0]): Promi
   return row?.channelUserId ?? null;
 }
 
-/** DM the operator on Telegram; when that isn't possible, one `[beta]` log line (it shows up in Fly's logs). */
-export async function notifyOperator(row: BetaRequest, send: TelegramSend, findUser = operatorTelegramUserId): Promise<"telegram" | "log"> {
+/**
+ * Tell the operator: an email from notify@ to OPERATOR_EMAIL (services/operator-mail.ts); without one, a Telegram DM;
+ * when neither is possible, one `[beta]` log line (it shows up in Fly's logs).
+ */
+export async function notifyOperator(
+  row: BetaRequest,
+  send: TelegramSend,
+  findUser = operatorTelegramUserId,
+  mail: (subject: string, text: string) => Promise<"sent" | "skipped" | "failed"> = mailOperator,
+): Promise<"email" | "telegram" | "log"> {
   const text = betaSummary(row);
   // Through /signin: /admin/* is a 404 until you're signed in, and /signin continues there at once if you are.
   const link = dashboardUrl(signInPath("/admin/beta"));
+  if ((await mail(`Roomie beta request: ${row.name}`, link ? `${text}\n\nAll requests: ${link}` : text).catch(() => "failed" as const)) === "sent") return "email";
   const fallback = (why: string) => {
     console.log(`[beta] ${why}; request ${row.id}:\n${text}`);
     return "log" as const;

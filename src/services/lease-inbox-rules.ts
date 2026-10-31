@@ -145,3 +145,34 @@ export function attachmentKind(mailClass: string | null, utility: string | null,
   if (utility || (filename && /\b(?:bill|invoice|statement)\b/i.test(filename.replace(/[_-]+/g, " ")))) return "bill";
   return "email";
 }
+
+/* ---------- the chat line for a landlord email (#45) ---------- */
+
+/** The longest sender label the chat shows. */
+const SENDER_MAX = 40;
+
+/**
+ * Who an email is from, as the chat says it: the From header's display name, else "The landlord". The name is the
+ * sender's own text, so it's made one short plain line: control, formatting and bidirectional characters and line
+ * breaks go, spaces collapse, at most 40 characters; nothing usable left (or an address) is "The landlord".
+ */
+export function senderName(fromHeader: string | null | undefined): string {
+  const raw = /^\s*"?([^"<]+?)"?\s*</.exec(fromHeader ?? "")?.[1] ?? "";
+  const name = raw
+    .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, SENDER_MAX)
+    .trim();
+  return name && !name.includes("@") && /\p{L}/u.test(name) ? name : "The landlord";
+}
+
+/**
+ * One line in the chat for a trusted landlord email, like a notification: who and what. A work-order reply names
+ * the work order; a rent or lease email only says it came (the details go to the Admins privately).
+ */
+export function mailLine(m: { class: "notice" | "rent-lease" | "work-order" | "other"; sender: string; summary: string; title?: string }): string {
+  if (m.class === "rent-lease") return `📬 ${m.sender} emailed about the rent or the lease. An admin has the details.`;
+  if (m.class === "work-order" && m.title) return `📬 ${m.sender} on ${m.title}: ${m.summary}`;
+  return `📬 ${m.sender}: ${m.summary}`;
+}

@@ -1,14 +1,35 @@
 // The /help FAQ (docs/landing.md "/help"). `text` is the plain answer for search engines (FAQPage JSON-LD); `a` is
 // what the page shows. They must say the same thing: faq.test.ts renders `a` and compares. No CSS import here, so
-// the test can load it.
+// the test can load it. Plain words about what Roomie does; no talk of models or the stack.
 import Link from "next/link"
 import type { ReactNode } from "react"
 
-import { GITHUB_URL, linkClass } from "../_landing/marks"
+import { linkClass } from "../_landing/marks"
 
 export type Faq = { q: string; a: ReactNode; text: string }
 
 export const FAQ: Faq[] = [
+  {
+    q: "What can Roomie do?",
+    text: "It's the roommate who keeps track. It splits rent and bills and knows who owes who, keeps one shared grocery list, keeps the chore chart fair, remembers the house stuff nobody does (the air filter, the smoke alarms), reminds people, and can handle the landlord's emails. You talk to it in the group chat like you'd talk to a roommate.",
+    a: (
+      <p>
+        It&apos;s the roommate who keeps track. It splits rent and bills and knows who owes who, keeps one shared grocery list, keeps the chore chart fair, remembers the
+        house stuff nobody does (the air filter, the smoke alarms), reminds people, and can handle the landlord&apos;s emails. You talk to it in the group chat like
+        you&apos;d talk to a roommate.
+      </p>
+    ),
+  },
+  {
+    q: "How do I talk to it?",
+    text: "Say \"roomie\", @mention it or reply to it, and just say what's going on: you paid for pizza, you're out of eggs, the trash goes out Tuesday. It answers in a line or two, and stays out of conversations that aren't for it.",
+    a: (
+      <p>
+        Say &ldquo;roomie&rdquo;, @mention it or reply to it, and just say what&apos;s going on: you paid for pizza, you&apos;re out of eggs, the trash goes out
+        Tuesday. It answers in a line or two, and stays out of conversations that aren&apos;t for it.
+      </p>
+    ),
+  },
   {
     q: "Is it free?",
     a: <p>Yes, while it&apos;s in beta.</p>,
@@ -16,40 +37,60 @@ export const FAQ: Faq[] = [
   },
   {
     q: "Does it read everything we say?",
-    text: "Yes. Every message, with the few before it, goes to a small model that decides whether Roomie should answer. It mostly answers when addressed; sometimes it chimes in, and it answers voice notes addressed to it. What it answers goes to Claude with recent chat for context. Chat messages, its memory of conversations and its debug records are deleted after 30 days. Each group's memory is separate. The privacy page has the details.",
+    text: "It sees the group's messages so it can tell when someone's talking to it, but it only answers when it's addressed or clearly needed. Chat messages and its memory of conversations are deleted after 30 days, and each group's memory is separate. The privacy page has the details.",
     a: (
-      <>
-        <p>
-          Yes. Every message, with the few before it, goes to a small model that decides whether Roomie should answer. It mostly answers when addressed; sometimes it
-          chimes in, and it answers voice notes addressed to it. What it answers goes to Claude with recent chat for context.
-        </p>
-        <p>
-          Chat messages, its memory of conversations and its debug records are deleted after 30 days. Each group&apos;s memory is separate. The{" "}
-          <Link href="/privacy" className={linkClass}>
-            privacy page
-          </Link>{" "}
-          has the details.
-        </p>
-      </>
+      <p>
+        It sees the group&apos;s messages so it can tell when someone&apos;s talking to it, but it only answers when it&apos;s addressed or clearly needed. Chat messages
+        and its memory of conversations are deleted after 30 days, and each group&apos;s memory is separate. The{" "}
+        <Link href="/privacy" className={linkClass}>
+          privacy page
+        </Link>{" "}
+        has the details.
+      </p>
     ),
   },
   {
     q: "Can it message people privately?",
-    text: "Yes. Your rent share, what you owe and your dashboard link come privately, and you can message it first: \"what do I owe\", \"remind me Friday\". On Telegram, only after you press Start with @imroomiebot (a Telegram rule). On WhatsApp, any Member of the group.",
+    text: "Yes. Your rent share, what you owe and your dashboard link come to you privately, and you can message it yourself, like asking what you owe or for a reminder on Friday. On Telegram, only after you press Start with @imroomiebot (a Telegram rule). On WhatsApp, anyone in the group.",
     a: (
       <p>
-        Yes. Your rent share, what you owe and your dashboard link come privately, and you can message it first: <q>what do I owe</q>, <q>remind me Friday</q>. On
-        Telegram, only after you press Start with @imroomiebot (a Telegram rule). On WhatsApp, any Member of the group.
+        Yes. Your rent share, what you owe and your dashboard link come to you privately, and you can message it yourself, like asking what you owe or for a reminder on
+        Friday. On Telegram, only after you press Start with @imroomiebot (a Telegram rule). On WhatsApp, anyone in the group.
       </p>
     ),
   },
   {
     q: "Does it nag people about money in the group?",
-    text: "No. If you've owed the same person more than $20 for over a week, Roomie reminds you privately, once a week, with a pay link. Nobody else sees it, and \"stop nudging me\" turns it off.",
+    text: "No. If you've owed the same person more than $20 for over a week, Roomie reminds you privately, once a week, with a pay link. Nobody else sees it, and you can tell it to stop.",
     a: (
       <p>
-        No. If you&apos;ve owed the same person more than $20 for over a week, Roomie reminds you privately, once a week, with a pay link. Nobody else sees it, and{" "}
-        <q>stop nudging me</q> turns it off.
+        No. If you&apos;ve owed the same person more than $20 for over a week, Roomie reminds you privately, once a week, with a pay link. Nobody else sees it, and you
+        can tell it to stop.
+      </p>
+    ),
+  },
+  {
+    q: "Can it order groceries by itself?",
+    text: "No. It turns the shared list into an Instacart list, and a person checks out. When you tell it what you paid, it splits the shop by who added what.",
+    a: <p>No. It turns the shared list into an Instacart list, and a person checks out. When you tell it what you paid, it splits the shop by who added what.</p>,
+  },
+  {
+    q: "Does it work with Venmo or Splitwise?",
+    text: "Settling up gives you Venmo, PayPal or Cash App links with the amount filled in; Roomie never moves money itself. An Admin can bring in a Splitwise group's history, copy expenses there, or keep the two in sync.",
+    a: (
+      <p>
+        Settling up gives you Venmo, PayPal or Cash App links with the amount filled in; Roomie never moves money itself. An Admin can bring in a Splitwise group&apos;s
+        history, copy expenses there, or keep the two in sync.
+      </p>
+    ),
+  },
+  {
+    q: "Does the landlord know it's a shared inbox?",
+    text: "Yes. Every email it sends says it's the residents' shared inbox and names who asked. When a new landlord address shows up, Roomie offers to send a short intro email first, signed by everyone in the group.",
+    a: (
+      <p>
+        Yes. Every email it sends says it&apos;s the residents&apos; shared inbox and names who asked. When a new landlord address shows up, Roomie offers to send a short
+        intro email first, signed by everyone in the group.
       </p>
     ),
   },
@@ -67,31 +108,21 @@ export const FAQ: Faq[] = [
     ),
   },
   {
-    q: "Does the landlord know it's a shared inbox?",
-    text: "Yes. Every email it sends says it's the residents' shared inbox and names who asked. When a new landlord address shows up, Roomie offers to send a short intro email first, signed by everyone in the group.",
-    a: (
-      <p>
-        Yes. Every email it sends says it&apos;s the residents&apos; shared inbox and names who asked. When a new landlord address shows up, Roomie offers to send a short
-        intro email first, signed by everyone in the group.
-      </p>
-    ),
-  },
-  {
     q: "Why didn't it answer?",
-    text: "The message didn't say \"roomie\", @mention it or reply to it. You're Pending: an Admin hasn't approved you yet. The group hasn't taught it that Trick. Say \"roomie, learn …\". It got a lot of messages at once and is pacing itself. Try again in a minute.",
+    text: "The message didn't say \"roomie\", @mention it or reply to it. You're Pending: an Admin hasn't approved you yet. The group hasn't taught it that Trick yet; an Admin can, on the dashboard's Tricks page or by asking it. It got a lot of messages at once and is pacing itself. Try again in a minute.",
     a: (
       <ul>
         <li>The message didn&apos;t say &ldquo;roomie&rdquo;, @mention it or reply to it.</li>
         <li>You&apos;re Pending: an Admin hasn&apos;t approved you yet.</li>
-        <li>The group hasn&apos;t taught it that Trick. Say &ldquo;roomie, learn …&rdquo;.</li>
+        <li>The group hasn&apos;t taught it that Trick yet; an Admin can, on the dashboard&apos;s Tricks page or by asking it.</li>
         <li>It got a lot of messages at once and is pacing itself. Try again in a minute.</li>
       </ul>
     ),
   },
   {
     q: "Can it forget a Trick?",
-    text: "Yes. An Admin says \"roomie, forget chores\" or taps Forget on the dashboard's Tricks page. What it kept stays, so teaching it again picks up where you left off.",
-    a: <p>Yes. An Admin says <q>roomie, forget chores</q> or taps Forget on the dashboard&apos;s Tricks page. What it kept stays, so teaching it again picks up where you left off.</p>,
+    text: "Yes. An Admin asks it to, or taps Forget on the dashboard's Tricks page. What it kept stays, so teaching it again picks up where you left off.",
+    a: <p>Yes. An Admin asks it to, or taps Forget on the dashboard&apos;s Tricks page. What it kept stays, so teaching it again picks up where you left off.</p>,
   },
   {
     q: "Can I use it in more than one group?",
@@ -100,11 +131,11 @@ export const FAQ: Faq[] = [
   },
   {
     q: "What's different on WhatsApp and Telegram?",
-    text: "WhatsApp is a beta we set up with you; there Roomie knows everyone in the group from the start and can message any Member privately. Telegram is open to everyone: add it yourself. Roomie meets people as they first speak, and can only message you privately after you press Start.",
+    text: "WhatsApp is a beta we set up with you; there Roomie knows everyone in the group from the start and can message anyone privately. Telegram is open to everyone: add it yourself. Roomie meets people as they first speak, and can only message you privately after you press Start.",
     a: (
       <>
         <p>
-          <strong>WhatsApp</strong> is a beta we set up with you; there Roomie knows everyone in the group from the start and can message any Member privately.
+          <strong>WhatsApp</strong> is a beta we set up with you; there Roomie knows everyone in the group from the start and can message anyone privately.
         </p>
         <p>
           <strong>Telegram</strong> is open to everyone: add it yourself. Roomie meets people as they first speak, and can only message you privately after you press
@@ -130,42 +161,19 @@ export const FAQ: Faq[] = [
   },
   {
     q: "What does \"forget me\" delete?",
-    text: "In that group: your chat messages, what Roomie remembered about you (like a diet or a Venmo handle), its memory of you under any name you had, the photos of yours it read and the debug records of your messages. You leave the group's Members and show as Former member; write again and you're a new member an Admin approves. Expenses you were part of stay so everyone else's Balances still add up.",
+    text: "In that group: your chat messages, what Roomie remembered about you (like a diet or a Venmo handle), its memory of you under any name you had, the photos of yours it read and the records of your messages. You leave the group's Members and show as Former member; write again and you're a new member an Admin approves. Expenses you were part of stay so everyone else's Balances still add up.",
     a: (
       <p>
         In that group: your chat messages, what Roomie remembered about you (like a diet or a Venmo handle), its memory of you under any name you had, the photos of yours
-        it read and the debug records of your messages. You leave the group&apos;s Members and show as &ldquo;Former member&rdquo;; write again and you&apos;re a new
-        member an Admin approves. Expenses you were part of stay so everyone else&apos;s Balances still add up.
+        it read and the records of your messages. You leave the group&apos;s Members and show as &ldquo;Former member&rdquo;; write again and you&apos;re a new member an
+        Admin approves. Expenses you were part of stay so everyone else&apos;s Balances still add up.
       </p>
     ),
   },
   {
     q: "Who runs this?",
-    text: "A small independent team. Roomie is open source on GitHub, and the data lives in a Postgres database on Neon. No ads, and we don't sell data.",
-    a: (
-      <p>
-        A small independent team. Roomie is{" "}
-        <a href={GITHUB_URL} target="_blank" rel="noopener noreferrer" className={linkClass}>
-          open source on GitHub
-        </a>
-        , and the data lives in a Postgres database on Neon. No ads, and we don&apos;t sell data.
-      </p>
-    ),
-  },
-  {
-    q: "Can it order groceries by itself?",
-    text: "No. It turns the Cart into an Instacart list, and a person checks out. Then \"roomie I paid 84\" splits the shop by who added what.",
-    a: <p>No. It turns the Cart into an Instacart list, and a person checks out. Then <q>roomie I paid 84</q> splits the shop by who added what.</p>,
-  },
-  {
-    q: "Does it work with Venmo or Splitwise?",
-    text: "Settle up gives you Venmo, PayPal or Cash App links with the amount filled in; Roomie never moves money itself. An Admin can bring in a Splitwise group's history, copy expenses there, or keep the two in sync.",
-    a: (
-      <p>
-        Settle up gives you Venmo, PayPal or Cash App links with the amount filled in; Roomie never moves money itself. An Admin can bring in a Splitwise group&apos;s
-        history, copy expenses there, or keep the two in sync.
-      </p>
-    ),
+    text: "A small independent team. No ads, and we don't sell your data.",
+    a: <p>A small independent team. No ads, and we don&apos;t sell your data.</p>,
   },
 ]
 

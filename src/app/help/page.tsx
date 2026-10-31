@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { ToolkitIcon } from "@/components/app/toolkit-icon"
 import { Roomie } from "@/components/roomie/mascot"
-import { GITHUB_URL, TelegramMark, WhatsAppMark, linkClass, telegramAddUrl } from "../_landing/marks"
+import { TelegramMark, WhatsAppMark, linkClass, telegramAddUrl } from "../_landing/marks"
 import { accentOf, builtTricks, comingSoonTricks, onForRoommates, teachLine } from "../_landing/tricks"
 import { FAQ, faqJsonLd } from "./faq"
 
@@ -197,8 +197,8 @@ export default function HelpPage() {
         <Part id="privacy" title="Privacy">
           <p>Each group is separate: its own memory, its own dashboard. Nothing crosses between groups.</p>
           <p>
-            Every message goes to a small model that decides whether Roomie should answer; the ones it answers go to Claude. Chat messages, its memory of conversations and
-            its debug records are kept for 30 days, then deleted. Say <q>roomie forget me</q> and it deletes what it knows about you and takes you out of the group&apos;s
+            Roomie sees the group&apos;s messages so it can tell when someone&apos;s talking to it, and answers only when it&apos;s addressed or clearly needed. Chat
+            messages and its memory of conversations are kept for 30 days, then deleted. Say <q>roomie forget me</q> and it deletes what it knows about you and takes you out of the group&apos;s
             Members. What goes where, and who can see it, is on the{" "}
             <Link href="/privacy" className={linkClass}>
               privacy page
@@ -251,9 +251,6 @@ export default function HelpPage() {
           <Link href="/privacy" className={linkClass}>
             Privacy
           </Link>
-          <a href={GITHUB_URL} target="_blank" rel="noopener noreferrer" className={linkClass}>
-            GitHub
-          </a>
         </nav>
       </footer>
 

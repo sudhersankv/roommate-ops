@@ -21,7 +21,7 @@ export function ToolkitOff({ toolkit }: { toolkit: { id: string; name: string; s
     start(async () => {
       const res = await setToolkit(group.id, toolkit.id as ToolkitId, true)
       if (!res.ok) return void toast.add({ title: `Roomie couldn't learn ${toolkit.name}`, description: res.error, type: "error" })
-      toast.add({ title: `Roomie learned ${toolkit.name}`, description: res.data?.tryThis ? `Try in the chat: "roomie, ${res.data.tryThis}"` : undefined, type: "success" })
+      toast.add({ title: `Roomie learned ${toolkit.name}`, description: "Roomie told the chat.", type: "success" })
       router.refresh()
     })
   return (
