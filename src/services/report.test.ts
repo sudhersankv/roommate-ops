@@ -57,13 +57,13 @@ const upcoming = [{ text: "Rent is due", dueAt: new Date("2026-11-02T15:00:00Z")
 
 /** What the services compose for Apt 4B: Money, House, Groceries in post order, then core. */
 const fullParts = (): ReportPart[] =>
-  composeReport([settleReportParts(settlePlan), [...choresReportParts(chores, shame, streaks), ...upkeepReportParts(upkeep)], cartReportParts(7)], coreReportParts(upcoming, CHI, NOW));
+  composeReport([settleReportParts(settlePlan, { nudged: true }), [...choresReportParts(chores, shame, streaks), ...upkeepReportParts(upkeep)], cartReportParts(7)], coreReportParts(upcoming, CHI, NOW));
 
 const report = (parts: ReportPart[], groupName: string | null = "Apt 4B"): GroupReport => ({ groupName, tz: CHI, now: NOW, parts });
 
 test("formatGroupReport: an empty Group is short and friendly", () => {
   const parts = composeReport([settleReportParts([]), [...choresReportParts([], [], []), ...upkeepReportParts([])], cartReportParts(0)], coreReportParts([], CHI, NOW));
-  assert.equal(formatGroupReport(report(parts, null)), ["📋 Group report", "💸 All square. Love that for us.", "🛒 The Cart's empty."].join("\n"));
+  assert.equal(formatGroupReport(report(parts, null)), ["📋 Group report", "💸 All square.", "🛒 The Cart's empty."].join("\n"));
 });
 
 test("formatGroupReport: every section in post order, deterministic, at most 12 lines", () => {
@@ -71,7 +71,7 @@ test("formatGroupReport: every section in post order, deterministic, at most 12 
   const lines = out.split("\n");
   assert.deepEqual(lines, [
     "📋 Group report · Apt 4B",
-    "💸 Dev pays Maya $30.00 and Sam pays Maya $12.50.",
+    "💸 2 open balances; I've DM'd everyone.",
     "🧹 Chores this week: Maya 3, Dev 2, Sam 0.",
     "🔥 Dev's on a 4-turn streak (dishes).",
     "⏳ Up now: Take out the trash (Maya, 2 days late), Dishes (Dev, today).",
@@ -91,7 +91,7 @@ test("formatGroupReport: casual Groups get sentences, no list look", () => {
   assert.equal(lines[0], "Group report · Apt 4B:");
   assert.ok(lines.length <= 3);
   assert.ok(!/^\p{Extended_Pictographic}/mu.test(out), "no emoji at line starts");
-  assert.match(out, /Dev pays Maya \$30\.00/);
+  assert.match(out, /2 open balances; I've DM'd everyone./);
   assert.match(out, /7 things in the Cart/);
 });
 
@@ -112,9 +112,12 @@ test("coreReportParts: only the next week's Reminders, at most three", () => {
   assert.match(coreReportParts([...many, far], CHI, NOW)[0].text, /^Coming up: R1 \(.*\), R2 \(.*\), R3 \(.*\)\.$/);
 });
 
-test("settleReportParts: capped at 3 with a count", () => {
+test("settleReportParts: a count, never a name or an amount (#25)", () => {
   const t = (i: number) => ({ fromId: `f${i}`, fromName: `P${i}`, toId: "m", toName: "Maya", cents: 100 * i });
-  assert.equal(settleReportParts([t(1), t(2), t(3), t(4), t(5)])[0].text, "P1 pays Maya $1.00, P2 pays Maya $2.00 and P3 pays Maya $3.00, +2 more.");
+  assert.equal(settleReportParts([t(1), t(2), t(3)], { nudged: true })[0].text, "3 open balances; I've DM'd everyone.");
+  assert.equal(settleReportParts([t(1)], { nudged: true })[0].text, "1 open balance; I've DM'd everyone.");
+  assert.equal(settleReportParts([t(1), t(2)])[0].text, "2 open balances.", "the nudge is off: no DM claim");
+  assert.equal(settleReportParts([])[0].text, "All square.");
 });
 
 test("choresReportParts / upkeepReportParts: nothing on an empty chart or a fine house", () => {
