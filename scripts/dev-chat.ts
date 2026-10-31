@@ -4,6 +4,9 @@
 //   join <adder> [others...]   Roomie is added to the Chat by <adder>; <others> were already in it (Onboarding)
 //   add <name>                 someone joins later (Pending; Roomie asks the Admins)
 //   say <name> <text>          a message in the Chat ("say Maya roomie who owes what")
+//   dm <name> <text>           a private message to Roomie ("dm Dev paid Maya"; "dm Dev for Apt 4B: what do I owe")
+//   vote <n> <name> <options>  <name> answers poll <n> as printed, options by number ("vote 1 Dev 1", "vote 1 Sam 1,3";
+//                              "vote 1 Sam -" takes it back). A bare number with `say` votes on the newest poll too
 //   photo <name> <path|url> [caption]  a photo (e.g. a receipt), stored under public/uploads/dev/ and sent with the caption
 //   ledger [n]                 the last n Expenses (cents, method, Payers, Shares) and Balances, straight from services
 //   cart [total]               open Cart items; with a total, the split "Maya paid <total>" would save
@@ -21,7 +24,7 @@ import { DevChannel, devUserId, type DevOutput } from "../src/channels/dev";
 import { db } from "../src/db";
 import { mastra } from "../src/mastra";
 import { onGroupJoined, onParticipantJoined } from "../src/onboarding";
-import { respondToIncoming } from "../src/pipeline";
+import { handlePollVote, respondToIncoming } from "../src/pipeline";
 import { cart, claims, groups, members, money, receipts } from "../src/services";
 import { useFakeSplitwiseIfUnavailable } from "../src/integrations/splitwise";
 import { useFakeInstacartIfUnavailable } from "../src/integrations/instacart";
@@ -47,7 +50,8 @@ function show(out: DevOutput) {
   console.log(`${head} ${out.msg.text.replace(/\n/g, "\n         ")}`);
   for (const b of out.msg.buttons ?? []) console.log(`         [button] ${b.text} -> ${b.url}`);
 }
-registerChannel(new DevChannel(show));
+const devChannel = new DevChannel(show);
+registerChannel(devChannel);
 
 const unquote = (s: string) => s.trim().replace(/^["'](.*)["']$/s, "$1");
 
@@ -64,14 +68,14 @@ async function memberNamed(name: string) {
   return { gid, m };
 }
 
-async function send(name: string, text: string, imageUrl?: string) {
+async function send(name: string, text: string, imageUrl?: string, isPrivate = false) {
   const u = user(name);
-  console.log(`[${u.name}] ${imageUrl ? `(photo ${imageUrl}) ` : ""}${text}`);
+  console.log(`[${u.name}${isPrivate ? " -> Roomie, private" : ""}] ${imageUrl ? `(photo ${imageUrl}) ` : ""}${text}`);
   const started = Date.now();
-  const r = await respondToIncoming({ channel: "dev", chatExternalId: chatId, userExternalId: u.userExternalId, userName: u.name, text, imageUrl });
+  const r = await respondToIncoming({ channel: "dev", chatExternalId: chatId, userExternalId: u.userExternalId, userName: u.name, text, imageUrl, ...(isPrivate ? { isPrivate: true } : {}) });
   const tools = r.toolCalls.filter((t) => t !== "updateWorkingMemory");
   console.log(`         (gate ${r.gate.decision}/${r.gate.reason}${tools.length ? `, tools ${tools.join(",")}` : ""}, ${((Date.now() - started) / 1000).toFixed(1)}s)`);
-  if (r.out) show({ to: "chat", chatExternalId: chatId, msg: r.out });
+  if (r.out) show(isPrivate ? { to: "private", userExternalId: u.userExternalId, msg: r.out } : { to: "chat", chatExternalId: chatId, msg: r.out });
   else console.log("         (Roomie stays quiet)");
 }
 
@@ -100,6 +104,19 @@ async function run(line: string) {
     case "say": {
       const [name] = rest;
       return send(unquote(name), unquote(tail.slice(name.length)));
+    }
+    case "dm": {
+      const [name] = rest;
+      return send(unquote(name), unquote(tail.slice(name.length)), undefined, true);
+    }
+    case "vote": {
+      // vote <n> <name> <options>: what a native poll's tap would send (options 1-based as printed; "-" = take it back).
+      const [n, name] = rest.map(unquote);
+      const picks = rest.slice(2).join(" ").trim() || "-";
+      if (!Number(n) || !name) throw new Error("vote <poll number> <name> <options, e.g. 1,3>");
+      const optionIds = picks === "-" ? [] : picks.split(/[,\s]+/).filter(Boolean).map((x) => Number(x) - 1);
+      await handlePollVote({ channel: "dev", chatExternalId: chatId, pollExternalId: devChannel.pollExternalId(Number(n)), userExternalId: user(name).userExternalId, optionIds });
+      return console.log(`(${name} voted ${picks} on poll ${n})`);
     }
     case "photo": {
       // photo <name> <path-or-url> [caption]: the file goes to public/uploads/dev/ like a Channel adapter would store it.
@@ -164,14 +181,14 @@ async function run(line: string) {
       return;
     default:
       if (cmd.startsWith("#")) return; // comments in piped scripts
-      throw new Error(`Unknown command "${cmd}". Try: join, add, say, photo, approve, link, ledger, cart, who, quit`);
+      throw new Error(`Unknown command "${cmd}". Try: join, add, say, dm, vote, photo, approve, link, ledger, cart, who, quit`);
   }
 }
 
 await assertNotProdDb(db, "dev-chat");
 await useFakeSplitwiseIfUnavailable();
 await useFakeInstacartIfUnavailable();
-console.log(`dev-chat on Chat "${chatId}". Commands: join, add, say, photo, approve, link, ledger, cart, who, quit`);
+console.log(`dev-chat on Chat "${chatId}". Commands: join, add, say, dm, vote, photo, approve, link, ledger, cart, who, quit`);
 const rl = createInterface({ input: process.stdin, output: process.stdout, prompt: "> ", terminal: interactive });
 if (interactive) rl.prompt();
 for await (const line of rl) {

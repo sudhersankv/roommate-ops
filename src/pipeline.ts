@@ -115,7 +115,7 @@ export async function resolveIncoming(msg: IncomingMessage): Promise<{ groupId: 
   const sender = { userExternalId: msg.userExternalId, name: msg.userName };
   if (msg.isPrivate) {
     // A DM: which Group it's about is ours to work out (ADR 0020); `chatExternalId` is only the adapter's hint.
-    const dm = await resolveDmGroup({ channel: msg.channel, userExternalId: msg.userExternalId, text: msg.text });
+    const dm = await resolveDmGroup({ channel: msg.channel, userExternalId: msg.userExternalId, text: msg.text, chatExternalId: msg.chatExternalId });
     if (dm.kind === "none") throw new Error("A private message needs a Member of a Group.");
     if (dm.kind === "say") throw new AskWhichGroup(dm.text);
     return { groupId: dm.groupId, member: dm.member, text: dm.text };

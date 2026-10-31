@@ -24,14 +24,14 @@ export async function noteDmContext(memberId: string, groupId: string, kind: "nu
 }
 
 /** Every Group this person is a Member of on this Channel (not removed), with their Member there. */
-export async function dmCandidates(channel: ChannelName, userExternalId: string): Promise<(DmCandidate & { member: Member })[]> {
+export async function dmCandidates(channel: ChannelName, userExternalId: string): Promise<(DmCandidate & { member: Member; chatExternalId: string })[]> {
   const rows = await db
-    .select({ member: members, name: groups.name })
+    .select({ member: members, name: groups.name, chatExternalId: chats.externalId })
     .from(members)
     .innerJoin(groups, eq(groups.id, members.groupId))
     .innerJoin(chats, eq(chats.groupId, members.groupId))
     .where(and(eq(chats.channel, channel), eq(members.channelUserId, userExternalId), ne(members.status, "removed")));
-  return rows.map((r) => ({ groupId: r.member.groupId, name: r.name, memberId: r.member.id, member: r.member }));
+  return rows.map((r) => ({ groupId: r.member.groupId, name: r.name, memberId: r.member.id, member: r.member, chatExternalId: r.chatExternalId }));
 }
 
 /** The question Roomie asked a person in several Groups, and the message it's holding until they answer. */
@@ -49,8 +49,10 @@ export type DmResolution = { kind: "group"; groupId: string; member: Member; tex
  * they last DM'd about, their only Group; otherwise Roomie asks once ("Apt 4B or Lisbon trip?") and holds the
  * message: a reply naming a Group runs it there and is remembered for next time.
  */
-export async function resolveDmGroup(msg: { channel: ChannelName; userExternalId: string; text: string }, now = new Date()): Promise<DmResolution> {
-  const candidates = await dmCandidates(msg.channel, msg.userExternalId);
+export async function resolveDmGroup(msg: { channel: ChannelName; userExternalId: string; text: string; chatExternalId?: string }, now = new Date()): Promise<DmResolution> {
+  let candidates = await dmCandidates(msg.channel, msg.userExternalId);
+  // dev-chat's people ("dev:maya") are in every dev Group there ever was: its DMs stay in the Chat it's attached to.
+  if (msg.channel === "dev" && msg.chatExternalId) candidates = candidates.filter((c) => c.chatExternalId === msg.chatExternalId);
   if (!candidates.length) return { kind: "none" };
   const key = `${msg.channel}:${msg.userExternalId}`;
   const found = (c: DmCandidate) => candidates.find((x) => x.groupId === c.groupId)!;

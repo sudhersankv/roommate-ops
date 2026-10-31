@@ -42,7 +42,7 @@ export function introMessage(adderName: string, opts: { dmHandle?: string } = {}
   const admin = isPlaceholderName(adderName) ? "Whoever added me is my admin." : `${adderName} added me, so ${adderName}'s my admin.`;
   return [
     `Hey all, I'm Roomie 🦖 the roommate who actually keeps track: rent, splits, groceries, chores, the landlord.`,
-    `Tell me what this group is for (roommates, a trip, friends, family, work…) and I'll learn the right Tricks. Currency and city are welcome too.`,
+    `Tell me what this group is for (roommates, a trip, friends, family, work…) and I'll learn the right Tricks. Currency and city are welcome too. You can DM me too, for what you'd rather not ask here.`,
     `${admin}${opts.dmHandle ? ` Tap @${opts.dmHandle} and press Start, so I can DM you the setup and your dashboard link.` : ""}`,
   ].join("\n");
 }
