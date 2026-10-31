@@ -33,6 +33,9 @@ import { readFile } from "node:fs/promises";
 import { runRetention } from "@/jobs/retention";
 import { expenseSummary } from "@/services/money";
 import * as restock from "@/services/restock";
+import { FakeMail, setMailClient } from "@/integrations/mail";
+import * as leaseInbox from "@/services/lease-inbox";
+import { processInbound } from "@/services/lease-inbox-inbound";
 import { allTools } from "./registry";
 import { assertNotProdDb } from "../../scripts/lib/prod-guard";
 
@@ -1095,7 +1098,7 @@ describe("Roomie tools against the dev DB", () => {
     assert.equal(s.currency, "EUR");
     assert.equal(s.timezone, "Europe/Berlin");
     assert.deepEqual([...s.toolkits].sort(), ["groceries", "splitting"]);
-    assert.equal(s.learned, `Learned Money and Groceries. Say "roomie, learn house" any time.`, "the one setup line");
+    assert.equal(s.learned, `Learned Money and Groceries. Say "roomie, learn house" any time. Want me to handle the landlord's emails too? Say "roomie, learn lease inbox".`, "the one setup line, with Lease Inbox's offer");
     const [g] = await db.select().from(schema.groups).where(eq(schema.groups.id, groupId));
     assert.ok(g.onboardedAt, "Onboarding is done");
     await assert.rejects(run("set_group_settings", { timezone: "Mars/Olympus" }), /don't know the time zone "Mars\/Olympus"\. Which city/);
@@ -1244,7 +1247,7 @@ describe("Roomie tools against the dev DB", () => {
     assert.equal(soon.notAvailable, true);
     assert.equal(soon.reason, "coming-soon");
     assert.match(soon.message, /can't learn Trips yet/);
-    for (const name of ["Lease Inbox", "outings", "cooking", "landlord"]) {
+    for (const name of ["outings", "cooking", "move out"]) {
       const r = await run("toggle_toolkit", { toolkit: name, enabled: true });
       assert.equal(r.reason, "coming-soon", `${name} is coming soon`);
       assert.match(r.message, /it's on the list/);
@@ -1257,7 +1260,8 @@ describe("Roomie tools against the dev DB", () => {
     assert.ok(list.known.some((t: { name: string; try?: string[] }) => t.name === "Money" && t.try?.length));
     assert.ok(list.couldLearn.some((t: { name: string }) => t.name === "Groceries"));
     assert.ok(list.comingSoon.includes("Guests") && list.comingSoon.includes("Stickers"));
-    assert.ok(["Lease Inbox", "Outings", "Cooking", "Move-out"].every((n) => list.comingSoon.includes(n)));
+    assert.ok(["Outings", "Cooking", "Move-out"].every((n) => list.comingSoon.includes(n)));
+    assert.ok(list.couldLearn.some((t: { name: string }) => t.name === "Lease Inbox"), "built (#27): one to teach, not Soon");
     assert.ok(!list.known.concat(list.couldLearn).some((t: { name: string }) => t.name === "Core"), "core isn't a Trick");
     assert.match(list.say, /^Tricks I know here: .*Money.*\. Could learn: .*Groceries.*\. Coming soon: /);
     assert.doesNotMatch(JSON.stringify(list), /Splitting/, "the Trick is called Money");
@@ -1830,7 +1834,7 @@ describe("Join links and seats", () => {
   test("setup answered in a DM: the learned line and the Join link go to the group chat too", async () => {
     const s = await run("set_group_settings", { purpose: "friends", currency: "USD" }, as("Maya", [["isPrivate", true]]));
     assert.equal(s.postedInGroup, true);
-    assert.match(s.say, /^Learned Money\. Say "roomie, learn groceries" any time\.\nEveryone: your dashboard is at .*\/j\//);
+    assert.match(s.say, /^Learned Money\. Say "roomie, learn groceries" any time\. Want me to handle the landlord's emails too\? Say "roomie, learn lease inbox"\.\nEveryone: your dashboard is at .*\/j\//);
     const lines = (await chatlog.roomieLines(gid, 20)).map((l) => l.text);
     assert.ok(lines.includes(s.say), "posted (and logged) in the group");
   });
@@ -1883,6 +1887,92 @@ describe("polls and nudges (#24B)", () => {
     assert.equal(await members.nudgesOff(people.Sam), true);
     assert.equal((await run("set_nudges", { on: true }, rc("Sam"))).nudges, "on");
     assert.equal(await members.nudgesOff(people.Sam), false);
+  });
+});
+
+describe("Lease Inbox tools (#27, FakeMail)", () => {
+  let lgid: string;
+  let people: Record<string, string>;
+  let inboxId: string;
+  const mail = new FakeMail();
+  const rc = (name: string, latest?: string) =>
+    new RequestContext<unknown>([["groupId", lgid], ["memberId", people[name]], ["memberName", name], ["role", name === "Maya" ? "admin" : "member"], ["status", "active"], ["source", "chat"], ...(latest ? [["latest", latest] as [string, unknown]] : [])]);
+
+  before(async () => {
+    setMailClient(mail);
+    leaseInbox.setClassifier({ classify: async (i) => (i.workOrderTitle ? { class: "work-order", reply: "acknowledged", summary: "they'll send someone" } : { class: "other", summary: i.subject }) });
+    const stamp = Date.now();
+    const list = ["Maya", "Dev", "Sam"].map((name) => ({ userExternalId: devUserId(`lease-${name}-${stamp}`), name }));
+    const joined = await onGroupJoined({ channel: "dev", externalId: `lease-${stamp}`, title: `Lease ${stamp}` }, list, list[0]);
+    lgid = joined.group.id;
+    people = Object.fromEntries(joined.members.map((m) => [m.displayName, m.id]));
+    inboxId = (await leaseInbox.ensureInbox({ groupId: lgid, memberId: people.Maya, source: "chat" })).inboxId;
+  });
+  after(async () => {
+    setMailClient(null);
+    leaseInbox.setClassifier(null);
+    if (lgid) await deleteGroup(lgid);
+  });
+
+  test("inbox_status: the address and the three ways to connect", async () => {
+    const r = await run("inbox_status", {}, rc("Dev"));
+    assert.match(r.line, /Our email address is lease-\d+-[a-z0-9]{4}@agentmail\.to\. To connect the landlord/);
+    assert.match(r.line, /I don't know the landlord yet/);
+  });
+
+  test("trust_sender: the Admin's yes trusts the sender Roomie asked about", async () => {
+    const m = mail.receive(inboxId, { from: "Brookfield Residential Leasing <leasing@brookfieldresidential.com>", subject: "Welcome to Brookfield", text: "Hello residents." });
+    await processInbound(lgid, m);
+    const r = await run("trust_sender", {}, rc("Maya", "yes"));
+    assert.deepEqual(r.trusted, ["leasing@brookfieldresidential.com", "brookfieldresidential.com"]);
+    const no = await run("trust_sender", { sender: "spam.example" }, rc("Dev", "yes"));
+    assert.equal(no.notAllowed, true, "Admins only");
+  });
+
+  test("report_issue sends at once; work_order_status answers; send_to_landlord replies in the thread", async () => {
+    const r = await run("report_issue", { what: "the leaking kitchen sink" }, rc("Dev", "roomie the sink's leaking, tell them"));
+    assert.deepEqual(r, { sent: true, say: "Sent: reported the leaking kitchen sink." });
+    assert.match(mail.sent.at(-1)!.text, /at Dev's request\./);
+    const s = await run("work_order_status", { what: "sink" }, rc("Sam"));
+    assert.match(s.line, /^the leaking kitchen sink: sent, no answer yet/);
+    const reply = mail.receive(inboxId, { from: "leasing@brookfieldresidential.com", subject: "Re: Work order: the leaking kitchen sink", text: "We'll send someone.", threadId: mail.sent.at(-1)!.threadId });
+    await processInbound(lgid, reply);
+    const t = await run("send_to_landlord", { intent: "reply", about: "the sink", body: "Thanks, someone is home after 4.", summary: "told them someone's home after 4" }, rc("Sam", "roomie tell them someone's home after 4"));
+    assert.equal(t.sent, true);
+    assert.equal(mail.sent.at(-1)!.threadId, reply.threadId);
+  });
+
+  test("send_to_landlord: not renewing asks first; a yes in the Member's own words sends; the model's confirmed alone doesn't", async () => {
+    const before = mail.sent.length;
+    const input = { intent: "new" as const, body: "We will not be renewing our lease.", summary: "told them we're not renewing" };
+    const ask = await run("send_to_landlord", input, rc("Sam", "roomie tell them we're not renewing"));
+    assert.equal(ask.sent, false);
+    assert.ok(ask.ask.length >= 1);
+    const sneaky = await run("send_to_landlord", { ...input, confirmed: true }, rc("Sam", "roomie tell them we're not renewing"));
+    assert.equal(sneaky.sent, false, "confirmed without the Member's yes is ignored");
+    assert.equal(mail.sent.length, before);
+    const yes = await run("send_to_landlord", { ...input, confirmed: true }, rc("Sam", "yes send it"));
+    assert.equal(yes.sent, true);
+  });
+
+  test("send_intro: once per landlord", async () => {
+    const r = await run("send_intro", {}, rc("Maya", "roomie send the intro"));
+    assert.equal(r.sent, true);
+    assert.match(mail.sent.at(-1)!.text, /Maya, Dev and Sam/);
+    assert.equal((await run("send_intro", {}, rc("Maya", "roomie send the intro"))).sent, false);
+  });
+
+  test("ask_lease: no lease filed yet names the address", async () => {
+    const r = await run("ask_lease", { question: "what's the notice period?" }, rc("Dev"));
+    assert.equal(r.found, false);
+    assert.match(r.line, /^No lease filed yet\. Forward the lease PDF to lease-\d+-[a-z0-9]{4}@agentmail\.to/);
+  });
+
+  test("release_inbox: Admins only; the address goes", async () => {
+    assert.equal((await run("release_inbox", {}, rc("Dev", "release the inbox"))).notAllowed, true);
+    const r = await run("release_inbox", {}, rc("Maya", "roomie release the inbox"));
+    assert.equal(r.released, true);
+    assert.equal(mail.inboxes.size, 0);
   });
 });
 
