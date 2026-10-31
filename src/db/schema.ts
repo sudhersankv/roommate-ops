@@ -119,6 +119,9 @@ export const members = pgTable(
     // A Pending Member made by a Join link pick of a seat that wasn't free: the seat they said is theirs. Approving
     // them moves their Account onto it (services/members.ts approveMember). No FK: informational.
     wantsSeatId: uuid("wants_seat_id"),
+    // The two Tricks (toolkit ids, left then right) this Member keeps in the dashboard's dock; null = the first two
+    // learned ones by nav order. A UI preference, checked against what's learned each time (services/dock.ts).
+    dock: text("dock").array(),
   },
   (t) => [
     uniqueIndex("members_group_channel_user").on(t.groupId, t.channelUserId),

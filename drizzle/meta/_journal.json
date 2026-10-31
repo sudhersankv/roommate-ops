@@ -155,6 +155,13 @@
       "when": 1793446000000,
       "tag": "0024_lease_restock_fixes",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1793448000000,
+      "tag": "0026_member_dock",
+      "breakpoints": true
     }
   ]
 }

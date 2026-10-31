@@ -8,7 +8,7 @@ import type { JoinPolicy, PaymentApp } from "@/db/schema"
 import { InstacartUnavailableError } from "@/integrations/instacart"
 import { memberSession } from "@/lib/session"
 import { parseInZone } from "@/lib/time"
-import { cart, chores, groups, isNotAllowed, joins, members, money, pantry, recipes, reminders, schedule, splitwise, toolkits, upkeep, type Ctx } from "@/services"
+import { cart, chores, dock, groups, isNotAllowed, joins, members, money, pantry, recipes, reminders, schedule, splitwise, toolkits, upkeep, type Ctx } from "@/services"
 import type { SettingsPatch } from "@/services/groups"
 import { releaseInbox, removeSender, sendForMember } from "@/services/lease-inbox-toolkit"
 import { setRent, type RentInput } from "@/services/rent"
@@ -224,6 +224,11 @@ export async function reassignSeat(groupId: string, fromMemberId: string, toMemb
 
 export async function setPaymentHandles(groupId: string, handles: Partial<Record<PaymentApp, string>>) {
   return act(groupId, async (ctx) => (await members.setPaymentHandles(ctx, handles)).handles ?? {})
+}
+
+/** Your own dock's two Tricks, left then right (the More drawer's edit mode); [] = back to the default. */
+export async function saveDock(groupId: string, tricks: string[]) {
+  return act(groupId, async (ctx) => (await dock.setDock(ctx, { tricks: Array.isArray(tricks) ? tricks.map(String) : [] })).dock)
 }
 
 export async function updateSettings(groupId: string, patch: SettingsPatch) {
