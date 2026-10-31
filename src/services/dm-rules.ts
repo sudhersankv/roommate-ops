@@ -29,6 +29,30 @@ export function matchGroupName(text: string, candidates: readonly DmCandidate[])
   return partial.length === 1 ? partial[0] : null;
 }
 
+/** Words around a Group's name when someone corrects which Group they mean ("no wait, 4107, that's the group"). */
+const SWITCH_WORDS = new Set(["no", "nah", "oh", "ok", "okay", "sorry", "oops", "wait", "actually", "i", "meant", "mean", "switch", "switching", "change", "go", "to", "talking", "it", "s", "its", "this", "that", "thats", "is", "about", "for", "in", "on", "re", "the", "my", "our", "group", "chat", "one"]);
+/** The words that make it about which Group (a correction, or "the 4107 group") rather than just a name or a number. */
+const POINTING = new Set(["no", "nah", "oh", "sorry", "oops", "wait", "actually", "meant", "mean", "switch", "switching", "change", "about", "group", "chat"]);
+
+/**
+ * A DM that points at another of their Groups ("actually 564", "no wait, 4107, that's the group", "I meant Apt 564",
+ * "switch to 4107", or a Group's name on its own) -> that Group; anything else -> null. Only the switch words above may
+ * surround the name, so "split 564 with Sam" stays an amount. A bare number needs a correction or "group" ("564" alone
+ * can be an amount Roomie asked for). Nothing to switch with one Group.
+ */
+export function switchTo(text: string, candidates: readonly DmCandidate[]): DmCandidate | null {
+  if (candidates.length < 2) return null;
+  const words = norm(text).split(" ").filter(Boolean);
+  const rest = words.filter((w) => !SWITCH_WORDS.has(w)).join(" ");
+  if (!rest) return null;
+  const pointed = words.some((w) => POINTING.has(w));
+  if (/^\d+$/.test(rest) && !pointed) return null;
+  return matchGroupName(rest, candidates);
+}
+
+/** Roomie's line after a switch: the Group it's on now. */
+export const switchLine = (name: string) => `Got it, ${name}. What's up?`;
+
 /** "for Lisbon: what do I owe" -> the Group and the rest of the message; no prefix (or no such Group) -> null. */
 export function groupPrefix(text: string, candidates: readonly DmCandidate[]): { group: DmCandidate; rest: string } | null {
   const m = /^\s*(?:for|in|re)\s+([^:]{1,60}?)\s*:\s*(.*)$/is.exec(text);

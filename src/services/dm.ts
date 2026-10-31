@@ -9,7 +9,7 @@ import { CantMessagePrivatelyError, type ChannelName, type Outgoing } from "@/ch
 import { dbNow, runChanges } from "./activity";
 import { logMessage } from "./chatlog";
 import { getNote, setNoteKeys, type Member, type NudgeNote } from "./members";
-import { afterPrivateRun, groupPrefix, matchGroupName, pickDmGroup, startHint, startHintDue, type DmCandidate, type RunChange } from "./dm-rules";
+import { afterPrivateRun, groupPrefix, matchGroupName, pickDmGroup, startHint, startHintDue, switchLine, switchTo, type DmCandidate, type RunChange } from "./dm-rules";
 import { currencyOf } from "./groups";
 
 export { NUDGE_CONTEXT_MS, START_HINT_MS, afterPrivateRun, pickDmGroup, startHint } from "./dm-rules";
@@ -49,7 +49,9 @@ export type DmResolution = { kind: "group"; groupId: string; member: Member; tex
 /**
  * Which Group a DM is about (ADR 0020), in order: a "for <group>:" prefix, a nudge Roomie sent within 24 h, the Group
  * they last DM'd about, their only Group; otherwise Roomie asks once ("Apt 4B or Lisbon trip?") and holds the
- * message: a reply naming a Group runs it there and is remembered for next time.
+ * message: a reply naming a Group runs it there and is remembered for next time. A DM that says which Group it means
+ * ("actually 564", "no wait, 4107, that's the group") switches there with one line (switchTo). An explicit choice
+ * (the prefix, the answer, a switch) also clears the pending nudge, so the next DM stays where they said.
  */
 export async function resolveDmGroup(msg: { channel: ChannelName; userExternalId: string; text: string; chatExternalId?: string }, now = new Date()): Promise<DmResolution> {
   let candidates = await dmCandidates(msg.channel, msg.userExternalId);
@@ -58,19 +60,29 @@ export async function resolveDmGroup(msg: { channel: ChannelName; userExternalId
   if (!candidates.length) return { kind: "none" };
   const key = `${msg.channel}:${msg.userExternalId}`;
   const found = (c: DmCandidate) => candidates.find((x) => x.groupId === c.groupId)!;
-  const choose = async (c: DmCandidate, text: string): Promise<DmResolution> => {
+  const remember = async (c: DmCandidate, explicit: boolean) => {
     asked().delete(key);
-    if (candidates.length > 1) await noteDmContext(c.memberId, c.groupId, "dm", now);
+    if (candidates.length < 2) return;
+    if (explicit) await db.delete(dmContext).where(and(inArray(dmContext.memberId, candidates.map((x) => x.memberId)), eq(dmContext.kind, "nudge")));
+    await noteDmContext(c.memberId, c.groupId, "dm", now);
+  };
+  const choose = async (c: DmCandidate, text: string, explicit = false): Promise<DmResolution> => {
+    await remember(c, explicit);
     return { kind: "group", groupId: c.groupId, member: found(c).member, text };
   };
 
   const prefixed = groupPrefix(msg.text, candidates);
-  if (prefixed) return choose(prefixed.group, prefixed.rest || msg.text);
+  if (prefixed) return choose(prefixed.group, prefixed.rest || msg.text, true);
 
+  const switched = switchTo(msg.text, candidates);
   const held = asked().get(key);
   if (held && now.getTime() - held.at <= ASK_TTL_MS) {
-    const named = matchGroupName(msg.text, candidates);
-    if (named) return choose(named, held.text);
+    const named = matchGroupName(msg.text, candidates) ?? switched;
+    if (named) return choose(named, held.text, true);
+  }
+  if (switched) {
+    await remember(switched, true);
+    return { kind: "say", text: switchLine(switched.name) };
   }
 
   const ids = candidates.map((c) => c.memberId);

@@ -22,8 +22,8 @@ export const ONBOARDING = `This group hasn't finished setup. If this message ans
 
 export const PETTED = `Someone just petted you (/pet). Answer in character, 1-2 short lines, about your day as the group's roommate who keeps track: how you feel right now and maybe one real, harmless thing from the group (no amounts unless a tool gave them, no private facts). No tools, no questions about logging.`;
 
-export const DM = (name: string) =>
-  `This is a private DM with ${name}, about this group: a private you for the group, with the group's tools. Answer about ${name}'s own things freely (their balances, their reminders, their own items). Never repeat here what other members said only to you privately, and nothing said here goes to the group from you: if ${name} logs or changes a shared expense, the group automatically gets one line about it, and a payment they record tells the other person privately; don't post either yourself or promise more. The group chat lines you're shown are context only.`;
+export const DM = (name: string, groupName?: string) =>
+  `This is a private DM with ${name}, about ${groupName ?? "this group"}: a private you for the group, with the group's tools. Answer about ${name}'s own things freely (their balances, their reminders, their own items). Never repeat here what other members said only to you privately, and nothing said here goes to the group from you: if ${name} logs or changes a shared expense, the group automatically gets one line about it, and a payment they record tells the other person privately; don't post either yourself or promise more. The group chat lines you're shown are context only.`;
 
 export const GREET = `This is the first message in the chat today. Start your reply with a very short hello in your voice (a few words, on the same line), then answer as usual.`;
 
@@ -57,12 +57,12 @@ export function describeMembers(people: { displayName: string; role: string; sta
   return `${active.join(", ") || "unknown yet"}${pending.length ? `; pending approval: ${pending.join(", ")}` : ""}`;
 }
 
-export type InstructionOpts = { onboarding?: boolean; toolkits?: readonly string[]; personality?: Personality; /** The Group's, default USD. */ currency?: string } & Partial<
+export type InstructionOpts = { onboarding?: boolean; toolkits?: readonly string[]; personality?: Personality; /** The Group's, default USD. */ currency?: string; /** Named in a DM (they may be in several Groups). */ groupName?: string } & Partial<
   Omit<PersonaFacts, "personality" | "toolkitPersona" | "timezone">
 >;
 
 export function roomieInstructions(ctx: Partial<RoomieContext>, members: string, now = new Date(), timezone = DEFAULT_TIMEZONE, opts: InstructionOpts = {}): string {
-  const { onboarding, toolkits, personality, currency = "USD", ...facts } = opts;
+  const { onboarding, toolkits, personality, currency = "USD", groupName, ...facts } = opts;
   const blocks = [
     composePersona({ ...facts, personality: personality ?? defaultPersonality(), timezone, toolkitPersona: toolkitPersona(toolkits ?? ctx.toolkits ?? TOOLKIT_IDS) }),
     `Group members: ${members}.${ctx.memberName ? ` You're talking with ${ctx.memberName}.` : ""}`,
@@ -70,7 +70,7 @@ export function roomieInstructions(ctx: Partial<RoomieContext>, members: string,
     `Money in this group is ${currency} (${currencySymbol(currency)}). Amounts people say ("190", "1.5k") are ${currency}; pass them to tools as they said them. Say amounts the way the tools return them, never in another currency.`,
   ];
   if (ctx.status === "pending" && ctx.memberName) blocks.push(PENDING(ctx.memberName));
-  if (ctx.isPrivate && ctx.memberName) blocks.push(DM(ctx.memberName));
+  if (ctx.isPrivate && ctx.memberName) blocks.push(DM(ctx.memberName, groupName));
   if (onboarding) blocks.push(ONBOARDING);
   if (ctx.pet === "petted") blocks.push(PETTED);
   if (ctx.pet === "greet") blocks.push(GREET);
