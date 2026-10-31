@@ -670,7 +670,7 @@ describe("Roomie tools against the dev DB", () => {
   test("group_report: one ready-to-post message from every Toolkit, at most 12 lines", async () => {
     const r: { text: string } = await run("group_report", {});
     assert.match(r.text, /^📋 Group report · Test Group/);
-    assert.match(r.text, /💸 2 open balances\.\n/, "a count from the ledger, nobody nudged yet (too fresh), never a name (#25)");
+    assert.match(r.text, /💸 2 open balances; I'm nudging people privately\.\n/, "a count from the ledger, over the $5 line, never a name (ADR 0021)");
     assert.doesNotMatch(r.text, /\$16\.00/);
     assert.match(r.text, /Chores this week: Sudhersan 2, Alex 1, Ryan 0\./);
     assert.match(r.text, /The chart says Ryan has some catching up to do\./);
