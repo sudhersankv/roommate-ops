@@ -157,7 +157,15 @@ export type ScheduleView = { nudgeHour: number | null; reportWeekday: number; re
 export type TodayRowView = { id: string; text: string; trick: string | null; accent: string | null; href: string | null }
 
 /** A Document for Home's "Recent documents" strip (filled by the Documents slot once core has `documentsView`). */
-export type RecentDocumentView = { id: string; kind: string; title: string; createdAt: string; href: string }
+export type RecentDocumentView = {
+  id: string
+  /** "lease", "notice", "receipt", ... as core's Documents name them. */
+  kind: string
+  title: string
+  /** The day it was kept, "YYYY-MM-DD" in the Group's time zone (lib/dates localDay). */
+  createdAt: string
+  href: string
+}
 
 /** One Trick's card on the Tricks page and its detail sheet, from the Toolkit's manifest and this Group's state. */
 export type ToolkitCardView = {
