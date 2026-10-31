@@ -61,11 +61,11 @@ export const FAQ: Faq[] = [
   },
   {
     q: "Does it nag people about money in the group?",
-    text: "No. If you've owed the same person more than $20 for over a week, Roomie reminds you privately, once a week, with a pay link. Nobody else sees it, and you can tell it to stop.",
+    text: "No. If you owe someone more than $5, Roomie reminds you privately a few hours later and every couple of days until it's paid, with a pay link when there is one. Nobody else sees it, and you can tell it to stop.",
     a: (
       <p>
-        No. If you&apos;ve owed the same person more than $20 for over a week, Roomie reminds you privately, once a week, with a pay link. Nobody else sees it, and you
-        can tell it to stop.
+        No. If you owe someone more than $5, Roomie reminds you privately a few hours later and every couple of days until it&apos;s paid, with a pay link when there is
+        one. Nobody else sees it, and you can tell it to stop.
       </p>
     ),
   },

@@ -445,7 +445,8 @@ export const scheduledPosts = pgTable(
     groupId: uuid("group_id").notNull().references(() => groups.id, { onDelete: "cascade" }),
     kind: text("kind", { enum: ["bundle", "urgent", "report.weekly", "rent.ahead", "nudge.settle", "restock.dm"] }).notNull(),
     // The Group's local day ("2026-10-28") for the Bundle and the urgent slot, the report's local day for the report;
-    // "<day>:<memberId>" for a personal restock DM (one per Member per day).
+    // "<day>:<memberId>" for a personal restock DM (one per Member per day); "<day>:<fromId>:<toId>" for a Settle
+    // nudge (one per debt per day, ADR 0021; older weekly claims are a bare day).
     period: text("period").notNull(),
     createdAt: createdAt(),
   },
