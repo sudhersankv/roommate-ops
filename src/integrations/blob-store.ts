@@ -1,7 +1,8 @@
 // Where Documents' bytes live (ADR 0018), behind one interface in the Splitwise / Instacart pattern. NeonObjectStorage
 // speaks the S3 API of Neon Object Storage (a bucket that branches with the database) with fetch and AWS SigV4,
-// path-style, no SDK. MemoryBlobStore stands in for tests, evals and any process without storage env (BLOB_FAKE=1, or
-// the endpoint / bucket / keys missing). Keys are "g/<groupId>/<documentId>" (services/documents.ts).
+// path-style, no SDK. MemoryBlobStore stands in for tests, evals and dev without storage env (BLOB_FAKE=1, or the
+// endpoint / bucket / keys missing); production without them refuses unless BLOB_FAKE=1. Keys are
+// "g/<groupId>/<documentId>" (services/documents.ts).
 import { createHash, createHmac } from "node:crypto";
 
 export type StoredBlob = { bytes: Buffer; contentType: string };
@@ -122,14 +123,30 @@ export function setBlobStore(store: BlobStore | null) {
   override = store;
 }
 
-/** One per process: Neon Object Storage when it's configured and BLOB_FAKE isn't 1, else the in-memory store. */
+export const STORAGE_ENV = ["NEON_STORAGE_ENDPOINT", "NEON_STORAGE_BUCKET", "NEON_STORAGE_ACCESS_KEY", "NEON_STORAGE_SECRET_KEY"] as const;
+
+/**
+ * Which store this env gets: Neon Object Storage when it's configured and BLOB_FAKE isn't 1; otherwise memory, except
+ * in production, where files must survive a restart: there it throws unless BLOB_FAKE=1 says volatile is meant.
+ */
+export function storeKindFor(env: Record<string, string | undefined> = process.env): { kind: "neon"; config: NeonStorageConfig } | { kind: "memory" } {
+  if (env.BLOB_FAKE === "1") return { kind: "memory" };
+  const config = storageConfigFromEnv(env);
+  if (config) return { kind: "neon", config };
+  if (env.NODE_ENV === "production") {
+    throw new Error(`No object storage for Documents: set ${STORAGE_ENV.join(", ")} (or Neon's AWS_* names), or BLOB_FAKE=1 to accept that Documents don't survive a restart.`);
+  }
+  return { kind: "memory" };
+}
+
+/** One per process (storeKindFor). */
 export function blobStore(): BlobStore {
   if (override) return override;
   const g = globalThis as { __roomieBlobStore?: BlobStore };
   if (!g.__roomieBlobStore) {
-    const config = process.env.BLOB_FAKE === "1" ? null : storageConfigFromEnv();
-    if (!config) console.warn("[documents] no object storage configured (NEON_STORAGE_*): files are kept in memory and lost on restart");
-    g.__roomieBlobStore = config ? new NeonObjectStorage(config) : new MemoryBlobStore();
+    const choice = storeKindFor();
+    if (choice.kind === "memory") console.warn("[documents] no object storage (NEON_STORAGE_* unset or BLOB_FAKE=1): files are kept in memory and lost on restart");
+    g.__roomieBlobStore = choice.kind === "neon" ? new NeonObjectStorage(choice.config) : new MemoryBlobStore();
   }
   return g.__roomieBlobStore;
 }

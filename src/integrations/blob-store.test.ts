@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { MemoryBlobStore, signV4, storageConfigFromEnv } from "./blob-store";
+import { MemoryBlobStore, signV4, storageConfigFromEnv, storeKindFor } from "./blob-store";
 
 const KEYS = { accessKey: "AKIAIOSFODNN7EXAMPLE", secretKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", region: "us-east-1" };
 
@@ -53,6 +53,16 @@ test("storage config: NEON_STORAGE_* first, Neon's injected AWS_* names as the f
     region: "eu-central-1",
   });
   assert.equal(storageConfigFromEnv({ NEON_STORAGE_ENDPOINT: "https://n", NEON_STORAGE_BUCKET: "d", NEON_STORAGE_ACCESS_KEY: "k", NEON_STORAGE_SECRET_KEY: "s", AWS_ENDPOINT_URL_S3: "https://aws" })?.endpoint, "https://n");
+});
+
+test("which store: memory in dev and tests; production without storage refuses, naming the variables, unless BLOB_FAKE=1", () => {
+  const full = { NEON_STORAGE_ENDPOINT: "https://n", NEON_STORAGE_BUCKET: "d", NEON_STORAGE_ACCESS_KEY: "k", NEON_STORAGE_SECRET_KEY: "s" };
+  assert.equal(storeKindFor({}).kind, "memory");
+  assert.equal(storeKindFor({ NODE_ENV: "development", NEON_STORAGE_BUCKET: "d" }).kind, "memory");
+  assert.equal(storeKindFor({ NODE_ENV: "production", ...full }).kind, "neon");
+  assert.throws(() => storeKindFor({ NODE_ENV: "production", NEON_STORAGE_BUCKET: "d" }), /NEON_STORAGE_ENDPOINT, NEON_STORAGE_BUCKET, NEON_STORAGE_ACCESS_KEY, NEON_STORAGE_SECRET_KEY.*BLOB_FAKE=1/);
+  assert.equal(storeKindFor({ NODE_ENV: "production", BLOB_FAKE: "1" }).kind, "memory", "an operator opting into volatile storage");
+  assert.equal(storeKindFor({ NODE_ENV: "production", BLOB_FAKE: "1", ...full }).kind, "memory");
 });
 
 test("MemoryBlobStore: put, get, delete; a missing key is null", async () => {

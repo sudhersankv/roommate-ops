@@ -187,7 +187,8 @@ src/
   integrations/         composio.ts (client + cached key health), splitwise.ts (SplitwiseClient: ComposioSplitwise and
                         FakeSplitwise, splitwiseClient(), splitwiseAvailability()), blob-store.ts (BlobStore: NeonObjectStorage
                         = the S3 API with fetch + SigV4, path-style, NEON_STORAGE_* or Neon's AWS_* env; MemoryBlobStore with
-                        BLOB_FAKE=1 or no storage env; blobStore(), setBlobStore() for tests)
+                        BLOB_FAKE=1 or no storage env, which in production is an error unless BLOB_FAKE=1 (storeKindFor);
+                        blobStore(), setBlobStore() for tests)
   channels/types.ts     IncomingMessage { channel, chatExternalId, userExternalId, userName, text, imageUrl?, isPrivate?,
                         ... }, Outgoing (+ poll { question, options, multi }), Sent { externalId?, secret? }, PollVote,
                         Channel (sends return Sent; nativePolls), CantMessagePrivatelyError, ROSTER_GRACE_MS
