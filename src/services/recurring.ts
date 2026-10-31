@@ -9,7 +9,7 @@ import { and, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import type { ExpenseCategory, Recurrence } from "@/db/enums";
 import { localDay } from "@/lib/dates";
-import { daysBetweenDays } from "@/lib/time";
+import { addDaysToDay, daysBetweenDays } from "@/lib/time";
 import { record } from "./activity";
 import { NotAllowedError, requireActive } from "./authz";
 import { getExpense, insertExpenseRows, listExpenses, logExpense, todayIn, type Expense, type ExpenseInput } from "./money";
@@ -199,8 +199,8 @@ export async function answerAmount(ctx: Ctx, input: { expenseId?: string; cents:
 /**
  * The Lease Inbox read a bill: the variable parent whose description matches `matchText` (case-insensitive, either
  * way round: "electric" or "ComEd electric bill") gets the amount as its month's prefill, so the ask only confirms.
- * A month already waiting first; else the next due month (a row with asks 0). Returns the parent, or null when none
- * matches.
+ * A month already waiting first; else the next month not answered yet (a row with asks 0). Returns the parent, or null
+ * when none matches.
  */
 export async function prefillAmount(groupId: string, matchText: string, cents: number): Promise<Expense | null> {
   const text = billName(matchText);
@@ -215,16 +215,17 @@ export async function prefillAmount(groupId: string, matchText: string, cents: n
     parents.find((p) => text.includes(billName(p.description))) ??
     parents.find((p) => billName(p.description).includes(text));
   if (!hit) return null;
-  const [waiting] = await db
-    .select({ id: pendingAmounts.id })
+  const [latest] = await db
+    .select({ id: pendingAmounts.id, dueOn: pendingAmounts.dueOn, resolved: pendingAmounts.resolvedExpenseId })
     .from(pendingAmounts)
-    .where(and(eq(pendingAmounts.expenseId, hit.id), isNull(pendingAmounts.resolvedExpenseId)))
+    .where(eq(pendingAmounts.expenseId, hit.id))
     .orderBy(desc(pendingAmounts.dueOn))
     .limit(1);
-  if (waiting) await db.update(pendingAmounts).set({ prefillCents: cents }).where(eq(pendingAmounts.id, waiting.id));
+  if (latest && !latest.resolved) await db.update(pendingAmounts).set({ prefillCents: cents }).where(eq(pendingAmounts.id, latest.id));
   else {
-    const today = localDay(new Date(), hit.tz);
-    const dueOn = nextDueOnOrAfter(Number(hit.occurredOn.slice(8, 10)), today > hit.occurredOn ? today : hit.occurredOn);
+    // The next month nobody has answered yet: not before today, the first month, or the day after the last answer.
+    const from = [localDay(new Date(), hit.tz), hit.occurredOn, latest ? addDaysToDay(latest.dueOn, 1) : ""].sort().at(-1)!;
+    const dueOn = nextDueOnOrAfter(Number(hit.occurredOn.slice(8, 10)), from);
     await db
       .insert(pendingAmounts)
       .values({ groupId, expenseId: hit.id, period: dueOn.slice(0, 7), dueOn, asks: 0, prefillCents: cents })
@@ -245,18 +246,18 @@ export async function waitingAmounts(groupId: string): Promise<{ expenseId: stri
 
 /**
  * Make today's copies of every due recurring Expense, and ask for the variable ones' amounts. Returns how many copies
- * were made. `deliver` is for tests (default: the Member's Channel).
+ * were made. Tests pass `deliver` (default: the Member's Channel) and `groupId` (only that Group).
  */
-export async function runRecurring(now = new Date(), deliver?: Deliver): Promise<number> {
+export async function runRecurring(now = new Date(), opts: { deliver?: Deliver; groupId?: string } = {}): Promise<number> {
   const parents = await db
     .select({ id: expenses.id, groupId: expenses.groupId, occurredOn: expenses.occurredOn, recurring: expenses.recurring, variable: expenses.variable, createdBy: expenses.createdBy, tz: groups.timezone })
     .from(expenses)
     .innerJoin(groups, eq(groups.id, expenses.groupId))
-    .where(and(isNotNull(expenses.recurring), isNull(expenses.deletedAt), isNull(expenses.recurringParentId)));
+    .where(and(isNotNull(expenses.recurring), isNull(expenses.deletedAt), isNull(expenses.recurringParentId), opts.groupId ? eq(expenses.groupId, opts.groupId) : undefined));
   let made = 0;
   for (const p of parents) {
     if (p.variable) {
-      await askVariable(p, now, deliver).catch((e) => console.error(`[recurring] asking for ${p.id} failed`, e));
+      await askVariable(p, now, opts.deliver).catch((e) => console.error(`[recurring] asking for ${p.id} failed`, e));
       continue;
     }
     const day = latestOccurrence(p.occurredOn, p.recurring!, localDay(now, p.tz));
