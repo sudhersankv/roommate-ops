@@ -87,7 +87,9 @@ function harness(opts: { deps?: Partial<TelegramDeps>; joinDelayMs?: number; fai
           ? { file_id: "f", file_unique_id: "u", file_path: "voice/file_1.oga" }
           : method === "sendMessage"
             ? { message_id: messageId++, date: 0, chat: { id: (payload as { chat_id: number }).chat_id, type: "supergroup" } }
-            : true;
+            : method === "sendPoll"
+              ? { message_id: messageId++, date: 0, chat: { id: (payload as { chat_id: number }).chat_id, type: "supergroup" }, poll: { id: "5460000000000000001", question: (payload as { question: string }).question, options: [], total_voter_count: 0, is_closed: false, is_anonymous: false, type: "regular", allows_multiple_answers: false } }
+              : true;
     return { ok: true, result } as never;
   });
   const feed = async (u: object) => {
@@ -586,5 +588,42 @@ describe("webhook route", () => {
       if (before === undefined) delete process.env.TELEGRAM_WEBHOOK_SECRET;
       else process.env.TELEGRAM_WEBHOOK_SECRET = before;
     }
+  });
+});
+
+describe("polls (ADR 0018)", () => {
+  test("a Poll goes out as Telegram's own, non-anonymous, and its id comes back", async () => {
+    const h = harness();
+    const sent = await h.tg.channel.sendToChat("-1001", { text: "Who's in on the $60 pizza?", poll: { question: "Who's in on the $60 pizza?", options: ["I'm in", "Not me"], multi: false } });
+    const poll = h.calls.find((c) => c.method === "sendPoll");
+    assert.ok(poll);
+    assert.equal(poll.payload.chat_id, "-1001");
+    assert.equal(poll.payload.question, "Who's in on the $60 pizza?");
+    assert.deepEqual(poll.payload.options, [{ text: "I'm in" }, { text: "Not me" }]);
+    assert.equal(poll.payload.is_anonymous, false, "anonymous polls tell nobody who voted");
+    assert.equal(poll.payload.allows_multiple_answers, false);
+    assert.equal(h.sent().length, 0, "no text alongside the poll");
+    assert.deepEqual(sent, { externalId: "5460000000000000001" });
+    await h.tg.channel.sendToChat("-1001", { text: "Who had pizza?", poll: { question: "Who had pizza?", options: ["Maya", "Dev", "Sam"], multi: true } });
+    assert.equal(h.calls.filter((c) => c.method === "sendPoll")[1].payload.allows_multiple_answers, true);
+  });
+
+  test("poll_answer -> a PollVote (0-based ids); an empty option list takes the vote back", async () => {
+    const votes: unknown[] = [];
+    const h = harness({ deps: { onPollVote: async (v) => void votes.push(v) } });
+    await h.feed({ poll_answer: { poll_id: "5460000000000000001", user: DEV, option_ids: [0], option_persistent_ids: ["a"] } });
+    await h.feed({ poll_answer: { poll_id: "5460000000000000001", user: SAM, option_ids: [0, 1], option_persistent_ids: ["a", "b"] } });
+    await h.feed({ poll_answer: { poll_id: "5460000000000000001", user: DEV, option_ids: [], option_persistent_ids: [] } });
+    assert.deepEqual(votes, [
+      { channel: "telegram", chatExternalId: "", pollExternalId: "5460000000000000001", userExternalId: "13", optionIds: [0] },
+      { channel: "telegram", chatExternalId: "", pollExternalId: "5460000000000000001", userExternalId: "12", optionIds: [0, 1] },
+      { channel: "telegram", chatExternalId: "", pollExternalId: "5460000000000000001", userExternalId: "13", optionIds: [] },
+    ]);
+    assert.equal(h.seen.incoming.length, 0, "a vote isn't a message");
+  });
+
+  test("poll_answer is one of the updates polling and the webhook ask for", async () => {
+    const { TELEGRAM_UPDATES } = await import("./telegram");
+    assert.ok((TELEGRAM_UPDATES as readonly string[]).includes("poll_answer"));
   });
 });
