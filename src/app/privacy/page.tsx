@@ -40,7 +40,7 @@ export default function PrivacyPage() {
             recent lines of the chat, what it remembers about the group and what Members asked it to remember. Photos it&apos;s asked to read, like receipts, go there
             too. So do private messages to Roomie and questions from the dashboard.
           </li>
-          <li>Voice notes addressed to it are sent to Google&apos;s Gemini (through OpenRouter) to turn them into text.</li>
+          <li>Voice notes addressed to it are sent to Google&apos;s Gemini (through the Neon AI Gateway) to turn them into text.</li>
           <li>About every 50 messages, a batch goes to a small Claude model that picks out how the group talks (phrases, emoji), and about 1 in 10 replies is checked by it for quality.</li>
           <li>The messages it passes to Claude, and its replies, are turned into search vectors on Neon&apos;s AI Gateway, so it can recall earlier conversations.</li>
           <li>Splitwise and Instacart only get what you ask Roomie to send them.</li>

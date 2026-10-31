@@ -1,16 +1,25 @@
-// P6 · Sudhersan. Voice note -> transcript, via an audio-capable chat model on OpenRouter
-// (no Whisper endpoint needed). Feed the result through the normal text path.
-// Docs: https://openrouter.ai/docs/features/multimodal/audio — input_audio formats include wav, mp3, ogg, m4a, aac, flac.
+// Voice note -> transcript, through the Neon AI Gateway (no Whisper endpoint there, so an audio-capable chat model,
+// Gemini, transcribes it). The audio goes as an `audio_url` data URL, the part type the gateway accepts. Feed the
+// result through the normal text path. No third party besides the gateway.
 
-const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
-export const DEFAULT_STT_MODEL = "google/gemini-2.5-flash";
+export const DEFAULT_STT_MODEL = "gemini-3-5-flash";
+
+/** The gateway model to use: STT_MODEL, unless it's an old OpenRouter-style id ("google/gemini-2.5-flash"). */
+export function sttModel(env = process.env.STT_MODEL): string {
+  return env && !env.includes("/") ? env : DEFAULT_STT_MODEL;
+}
+
+/** Voice notes can be heard when the gateway is configured. */
+export const voiceAvailable = () => !!process.env.NEON_AI_GATEWAY_BASE_URL && !!process.env.NEON_AI_GATEWAY_TOKEN;
 
 export const TRANSCRIBE_PROMPT =
   "Transcribe this voice note verbatim. Reply with only the transcript, no quotes, no commentary. If it's empty or unintelligible reply with an empty string.";
 
 export type AudioFormat = "ogg" | "mp3" | "wav" | "m4a" | "aac" | "flac";
 
-/** Map a MIME type (or file extension-ish string) to OpenRouter's input_audio.format. Chat-app voice notes are usually ogg/opus. */
+const MIME: Record<AudioFormat, string> = { ogg: "audio/ogg", mp3: "audio/mpeg", wav: "audio/wav", m4a: "audio/mp4", aac: "audio/aac", flac: "audio/flac" };
+
+/** Map a MIME type (or file extension-ish string) to an audio format. Chat-app voice notes are usually ogg/opus. */
 export function formatFromMime(mime?: string | null): AudioFormat {
   const m = (mime ?? "").toLowerCase().split(";")[0].trim();
   if (!m) return "ogg";
@@ -23,20 +32,23 @@ export function formatFromMime(mime?: string | null): AudioFormat {
   return "ogg";
 }
 
-/** The chat-completions body for a transcription request. Pure; tested in voice.test.ts. */
+type ContentPart = { type: "text" | "audio_url"; text?: string; audio_url?: { url: string } };
+
+/** The chat-completions body for a transcription request. Pure; tested in voice.test.ts. No temperature (some gateway models reject it). */
 export function buildTranscriptionRequest(base64: string, format: AudioFormat, model = DEFAULT_STT_MODEL) {
   return {
     model,
+    // Gemini reasons before it answers; leave room for the transcript after that.
+    max_tokens: 2000,
     messages: [
       {
         role: "user" as const,
         content: [
-          { type: "text" as const, text: TRANSCRIBE_PROMPT },
-          { type: "input_audio" as const, input_audio: { data: base64, format } },
-        ],
+          { type: "text", text: TRANSCRIBE_PROMPT },
+          { type: "audio_url", audio_url: { url: `data:${MIME[format]};base64,${base64}` } },
+        ] as ContentPart[],
       },
     ],
-    temperature: 0,
   };
 }
 
@@ -69,25 +81,22 @@ function contentText(c: ChatResponse["choices"]): string {
 }
 
 export async function transcribe(audio: ArrayBuffer, opts: { mime?: string; filename?: string } = {}): Promise<string> {
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey) throw new Error("OPENROUTER_API_KEY not set");
+  const base = (process.env.NEON_AI_GATEWAY_BASE_URL ?? "").replace(/\/+$/, "");
+  const token = process.env.NEON_AI_GATEWAY_TOKEN;
+  if (!base || !token) throw new Error("The AI Gateway isn't configured, so voice notes can't be transcribed.");
   const format = formatFromMime(opts.mime ?? (opts.filename?.match(/\.(\w+)$/)?.[1] ?? null));
-  const base64 = Buffer.from(audio).toString("base64");
-  const body = buildTranscriptionRequest(base64, format, process.env.STT_MODEL || DEFAULT_STT_MODEL);
-
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${apiKey}`,
-    "Content-Type": "application/json",
-    "X-Title": "Roomie",
-  };
-  if (process.env.APP_URL) headers["HTTP-Referer"] = process.env.APP_URL;
-
-  const res = await fetch(OPENROUTER_URL, { method: "POST", headers, body: JSON.stringify(body) });
+  const body = buildTranscriptionRequest(Buffer.from(audio).toString("base64"), format, sttModel());
+  const res = await fetch(`${base}/v1/chat/completions`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(60_000),
+  });
   if (!res.ok) {
     const snippet = (await res.text().catch(() => "")).slice(0, 300);
-    throw new Error(`transcription failed: OpenRouter ${res.status} ${snippet}`);
+    throw new Error(`transcription failed: gateway ${res.status} ${snippet}`);
   }
   const json = (await res.json()) as ChatResponse & { error?: { message?: string } };
-  if (json.error) throw new Error(`transcription failed: OpenRouter error ${json.error.message ?? JSON.stringify(json.error)}`);
+  if (json.error) throw new Error(`transcription failed: gateway error ${json.error.message ?? JSON.stringify(json.error)}`);
   return cleanTranscript(contentText(json.choices));
 }
