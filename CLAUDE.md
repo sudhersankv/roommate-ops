@@ -29,7 +29,8 @@ src/
                         (the landing page's WhatsApp beta form, not tied to a Group); trick_votes ("I want this" on a
                         coming-soon Trick, migration 0008); rate_counters (fixed-window cap counts) and groups.paused_at
                         (migration 0009); groups.join_code / join_code_rotated_at / join_policy, chats.participant_count
-                        (+ _at) and members.wants_seat_id (Join links, migration 0011)
+                        (+ _at) and members.wants_seat_id (Join links, migration 0011); polls (secret = WhatsApp's
+                        messageSecret), poll_votes and dm_context (#24B, migration 0016)
   db/enums.ts           categories, split methods, recurrences, sources, Group purposes, beta sizes / statuses (no drizzle
                         import: client code uses them)
   db/index.ts           db client
@@ -84,6 +85,15 @@ src/
                         (choresReportParts + upkeepReportParts), startHouse (its onEnable: starter chores + the usual five, once)
     reminders.ts        one-off / daily / weekly / monthly (nextOccurrence keeps the wall-clock across DST), whole Group
                         or one Member (private), reminderLine ("(set by Maya)"), visibleTo / canCancel, claim before send
+    polls.ts            Polls (ADR 0018): askPoll (sends through the Group's Channel, stores the row with the sent id +
+                        secret), recordVote / voteOnPoll (upsert, empty = retracted), resolvePoll once (majority |
+                        expired | closed; "who-in" -> logExpense among those in, one line), closePollsFor (the asker's
+                        text wins), expirePolls (scheduler), openTextPoll, pollSecret; poll-rules.ts = the pure rules
+                        (pollMajority = floor(n/2)+1, pollOutcome, whoIn, numberVote)
+    dm.ts               DMs (ADR 0020): noteDmContext, resolveDmGroup (prefix -> nudge 24 h -> last DM'd -> only Group ->
+                        ask once, the held message runs on the answer), echoAfterPrivateRun (the Echo rule from the
+                        run's Activity rows), nudgeOrHint (no DM path: one neutral line per Member per 7 days);
+                        dm-rules.ts = the pure rules (pickDmGroup, groupPrefix, afterPrivateRun, startHint)
     report.ts           groupReport (the enabled Toolkits' report() parts in post order + core's Reminders line, naming no
                         Toolkit) + composeReport / formatGroupReport (one message; casual = sentences), dueWord, joinNames
     bundle.ts           the morning Bundle (ADR 0017): groupBundle = the enabled Toolkits' bundle() lines in post order,
@@ -123,7 +133,8 @@ src/
                         Onboarding (vibe + presets) / /pet / greeting / Gate blocks
     persona.ts          pure: core rules + house style + archetype voice + sliders as sentences + quirks + learned
                         style (gated by confidence) + /* TOOLKIT_PERSONA */ + mood + people (ADR 0012)
-    memory.ts           Memory: thread group-<id>, resource <groupId>; last 30, semantic recall, working memory
+    memory.ts           Memory: thread group-<id>, resource <groupId>; a DM: thread group-<id>-dm-<member>, resource
+                        <groupId>:dm:<member> (the group's recall never finds it); last 30, semantic recall, working memory
     forget.ts           memory + trace cleanup: "forget me" (a Member's lines under every name they had, matched by text too,
                         Roomie's replies naming them, their note; traces their messages started), "delete group data"
                         (the thread, the Group's traces and scores), retention (deleteOldTraces, deleteOldMemory)
@@ -163,10 +174,12 @@ src/
   integrations/         composio.ts (client + cached key health), splitwise.ts (SplitwiseClient: ComposioSplitwise and
                         FakeSplitwise, splitwiseClient(), splitwiseAvailability())
   channels/types.ts     IncomingMessage { channel, chatExternalId, userExternalId, userName, text, imageUrl?, isPrivate?,
-                        ... }, Outgoing, Channel, CantMessagePrivatelyError, ROSTER_GRACE_MS
-  channels/index.ts     registry: registerChannel(); deliver(groupId, out) and deliverPrivate(memberId, out) go through
-                        the Chat's adapter (only log when none is registered)
-  channels/dev.ts       the dev adapter used by scripts/dev-chat.ts
+                        ... }, Outgoing (+ poll { question, options, multi }), Sent { externalId?, secret? }, PollVote,
+                        Channel (sends return Sent; nativePolls), CantMessagePrivatelyError, ROSTER_GRACE_MS
+  channels/index.ts     registry: registerChannel(); deliver(groupId, out) and deliverPrivate(memberId, out, { groupId?,
+                        kind? }) go through the Chat's adapter (only log when none is registered) and return Sent;
+                        deliverPrivate notes dm_context ("nudge") so the reply lands in that Group
+  channels/dev.ts       the dev adapter used by scripts/dev-chat.ts (a Poll prints as numbered text, "(poll n)")
   channels/telegram.ts  grammY adapter: TelegramChannel (outbound: typing, pause, rate limits, chunks, URL buttons, 403 ->
                         CantMessagePrivatelyError) + createTelegramBot(deps) (inbound: joins, new members, text/photo/
                         voice/DMs -> IncomingMessage, queued per Chat). Never imports the app: deps come in
@@ -310,7 +323,9 @@ scripts/studio-presets.ts  writes .mastra-presets.json for Studio (run by mastra
 - **Who is what** (ADR 0008): whoever adds Roomie is Admin; people already in the Chat are active; later joiners and unknown senders are Pending until an Admin approves (chat or Members page).
 - **Telegram can't list members** (ADR 0010): at join time Roomie knows the adder (Admin) and the group's Telegram admins (active). Anyone else becomes a Member on their first message: active if it's within 24 h of Roomie joining (`ROSTER_GRACE_MS`, from `chats.created_at`), Pending after. `new_chat_members` are Pending at once (with the approval ask), even inside the 24 h; people added together with Roomie count as already there.
 - **WhatsApp can list members** (ADR 0013): when Roomie is added, the whole group (from `groupMetadata`) becomes active Members, the adder the Admin; there is no roster window and no "press Start": Roomie can DM any Member. Later joiners are Pending, as everywhere. A Member's `channel_user_id` is the phone JID (`<number>@s.whatsapp.net`) when resolvable, else the LID (`…@lid`); every learned pair is kept in memory, but only Members' pairs go to `wa_contacts` (`deleteContactFor(jid)` in `whatsapp-store.ts` drops one) and LID Members move to the phone JID (`rekeyChannelUser`). Members named by their number (`+1555…`, or "Someone" for a hidden one) take the profile name from their first message.
-- **Private messages on Telegram:** a bot can't DM anyone first, so the intro asks people to tap @bot and press Start once; the Admin's setup DM is tried at join and otherwise sent on their `/start` (`setupDmFor`). On WhatsApp it goes out at once. A refused DM is a `CantMessagePrivatelyError`; `get_dashboard_link` relays its "tap @bot and press Start" message and never posts the Claim link in the group. A DM from a Member of exactly one Group goes through the pipeline as that Group with `isPrivate`.
+- **Private messages on Telegram:** a bot can't DM anyone first, so the intro asks people to tap @bot and press Start once; the Admin's setup DM is tried at join and otherwise sent on their `/start` (`setupDmFor`). On WhatsApp it goes out at once. A refused DM is a `CantMessagePrivatelyError`; `get_dashboard_link` relays its "tap @bot and press Start" message and never posts the Claim link in the group.
+- **DMs** (ADR 0020, `services/dm.ts`): a DM from any Member goes through the pipeline with `isPrivate`; `resolveIncoming` picks the Group: a `for <group name>:` prefix, else the Group Roomie last DM'd them about within 24 h (`dm_context` "nudge", written by every `deliverPrivate`), else the Group they last DM'd about ("dm"), else their only Group, else one question ("Which group is this about: Apt 4B or Lisbon trip?") and the held message runs when a reply names one. The run writes only the Member's DM thread (`threadFor(groupId, memberId)`); the group's recent chat is read-only context; DMs stay out of `chat_messages`. Tools see `source: "dm"` (`ctxOf`), so Activity says `dm`. **Echo rule:** after a DM or dashboard Ask, `echoAfterPrivateRun` reads that run's own Activity rows: an Expense with more than one Member in its Shares logged / changed / deleted posts ONE group line ("Dev logged $40.00 pizza, split 3 ways."); a Settlement never echoes (the other person gets "Dev paid you $20.00." privately) and DM Settlements are left out of the group's SINCE YOU LAST SPOKE. No DM path: `nudgeOrHint` posts "Dev, I've got something for you; tap @bot and press Start." at most once per Member per 7 days (`member_notes.note.lastStartHintAt`), never the content (private reminders use it too). `set_nudges` sets `member_notes.note.nudges` ("off" | "on"; `nudgesOff(memberId)` for the nudge selectors; Reminders ignore it). In dev-chat a DM stays in its attached Chat.
+- **Polls** (ADR 0018, `services/polls.ts`): `ask_poll` (core tool, who-questions only, ≤ 4 options) sends `Outgoing.poll`: Telegram `sendPoll` non-anonymous (`poll_answer` in `TELEGRAM_UPDATES`, empty `option_ids` = retracted), WhatsApp a native poll whose `messageSecret` is stored in `polls.secret` (Baileys rc14 doesn't decrypt votes: the adapter takes `pollUpdateMessage` from `messages.upsert`, loads the secret through `deps.pollSecret`, `decryptWaVote` tries the phone / LID jid pairs, `optionIdsFromHashes` matches SHA-256 option hashes), dev-chat numbered text (`nativePolls` false: a bare number from an active Member is the vote, before the Gate). Votes reach `handlePollVote`. Resolution once: majority (`floor(n/2)+1` active Members), 2 hours (`expirePolls` in the scheduler tick) or the asker's `log_expense` in a later run (`closePollsFor`, logs nothing); "who-in" logs one even Expense among those in (payer first), then one line.
 - **Rules** (`services/authz.ts`): Pending members can chat and read, but every write service calls `requireActive` and refuses with "Hang on, an admin needs to approve you first. <Admin> can approve you." Members, roles, settings, Toolkits and delete-group-data call `requireAdmin`. Expenses can be changed by whoever added or paid them, anyone with a Share, or an Admin. Any active Member can add a chore and record a Settlement between two other Members (intended).
 - **Dashboard:** every page and action goes through `lib/session.ts`; nothing trusts a member id from the client. Non-Admins don't see admin controls, and the actions return 403 anyway.
 - **Dev sign-in bypass:** with `NODE_ENV !== "production"` and `DEV_AUTH_EMAIL` set, that email is the signed-in Account (loud warning in the log). For automated browser checks only.
@@ -364,7 +379,7 @@ scripts/studio-presets.ts  writes .mastra-presets.json for Studio (run by mastra
 
 ## The Gate (when Roomie speaks)
 
-`mastra/gate/policy.ts`, ADR 0002. In order: hard trigger (`isHardTrigger`: reply to Roomie, @mention, the word "roomie", the dashboard, a DM; a voice note is not one by itself) always speaks; Jev error or > 2.5 s means hard triggers only; p(act) over the Group's threshold acts; in the follow-up window (3 min / 3 messages after Roomie spoke) the agent decides with permission to answer `[silent]`, unless Jev is sure it's chatter; p(clarify) over its threshold asks. Thresholds (act / clarify): quiet .9/.8, **normal .75/.6** (default), chatty .6/.45. If nobody addressed Roomie and it's not a follow-up, the agent is told to ask before logging anything. Jev's toolkit narrows the agent's tools only at p ≥ 0.6, and Jev is only offered the Group's enabled Toolkits (plus `core`: reminders, members, settings, what Roomie can do; and `none`). While Onboarding is open (`groups.onboarded_at` null), an active Member's message in the follow-up window counts as a hard trigger, so "roommates, USD, Chicago" reaches `set_group_settings`.
+`mastra/gate/policy.ts`, ADR 0002. In order: hard trigger (`isHardTrigger`: reply to Roomie, @mention, the word "roomie", the dashboard, a DM; a voice note is not one by itself) always speaks; Jev error or > 2.5 s means hard triggers only; p(act) over the Group's threshold acts; in the follow-up window (3 min / 3 messages after Roomie spoke) the agent decides with permission to answer `[silent]`, unless Jev is sure it's chatter; p(clarify) over its threshold asks. Thresholds (act / clarify): quiet .9/.8, **normal .75/.6** (default), chatty .6/.45. If nobody addressed Roomie and it's not a follow-up, the agent is told to ask before logging anything. Jev's toolkit narrows the agent's tools only at p ≥ 0.6, and Jev is only offered the Group's enabled Toolkits (plus `core`: reminders, members, settings, what Roomie can do; and `none`). While Onboarding is open (`groups.onboarded_at` null), an active Member's message in the follow-up window counts as a hard trigger, so "roommates, USD, Chicago" reaches `set_group_settings`. Poll votes never reach the Gate: native votes come in as `PollVote`s, and on a text-poll Channel a bare number while a poll is open is recorded and Roomie stays quiet (reason `poll-vote`); a DM in several Groups that names none gets the which-group question without an agent run (`which-group`).
 
 ## Abuse limits and the kill switch (audit B3, H1, H2, H4, H6)
 
