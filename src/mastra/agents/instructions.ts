@@ -36,6 +36,7 @@ export function toolkitPersona(enabled: readonly string[]): string[] {
     off.length ? `- Not learned here yet: ${off.map((m) => m.name).join(", ")}. If someone asks for one, say you haven't learned it here yet and an admin can teach you ("roomie, learn ${off[0].name.toLowerCase()}", or the dashboard's Tricks page).` : "",
     `- Coming soon, nobody can teach you these yet: ${COMING_SOON.map((m) => m.name).join(", ")}.`,
     ...on.filter((m) => m.persona).map((m) => m.persona!),
+    CORE_MANIFEST.persona ?? "",
   ].filter(Boolean);
 }
 
