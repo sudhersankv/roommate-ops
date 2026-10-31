@@ -1,7 +1,7 @@
 import type { Metadata } from "next"
 
 import { currentMember } from "@/lib/session"
-import { activityView, balancesView, expensesView } from "../_components/data"
+import { activityView, balancesView, expensesView, rentCardView } from "../_components/data"
 import { MoneyScreen, type MoneyTab } from "../_components/screens/money"
 
 export const metadata: Metadata = { title: "Money" }
@@ -13,6 +13,6 @@ export default async function MoneyPage({ params, searchParams }: { params: Prom
   const s = await currentMember(groupId)
   if (s.member.status !== "active") return null
   const initialTab = tabs.find((t) => t === tab) ?? "balances"
-  const [money, expenses, activity] = await Promise.all([balancesView(s), expensesView(s), activityView(s)])
-  return <MoneyScreen key={initialTab} initialTab={initialTab} {...money} expenses={expenses} activity={activity} />
+  const [money, expenses, activity, rent] = await Promise.all([balancesView(s), expensesView(s), activityView(s), rentCardView(s)])
+  return <MoneyScreen key={initialTab} initialTab={initialTab} {...money} expenses={expenses} activity={activity} rent={rent} />
 }

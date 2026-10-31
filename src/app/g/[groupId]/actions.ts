@@ -10,6 +10,8 @@ import { memberSession } from "@/lib/session"
 import { parseInZone } from "@/lib/time"
 import { cart, chores, groups, isNotAllowed, joins, members, money, pantry, recipes, reminders, schedule, splitwise, toolkits, upkeep, type Ctx } from "@/services"
 import type { SettingsPatch } from "@/services/groups"
+import { setRent, type RentInput } from "@/services/rent"
+import { updateNudgeSettings, type NudgeSettings } from "@/services/settle-nudge"
 import type { ToolkitId } from "@/toolkits/types"
 import type { ActionResult } from "./_components/group-context"
 import type { RecipeDraftView } from "./_components/types"
@@ -268,4 +270,24 @@ export async function setSplitwiseMirror(groupId: string, on: boolean, splitwise
 
 export async function disconnectSplitwise(groupId: string) {
   return sw(groupId, (ctx) => splitwise.disconnectSplitwise(ctx))
+}
+
+/** The Rent card's form: the amount, the due day, who pays the landlord, and evenly or per-person amounts (as typed). */
+export type RentForm = Pick<RentInput, "cents" | "dueDay" | "payerId"> & { method: "equal" | "exact"; splits?: { memberId: string; cents: number }[] }
+
+export async function saveRent(groupId: string, input: RentForm) {
+  return act(groupId, async (ctx) => {
+    const rent = await setRent(ctx, {
+      cents: input.cents,
+      dueDay: input.dueDay,
+      payerId: input.payerId,
+      method: input.method,
+      ...(input.method === "exact" ? { splits: input.splits } : {}),
+    })
+    return rent.expenseId
+  })
+}
+
+export async function updateNudges(groupId: string, patch: Partial<NudgeSettings>) {
+  return act(groupId, (ctx) => updateNudgeSettings(ctx, patch))
 }
