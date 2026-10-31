@@ -763,7 +763,7 @@ describe("Roomie tools against the dev DB", () => {
   test("cart_add with usuals: a bare 'Pepsi' asks once; the answer (remember) is his usual; next time usedUsual, no question; Ryan's is his own", async () => {
     type Add = CartAdd & { usedUsual?: { name: string; qty: string }[] };
     const ask: Add = await run("cart_add", { items: [{ name: "Pepsi" }] });
-    assert.deepEqual([ask.added, ask.needsClarification], [[], ["Pepsi: cans or a bottle, and how many?"]]);
+    assert.deepEqual([ask.added, ask.needsClarification], [[], ["Pepsi: 12-pack of cans or a 2-liter?"]]);
     const answer: Add = await run("cart_add", { items: [{ name: "Pepsi", qty: "12 × 12 oz cans", remember: true }] });
     assert.deepEqual([answer.added, answer.usedUsual], [[{ name: "Pepsi", qty: "12 × 12 oz cans", for: "Sudhersan" }], undefined]);
     const usual: Add = await run("cart_add", { items: [{ name: "pepsi" }] });
@@ -771,7 +771,7 @@ describe("Roomie tools against the dev DB", () => {
     const once: CartAdd = await run("cart_add", { items: [{ name: "Pepsi", qty: "1 × 2-liter bottle", remember: false }] });
     assert.equal(once.added[0].qty, "1 × 2-liter bottle");
     const ryans: CartAdd = await run("cart_add", { items: [{ name: "Pepsi" }] }, contextFor(member.Ryan, "Ryan", "member", "active"));
-    assert.deepEqual(ryans.needsClarification, ["Pepsi: cans or a bottle, and how many?"], "Sudhersan's usual isn't Ryan's");
+    assert.deepEqual(ryans.needsClarification, ["Pepsi: 12-pack of cans or a 2-liter?"], "Sudhersan's usual isn't Ryan's");
     for (let k = 0; k < 3; k++) await run("cart_remove", { name: "Pepsi" });
     noPrice(usual);
   });

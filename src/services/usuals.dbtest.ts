@@ -53,7 +53,7 @@ describe("Grocery usuals against the dev DB", () => {
 
   test("a bare 'Pepsi' asks once; Dev's answer writes his row; the next bare 'Pepsi' uses it, no second question", async () => {
     const first = await addAsSaid(dev, { items: [{ name: "Pepsi" }] });
-    assert.deepEqual([first.added, first.needsClarification], [[], ["Pepsi: cans or a bottle, and how many?"]]);
+    assert.deepEqual([first.added, first.needsClarification], [[], ["Pepsi: 12-pack of cans or a 2-liter?"]]);
     assert.equal((await listOpenItems({ groupId })).length, 0);
     // The answer, without remember: the question was just asked about Pepsi for Dev, so it's remembered.
     const answer = await addAsSaid(dev, { items: [{ name: "Pepsi", qty: "12 × 12 oz cans" }] });
@@ -95,18 +95,19 @@ describe("Grocery usuals against the dev DB", () => {
   });
 
   test("each scope stays separate: Dev's Pepsi isn't Sam's; the house's bread isn't anyone's own; for Dev uses Dev's", async () => {
-    assert.deepEqual((await addAsSaid(sam, { items: [{ name: "Pepsi" }] })).needsClarification, ["Pepsi: cans or a bottle, and how many?"]);
+    assert.deepEqual((await addAsSaid(sam, { items: [{ name: "Pepsi" }] })).needsClarification, ["Pepsi: 12-pack of cans or a 2-liter?"]);
     await addAsSaid(maya, { items: [{ name: "Sourdough bread", qty: "1 loaf", remember: true }], shared: true });
     const shared = await addAsSaid(sam, { items: [{ name: "bread" }], shared: true });
     assert.deepEqual(shared.usedUsual, [{ name: "Sourdough bread", qty: "1 loaf" }], "a bare bread finds the house's sourdough");
-    assert.deepEqual((await addAsSaid(sam, { items: [{ name: "bread" }] })).needsClarification, ["bread: what kind?"]);
+    const own = await addAsSaid(sam, { items: [{ name: "bread" }] });
+    assert.deepEqual([own.usedUsual, own.needsClarification, own.added.map((i) => i.name)], [[], [], ["bread"]], "Sam's own bread is just bread, not the house's sourdough");
     const forDev = await addAsSaid(maya, { items: [{ name: "Pepsi" }], forMemberId: dev.memberId });
     assert.deepEqual(forDev.usedUsual, [{ name: "Pepsi", qty: "24 × 12 oz cans" }]);
   });
 
   test("an answer from the dashboard counts too; a quantity long after the question is a plain add", async () => {
     const ui = { ...sam, source: "ui" as const };
-    assert.deepEqual((await addAsSaid(ui, { items: [{ name: "coffee" }] })).needsClarification, ["coffee: beans or ground, and what size bag?"]);
+    assert.deepEqual((await addAsSaid(ui, { items: [{ name: "coffee" }] })).needsClarification, ["coffee: beans or ground?"]);
     await addAsSaid(ui, { items: [{ name: "coffee", qty: "1 lb ground" }] });
     assert.equal((await rowOf(sam.memberId, "coffee"))?.qty, "1 lb ground");
     usuals.noteAsked(groupId, sam.memberId, ["seltzer"], Date.now() - usuals.ANSWER_MS - 1000);

@@ -54,19 +54,20 @@ test("clarifyQuantities: eggs with no quantity ask once; with one they go in", (
   assert.deepEqual(clarifyQuantities([{ name: "eggs" }, { name: "Eggs" }]).questions, ["eggs: 12 or 18?"]);
 });
 
-test("kindQuestion: things that come in sizes or kinds ask one question with no quantity; clear ones don't", () => {
-  assert.equal(kindQuestion("Pepsi"), "Pepsi: cans or a bottle, and how many?");
-  assert.equal(kindQuestion("Diet Pepsi"), "Diet Pepsi: cans or a bottle, and how many?");
-  assert.equal(kindQuestion("sparkling water"), "sparkling water: cans or a bottle, and how many?");
-  assert.equal(kindQuestion("oat milk"), "oat milk: what kind, and how much?");
-  assert.equal(kindQuestion("paper towels"), "paper towels: how many rolls?");
-  assert.equal(kindQuestion("milk chocolate"), null, "the last words are the thing");
-  assert.equal(kindQuestion("dish soap"), null);
+test("kindQuestion: drinks and coffee get one question with two picks; staples go straight in", () => {
+  assert.equal(kindQuestion("Pepsi"), "Pepsi: 12-pack of cans or a 2-liter?");
+  assert.equal(kindQuestion("Diet Pepsi"), "Diet Pepsi: 12-pack of cans or a 2-liter?");
+  assert.equal(kindQuestion("sparkling water"), "sparkling water: a 12-pack or just a few?");
+  assert.equal(kindQuestion("water"), "water: a case of bottles or a gallon jug?");
+  assert.equal(kindQuestion("coffee"), "coffee: beans or ground?");
+  // Staples: what main's examples add as is ("Added milk, 1 gal.", "Added paper towels.").
+  for (const staple of ["milk", "oat milk", "bread", "paper towels", "toilet paper", "dish soap"]) assert.equal(kindQuestion(staple), null, staple);
+  assert.equal(kindQuestion("coffee filters"), null, "the last words are the thing");
 });
 
 test("clarifyQuantities: kinds are asked about with no quantity, once; not with one; not when kinds is off (a written list)", () => {
   const r = clarifyQuantities([{ name: "Pepsi" }, { name: "dish soap" }, { name: "whole milk", qty: "2 gallons" }]);
-  assert.deepEqual(r.questions, ["Pepsi: cans or a bottle, and how many?"]);
+  assert.deepEqual(r.questions, ["Pepsi: 12-pack of cans or a 2-liter?"]);
   assert.deepEqual(r.ok.map((i) => i.name), ["dish soap", "whole milk"]);
   assert.deepEqual(clarifyQuantities([{ name: "bread" }, { name: "eggs" }], { kinds: false }).questions, ["eggs: 12 or 18?"]);
 });
