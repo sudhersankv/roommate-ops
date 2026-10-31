@@ -1,3 +1,5 @@
+import { formatMoney } from "@/lib/money";
+
 // Every service takes a Ctx first. The pipeline (chat), the dashboard (session) and tests all build one.
 export type Ctx = {
   groupId: string;
@@ -9,4 +11,11 @@ export type Ctx = {
 /** Group-level reads only need the Group. */
 export type GroupCtx = Pick<Ctx, "groupId">;
 
-export const dollars = (cents: number) => `$${(cents / 100).toFixed(2)}`;
+/**
+ * Amounts as Roomie says them, in the Group's currency ("₹190.00", "€12.50", "$22.50"): the same formatting as the
+ * dashboard (formatMoney). Services read the currency once (groups.currencyOf) and format with the function this returns.
+ */
+export const moneyIn =
+  (currency = "USD") =>
+  (cents: number) =>
+    formatMoney(cents, currency);

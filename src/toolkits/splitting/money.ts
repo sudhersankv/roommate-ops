@@ -1,32 +1,33 @@
 // The splitting tools: thin front doors over services/money.ts. The model passes intent (who, percentages, shares,
-// exact amounts as people said them, in dollars); every per-person cent is computed by the service (ADR 0007).
+// exact amounts as people said them, in the group's currency); every per-person cent is computed by the service (ADR 0007).
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { EXPENSE_CATEGORIES, RECURRENCES, SPLIT_METHODS } from "@/db/enums";
 import { payLinks } from "@/lib/pay-links";
 import { groups, members, money } from "@/services";
 import { expenseSummary, type Transfer } from "@/services/money";
-import type { Ctx } from "@/services/types";
-import { dollars } from "@/services/types";
+import { moneyIn, type Ctx, type GroupCtx } from "@/services/types";
 import { ctxOf, memberIdByName, toCents } from "../util";
 
-const transferText = (t: Transfer) => ({ from: t.fromName, to: t.toName, amount: dollars(t.cents) });
+const transferText = (t: Transfer, amount: (cents: number) => string) => ({ from: t.fromName, to: t.toName, amount: amount(t.cents) });
+/** Amounts said in the Group's currency. */
+const amountFor = async (ctx: GroupCtx) => moneyIn(await groups.currencyOf(ctx.groupId));
 
 const names = (ctx: Ctx, list: string[]) => Promise.all(list.map((n) => memberIdByName(ctx, n)));
 
 const splitFields = {
   method: z.enum(SPLIT_METHODS).optional().describe("equal (default), exact, percent or shares. Inferred from which list you pass."),
   splitAmong: z.array(z.string()).optional().describe("equal: member names; omit for everyone"),
-  exact: z.array(z.object({ name: z.string(), amount: z.number().nonnegative().describe("Dollars, as the person said it") })).optional().describe("exact: each person's amount; must add up to the total"),
+  exact: z.array(z.object({ name: z.string(), amount: z.number().nonnegative().describe("In the group's currency, as the person said it") })).optional().describe("exact: each person's amount; must add up to the total"),
   percents: z.array(z.object({ name: z.string(), percent: z.number().nonnegative() })).optional().describe("percent: e.g. 50/25/25; must add up to 100"),
   shares: z.array(z.object({ name: z.string(), shares: z.number().positive() })).optional().describe("shares: e.g. 2:2:1"),
   payer: z.string().optional().describe("Member name if one person other than the sender paid it all"),
-  payers: z.array(z.object({ name: z.string(), amount: z.number().nonnegative().describe("Dollars this person paid") })).optional().describe("Several payers ('Alex paid 60 and I paid 40'); must add up to the total"),
+  payers: z.array(z.object({ name: z.string(), amount: z.number().nonnegative().describe("What this person paid, in the group's currency") })).optional().describe("Several payers ('Alex paid 60 and I paid 40'); must add up to the total"),
 };
 
 type SplitArgs = { [K in keyof typeof splitFields]?: z.infer<(typeof splitFields)[K]> };
 
-/** Names -> member ids, dollars -> cents. No arithmetic beyond the unit conversion. */
+/** Names -> member ids, amounts -> cents. No arithmetic beyond the unit conversion. */
 async function resolveSplit(ctx: Ctx, a: SplitArgs): Promise<Partial<money.ExpenseInput>> {
   const out: Partial<money.ExpenseInput> = {};
   if (a.method) out.method = a.method;
@@ -44,7 +45,8 @@ async function pickExpense(ctx: Ctx, query: string, opts: { deleted?: boolean } 
   const hits = await money.findExpenses(ctx, query, opts);
   if (hits.length === 0) throw new Error(`No ${opts.deleted ? "deleted " : ""}expense matches "${query}".`);
   if (hits.length > 1) {
-    const list = hits.slice(0, 5).map((h) => `${h.description} ${dollars(h.cents)} on ${h.occurredOn}`).join("; ");
+    const amount = await amountFor(ctx);
+    const list = hits.slice(0, 5).map((h) => `${h.description} ${amount(h.cents)} on ${h.occurredOn}`).join("; ");
     throw new Error(`More than one expense matches "${query}": ${list}. Ask which one.`);
   }
   return hits[0];
@@ -58,7 +60,7 @@ export const moneyTools = {
       "Pass the split the way people said it and let the service do the math: percents for '50/25/25', shares for '2:2:1', exact for amounts per person, payers for 'Alex paid 60 and I paid 40'. Never pass per-person amounts you calculated yourself. " +
       "Always set a category. Exact amounts or payers that don't add up come back as an error: ask instead of fixing them.",
     inputSchema: z.object({
-      amount: z.number().positive().describe("The total in dollars, e.g. 62.5"),
+      amount: z.number().positive().describe("The total in the group's currency, e.g. 62.5"),
       description: z.string().min(1).describe("What it was for, e.g. 'internet'"),
       category: z.enum(EXPENSE_CATEGORIES).describe("Your best pick: food (eating out), groceries, rent, utilities, transport, entertainment, household, travel, health, other"),
       ...splitFields,
@@ -77,7 +79,7 @@ export const moneyTools = {
         recurring: input.recurring ?? null,
         ...(await resolveSplit(ctx, input)),
       });
-      return expenseSummary(e);
+      return expenseSummary(e, await groups.currencyOf(ctx.groupId));
     },
   }),
   update_expense: createTool({
@@ -86,7 +88,7 @@ export const moneyTools = {
       "Change an expense ('make the pizza $30', 'Sam wasn't in the uber', 'the dinner was 60/40'). Only pass what changes; the split method is kept, so a new total re-splits it the same way. Find it by its description.",
     inputSchema: z.object({
       expense: z.string().min(1).describe("Its description (or id) as people call it, e.g. 'pizza'"),
-      amount: z.number().positive().optional().describe("New total in dollars"),
+      amount: z.number().positive().optional().describe("New total in the group's currency"),
       description: z.string().optional().describe("New description"),
       category: z.enum(EXPENSE_CATEGORIES).optional(),
       ...splitFields,
@@ -107,7 +109,7 @@ export const moneyTools = {
         ...(input.recurring ? { recurring: input.recurring === "none" ? null : input.recurring } : {}),
         ...(await resolveSplit(ctx, input)),
       });
-      return expenseSummary(e);
+      return expenseSummary(e, await groups.currencyOf(ctx.groupId));
     },
   }),
   delete_expense: createTool({
@@ -118,7 +120,7 @@ export const moneyTools = {
       const ctx = ctxOf(context);
       const target = await pickExpense(ctx, expense);
       const gone = await money.deleteExpense(ctx, { expenseId: target.id });
-      return { deleted: gone.description, amount: dollars(gone.cents), undo: "Say 'undo' to bring it back." };
+      return { deleted: gone.description, amount: (await amountFor(ctx))(gone.cents), undo: "Say 'undo' to bring it back." };
     },
   }),
   restore_expense: createTool({
@@ -130,7 +132,7 @@ export const moneyTools = {
       const target = expense ? await pickExpense(ctx, expense, { deleted: true }) : await money.lastDeletedExpense(ctx);
       if (!target) throw new Error("Nothing was deleted lately, so there's nothing to undo.");
       const back = await money.restoreExpense(ctx, { expenseId: target.id });
-      return { restored: back.description, amount: dollars(back.cents) };
+      return { restored: back.description, amount: (await amountFor(ctx))(back.cents) };
     },
   }),
   get_balances: createTool({
@@ -141,10 +143,11 @@ export const moneyTools = {
     execute: async (_input, context) => {
       const ctx = ctxOf(context);
       const [balances, plan, group] = await Promise.all([money.getBalances(ctx), money.getSettlePlan(ctx), groups.getGroup(ctx.groupId)]);
+      const amount = moneyIn(group?.currency);
       return {
         simplifyDebts: group?.simplifyDebts ?? true,
-        balances: balances.map((b) => ({ name: b.name, balance: `${b.cents > 0 ? "+" : b.cents < 0 ? "-" : ""}${dollars(Math.abs(b.cents))}`, cents: b.cents })),
-        settlePlan: plan.map(transferText),
+        balances: balances.map((b) => ({ name: b.name, balance: `${b.cents > 0 ? "+" : b.cents < 0 ? "-" : ""}${amount(Math.abs(b.cents))}`, cents: b.cents })),
+        settlePlan: plan.map((t) => transferText(t, amount)),
       };
     },
   }),
@@ -156,13 +159,14 @@ export const moneyTools = {
     inputSchema: z.object({
       with: z.string().min(1).describe("The other member"),
       paid: z.boolean().describe("true only if the money already moved"),
-      amount: z.number().positive().optional().describe("Dollars; omit to use what the settle plan says"),
+      amount: z.number().positive().optional().describe("In the group's currency; omit to use what the settle plan says"),
       direction: z.enum(["sender_pays", "other_pays"]).optional().describe("For paid=true: who paid. Default: the sender paid the other member"),
       from: z.string().optional().describe("Record for someone else: the member who paid (instead of the sender)"),
     }),
     execute: async (input, context) => {
       const ctx = ctxOf(context);
       const other = await memberIdByName(ctx, input.with);
+      const amount = await amountFor(ctx);
       const me = input.from ? await memberIdByName(ctx, input.from) : ctx.memberId;
       const owed = await money.debtBetween(ctx, me, other);
       if (input.paid) {
@@ -171,7 +175,7 @@ export const moneyTools = {
         if (!cents) throw new Error("How much was it? The settle plan doesn't have that one owing the other anything.");
         const s = await money.settleUp(ctx, { fromId, toId, cents });
         const after = await money.debtBetween(ctx, fromId, toId);
-        return { recorded: true, amount: dollars(s.cents), stillOwed: after ? transferText(after) : "square now" };
+        return { recorded: true, amount: amount(s.cents), stillOwed: after ? transferText(after, amount) : "square now" };
       }
       if (!owed) return { recorded: false, square: true, message: "Nothing to settle: they're square." };
       const cents = input.amount !== undefined ? toCents(input.amount) : owed.cents;
@@ -179,7 +183,7 @@ export const moneyTools = {
       const links = payLinks(payee?.handles ?? {}, cents, { to: owed.toName, note: (await groups.getGroup(ctx.groupId))?.name ?? "" });
       return {
         recorded: false,
-        owes: { from: owed.fromName, to: owed.toName, amount: dollars(cents) },
+        owes: { from: owed.fromName, to: owed.toName, amount: amount(cents) },
         ...(links.length ? { links, payButtons: links.map((l) => l.text) } : { noHandles: `${owed.toName} hasn't saved a Venmo, PayPal or Cash App handle yet.` }),
         next: "Nothing is recorded until they say it's paid.",
       };
@@ -192,13 +196,18 @@ export const moneyTools = {
     execute: async ({ on }, context) => {
       const ctx = ctxOf(context);
       await groups.setSimplifyDebts(ctx, { on });
-      return { simplifyDebts: on, settlePlan: (await money.getSettlePlan(ctx)).map(transferText) };
+      const amount = await amountFor(ctx);
+      return { simplifyDebts: on, settlePlan: (await money.getSettlePlan(ctx)).map((t) => transferText(t, amount)) };
     },
   }),
   list_expenses: createTool({
     id: "list_expenses",
     description: "Recent shared expenses, newest first, with payers, each person's share, method and category. Amounts are ready to say.",
     inputSchema: z.object({ limit: z.number().int().positive().max(50).optional().describe("Default 10") }),
-    execute: async ({ limit }, context) => (await money.listExpenses(ctxOf(context), limit ?? 10)).map(expenseSummary),
+    execute: async ({ limit }, context) => {
+      const ctx = ctxOf(context);
+      const currency = await groups.currencyOf(ctx.groupId);
+      return (await money.listExpenses(ctx, limit ?? 10)).map((e) => expenseSummary(e, currency));
+    },
   }),
 };

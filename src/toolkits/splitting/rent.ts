@@ -1,21 +1,22 @@
 // Rent and utilities (#25): thin front doors over services/rent.ts and services/recurring.ts. The model passes the
-// split as people said it (percents, shares, exact amounts in dollars) and the services compute every cent (ADR 0007).
+// split as people said it (percents, shares, exact amounts in the group's currency) and the services compute every cent (ADR 0007).
 // In the group chat nobody's own share is said out loud: rent_status gives the shares only in a DM.
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { EXPENSE_CATEGORIES } from "@/db/enums";
+import { groups } from "@/services";
 import { expenseSummary, findExpenses, getExpense } from "@/services/money";
 import { answerAmount, setVariableExpense } from "@/services/recurring";
 import { rentStatus, rentSummary, setRent } from "@/services/rent";
 import { groupTimezone } from "@/services/schedule";
-import { dollars } from "@/services/types";
+import { moneyIn } from "@/services/types";
 import { ctxOf, memberIdByName, toCents } from "../util";
 
 const inDm = (context: unknown) => (context as { requestContext?: { get(k: string): unknown } } | undefined)?.requestContext?.get("isPrivate") === true;
 
 const shareFields = {
   splitAmong: z.array(z.string()).optional().describe("Split evenly among these member names; omit for everyone"),
-  exact: z.array(z.object({ name: z.string(), amount: z.number().nonnegative().describe("Dollars, as said") })).optional().describe("'Maya 1000, Dev 800, Sam 600': each person's amount; must add up"),
+  exact: z.array(z.object({ name: z.string(), amount: z.number().nonnegative().describe("In the group's currency, as said") })).optional().describe("'Maya 1000, Dev 800, Sam 600': each person's amount; must add up"),
   percents: z.array(z.object({ name: z.string(), percent: z.number().nonnegative() })).optional().describe("'40/30/30'; must add up to 100"),
   shares: z.array(z.object({ name: z.string(), shares: z.number().positive() })).optional().describe("'2:2:1'"),
 };
@@ -44,7 +45,7 @@ export const rentTools = {
       "It's a monthly recurring expense: Roomie tells the group 3 days before it's due and DMs each person their own share with a pay link. " +
       "New rent needs the amount and the due day; the payer defaults to the sender, the split to everyone evenly. Pass only what changes. Pass the split as said, never per-person amounts you worked out.",
     inputSchema: z.object({
-      amount: z.number().positive().optional().describe("The whole rent in dollars"),
+      amount: z.number().positive().optional().describe("The whole rent in the group's currency"),
       dueDay: z.number().int().min(1).max(31).optional().describe("Day of the month it's due (1 = the 1st)"),
       payer: z.string().optional().describe("Who pays the landlord (member name); default the sender for new rent"),
       ...shareFields,
@@ -102,7 +103,7 @@ export const rentTools = {
     description:
       "The amount of a bill Roomie asked for ('92' in reply to 'How much was the electric bill?', 'roomie electric was 92', 'yes' to a prefilled amount: pass that amount). Logs this month's bill split like always. Only the bill's payer or an admin.",
     inputSchema: z.object({
-      amount: z.number().positive().describe("Dollars"),
+      amount: z.number().positive().describe("In the group's currency"),
       bill: z.string().optional().describe("Which bill, when more than one is waiting (e.g. 'electric')"),
     }),
     execute: async (input, context) => {
@@ -115,8 +116,9 @@ export const rentTools = {
         if (parents.length === 1) expenseId = parents[0]!.id;
       }
       const { expense } = await answerAmount(ctx, { cents: toCents(input.amount), ...(expenseId ? { expenseId } : {}) });
-      const summary = expenseSummary(expense);
-      return { logged: summary.description, total: dollars(expense.cents), date: summary.date, paidBy: summary.paidBy, ...(inDm(context) ? { shares: summary.shares } : {}) };
+      const currency = await groups.currencyOf(ctx.groupId);
+      const summary = expenseSummary(expense, currency);
+      return { logged: summary.description, total: moneyIn(currency)(expense.cents), date: summary.date, paidBy: summary.paidBy, ...(inDm(context) ? { shares: summary.shares } : {}) };
     },
   }),
 };

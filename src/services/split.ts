@@ -1,5 +1,7 @@
 // Pure split math with no DB import, so the dashboard's add-expense preview uses the same rule the service saves.
 // Every function returns integer cents that sum to exactly the total (ADR 0007).
+import { moneyIn } from "./types";
+
 export type { SplitMethod } from "@/db/enums";
 export type SplitRow = { memberId: string; cents: number };
 export type PayerRow = { memberId: string; cents: number };
@@ -17,10 +19,9 @@ export class SplitError extends Error {
   }
 }
 
-const money = (cents: number) => `${cents < 0 ? "-" : ""}$${(Math.abs(cents) / 100).toFixed(2)}`;
 
 /** Leftover cents go to Payers first (in the given order), then by name, so the same input always splits the same way. */
-export type TieBreak = { payerIds?: string[]; nameOf?: (memberId: string) => string };
+export type TieBreak = { payerIds?: string[]; nameOf?: (memberId: string) => string; /** For error messages; default USD. */ currency?: string };
 
 /**
  * Split `total` cents evenly across `memberIds`. Leftover cents (total mod n) go one each,
@@ -82,6 +83,7 @@ export function apportion(total: number, rows: { memberId: string; weight: numbe
 
 /** Exact amounts: they must add up to the total. Zero rows are dropped. */
 export function splitExact(total: number, rows: SplitRow[], tie: TieBreak = {}): SplitRow[] {
+  const money = moneyIn(tie.currency);
   if (rows.length === 0) throw new SplitError("Who owes what? Give at least one amount.");
   uniqueIds(rows.map((r) => r.memberId), tie.nameOf);
   for (const r of rows) {
@@ -123,7 +125,8 @@ export function splitShares(total: number, rows: SharesRow[], tie: TieBreak = {}
 }
 
 /** Payers must cover the total exactly. Returns them biggest first (the first one is the primary Payer). */
-export function checkPayers(total: number, payers: PayerRow[], nameOf?: (id: string) => string): PayerRow[] {
+export function checkPayers(total: number, payers: PayerRow[], nameOf?: (id: string) => string, currency?: string): PayerRow[] {
+  const money = moneyIn(currency);
   if (payers.length === 0) throw new SplitError("Who paid?");
   uniqueIds(payers.map((p) => p.memberId), nameOf);
   for (const p of payers) {

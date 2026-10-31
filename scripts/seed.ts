@@ -12,7 +12,9 @@ import { addDays, localDay } from "../src/lib/dates";
 import { zonedParts, zonedTimeToUtc } from "../src/lib/time";
 import { guessCategory } from "../src/services/categories";
 import { claims, groups, joins, money, chores as choresSvc, pantry as pantrySvc, recipes as recipesSvc, upkeep as upkeepSvc } from "../src/services";
-import { dollars } from "../src/services/types";
+import { moneyIn } from "../src/services/types";
+
+const dollars = moneyIn("USD");
 import { presetFor } from "../src/toolkits/presets";
 import { PRESETS_FILE, writeStudioPresets } from "./lib/presets";
 import { assertNotProdDb } from "./lib/prod-guard";

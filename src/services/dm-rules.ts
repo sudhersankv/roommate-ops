@@ -1,6 +1,6 @@
 // DMs, pure (ADR 0020): which Group a DM is about, the "for <group>:" prefix, the Start hint's timing and the Echo
 // rule's decision from a run's changes. No DB import: dm.ts and the tests use these.
-import { dollars } from "./types";
+import { moneyIn } from "./types";
 
 /** A reply within this long of Roomie DMing someone is about the Group that DM came from. */
 export const NUDGE_CONTEXT_MS = 24 * 60 * 60 * 1000;
@@ -85,7 +85,8 @@ export type AfterPrivateRun = {
  * one line; a Settlement never is (the other person gets a private line instead); anything else (a personal Cart
  * item, a reminder for me, a fact about me) stays private.
  */
-export function afterPrivateRun(changes: readonly RunChange[]): AfterPrivateRun {
+export function afterPrivateRun(changes: readonly RunChange[], currency = "USD"): AfterPrivateRun {
+  const dollars = moneyIn(currency);
   const parts: string[] = [];
   let actor: string | null = null;
   const privately: { memberId: string; text: string }[] = [];

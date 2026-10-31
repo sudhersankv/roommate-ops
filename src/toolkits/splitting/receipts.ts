@@ -4,7 +4,7 @@ import { EXPENSE_CATEGORIES } from "@/db/enums";
 import { groups, members, money, receipts } from "@/services";
 import { expenseSummary } from "@/services/money";
 import { recordReceiptItems } from "@/services/restock";
-import { dollars } from "@/services/types";
+import { moneyIn } from "@/services/types";
 import { ctxOf, memberIdByName, toCents } from "../util";
 
 export const receiptTools = {
@@ -20,7 +20,7 @@ export const receiptTools = {
         .array(z.object({ item: z.string().describe("As they said it, e.g. 'steak'"), who: z.array(z.string()).describe("Member names; ['everyone'] for shared") }))
         .optional(),
       payer: z.string().optional().describe("Member name if the sender didn't pay"),
-      total: z.number().positive().optional().describe("Dollars, only when they picked a total different from the items' sum"),
+      total: z.number().positive().optional().describe("In the group's currency, only when they picked a total different from the items' sum"),
       description: z.string().optional().describe("Default: the merchant"),
       category: z.enum(EXPENSE_CATEGORIES).optional().describe("Default: food for restaurants, else your pick"),
       confirm: z.boolean().optional(),
@@ -30,6 +30,7 @@ export const receiptTools = {
       await receipts.requireGroupUpload(input.receipt_url, ctx.groupId);
       const group = await groups.getGroup(ctx.groupId);
       const parsed = await receipts.parseReceipt({ url: input.receipt_url }, group?.currency);
+      const amount = moneyIn(group?.currency);
       const everyone = (await members.listMembers(ctx)).map((m) => m.id);
       const payerId = input.payer ? await memberIdByName(ctx, input.payer) : ctx.memberId;
       const assignments = await Promise.all(
@@ -45,13 +46,13 @@ export const receiptTools = {
       const breakdown = {
         merchant: parsed.merchant,
         date: parsed.date,
-        items: items.map((i) => ({ name: i.name, price: dollars(i.cents), who: i.memberIds.length === everyone.length ? "everyone" : i.memberIds.map(nameOf) })),
-        tax: dollars(parsed.taxCents),
-        tip: dollars(parsed.tipCents),
-        total: dollars(totalCents),
-        perPerson: rows.map((r) => ({ name: nameOf(r.memberId), owes: dollars(r.cents) })),
+        items: items.map((i) => ({ name: i.name, price: amount(i.cents), who: i.memberIds.length === everyone.length ? "everyone" : i.memberIds.map(nameOf) })),
+        tax: amount(parsed.taxCents),
+        tip: amount(parsed.tipCents),
+        total: amount(totalCents),
+        perPerson: rows.map((r) => ({ name: nameOf(r.memberId), owes: amount(r.cents) })),
         ...(parsed.mismatch && input.total === undefined
-          ? { warning: `The receipt says ${dollars(parsed.printedTotalCents!)}, but its items, tax and tip add up to ${dollars(parsed.totalCents)}. Ask which total is right before logging.` }
+          ? { warning: `The receipt says ${amount(parsed.printedTotalCents!)}, but its items, tax and tip add up to ${amount(parsed.totalCents)}. Ask which total is right before logging.` }
           : {}),
       };
       if (!input.confirm || (parsed.mismatch && input.total === undefined)) return { logged: false, needsConfirmation: true, ...breakdown };
@@ -64,11 +65,11 @@ export const receiptTools = {
         payerId,
         occurredOn: parsed.date && parsed.date <= (await money.todayIn(ctx.groupId)) ? parsed.date : undefined,
         receiptUrl: input.receipt_url,
-        note: items.map((i) => `${i.name} ${dollars(i.cents)}`).join(", ").slice(0, 500),
+        note: items.map((i) => `${i.name} ${amount(i.cents)}`).join(", ").slice(0, 500),
       });
       // Restock learns from what was bought (grocery and household receipts; claimed lines are that Member's).
       await recordReceiptItems(ctx, { id: e.id, category: e.category ?? "" }, items, everyone).catch((err) => console.warn("[receipts] restock events failed", err));
-      return { logged: true, ...expenseSummary(e) };
+      return { logged: true, ...expenseSummary(e, group?.currency) };
     },
   }),
 };

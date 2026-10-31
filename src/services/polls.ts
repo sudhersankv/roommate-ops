@@ -13,7 +13,8 @@ import { logMessage } from "./chatlog";
 import { listMembers, memberByChannelUser } from "./members";
 import { logExpense } from "./money";
 import { MAX_POLL_OPTIONS, POLL_TTL_MS, pollOutcome, whoIn, type PollReason } from "./poll-rules";
-import { dollars, type Ctx } from "./types";
+import { moneyIn, type Ctx } from "./types";
+import { currencyOf } from "./groups";
 
 export { pollMajority, pollOutcome, whoIn, numberVote, POLL_TTL_MS, MAX_POLL_OPTIONS } from "./poll-rules";
 export type { PollAbout };
@@ -151,7 +152,7 @@ async function runAbout(poll: PollRow): Promise<string | null> {
   }
   const about = poll.about as Extract<PollAbout, { kind: "who-in" }>;
   const votes = await db.select({ memberId: pollVotes.memberId, optionIds: pollVotes.optionIds }).from(pollVotes).where(eq(pollVotes.pollId, poll.id)).orderBy(asc(pollVotes.at));
-  const what = `${dollars(about.cents)} ${about.description}`;
+  const what = `${moneyIn(await currencyOf(poll.groupId))(about.cents)} ${about.description}`;
   if (!votes.length) return `Nobody answered about the ${what}, so it's not logged. Tell me who was in and I'll log it.`;
   const people = await listMembers({ groupId: poll.groupId });
   const among = whoIn({ options: poll.options, votes, members: people, payerId: about.payerId, inOption: about.inOption });

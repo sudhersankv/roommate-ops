@@ -18,7 +18,7 @@ export const pollTools = {
       multi: z.boolean().default(false).describe("Several options may be picked (names: true)"),
       about: z
         .object({
-          amount: z.number().positive().describe("Dollars, as said"),
+          amount: z.number().positive().describe("In the group's currency, as said"),
           description: z.string(),
           payer: z.string().optional().describe("Who paid; default the sender"),
           category: z.enum(EXPENSE_CATEGORIES).optional(),

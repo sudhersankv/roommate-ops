@@ -12,7 +12,8 @@ import { listMembers } from "./members";
 import { enqueueSplitwisePush } from "./outbox";
 import type { ReportPart } from "./report";
 import { checkPayers, computeShares, SplitError, type PayerRow, type PercentRow, type SharesRow, type SplitIntent, type SplitRow } from "./split";
-import { dollars, type Ctx, type GroupCtx } from "./types";
+import { currencyOf } from "./groups";
+import { moneyIn, type Ctx, type GroupCtx } from "./types";
 
 const { expenses, expensePayers, expenseSplits, expenseExternalRefs, settlements, members, groups } = schema;
 
@@ -196,7 +197,7 @@ async function groupTz(groupId: string): Promise<string> {
 export const todayIn = async (groupId: string) => localDay(new Date(), await groupTz(groupId));
 
 /** Validates an Expense against the Group's active Members and works out every Share. */
-async function build(ctx: Ctx, input: ExpenseInput): Promise<BuiltExpense & { nameOf: (id: string) => string }> {
+async function build(ctx: Ctx, input: ExpenseInput): Promise<BuiltExpense & { nameOf: (id: string) => string; amount: (cents: number) => string }> {
   // A variable parent has no amount of its own (0 cents): each month is its own Expense. Its rows keep who's in and the weights.
   if (input.variable) {
     if (input.cents !== 0) throw new Error("A bill that varies has no amount of its own; each month's amount is asked on the due day.");
@@ -205,6 +206,8 @@ async function build(ctx: Ctx, input: ExpenseInput): Promise<BuiltExpense & { na
   if (!description) throw new Error("What was it for? Give the expense a description.");
 
   const people = await listMembers(ctx);
+  const currency = await currencyOf(ctx.groupId);
+  const amount = moneyIn(currency);
   const byId = new Map(people.map((m) => [m.id, m]));
   const nameOf = (id: string) => byId.get(id)?.displayName ?? id;
   const known = (id: string, role: string) => {
@@ -214,8 +217,8 @@ async function build(ctx: Ctx, input: ExpenseInput): Promise<BuiltExpense & { na
   const payerList = input.payers?.length ? input.payers : [{ memberId: input.payerId ?? ctx.memberId, cents: input.cents }];
   for (const p of payerList) known(p.memberId, "payer");
   if (input.variable && payerList.length > 1) throw new SplitError("A bill that varies has one payer. Who pays it?");
-  const payers = input.variable ? [{ memberId: payerList[0].memberId, cents: 0 }] : checkPayers(input.cents, payerList, nameOf);
-  const tie = { payerIds: payers.map((p) => p.memberId), nameOf };
+  const payers = input.variable ? [{ memberId: payerList[0].memberId, cents: 0 }] : checkPayers(input.cents, payerList, nameOf, currency);
+  const tie = { payerIds: payers.map((p) => p.memberId), nameOf, currency };
 
   const method = inferMethod(input);
   let intent: SplitIntent;
@@ -241,6 +244,7 @@ async function build(ctx: Ctx, input: ExpenseInput): Promise<BuiltExpense & { na
     recurring: input.recurring ?? null,
     receiptUrl: input.receiptUrl ?? null,
     nameOf,
+    amount,
   };
 }
 
@@ -290,8 +294,8 @@ export async function insertExpenseRows(
   return tx ? run(tx) : db.transaction(run);
 }
 
-const howSplit = (b: Pick<BuiltExpense, "method" | "rows" | "payers">, nameOf: (id: string) => string) => {
-  const by = b.payers.length > 1 ? ` (paid by ${b.payers.map((p) => `${nameOf(p.memberId)} ${dollars(p.cents)}`).join(", ")})` : "";
+const howSplit = (b: Pick<BuiltExpense, "method" | "rows" | "payers">, nameOf: (id: string) => string, amount: (cents: number) => string) => {
+  const by = b.payers.length > 1 ? ` (paid by ${b.payers.map((p) => `${nameOf(p.memberId)} ${amount(p.cents)}`).join(", ")})` : "";
   return b.method === "equal" ? by : `, split by ${b.method}${by}`;
 };
 
@@ -308,7 +312,7 @@ export async function logExpense(ctx: Ctx, input: ExpenseInput): Promise<Expense
   const id = await insertExpenseRows(ctx.groupId, ctx.memberId, { ...b, source, variable: input.variable, recurringParentId: input.recurringParentId });
   if (!id) throw new Error(`${b.description} for ${b.occurredOn} is already logged.`);
   if (b.receiptUrl) await linkReceipt(ctx, id, b.description, b.receiptUrl);
-  const what = input.variable ? `added ${b.description} (${b.recurring}, amount asked on the due day)` : `added ${b.description}, ${dollars(b.cents)}${howSplit(b, b.nameOf)}`;
+  const what = input.variable ? `added ${b.description} (${b.recurring}, amount asked on the due day)` : `added ${b.description}, ${b.amount(b.cents)}${howSplit(b, b.nameOf, b.amount)}`;
   await recordFor(ctx, "expense.added", what, { table: "expenses", id });
   if (!input.variable) await enqueueSplitwisePush(ctx.groupId, id, "upsert");
   return (await getExpense(ctx, id))!;
@@ -351,12 +355,13 @@ export async function updateExpense(ctx: Ctx, input: ExpensePatch): Promise<Expe
   const before = (await getExpense(ctx, row.id))!;
   const cents = input.cents ?? before.cents;
   const totalChanged = cents !== before.cents;
+  const amount = moneyIn(await currencyOf(ctx.groupId));
 
   let payers = input.payers;
   if (!payers && input.payerId) payers = [{ memberId: input.payerId, cents }];
   if (!payers) {
     const old = before.payers ?? [];
-    if (old.length > 1 && totalChanged) throw new SplitError(`Several people paid for ${before.description}. Who paid how much of the new ${dollars(cents)}?`);
+    if (old.length > 1 && totalChanged) throw new SplitError(`Several people paid for ${before.description}. Who paid how much of the new ${amount(cents)}?`);
     payers = old.length > 1 ? old.map((p) => ({ memberId: p.memberId, cents: p.cents })) : [{ memberId: old[0]?.memberId ?? row.payerId, cents }];
   }
 
@@ -367,7 +372,7 @@ export async function updateExpense(ctx: Ctx, input: ExpensePatch): Promise<Expe
   if (method === "equal") split = { splitAmong: input.splitAmong ?? old.map((s) => s.memberId) };
   else if (method === "exact") {
     if (input.splits) split = { splits: input.splits };
-    else if (totalChanged || before.method !== "exact") throw new SplitError(`${before.description} is split by exact amounts. Give me each person's amount for ${dollars(cents)}.`);
+    else if (totalChanged || before.method !== "exact") throw new SplitError(`${before.description} is split by exact amounts. Give me each person's amount for ${amount(cents)}.`);
     else split = { splits: old.map((s) => ({ memberId: s.memberId, cents: s.cents })) };
   } else if (method === "percent") {
     split = { percents: input.percents ?? (before.method === "percent" ? old.map((s) => ({ memberId: s.memberId, percent: Number(s.weight ?? 0) })) : undefined) };
@@ -411,7 +416,7 @@ export async function updateExpense(ctx: Ctx, input: ExpensePatch): Promise<Expe
     await tx.delete(expenseSplits).where(eq(expenseSplits.expenseId, row.id));
     await writeShares(tx, row.id, b);
   });
-  const what = totalChanged && !before.variable ? `changed ${b.description}: ${dollars(before.cents)} -> ${dollars(cents)}` : `changed ${b.description}`;
+  const what = totalChanged && !before.variable ? `changed ${b.description}: ${amount(before.cents)} -> ${amount(cents)}` : `changed ${b.description}`;
   if (input.receiptUrl !== undefined && input.receiptUrl !== before.receiptUrl) await linkReceipt(ctx, row.id, b.description, b.receiptUrl);
   await recordFor(ctx, "expense.changed", what, { table: "expenses", id: row.id });
   if (!(input.variable ?? before.variable)) await enqueueSplitwisePush(ctx.groupId, row.id, "upsert");
@@ -432,7 +437,7 @@ async function linkReceipt(ctx: Ctx, expenseId: string, description: string, rec
 export async function deleteExpense(ctx: Ctx, input: { expenseId: string }): Promise<{ id: string; description: string; cents: number }> {
   const e = await changeable(ctx, input.expenseId);
   await db.update(expenses).set({ deletedAt: new Date() }).where(eq(expenses.id, e.id));
-  await recordFor(ctx, "expense.deleted", `deleted ${e.description}, ${dollars(e.cents)}`, { table: "expenses", id: e.id });
+  await recordFor(ctx, "expense.deleted", `deleted ${e.description}, ${moneyIn(await currencyOf(ctx.groupId))(e.cents)}`, { table: "expenses", id: e.id });
   await enqueueSplitwisePush(ctx.groupId, e.id, "delete");
   return { id: e.id, description: e.description, cents: e.cents };
 }
@@ -440,7 +445,7 @@ export async function deleteExpense(ctx: Ctx, input: { expenseId: string }): Pro
 export async function restoreExpense(ctx: Ctx, input: { expenseId: string }): Promise<{ id: string; description: string; cents: number }> {
   const e = await changeable(ctx, input.expenseId, { deleted: true });
   await db.update(expenses).set({ deletedAt: null }).where(eq(expenses.id, e.id));
-  await recordFor(ctx, "expense.restored", `restored ${e.description}, ${dollars(e.cents)}`, { table: "expenses", id: e.id });
+  await recordFor(ctx, "expense.restored", `restored ${e.description}, ${moneyIn(await currencyOf(ctx.groupId))(e.cents)}`, { table: "expenses", id: e.id });
   await enqueueSplitwisePush(ctx.groupId, e.id, "upsert");
   return { id: e.id, description: e.description, cents: e.cents };
 }
@@ -581,7 +586,8 @@ export async function settleUp(ctx: Ctx, input: { fromId?: string; toId: string;
   if (!byId.has(fromId)) throw new Error("The payer isn't an active member of this group.");
   if (!byId.has(input.toId)) throw new Error("The person being paid isn't an active member of this group.");
   const [s] = await db.insert(settlements).values({ groupId: ctx.groupId, fromId, toId: input.toId, cents: input.cents }).returning();
-  const summary = fromId === ctx.memberId ? `paid ${byId.get(input.toId)} ${dollars(input.cents)}` : `recorded ${byId.get(fromId)} paying ${byId.get(input.toId)} ${dollars(input.cents)}`;
+  const amount = moneyIn(await currencyOf(ctx.groupId));
+  const summary = fromId === ctx.memberId ? `paid ${byId.get(input.toId)} ${amount(input.cents)}` : `recorded ${byId.get(fromId)} paying ${byId.get(input.toId)} ${amount(input.cents)}`;
   await recordFor(ctx, "settlement.added", summary, { table: "settlements", id: s.id });
   return { id: s.id, fromId, toId: input.toId, cents: input.cents };
 }
@@ -653,8 +659,9 @@ export async function getExpense(ctx: GroupCtx, expenseId: string): Promise<Expe
   return (await listExpenses(ctx, 1, { expenseId }))[0];
 }
 
-/** What the model reads back about an Expense (Money's tools, the Cart's "I paid"): names and ready-made dollar strings, so it never formats or adds cents itself. */
-export function expenseSummary(e: Expense) {
+/** What the model reads back about an Expense (Money's tools, the Cart's "I paid"): names and ready-made amounts in the Group's currency, so it never formats or adds cents itself. */
+export function expenseSummary(e: Expense, currency = "USD") {
+  const dollars = moneyIn(currency);
   return {
     id: e.id,
     description: e.description,

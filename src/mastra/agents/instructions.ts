@@ -2,6 +2,7 @@
 // from the enabled manifests in its Toolkit slot, and the per-request blocks. agents/roomie.ts fetches the facts and
 // calls roomieInstructions; tests import this file directly.
 import { defaultPersonality, type Personality } from "@/lib/personality";
+import { currencySymbol } from "@/lib/money";
 import { describeNow } from "@/lib/time";
 import { DEFAULT_TIMEZONE } from "@/services/schedule";
 import { COMING_SOON, CORE_MANIFEST, MANIFESTS, TOOLKIT_IDS } from "@/toolkits/manifests";
@@ -56,16 +57,17 @@ export function describeMembers(people: { displayName: string; role: string; sta
   return `${active.join(", ") || "unknown yet"}${pending.length ? `; pending approval: ${pending.join(", ")}` : ""}`;
 }
 
-export type InstructionOpts = { onboarding?: boolean; toolkits?: readonly string[]; personality?: Personality } & Partial<
+export type InstructionOpts = { onboarding?: boolean; toolkits?: readonly string[]; personality?: Personality; /** The Group's, default USD. */ currency?: string } & Partial<
   Omit<PersonaFacts, "personality" | "toolkitPersona" | "timezone">
 >;
 
 export function roomieInstructions(ctx: Partial<RoomieContext>, members: string, now = new Date(), timezone = DEFAULT_TIMEZONE, opts: InstructionOpts = {}): string {
-  const { onboarding, toolkits, personality, ...facts } = opts;
+  const { onboarding, toolkits, personality, currency = "USD", ...facts } = opts;
   const blocks = [
     composePersona({ ...facts, personality: personality ?? defaultPersonality(), timezone, toolkitPersona: toolkitPersona(toolkits ?? ctx.toolkits ?? TOOLKIT_IDS) }),
     `Group members: ${members}.${ctx.memberName ? ` You're talking with ${ctx.memberName}.` : ""}`,
     `Now (local): ${describeNow(timezone, now)}. House timezone: ${timezone}. "Today", "tonight", "Tuesday 8pm" and "this week" mean that zone. Pass times to tools as local wall-clock without an offset (2026-11-03T20:00); the tools convert.`,
+    `Money in this group is ${currency} (${currencySymbol(currency)}). Amounts people say ("190", "1.5k") are ${currency}; pass them to tools as they said them. Say amounts the way the tools return them, never in another currency.`,
   ];
   if (ctx.status === "pending" && ctx.memberName) blocks.push(PENDING(ctx.memberName));
   if (ctx.isPrivate && ctx.memberName) blocks.push(DM(ctx.memberName));

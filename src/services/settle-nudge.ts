@@ -14,7 +14,8 @@ import { listMembersWithHandles } from "./members";
 import { computeSettlePlan, pairwiseDebts, type Transfer } from "./money";
 import { mayPost, sendDms, type DmOutcome, type RentDm } from "./rent";
 import { claimPost, getSchedule, groupTimezone, weeklyReportWindow } from "./schedule";
-import { dollars, type Ctx, type GroupCtx } from "./types";
+import { moneyIn, type Ctx, type GroupCtx } from "./types";
+import { currencyOf } from "./groups";
 
 const { expenses, expensePayers, expenseSplits, settlements, memberNotes, groupToolkits } = schema;
 const DAY_MS = 86_400_000;
@@ -76,8 +77,8 @@ export function nudgeCandidates(
 }
 
 /** The DM: their amount, who to, how to close it. */
-export function nudgeText(c: Pick<NudgeCandidate, "toName" | "cents">, hasLink: boolean): string {
-  const head = `Quick one: you owe ${c.toName} ${dollars(c.cents)}.`;
+export function nudgeText(c: Pick<NudgeCandidate, "toName" | "cents">, hasLink: boolean, currency = "USD"): string {
+  const head = `Quick one: you owe ${c.toName} ${moneyIn(currency)(c.cents)}.`;
   return hasLink ? `${head} Tap to pay, then say "paid" here.` : `${head} No pay link yet: ${c.toName} can tell me their Venmo, PayPal or Cash App. Say "paid" here once it's done.`;
 }
 
@@ -132,7 +133,7 @@ export async function updateNudgeSettings(ctx: Ctx, patch: Partial<NudgeSettings
     .insert(groupToolkits)
     .values({ groupId: ctx.groupId, toolkit: splitting.id, enabled: true, settings })
     .onConflictDoUpdate({ target: [groupToolkits.groupId, groupToolkits.toolkit], set: { settings } });
-  const what = next.enabled ? `set the settle nudge to over ${dollars(next.thresholdCents)} for ${next.thresholdDays} days` : "turned the settle nudge off";
+  const what = next.enabled ? `set the settle nudge to over ${moneyIn(await currencyOf(ctx.groupId))(next.thresholdCents)} for ${next.thresholdDays} days` : "turned the settle nudge off";
   await recordFor(ctx, "group.settings", what, { table: "groups", id: ctx.groupId });
   return next;
 }
@@ -169,11 +170,11 @@ export async function settleNudgeCandidates(ctx: GroupCtx, now = new Date()): Pr
 
 /** The DMs for those candidates, pay links to each creditor's handles. */
 export async function settleNudgeDms(ctx: GroupCtx, now = new Date()): Promise<RentDm[]> {
-  const [candidates, people] = await Promise.all([settleNudgeCandidates(ctx, now), listMembersWithHandles(ctx)]);
+  const [candidates, people, currency] = await Promise.all([settleNudgeCandidates(ctx, now), listMembersWithHandles(ctx), currencyOf(ctx.groupId)]);
   const handlesOf = new Map(people.map((p) => [p.id, p.handles]));
   return candidates.map((c) => {
     const buttons = payLinks(handlesOf.get(c.toId) ?? {}, c.cents, { to: c.toName });
-    return { memberId: c.fromId, cents: c.cents, text: nudgeText(c, buttons.length > 0), buttons };
+    return { memberId: c.fromId, cents: c.cents, text: nudgeText(c, buttons.length > 0, currency), buttons };
   });
 }
 

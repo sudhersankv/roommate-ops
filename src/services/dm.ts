@@ -10,6 +10,7 @@ import { dbNow, runChanges } from "./activity";
 import { logMessage } from "./chatlog";
 import { getNote, setNoteKeys, type Member, type NudgeNote } from "./members";
 import { afterPrivateRun, groupPrefix, matchGroupName, pickDmGroup, startHint, startHintDue, type DmCandidate, type RunChange } from "./dm-rules";
+import { currencyOf } from "./groups";
 
 export { NUDGE_CONTEXT_MS, START_HINT_MS, afterPrivateRun, pickDmGroup, startHint } from "./dm-rules";
 
@@ -107,7 +108,7 @@ export async function echoAfterPrivateRun(groupId: string, memberId: string, sin
     }
     changes.push(c);
   }
-  const plan = afterPrivateRun(changes);
+  const plan = afterPrivateRun(changes, await currencyOf(groupId));
   if (plan.echo) {
     await deliver(groupId, { text: plan.echo });
     await logMessage(groupId, null, plan.echo);

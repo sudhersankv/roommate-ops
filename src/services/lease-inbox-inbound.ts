@@ -9,7 +9,6 @@ import { CantMessagePrivatelyError } from "@/channels/types";
 import { db, schema } from "@/db";
 import { mailClient, type MailAttachment, type MailMessage } from "@/integrations/mail";
 import { addressOf } from "@/lib/forwarded";
-import { formatMoney } from "@/lib/money";
 import { inQuietHours, nextAllowed } from "@/lib/quiet-hours";
 import { leaseInbox as manifest } from "@/toolkits/lease-inbox/manifest";
 import { logMessage } from "./chatlog";
@@ -24,7 +23,7 @@ import { sendNudge } from "./nudges";
 import { dbMoments } from "./pet";
 import { prefillAmount } from "./recurring";
 import { setReminder } from "./reminders";
-import { getRent } from "./rent";
+import { getRent, shortMoney } from "./rent";
 import { DEFAULT_TIMEZONE } from "./schedule";
 import { postUrgent } from "./urgent";
 
@@ -178,10 +177,10 @@ export async function fileAttachments(groupId: string, mailId: string, attachmen
 }
 
 /** The rent proposal for the Admin (private): the landlord's line, and the exact words that update the rent. */
-export function rentProposalText(summary: string, amountCents: number | null, currentCents: number | null): string {
-  const now = currentCents ? ` (it's ${formatMoney(currentCents).replace(/\.00$/, "")} now)` : "";
+export function rentProposalText(summary: string, amountCents: number | null, currentCents: number | null, currency = "USD"): string {
+  const now = currentCents ? ` (it's ${shortMoney(currentCents, currency)} now)` : "";
   const ask = amountCents
-    ? `If the rent is now ${formatMoney(amountCents).replace(/\.00$/, "")}${now}, say "roomie, update the rent to ${formatMoney(amountCents).replace(/\.00$/, "")}" and I'll change it.`
+    ? `If the rent is now ${shortMoney(amountCents, currency)}${now}, say "roomie, update the rent to ${shortMoney(amountCents, currency)}" and I'll change it.`
     : `Tell me the new amount ("roomie, update the rent to ...") and I'll change it${now}.`;
   return `The landlord emailed about the rent or the lease: ${summary}. ${ask} Nothing changes until you say so.`;
 }
@@ -233,7 +232,7 @@ export async function processInbound(groupId: string, message: MailMessage, opts
     async proposeRent(gid, id, amountCents) {
       const [m] = await db.select({ summary: mailMessages.summary, subject: mailMessages.subject }).from(mailMessages).where(eq(mailMessages.id, id));
       const rent = await getRent({ groupId: gid });
-      await tellAdmins(gid, rentProposalText(m?.summary ?? m?.subject ?? "a change", amountCents, rent?.cents ?? null), now);
+      await tellAdmins(gid, rentProposalText(m?.summary ?? m?.subject ?? "a change", amountCents, rent?.cents ?? null, rent?.currency), now);
     },
     async prefillUtility(gid, utility, cents) {
       await prefillAmount(gid, utility, cents);

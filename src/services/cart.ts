@@ -15,7 +15,8 @@ import { listMembers } from "./members";
 import { logExpense, type Expense } from "./money";
 import { insertPurchases, localDay } from "./restock";
 import type { ReportPart } from "./report";
-import { dollars, type Ctx, type GroupCtx } from "./types";
+import { moneyIn, type Ctx, type GroupCtx } from "./types";
+import { currencyOf } from "./groups";
 
 export { canRemoveItem, computeCartSplits, type SplitItem } from "./cart-split";
 
@@ -357,6 +358,6 @@ export async function markPurchased(ctx: Ctx, input: { totalCents: number; payer
     count = items.length;
     return expense;
   });
-  await record(ctx.groupId, ctx.memberId, "cart.purchased", `marked the Cart bought (${count} item${count === 1 ? "" : "s"}, ${dollars(input.totalCents)})`, { table: "expenses", id: expense.id }, sourceOf(ctx));
+  await record(ctx.groupId, ctx.memberId, "cart.purchased", `marked the Cart bought (${count} item${count === 1 ? "" : "s"}, ${moneyIn(await currencyOf(ctx.groupId))(input.totalCents)})`, { table: "expenses", id: expense.id }, sourceOf(ctx));
   return expense;
 }

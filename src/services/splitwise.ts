@@ -11,7 +11,7 @@ import { requireAdmin } from "./authz";
 import { guessCategory } from "./categories";
 import { insertExpenseRows, listExpenses } from "./money";
 import { dueJobs, markDone, markFailed, pendingCount } from "./outbox";
-import { dollars, type Ctx, type GroupCtx } from "./types";
+import { moneyIn, type Ctx, type GroupCtx } from "./types";
 
 const { splitwiseLinks, members, accounts, expenses, expenseExternalRefs, settlements, settlementExternalRefs, groups } = schema;
 
@@ -345,7 +345,7 @@ export async function exportToSplitwise(ctx: Ctx, input: { splitwiseGroupId?: st
     const from = link.memberMap[s.fromId];
     const to = link.memberMap[s.toId];
     if (!from || !to) {
-      result.skipped.push({ expense: `payment of ${dollars(s.cents)}`, why: "someone in it isn't in the Splitwise group" });
+      result.skipped.push({ expense: `payment of ${moneyIn(g?.currency)(s.cents)}`, why: "someone in it isn't in the Splitwise group" });
       continue;
     }
     const { id } = await splitwiseClient().createExpense(userId, {

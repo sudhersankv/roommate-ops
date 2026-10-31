@@ -126,9 +126,9 @@ export function ExpenseDrawer({
 }
 
 /** The Shares this draft would save, worked out with the same split.ts the service uses. */
-function preview(d: Draft, total: number | null, ids: string[], realName: (id: string) => string, payerIds: string[]) {
+function preview(d: Draft, total: number | null, ids: string[], realName: (id: string) => string, payerIds: string[], currency: string) {
   if (total === null || total <= 0) return { rows: [] as SplitRow[], ok: false, text: "Enter the total first." }
-  const tie = { payerIds, nameOf: realName }
+  const tie = { payerIds, nameOf: realName, currency }
   let intent: SplitIntent
   if (d.method === "equal") {
     const among = ids.filter((id) => d.included.includes(id))
@@ -191,7 +191,7 @@ function ExpenseForm({ expense, onDone, onSaved }: { expense?: ExpenseView; onDo
   const payersOk = totalOk && payerRows.every((p) => p.cents !== null) && paidSum === total
   const payerIds = payersOk ? checkPayers(total!, payerRows as SplitRow[]).map((p) => p.memberId) : [d.payer]
 
-  const split = preview(d, total, ids, realName, payerIds)
+  const split = preview(d, total, ids, realName, payerIds, group.currency)
   const shareOf = (id: string) => split.rows.find((s) => s.memberId === id)?.cents
   const valid = totalOk && descriptionOk && split.ok && payersOk
 
