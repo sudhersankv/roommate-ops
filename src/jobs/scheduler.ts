@@ -11,6 +11,7 @@ import { deliver } from "@/channels";
 import { nudgeOrHint } from "@/services/dm";
 import { expirePolls } from "@/services/polls";
 import { groupBundle } from "@/services/bundle";
+import { logMessage } from "@/services/chatlog";
 import { groupsWithChat } from "@/services/groups";
 import { claimReminder, dueReminders, releaseReminder, reminderLine, scheduleNext, type Reminder } from "@/services/reminders";
 import { bundleWindow, claimPost, getSchedule, releasePost, weeklyReportWindow, type PostKind } from "@/services/schedule";
@@ -130,7 +131,11 @@ export async function bundleJob(g: GroupRow, now: Date): Promise<string | null> 
   if (!w.open) return null;
   const text = await groupBundle({ groupId: g.id }, now);
   if (!text) return null;
-  return (await postOnce(g, "bundle", w.period, text)) ? text : null;
+  if (!(await postOnce(g, "bundle", w.period, text))) return null;
+  // Only the Bundle is logged as Roomie's line (not the report or urgent posts): it asks things ("Add them?"), and
+  // the follow-up window it opens is how a "yes" reaches the agent, with the Bundle in its earlier chat.
+  await logMessage(g.id, null, text).catch((e) => console.warn(`scheduler: couldn't log ${g.name}'s Bundle`, e));
+  return text;
 }
 
 /** The weekly Group Report, on the Group's report day and hour. Returns the text posted. */

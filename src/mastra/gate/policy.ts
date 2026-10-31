@@ -103,7 +103,8 @@ export const FOLLOW_UP_MAX = 4;
  * been logged since it. Both facts come from chat_log, so the window survives restarts and multiple instances.
  * Off-by-one: the pipeline logs the message being handled BEFORE deciding, so `humanSinceRoomie` already includes
  * it. With maxFollowUps = 4 the 1st, 2nd and 3rd follow-up (count 1..3) are in the window; the 4th closes it.
- * Roomie's own replies refresh it (a new memberId=null row); scheduled posts are not logged and never open one.
+ * Roomie's own replies refresh it (a new memberId=null row); of the scheduled posts only the morning Bundle is logged
+ * (its "Add them?" wants a "yes"), the weekly report and urgent posts never open one.
  */
 export function inFollowUpWindow({
   lastRoomieAt,
