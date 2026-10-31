@@ -6,7 +6,9 @@ import assert from "node:assert/strict";
 import { COMING_SOON, MANIFESTS } from "@/toolkits/manifests";
 import { PRESETS } from "@/toolkits/presets";
 import type { ToolkitManifest } from "@/toolkits/types";
-import { NAV_TABS, groupTricks, shellView, todayRows } from "./data";
+import type { GroupSession } from "@/lib/session";
+import type { Expense } from "@/services/money";
+import { NAV_TABS, expenseView, groupTricks, shellView, todayRows } from "./data";
 
 const onFor = (ids: readonly string[]) => Object.fromEntries(MANIFESTS.map((m) => [m.id, ids.includes(m.id)]));
 
@@ -82,6 +84,15 @@ describe("shellView", () => {
     assert.deepEqual(v.drawer.notYet.map((t) => t.name), ["Money", "Groceries", "House"]);
     assert.equal(v.drawer.soon.length, COMING_SOON.length);
   });
+});
+
+test("expenseView: a receipt shows only for a Document's link (made local); an old /uploads path shows none", () => {
+  const id = "0b7e4a52-3c1d-4f6a-9e2b-5d8c7a1f0e93";
+  const s = { member: { id: "dev", role: "member" }, group: { timezone: "America/Chicago" } } as unknown as GroupSession;
+  const e = (receiptUrl: string | null): Expense => ({ id: "e1", payerName: "Dev", cents: 6000, description: "Luigi's", createdAt: new Date(), occurredOn: "2026-10-30", category: "food", receiptUrl });
+  assert.equal(expenseView(s, e(`/api/docs/${id}`)).receiptUrl, `/api/docs/${id}`);
+  assert.equal(expenseView(s, e("/uploads/tg/-100123/AQAD.jpg")).receiptUrl, null);
+  assert.equal(expenseView(s, e(null)).receiptUrl, null);
 });
 
 describe("todayRows (Home's Today = the Bundle on a page)", () => {

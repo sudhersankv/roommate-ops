@@ -52,6 +52,12 @@ export function docIdFromUrl(url: string): string | null {
   return rel ? (DOC_PATH.exec(rel)?.[1]?.toLowerCase() ?? null) : null;
 }
 
+/** An Expense's receipt link as people open it (/api/docs/<id>); null for anything else, an old /uploads path included. */
+export function receiptHref(url: string | null | undefined): string | null {
+  const id = url ? docIdFromUrl(url) : null;
+  return id ? docPath(id) : null;
+}
+
 /** The same Channel file (a Telegram file id, a WhatsApp message id) is one Document per Group. */
 export function stableDocId(groupId: string, name: string): string {
   const h = createHash("sha256").update(`${groupId}:${name}`).digest("hex");

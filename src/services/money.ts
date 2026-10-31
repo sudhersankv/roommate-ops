@@ -7,7 +7,7 @@ import { localDay } from "@/lib/dates";
 import { recordFor } from "./activity";
 import { canChangeExpense, NotAllowedError, requireActive } from "./authz";
 import { guessCategory, isCategory } from "./categories";
-import { attachReceipt, docIdFromUrl } from "./documents";
+import { attachReceipt, docIdFromUrl, receiptHref } from "./documents";
 import { listMembers } from "./members";
 import { enqueueSplitwisePush } from "./outbox";
 import { joinNames, type ReportPart } from "./report";
@@ -638,7 +638,7 @@ export function expenseSummary(e: Expense) {
     shares: (e.splits ?? []).map((s) => ({ name: s.name, owes: dollars(s.cents), ...(s.weight != null ? { [e.method === "percent" ? "percent" : "shares"]: s.weight } : {}) })),
     ...(e.note ? { note: e.note } : {}),
     ...(e.recurring ? { repeats: e.recurring } : {}),
-    ...(e.receiptUrl ? { hasReceipt: true } : {}),
+    ...(receiptHref(e.receiptUrl) ? { hasReceipt: true } : {}),
     ...(e.splitwiseId ? { inSplitwise: true } : {}),
   };
 }

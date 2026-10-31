@@ -268,8 +268,13 @@ export async function uploadBelongsTo(url: string, groupId: string): Promise<boo
   return !!id && !!(await getDocument({ groupId }, id));
 }
 
+const GONE = "That photo isn't here anymore.";
+/** A link from before Documents (/uploads/<folder>/<name>.<ext>, relative or under a host): that disk is long wiped. */
+const OLD_UPLOAD = /^(https?:\/\/[^/]+)?\/uploads\/(?:[a-z0-9_-]+\/)+[a-z0-9_-]+\.[a-z0-9]+$/i;
+
 /** Throws the friendly error unless the photo was sent in (or uploaded for) this Group. */
 export async function requireGroupUpload(url: string, groupId: string): Promise<void> {
+  if (OLD_UPLOAD.test(url)) throw new Error(GONE);
   if (!(await uploadBelongsTo(url, groupId))) throw new Error("I can only read photos sent in this group's chat or uploaded on its dashboard.");
 }
 
@@ -282,9 +287,10 @@ export async function imageDataUrl(url: string, opts: { ownOnly?: boolean } = {}
   if (id) {
     const groupId = await documentGroup(id);
     const blob = groupId ? await documentBytes(groupId, id) : null;
-    if (!blob) throw new Error("That photo isn't here anymore.");
+    if (!blob) throw new Error(GONE);
     return `data:${blob.contentType};base64,${blob.bytes.toString("base64")}`;
   }
+  if (OLD_UPLOAD.test(url)) throw new Error(GONE);
   if (opts.ownOnly || !/^https:\/\//i.test(url)) throw new Error("I can only read photos sent in the chat or uploaded on the dashboard.");
   const res = await fetch(url, { signal: AbortSignal.timeout(20_000), redirect: "error" });
   const type = res.headers.get("content-type")?.split(";")[0] ?? "";
