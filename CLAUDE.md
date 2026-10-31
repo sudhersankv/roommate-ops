@@ -33,7 +33,8 @@ src/
                         title, storage_key in the BlobStore, source, uploaded_by, filed_at null = an unkept chat photo),
                         expenses.receipt_document_id and pending_posts (urgent posts / DMs held through quiet hours) and
                         scheduled_posts kind "bundle" (was "chores.nudge"), migration 0015; polls (secret = WhatsApp's
-                        messageSecret), poll_votes and dm_context (#24B, migration 0016)
+                        messageSecret), poll_votes and dm_context (#24B, migration 0016); 0019 nulls pre-Documents
+                        /uploads receipt_url values (hand-written, idempotent)
   db/enums.ts           categories, split methods, recurrences, sources, Group purposes, beta sizes / statuses (no drizzle
                         import: client code uses them)
   db/index.ts           db client
@@ -69,11 +70,13 @@ src/
                         unfiled photo Document; folder "tg/<chat>" / "wa/<user>" / "g-<id>" or { groupId } -> /api/docs/<id>),
                         askVision (the one vision call), imageDataUrl (our Documents from the blob store)
     documents.ts        Documents (ADR 0018): fileDocument (row + blob "g/<groupId>/<id>"), list / findDocuments (title or
-                        kind, newest first), readDocument (active Members), keepDocument ("roomie keep this"), attachReceipt,
+                        kind, newest first), readDocument (active Members), keepDocument ("roomie keep this"), attachReceipt
+                        (one Expense per receipt: attaching it elsewhere moves it; a re-sent deleted photo comes back),
                         deleteDocument (uploader or Admin), documentsView (the Docs tab's data), forget me (deleteMemberPhotos,
                         anonymizeUploader, deleteUnfiledByUrl), deleteGroupDocuments, purgeOldDocuments (unkept, 30 days)
     urgent.ts           the urgent slot: postUrgent (one a day, "urgent" claim, held to 08:00 in quiet hours, nothing when
-                        paused), flushPendingPosts (scheduler: claim-by-delete, put back on failure), nudgesOff
+                        paused; a failed queue write gives the claim back), flushPendingPosts (scheduler: claim-by-delete,
+                        put back on failure until a day old, a refused DM becomes postStartHint), nudgesOff
     nudges.ts           sendNudge(memberId, out, now): a private nudge; skipped when member_notes.note.nudges = "off",
                         held to 08:00 in quiet hours
     grocery-photos.ts   a recipe / list / shelf photo -> items as written (readGroceryPhoto, cached per url;
@@ -104,7 +107,8 @@ src/
                         (pollMajority = floor(n/2)+1, pollOutcome, whoIn, numberVote)
     dm.ts               DMs (ADR 0020): noteDmContext, resolveDmGroup (prefix -> nudge 24 h -> last DM'd -> only Group ->
                         ask once, the held message runs on the answer), echoAfterPrivateRun (the Echo rule from the
-                        run's Activity rows), nudgeOrHint (no DM path: one neutral line per Member per 7 days);
+                        run's Activity rows), nudgeOrHint (no DM path: one neutral line per Member per 7 days,
+                        postStartHint alone for a held DM);
                         dm-rules.ts = the pure rules (pickDmGroup, groupPrefix, afterPrivateRun, startHint)
     report.ts           groupReport (the enabled Toolkits' report() parts in post order + core's Reminders line, naming no
                         Toolkit) + composeReport / formatGroupReport (one message; casual = sentences), dueWord, joinNames
