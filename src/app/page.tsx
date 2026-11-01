@@ -9,7 +9,7 @@ import { Landing } from "./_landing/landing"
 
 const TITLE = "Roomie — the roommate who actually keeps track"
 const DESCRIPTION =
-  "Add Roomie to your apartment's group chat. It handles rent, splits, groceries, chores and the landlord, so none of you have to. WhatsApp beta; works on Telegram today. Every group gets its own dashboard."
+  "A tiny dino that lives in your apartment's group chat and keeps track of rent, splits, groceries, chores and the landlord's emails, so nothing gets buried. Works on Telegram today; WhatsApp waitlist."
 
 export function generateMetadata(): Metadata {
   const base = appUrl()

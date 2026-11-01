@@ -26,7 +26,10 @@ export { telegramAddUrl } from "./marks"
 
 /** The words (ADR 0015). The headline is also the metadata's and the share image's (scripts/og-image.ts keeps its own copy). */
 export const HEADLINE = "The roommate who actually keeps track."
-export const SUBLINE = "Add it to the group chat. It handles rent, splits, groceries, chores and the landlord, so none of you have to."
+export const SUBLINE = "A tiny dino that lives in your group chat. Rent, splits, groceries, chores and the landlord's emails: it keeps track, so nothing gets buried."
+/** The launch video (unlisted YouTube Short), embedded without cookies. */
+export const VIDEO_ID = "3wBbhV3xV8Q"
+export const VIDEO_TITLE = "Nothing gets buried."
 export const DEMOS_TITLE = "Five apps and a group mom. Or Roomie."
 export const DEMOS_SUBLINE = "Splitwise, a list app, a chores app, calendar reminders and the landlord thread one of you is stuck forwarding. One roommate instead."
 export const OTHER_GROUPS_LINE = "Not roommates? It works for trips and friends too."
@@ -48,6 +51,7 @@ export function Landing({ signedIn = false, votes = {} }: { signedIn?: boolean; 
       <Hero addUrl={addUrl} signedIn={signedIn} />
       <main id="main">
         <Channels addUrl={addUrl} votes={votes} />
+        <Video addUrl={addUrl} />
         <Demos addUrl={addUrl} />
         <Tricks votes={votes} />
         <HowItWorks addUrl={addUrl} />
@@ -62,19 +66,19 @@ export function Landing({ signedIn = false, votes = {} }: { signedIn?: boolean; 
 
 /* ---------- hero: headline, one line, two buttons, one chat ---------- */
 
-/** The hero's buttons: the WhatsApp beta first (ADR 0015), Telegram as "works today". Reused after the demos. */
+/** The hero's buttons: Telegram first (it works today), the WhatsApp waitlist second. Reused after the demos. */
 function AddButtons({ addUrl, size = "lg" }: { addUrl: string; size?: "lg" | "default" }) {
   const small = size === "lg" ? "max-sm:h-11 max-sm:px-4 max-sm:text-sm" : ""
   return (
     <div className="flex flex-wrap gap-2 sm:gap-3">
-      <Button size={size} nativeButton={false} render={<a href="#whatsapp-beta" />} className={small}>
-        <WhatsAppMark />
-        WhatsApp beta
-      </Button>
-      <Button size={size} variant="tint" nativeButton={false} render={<a href={addUrl} target="_blank" rel="noopener noreferrer" />} className={small}>
+      <Button size={size} nativeButton={false} render={<a href={addUrl} target="_blank" rel="noopener noreferrer" />} className={small}>
         <TelegramMark />
-        Works on Telegram today
+        Add it on Telegram
         <span className="sr-only">(opens Telegram in a new tab)</span>
+      </Button>
+      <Button size={size} variant="tint" nativeButton={false} render={<a href="#whatsapp-beta" />} className={small}>
+        <WhatsAppMark />
+        WhatsApp waitlist
       </Button>
     </div>
   )
@@ -260,6 +264,39 @@ function IMessageMark() {
   )
 }
 
+/* ---------- the launch video ---------- */
+
+/** The launch video beside the two things it says. A vertical YouTube Short on youtube-nocookie.com, loaded lazily. */
+function Video({ addUrl }: { addUrl: string }) {
+  return (
+    <section id="video" aria-labelledby="video-title" className="mx-auto grid max-w-6xl scroll-mt-6 items-center gap-10 px-5 pt-32 sm:px-8 md:grid-cols-[1fr_minmax(0,22rem)] lg:gap-16 lg:pt-40">
+      <div className="flex flex-col gap-5">
+        <SectionHead id="video-title" title={VIDEO_TITLE}>
+          Two minutes in Apt 4B: the milk, the trash, the wifi money and the leasing office email nobody read.
+        </SectionHead>
+        <ul className="m-0 flex list-none flex-col gap-3 p-0 text-base leading-snug sm:text-lg">
+          <li><span className="font-extrabold">Just talk to it.</span> <span className="text-muted-foreground">Say what you paid, what you need or what broke.</span></li>
+          <li><span className="font-extrabold">Never calls anyone out.</span> <span className="text-muted-foreground">Who owes what is a private reminder, until it&apos;s paid.</span></li>
+        </ul>
+        <AddButtons addUrl={addUrl} size="default" />
+      </div>
+      <div className="mx-auto w-full max-w-[22rem] overflow-hidden rounded-[2rem] border-[7px] border-[#1b262d] bg-[#0b141a] shadow-2xl shadow-black/40">
+        <div className="relative aspect-[9/16] w-full">
+          <iframe
+            src={`https://www.youtube-nocookie.com/embed/${VIDEO_ID}?rel=0&playsinline=1`}
+            title="Roomie: Nothing gets buried (video)"
+            loading="lazy"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+            referrerPolicy="strict-origin-when-cross-origin"
+            allowFullScreen
+            className="absolute inset-0 size-full border-0"
+          />
+        </div>
+      </div>
+    </section>
+  )
+}
+
 /* ---------- the demos: one per bucket ---------- */
 
 function Demos({ addUrl }: { addUrl: string }) {
@@ -386,7 +423,7 @@ function Studs({ ghost = false }: { ghost?: boolean }) {
 const STEPS: { title: string; body: ReactNode }[] = [
   { title: "Add it to the group chat", body: "WhatsApp is in beta; Telegram works today." },
   { title: "Answer one question", body: "What the group's for. It learns the right Tricks." },
-  { title: "Open the dashboard", body: "It posts one Join link for everyone. Sign in with Google, pick your name." },
+  { title: "Then just talk to it", body: "In the chat, or privately. A dashboard comes with it, if you want it." },
 ]
 
 function HowItWorks({ addUrl }: { addUrl: string }) {
@@ -413,8 +450,8 @@ function HowItWorks({ addUrl }: { addUrl: string }) {
       <div className="mt-14 grid gap-4 md:grid-cols-3">
         <div className="flex flex-col gap-2 rounded-3xl border bg-card p-5">
           <Roomie mood="sleepy" size={52} animated className="-ml-1" />
-          <h3 className="type-heading m-0">Speaks when spoken to</h3>
-          <p className="type-body m-0 text-muted-foreground">Say &ldquo;roomie&rdquo;, @mention it or reply to it. One morning post, then it keeps quiet.</p>
+          <h3 className="type-heading m-0">Never nags in the group</h3>
+          <p className="type-body m-0 text-muted-foreground">Money and chore reminders go to you privately. In the group it speaks when spoken to, plus one morning post.</p>
         </div>
         <div className="flex flex-col gap-2 rounded-3xl border bg-card p-5">
           <LockIcon aria-hidden className="m-3 size-7 text-owed" />
@@ -443,7 +480,7 @@ function DashboardPeek() {
   return (
     <section aria-labelledby="peek-title" className="dark mt-32 bg-forest text-foreground lg:mt-40">
       <div className="mx-auto max-w-6xl px-5 py-24 sm:px-8 lg:py-28">
-        <SectionHead id="peek-title" title="Every group gets a dashboard." className="[&_h2]:text-mint [&_p]:text-mint/80">
+        <SectionHead id="peek-title" title="And a dashboard, if you want it." className="[&_h2]:text-mint [&_p]:text-mint/80">
           Settle up, tick off a chore, check the Cart. No scrolling back.
         </SectionHead>
         <ul className="m-0 -mx-5 mt-14 flex list-none snap-x snap-mandatory gap-5 overflow-x-auto px-5 pb-4 sm:mx-0 sm:justify-center sm:overflow-visible sm:px-0 lg:gap-10">
@@ -468,7 +505,7 @@ function Beta({ addUrl }: { addUrl: string }) {
       <div className="flex flex-col gap-5">
         <Roomie mood="calm" size={72} animated />
         <SectionHead id="beta-title" title="Want it on WhatsApp?">
-          WhatsApp is in a small beta. Tell us about your apartment.
+          WhatsApp is in a small beta. Join the waitlist and we&apos;ll add you.
         </SectionHead>
         <p className="type-body m-0 max-w-[44ch] text-muted-foreground">
           On Telegram?{" "}
