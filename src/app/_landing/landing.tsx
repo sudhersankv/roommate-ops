@@ -27,8 +27,9 @@ export { telegramAddUrl } from "./marks"
 /** The words (ADR 0015). The headline is also the metadata's and the share image's (scripts/og-image.ts keeps its own copy). */
 export const HEADLINE = "The roommate who actually keeps track."
 export const SUBLINE = "A tiny dino that lives in your group chat. Rent, splits, groceries, chores and the landlord's emails: it keeps track, so nothing gets buried."
-/** The launch video (unlisted YouTube Short), embedded without cookies. */
-export const VIDEO_ID = "3wBbhV3xV8Q"
+/** The launch video, served from public/landing (720p, faststart, about 9.7 MB) with its end card as the poster. */
+export const VIDEO_SRC = "/landing/roomie-video.mp4"
+export const VIDEO_POSTER = "/landing/roomie-video-poster.jpg"
 export const VIDEO_TITLE = "Nothing gets buried."
 export const DEMOS_TITLE = "Five apps and a group mom. Or Roomie."
 export const DEMOS_SUBLINE = "Splitwise, a list app, a chores app, calendar reminders and the landlord thread one of you is stuck forwarding. One roommate instead."
@@ -266,7 +267,7 @@ function IMessageMark() {
 
 /* ---------- the launch video ---------- */
 
-/** The launch video beside the two things it says. A vertical YouTube Short on youtube-nocookie.com, loaded lazily. */
+/** The launch video beside the two things it says. Our own file in a phone frame: nothing loads until someone presses play. */
 function Video({ addUrl }: { addUrl: string }) {
   return (
     <section id="video" aria-labelledby="video-title" className="mx-auto grid max-w-6xl scroll-mt-6 items-center gap-10 px-5 pt-32 sm:px-8 md:grid-cols-[1fr_minmax(0,22rem)] lg:gap-16 lg:pt-40">
@@ -282,14 +283,14 @@ function Video({ addUrl }: { addUrl: string }) {
       </div>
       <div className="mx-auto w-full max-w-[22rem] overflow-hidden rounded-[2rem] border-[7px] border-[#1b262d] bg-[#0b141a] shadow-2xl shadow-black/40">
         <div className="relative aspect-[9/16] w-full">
-          <iframe
-            src={`https://www.youtube-nocookie.com/embed/${VIDEO_ID}?rel=0&playsinline=1`}
-            title="Roomie: Nothing gets buried (video)"
-            loading="lazy"
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-            referrerPolicy="strict-origin-when-cross-origin"
-            allowFullScreen
-            className="absolute inset-0 size-full border-0"
+          <video
+            src={VIDEO_SRC}
+            poster={VIDEO_POSTER}
+            controls
+            playsInline
+            preload="none"
+            aria-label="Roomie: Nothing gets buried. Two minutes in Apt 4B."
+            className="absolute inset-0 size-full bg-[#0b141a] object-cover"
           />
         </div>
       </div>
