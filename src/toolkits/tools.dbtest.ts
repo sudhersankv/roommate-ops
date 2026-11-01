@@ -1186,7 +1186,9 @@ describe("Roomie tools against the dev DB", () => {
     assert.equal(s.currency, "EUR");
     assert.equal(s.timezone, "Europe/Berlin");
     assert.deepEqual([...s.toolkits].sort(), ["groceries", "splitting"]);
-    assert.equal(s.learned, "Learned Money and Groceries.", "the one setup line: what was learned, no tip or offer (#44)");
+    assert.equal(s.learned, undefined, "no 'Learned X' any more (#68)");
+    assert.match(s.say, /^(Got it|Sorted)\. [^\n]*trip[^\n]*\nEveryone: your dashboard is at .*\/j\//, "one plain line for a trip, then the Join link (#68)");
+    assert.doesNotMatch(s.say, /Money|Groceries|House|Learned|roomie, learn|house/, "no Trick names, no tip; a trip never hears house");
     const [g] = await db.select().from(schema.groups).where(eq(schema.groups.id, groupId));
     assert.ok(g.onboardedAt, "Onboarding is done");
     await assert.rejects(run("set_group_settings", { timezone: "Mars/Olympus" }), /don't know the time zone "Mars\/Olympus"\. Which city/);
@@ -1233,7 +1235,7 @@ describe("Roomie tools against the dev DB", () => {
     }
   });
 
-  test("set_group_settings with toolkits: [groceries] ends with Money on too, and the setup line says so", async () => {
+  test("set_group_settings with toolkits: [groceries] ends with Money on too; the setup line names no Trick", async () => {
     const people = ["Maya", "Dev", "Sam"].map((name) => ({ userExternalId: devUserId(`list-${name}-${Date.now()}`), name }));
     const joined = await onGroupJoined({ channel: "dev", externalId: `list-${Date.now()}`, title: "Apt 4B" }, people, people[0]);
     const gid = joined.group.id;
@@ -1249,7 +1251,8 @@ describe("Roomie tools against the dev DB", () => {
       const s = await run("set_group_settings", { purpose: "roommates", toolkits: ["groceries"] }, rc);
       assert.deepEqual(s.toolkits, ["splitting", "groceries"]);
       assert.deepEqual(await groups.enabledToolkits({ groupId: gid }), ["splitting", "groceries"]);
-      assert.match(s.learned, /^Learned Money and Groceries\./);
+      assert.match(s.say, /^(Got it|Sorted)\. [^\n]*house stuff/);
+      assert.doesNotMatch(s.say, /Money|Groceries|Learned/);
       const later = await run("set_group_settings", { toolkits: ["house", "groceries"] }, rc);
       assert.deepEqual(later.toolkits, ["splitting", "groceries", "house"], "a later list keeps Money under Groceries too");
     } finally {
@@ -1799,7 +1802,7 @@ describe("Join links and seats", () => {
     assert.equal(await joins.ensureJoinCode(gid), code, "stable until rotated");
     assert.equal(await joins.rosterSize(gid), 3);
     assert.match(setupDm!.text, /You added me to Join test \d+, so you're its admin/);
-    assert.match(setupDm!.text, /Answer the setup here or in the group: what's the group for, currency, city\./);
+    assert.match(setupDm!.text, /What's this chat for\? Answer here or in the group\./);
     assert.match(setupDm!.buttons![0].url, /\/claim\//);
     const tokens = await db.select().from(schema.claimTokens).where(eq(schema.claimTokens.memberId, ids.Maya));
     assert.equal(tokens.length, 1);
@@ -1920,10 +1923,11 @@ describe("Join links and seats", () => {
     assert.equal(r.links, undefined);
   });
 
-  test("setup answered in a DM: the learned line and the Join link go to the group chat too", async () => {
+  test("setup answered in a DM: the setup line and the Join link go to the group chat too", async () => {
     const s = await run("set_group_settings", { purpose: "friends", currency: "USD" }, as("Maya", [["isPrivate", true]]));
     assert.equal(s.postedInGroup, true);
-    assert.match(s.say, /^Learned Money\.\nEveryone: your dashboard is at .*\/j\//);
+    assert.match(s.say, /^(Got it|Sorted)\. [^\n]+\nEveryone: your dashboard is at .*\/j\//);
+    assert.doesNotMatch(s.say, /Money|Learned/);
     const lines = (await chatlog.roomieLines(gid, 20)).map((l) => l.text);
     assert.ok(lines.includes(s.say), "posted (and logged) in the group");
   });

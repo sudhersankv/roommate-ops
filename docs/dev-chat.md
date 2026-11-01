@@ -38,13 +38,12 @@ Step 4's done-criteria in one run: Onboarding, settings applied by a tool, a Pen
 ```
 > join Maya Dev Sam
 (Group 8f724e64-… created; Maya admin/active, Dev member/active, Sam member/active)
-[Roomie] Hey all, I'm Roomie 👋 Maya added me, so Maya's my admin. I split costs, keep a shared Cart and track chores.
-         Quick setup, one reply is plenty: what's this group for (roommates, a trip, friends, family, work), which
-         currency, and which time zone? Just "roommates" works too: I'll go with USD, Chicago time and switch everything on.
+[Roomie] Hey all! I'm Roomie. What's this chat for?
 
 > say Maya "roommates, USD, Chicago"
          (gate act/hard-trigger, tools set_group_settings, 19.0s)
-[Roomie] You're all set: roommates, USD, Chicago time. Splitting, groceries, chores and upkeep are all on 🏠
+[Roomie] Got it. I've got the house stuff from here.
+         Everyone: your dashboard is at http://localhost:3000/j/qk3dcb5btz. Sign in with Google and pick your name.
 
 > add Priya
 (Priya is pending)
@@ -227,9 +226,7 @@ Onboarding a household (starter chores, the usual five, Chicago time), logging c
 
 ```
 > join Maya Dev Sam
-[Roomie] Hey all, I'm Roomie 👋 Maya added me, so Maya's my admin. I split costs, keep a shared Cart, track chores and set reminders.
-         Quick setup, one reply is plenty: what's this group for (roommates, a trip, friends, family, work), which currency, and which
-         time zone (a city is fine)? Just "roommates" works too: I'll go with USD, Chicago time and switch everything on.
+[Roomie] Hey all! I'm Roomie. What's this chat for?
 
 > say Maya "roommates, USD, Chicago"
          (gate act/hard-trigger, tools set_group_settings, 23.1s)
@@ -319,11 +316,7 @@ The personality branch end to end: the new intro, the default chill voice, the s
 
 ```
 > join Maya Dev Sam
-[Roomie] Hey all, I'm Roomie, your group's new pet 🦖 Maya added me, so Maya's my admin. I split costs, keep a
-         shared Cart, track chores, and slowly pick up how you all talk.
-         Quick setup, one reply is plenty: what's this group for (roommates, a trip, friends, family, work), which
-         currency, which time zone, and what vibe should I have (chill / hype / deadpan / mom / gremlin / butler)? Just
-         "roommates" works too: I'll go with USD, Chicago time, chill, and switch everything on.
+[Roomie] Hey all! I'm Roomie. What's this chat for?
 
 > say Maya "roommates, USD, Chicago"
          (gate act/hard-trigger, tools set_group_settings, 10.0s)

@@ -8,7 +8,8 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { BAD_VOICE, MANY_GROUPS, NO_GROUP, NO_VOICE, OOPS, helpText, startReply } from "@/channels/text";
-import { approvalPrompt, introMessage, learnedLine, setupDmText } from "@/onboarding";
+import { approvalPrompt, introMessage, setupDmText, setupLine } from "@/onboarding";
+import { GROUP_PURPOSES } from "@/db/enums";
 import { CATALOG, CORE_MANIFEST, MANIFESTS } from "@/toolkits/manifests";
 
 export const FORBIDDEN = /\b(?:AI|bots?|brains?|assistants?|smart|toolkits?|features?|enabled?|enabling|vibes?|marketplace)\b/i;
@@ -102,13 +103,11 @@ test("the dashboard allowlist only names files that exist and phrases they still
 
 test("the Onboarding copy", () => {
   const lines = [
-    introMessage("Maya"),
-    introMessage("Maya", { dmHandle: "imroomiebot" }),
-    introMessage("+15551234567"),
+    introMessage(),
     setupDmText("Maya Lee", "Apt 4B"),
-    learnedLine(MANIFESTS.map((m) => m.id)),
-    learnedLine(["splitting"], { defaulted: true }),
-    learnedLine([]),
+    ...GROUP_PURPOSES.map((p) => setupLine(p, MANIFESTS.map((m) => m.id), { seed: p })),
+    setupLine(null, ["splitting"], { defaulted: true }),
+    setupLine("roommates", []),
     approvalPrompt("Priya", ["Maya"]),
   ];
   for (const line of lines) assert.deepEqual(hits(line), [], line);

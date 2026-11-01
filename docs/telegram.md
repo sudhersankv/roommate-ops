@@ -52,8 +52,8 @@ If handling a message fails, the log gets `[roomie] couldn't handle a message fr
 ## 4. Try it in a test group
 
 1. Create a Telegram group with one or two friends (or a second account), then add the bot (group → Add members → `@roomie_house_bot`). Whoever adds it is Roomie's Admin.
-2. Wait `JOIN_DELAY_MS` (a minute by default): Roomie introduces itself, names the Admin, asks what the group is for, and asks everyone to tap `@roomie_house_bot` and press **Start** once. If someone talks to Roomie before then, the intro goes first.
-3. Answer the setup in one line: `roommates, USD, Chicago`.
+2. Wait `JOIN_DELAY_MS` (a minute by default): Roomie posts one line: "Hey all! I'm Roomie. What's this chat for?" If someone talks to Roomie before then, the intro goes first.
+3. Answer it: `we're roommates` is enough (currency and city only if they're not USD and Chicago). If the answer is unclear, Roomie asks one short question at a time. It ends with one plain line ("Got it. I've got the house stuff from here.") and the Join link.
 4. Each person who was already in the group should press **Start** in a 1:1 chat with the bot (needed for the private dashboard link; Telegram doesn't let bots message anyone first).
 5. Try:
    - `roomie who's here` — lists Members with roles. People show up as they speak (see "Who is a Member" below).
@@ -73,7 +73,7 @@ Telegram bots can't list a group's members. Roomie knows the person who added it
 
 ## Private messages
 
-A DM to the bot from someone who is a Member of exactly one Group is handled as that Group's conversation (Roomie answers in the DM; nothing is logged in the group chat). In no Group: "Add me to your group chat first"; in several: "ask me in the group chat you mean". `/start` from the Admin of a Group that hasn't finished setup sends the **setup DM** (their Claim link button and "Answer the setup here or in the group: what's the group for, currency, city, vibe.", [docs/joining.md](./joining.md)); otherwise one line: for a Member, that DMs work now and how to get the dashboard; for anyone else, how to add Roomie to a group, never a link. When setup is answered (DM or group), the Group's Join link is posted in the group, and `/help` names it. Reminders for one Member arrive here too.
+A DM to the bot from someone who is a Member of exactly one Group is handled as that Group's conversation (Roomie answers in the DM; nothing is logged in the group chat). In no Group: "Add me to your group chat first"; in several: "ask me in the group chat you mean". `/start` from the Admin of a Group that hasn't finished setup sends the **setup DM** (their Claim link button and "What's this chat for? Answer here or in the group.", [docs/joining.md](./joining.md)); otherwise one line: for a Member, that DMs work now and how to get the dashboard; for anyone else, how to add Roomie to a group, never a link. When setup is answered (DM or group), the Group's Join link is posted in the group, and `/help` names it. Reminders for one Member arrive here too.
 
 ## Webhook (public URL later)
 

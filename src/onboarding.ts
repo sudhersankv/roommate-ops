@@ -9,7 +9,7 @@
 //   - anyone who joins later, or speaks without Roomie having seen them join: Pending until an Admin approves
 import { and, desc, eq, isNull } from "drizzle-orm";
 import { db, schema } from "@/db";
-import type { ChannelName } from "@/db/schema";
+import type { ChannelName, GroupPurpose } from "@/db/schema";
 import { channelFor } from "@/channels";
 import { ROSTER_GRACE_MS, type ChannelUser, type Outgoing } from "@/channels/types";
 import { caps, TOO_MANY_GROUPS } from "@/lib/caps";
@@ -19,13 +19,11 @@ import { issueDashboardLink } from "@/services/claims";
 import { newJoinCode } from "@/services/joins";
 import { chatFor, initToolkits, type Chat, type Group } from "@/services/groups";
 import { addMember, admins, memberByChannelUser, type Member } from "@/services/members";
-import { MANIFESTS } from "@/toolkits/manifests";
-import type { ToolkitManifest } from "@/toolkits/types";
 
 export type ChatRef = { channel: ChannelName; externalId: string; title?: string };
 
-/** What a Group that never said its purpose gets (presetFor(null): every defaultOn Trick, the roommates set). */
-const DEFAULT_PURPOSE = "roommates";
+/** What a Group that never said its purpose is set up like (presetFor(null): every defaultOn Trick, the roommates set). */
+const DEFAULT_PLACE = "apartment";
 
 const joinNames = (n: string[]) => (n.length <= 1 ? n.join("") : `${n.slice(0, -1).join(", ")} and ${n[n.length - 1]}`);
 
@@ -35,17 +33,14 @@ const joinNames = (n: string[]) => (n.length <= 1 ? n.join("") : `${n.slice(0, -
 export const isPlaceholderName = (name: string) => /^\+?\d[\d\s-]{5,}$/.test(name.trim()) || name.trim() === "Someone";
 
 /**
- * Roomie's first message, at most three lines and no list of what it does: who it is, what to tell it (the group's
- * purpose picks the Tricks it learns), and who the Admin is. `dmHandle` (Telegram's @username) adds the one nudge to
- * open a 1:1 chat, since on Telegram Roomie can't message anyone first. One voice, one name (ADR 0020): no vibe offer.
+ * Roomie's first message: one line, one question (#68). The answer picks the Tricks; Roomie asks a short follow-up
+ * only when it's unclear (mastra/agents/instructions.ts ONBOARDING). No admin line and no "press Start" nudge: the
+ * Admin's setup DM still goes out (WhatsApp at once, Telegram on /start) and the setup's last line posts the Join
+ * link for everyone. One voice, one name (ADR 0020): no vibe offer. No link at join time (ADR 0001).
  */
-export function introMessage(adderName: string, opts: { dmHandle?: string } = {}): string {
-  const admin = isPlaceholderName(adderName) ? "Whoever added me is my admin." : `${adderName} added me, so ${adderName}'s my admin.`;
-  return [
-    `Hey all, I'm Roomie 🦖 the roommate who actually keeps track: rent, splits, groceries, chores, the landlord.`,
-    `Tell me what this group is for (roommates, a trip, friends, family, work…) and I'll learn the right Tricks. Currency and city are welcome too. You can DM me too, for what you'd rather not ask here.`,
-    `${admin}${opts.dmHandle ? ` Tap @${opts.dmHandle} and press Start, so I can DM you the setup and your dashboard link.` : ""}`,
-  ].join("\n");
+export const INTRO = "Hey all! I'm Roomie. What's this chat for?";
+export function introMessage(): string {
+  return INTRO;
 }
 
 /**
@@ -56,8 +51,8 @@ export function introMessage(adderName: string, opts: { dmHandle?: string } = {}
 export function setupDmText(adminName: string, groupName: string): string {
   const first = isPlaceholderName(adminName) ? "" : ` ${adminName.trim().split(/\s+/)[0]}`;
   return [
-    `Hi${first} 👋 You added me to ${groupName}, so you're its admin. Your own dashboard link is below (just for you, it works once).`,
-    `Answer the setup here or in the group: what's the group for, currency, city.`,
+    `Hi${first}! You added me to ${groupName}, so you're its admin. Your own dashboard link is below (just for you, it works once).`,
+    `What's this chat for? Answer here or in the group.`,
   ].join("\n");
 }
 
@@ -92,16 +87,31 @@ export async function setupDmFor(channel: ChannelName, userExternalId: string): 
   return row ? setupDm(row.group, row.member) : null;
 }
 
+/** What the setup's last line says Roomie has from here, by purpose: several ways to say it (#68). */
+const SETUP_LINES: Record<GroupPurpose, readonly string[]> = {
+  roommates: ["Got it. I've got the house stuff from here.", "Got it. I'll keep track of the house stuff from here.", "Sorted. I've got the house stuff from here."],
+  family: ["Got it. I've got the house stuff from here.", "Got it. I'll keep track of the house stuff from here.", "Sorted. I've got the house stuff from here."],
+  trip: ["Got it. I've got the trip from here.", "Got it. I'll keep the trip's costs straight.", "Sorted. I'll keep track of the trip from here."],
+  friends: ["Got it. I'll keep track of who paid for what.", "Got it. I've got the money stuff from here.", "Sorted. I'll keep track of who paid for what."],
+  work: ["Got it. I'll keep track of the shared costs.", "Got it. I've got the shared costs from here.", "Sorted. I'll keep the shared costs straight."],
+  other: ["Got it. I'll keep track from here.", "Got it. I've got it from here.", "Sorted. I'll keep track from here."],
+};
+
+/** A small stable number from a string (the Group id), so a Group always gets the same wording. */
+const pick = (seed: string, n: number) => [...seed].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) % n;
+
 /**
- * The one line after the setup answer: the Tricks Roomie learned, as a fact. `defaulted`: nobody said what the group
- * is for, so it kept the roommates set, and says so. No "say roomie, learn …" tip and no offers (#44): Roomie
- * mentions a Trick it hasn't learned only when the conversation needs it. Names no Trick: it's all from the manifests.
+ * The one line that ends setup (#68), before the Join link line: plain words for what Roomie has from here, fitting
+ * the purpose ("Got it. I've got the house stuff from here."; a trip never hears "house"). Never names a Trick, never
+ * says "Learned X", never a "say roomie, learn …" tip or an offer (#44). `defaulted`: nobody said what the chat is
+ * for, so Roomie set it up like a shared place, and says so. `on` empty: only the basics. `seed` (the Group id) picks
+ * one of the wordings, stably. Pure.
  */
-export function learnedLine(on: readonly string[], opts: { defaulted?: boolean } = {}, manifests: readonly ToolkitManifest[] = MANIFESTS): string {
-  const names = manifests.filter((m) => on.includes(m.id)).map((m) => m.name);
-  const learned = names.length ? `${opts.defaulted ? "learned" : "Learned"} ${joinNames(names)}.` : `${opts.defaulted ? "no" : "No"} Tricks yet.`;
-  const lead = opts.defaulted ? `You didn't say what this group is for, so I kept the ${DEFAULT_PURPOSE} set: ` : "";
-  return `${lead}${learned}`;
+export function setupLine(purpose: GroupPurpose | null, on: readonly string[], opts: { defaulted?: boolean; seed?: string } = {}): string {
+  if (!on.length) return "Got it. Just reminders for now; an admin can teach me more.";
+  if (opts.defaulted) return `Got it. You didn't say what this chat is for, so I set it up like a shared ${DEFAULT_PLACE}.`;
+  const lines = SETUP_LINES[purpose ?? "other"];
+  return lines[pick(opts.seed ?? "", lines.length)];
 }
 
 /** Asked in the Chat when someone new shows up. */
@@ -142,6 +152,7 @@ export async function onGroupJoined(
   chat: ChatRef,
   participants: ChannelUser[],
   addedBy: ChannelUser,
+  /** `dmHandle`: the adapters still pass it; the one-line intro (#68) doesn't use it. */
   opts: { dmHandle?: string; participantCount?: number | null; newGroupAllowed?: (channel: string, userExternalId: string) => Promise<boolean> } = {},
 ): Promise<JoinResult> {
   const known = await chatFor(chat.channel, chat.externalId);
@@ -183,7 +194,7 @@ export async function onGroupJoined(
   await initToolkits(group.id);
   await record(group.id, null, "group.created", `joined the chat. ${admin.displayName} is the first admin`, { table: "groups", id: group.id });
 
-  const intro = { text: introMessage(admin.displayName, { dmHandle: opts.dmHandle }) };
+  const intro = { text: introMessage() };
   await logMessage(group.id, null, intro.text); // opens the follow-up window for the answers
   const dm = await setupDm(withCreator, admin).catch((e) => {
     console.warn(`[onboarding] couldn't make the setup DM for ${group.id}`, e);

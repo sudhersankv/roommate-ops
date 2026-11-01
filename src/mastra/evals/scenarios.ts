@@ -90,6 +90,9 @@ export const READ_ONLY_TOOLS = new Set([
 /** Words a reply never uses for what Roomie can do: it's Tricks, and learn / forget. */
 const TOOLKIT_WORDS = [/toolkit/i, /\bfeatures?\b/i, /\bmodules?\b/i, /\bplugins?\b/i, /\bcapabilit/i, /\benabled?\b/i];
 
+/** What the setup's last line never says (#68): a Trick's name, "Learned X", a phrase to type. */
+const SETUP_NAMES = [/\bLearned\b/i, /\bMoney\b/, /\bGroceries\b/, /\bHouse\b/, /roomie, learn/i];
+
 const balanceOf = async (env: EvalEnv, name: EvalMember) => (await money.getBalances(env.ctx)).find((b) => b.name === name)?.cents ?? 0;
 const expenseCount = async (env: EvalEnv) => (await money.listExpenses(env.ctx, 50)).length;
 const lastExpense = async (env: EvalEnv) => (await money.listExpenses(env.ctx, 1))[0];
@@ -802,8 +805,8 @@ export const SCENARIOS: Scenario[] = [
         const items = await upkeep.listMaintenance(e.ctx);
         return fail(g?.timezone === "Asia/Kolkata" && g.currency === "INR" && chart.length === 3 && items.length === 5, `India, INR, 3 starter chores, 5 upkeep; got ${g?.timezone} ${g?.currency} ${chart.length} ${items.length}`);
       },
-      replyIncludes: [/learned/i],
-      excludes: TOOLKIT_WORDS,
+      replyIncludes: [/house stuff/i, /\/j\/[a-z2-7]{10}/],
+      excludes: [...TOOLKIT_WORDS, ...SETUP_NAMES],
     },
   },
   {
@@ -817,8 +820,8 @@ export const SCENARIOS: Scenario[] = [
     turn: { text: "it's a trip! EUR, Lisbon time" },
     expect: {
       tools: ["set_group_settings"],
-      replyIncludes: [/learned money and groceries/i],
-      excludes: [...TOOLKIT_WORDS, /learned[^.]*house/i],
+      replyIncludes: [/trip/i, /\/j\/[a-z2-7]{10}/],
+      excludes: [...TOOLKIT_WORDS, ...SETUP_NAMES, /house/i],
       check: async (e) => {
         const g = await groups.getGroup(e.ctx.groupId);
         const on = [...(await groups.enabledToolkits(e.ctx))].sort().join(",");
@@ -836,13 +839,52 @@ export const SCENARIOS: Scenario[] = [
     turn: { text: "roommates, USD, Chicago", private: true },
     expect: {
       tools: ["set_group_settings"],
-      replyIncludes: [/learned/i],
-      excludes: [...TOOLKIT_WORDS, /\/claim\//],
+      replyIncludes: [/house stuff/i],
+      excludes: [...TOOLKIT_WORDS, ...SETUP_NAMES, /\/claim\//],
       check: async (e) => {
         const g = await groups.getGroup(e.ctx.groupId);
         const posted = (await chatlog.roomieLines(e.ctx.groupId, 10)).map((l) => l.text);
-        const inGroup = posted.some((t) => /^Learned /.test(t) && /\/j\/[a-z2-7]{10}\. Sign in with Google and pick your name\./.test(t));
-        return fail(g?.purpose === "roommates" && g.timezone === "America/Chicago" && inGroup, `roommates in Chicago, and the learned + Join link lines in the group chat; got ${g?.purpose} ${g?.timezone} / ${posted.join(" | ")}`);
+        const inGroup = posted.some((t) => /^(Got it|Sorted)\. /.test(t) && /\/j\/[a-z2-7]{10}\. Sign in with Google and pick your name\./.test(t));
+        return fail(g?.purpose === "roommates" && g.timezone === "America/Chicago" && inGroup, `roommates in Chicago, and the setup + Join link lines in the group chat; got ${g?.purpose} ${g?.timezone} / ${posted.join(" | ")}`);
+      },
+    },
+  },
+  {
+    id: "setup-unclear-asks-one",
+    area: "core",
+    seed: async (e) => {
+      await db.update(schema.groups).set({ onboardedAt: null }).where(eq(schema.groups.id, e.ctx.groupId));
+      await groups.initToolkits(e.ctx.groupId);
+    },
+    setup: [{ text: "roomie hi" }],
+    turn: { text: "idk, just us figuring stuff out" },
+    expect: {
+      noTools: ["set_group_settings"],
+      asks: true,
+      maxLines: 2,
+      excludes: [...TOOLKIT_WORDS, ...SETUP_NAMES, /currency/i, /\bcity\b/i, /time ?zone/i],
+      check: async (e, reply) => {
+        const g = await groups.getGroup(e.ctx.groupId);
+        return fail(!g?.onboardedAt && (reply.match(/\?/g) ?? []).length === 1, `one question, setup still open; got onboarded=${!!g?.onboardedAt} / ${reply}`);
+      },
+    },
+  },
+  {
+    id: "setup-roommates-no-currency-ask",
+    area: "core",
+    seed: async (e) => {
+      await db.update(schema.groups).set({ onboardedAt: null }).where(eq(schema.groups.id, e.ctx.groupId));
+      await groups.initToolkits(e.ctx.groupId);
+    },
+    setup: [{ text: "roomie hi" }],
+    turn: { text: "we're roommates, 3 of us splitting rent" },
+    expect: {
+      tools: ["set_group_settings"],
+      replyIncludes: [/house stuff/i, /\/j\/[a-z2-7]{10}/],
+      excludes: [...TOOLKIT_WORDS, ...SETUP_NAMES, /currency/i, /which city/i],
+      check: async (e) => {
+        const g = await groups.getGroup(e.ctx.groupId);
+        return fail(g?.purpose === "roommates" && !!g.onboardedAt, `roommates, setup done; got ${g?.purpose} ${!!g?.onboardedAt}`);
       },
     },
   },
