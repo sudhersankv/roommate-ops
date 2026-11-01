@@ -4,6 +4,8 @@
 // gets ONE line from Roomie in the Chat.
 import { eq } from "drizzle-orm";
 import { db, schema } from "@/db";
+import type { Button, Outgoing } from "@/channels/types";
+import { dashboardUrl } from "@/lib/urls";
 import { CATALOG, findManifest, isToolkitId, manifestOf, MANIFESTS, type ToolkitId } from "@/toolkits/manifests";
 import type { HookCtx, Integration, Toolkit, ToolkitManifest } from "@/toolkits/types";
 import { recordFor } from "./activity";
@@ -205,6 +207,27 @@ export function learnedSay(m: Pick<ToolkitManifest, "name" | "summary">): string
 /** The line Roomie posts when a Toolkit goes on from the dashboard. Pure. */
 export const announcement = (m: Pick<ToolkitManifest, "name" | "summary">): string => learnedSay(m);
 
+export const SETUP_SAY = "That needs a quick setup. Here:";
+export type SetupLink = { say: string; links?: Button[] };
+
+/**
+ * For a Trick whose manifest has `setup` (#69): the line for whoever taught it and a button to its setup page (an
+ * absolute APP_URL link). No absolute APP_URL: the line points at the dashboard without a link. No `setup`: null. Pure
+ * with `urlFor`.
+ */
+export function setupFor(m: Pick<ToolkitManifest, "name" | "setup">, groupId: string, urlFor: (path: string) => string | null = dashboardUrl): SetupLink | null {
+  if (!m.setup) return null;
+  const url = urlFor(`/g/${groupId}/${m.setup.path.replace(/^\/+/, "")}`);
+  if (!url) return { say: "That needs a quick setup on the dashboard." };
+  return { say: m.setup.line ?? SETUP_SAY, links: [{ text: `Set up ${m.name}`, url }] };
+}
+
+/** The dashboard switch-on post: the learned line, plus the setup line and its button when the Trick needs one. Pure with `urlFor`. */
+export function announcementFor(m: Pick<ToolkitManifest, "name" | "summary" | "setup">, groupId: string, urlFor?: (path: string) => string | null): Outgoing {
+  const setup = setupFor(m, groupId, urlFor);
+  return setup ? { text: `${announcement(m)}\n${setup.say}`, ...(setup.links ? { buttons: setup.links } : {}) } : { text: announcement(m) };
+}
+
 const ANNOUNCE_COOLDOWN_MS = 10 * 60_000;
 const announced = (): Map<string, number> => ((globalThis as { __roomieAnnounced?: Map<string, number> }).__roomieAnnounced ??= new Map());
 
@@ -221,9 +244,9 @@ export async function announceToolkitOn(groupId: string, id: string, now = Date.
   announced().set(key, now);
   const [chat] = await db.select({ id: schema.chats.id }).from(schema.chats).where(eq(schema.chats.groupId, groupId));
   if (!chat) return false;
-  const text = announcement(m);
+  const out = announcementFor(m, groupId);
   const { deliver } = await import("@/channels");
-  await deliver(groupId, { text });
-  await logMessage(groupId, null, text);
+  await deliver(groupId, out);
+  await logMessage(groupId, null, out.text);
   return true;
 }

@@ -2043,6 +2043,30 @@ describe("Lease Inbox tools (#27, FakeMail)", () => {
     leaseInbox.setClassifier(null);
   });
 
+  test("toggle_toolkit on a Trick that needs setup (#69): it goes on, and whoever taught it gets the setup line + a button to the Inbox page", async () => {
+    const fake = process.env.MAIL_FAKE;
+    process.env.MAIL_FAKE = "1";
+    try {
+      await run("toggle_toolkit", { toolkit: "lease inbox", enabled: false }, rc("Maya"));
+      const r = await run("toggle_toolkit", { toolkit: "lease inbox", enabled: true }, rc("Maya"));
+      assert.equal(r.enabled, true);
+      assert.equal(r.changed, true);
+      assert.ok((await groups.enabledToolkits({ groupId: lgid })).includes("lease-inbox"), "it still turns on");
+      if (process.env.APP_URL?.startsWith("http")) {
+        assert.match(r.say, /\nThat needs a quick setup\. Here:$/);
+        assert.deepEqual(r.links, [{ text: "Set up Lease Inbox", url: `${process.env.APP_URL.replace(/\/+$/, "")}/g/${lgid}/inbox` }]);
+      } else assert.match(r.say, /\nThat needs a quick setup on the dashboard\.$/);
+      assert.doesNotMatch(r.say, /https?:\/\//, "the link rides as a button");
+      const again = await run("toggle_toolkit", { toolkit: "lease inbox", enabled: true }, rc("Maya"));
+      assert.equal(again.links, undefined, "already on: no setup line");
+      const house = await run("toggle_toolkit", { toolkit: "house", enabled: true }, rc("Maya"));
+      assert.doesNotMatch(house.say, /quick setup/, "a Trick without setup says nothing about it");
+    } finally {
+      if (fake === undefined) delete process.env.MAIL_FAKE;
+      else process.env.MAIL_FAKE = fake;
+    }
+  });
+
   test("inbox_status: the address and the three ways to connect", async () => {
     const r = await run("inbox_status", {}, rc("Dev"));
     assert.match(r.line, /Our email address is lease-\d+-[a-z0-9]{4}@agentmail\.to\. To connect the landlord/);

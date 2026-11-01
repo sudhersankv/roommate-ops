@@ -40,6 +40,8 @@ export const leaseInbox = defineManifest({
   },
   // Money, the landlord, then the house (ADR 0017).
   postOrder: 20,
+  // The connect step (#69): the Inbox page shows the address and how to give it to the landlord.
+  setup: { path: "inbox" },
   dashboard: {
     nav: { label: "Inbox", href: (g) => `/g/${g}/inbox`, icon: "Inbox", order: 35 },
     pages: ["inbox"],

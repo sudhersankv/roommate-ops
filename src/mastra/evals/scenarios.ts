@@ -1400,7 +1400,9 @@ export const SCENARIOS: Scenario[] = [
     turn: { text: "roomie learn lease inbox" },
     expect: {
       tools: ["toggle_toolkit"],
-      excludes: TOOLKIT_WORDS,
+      // #69: it goes on, and the one who asked hears it needs a quick setup (the Inbox page rides as a button).
+      replyIncludes: [/quick setup/i],
+      excludes: [...TOOLKIT_WORDS, /\/g\/[0-9a-f-]{36}/],
       check: async (e) => {
         const { inboxOf } = await import("@/services/lease-inbox");
         const inbox = await inboxOf(e.ctx.groupId);

@@ -4,7 +4,7 @@ import { GROUP_PURPOSES } from "@/db/schema";
 import { WEEKDAY_NAMES } from "@/lib/time";
 import { groups, joins, schedule, toolkits as toolkitsSvc } from "@/services";
 import { setupLine } from "@/onboarding";
-import { CATALOG, CORE_MANIFEST, TOOLKIT_IDS } from "../manifests";
+import { CATALOG, CORE_MANIFEST, manifestOf, TOOLKIT_IDS } from "../manifests";
 import type { ToolkitManifest } from "../types";
 import { ctxOf } from "../util";
 
@@ -90,17 +90,21 @@ export const settingsTools = {
   }),
   toggle_toolkit: createTool({
     id: "toggle_toolkit",
-    description: `Admin only: learn or forget a Trick by name ("roomie, learn chores" = enabled true; "forget groceries" = enabled false; "turn on/off ..." means the same). Learnable: ${SWITCHABLE}. Coming soon, can't be learned yet: ${SOON}. Forgetting deletes nothing. Coming-soon ones and ones missing something they need come back with notAvailable + message: relay it, and don't offer another coming-soon one instead. Otherwise say the result's \`say\` line in your voice (it says what you learned or forgot); don't add a phrase for them to try.`,
+    description: `Admin only: learn or forget a Trick by name ("roomie, learn chores" = enabled true; "forget groceries" = enabled false; "turn on/off ..." means the same). Learnable: ${SWITCHABLE}. Coming soon, can't be learned yet: ${SOON}. Forgetting deletes nothing. Coming-soon ones and ones missing something they need come back with notAvailable + message: relay it, and don't offer another coming-soon one instead. Otherwise say the result's \`say\` in your voice (it says what you learned or forgot); don't add a phrase for them to try. When \`say\` ends with "That needs a quick setup. Here:", keep that line: the setup page's button is attached; never paste the link.`,
     inputSchema: z.object({ toolkit: z.string().describe(`The Trick, one of: ${NAMES}`), enabled: z.boolean().describe("true = learn, false = forget") }),
     execute: async (input, context) => {
       try {
-        const r = await toolkitsSvc.setToolkit(ctxOf(context), input);
-        const say = r.enabled
+        const ctx = ctxOf(context);
+        const r = await toolkitsSvc.setToolkit(ctx, input);
+        // A Trick that needs setup (#69): whoever taught it gets the line and a button to its setup page.
+        const setup = r.enabled && r.changed ? toolkitsSvc.setupFor(manifestOf(r.toolkit)!, ctx.groupId) : null;
+        const said = r.enabled
           ? r.changed
             ? toolkitsSvc.learnedSay(r)
             : `Already know ${r.name}.`
           : `${r.changed ? "Forgot" : "Didn't know"} ${r.name}${r.changed ? ". Nothing's deleted, so it's all still there if an admin teaches me again." : " here anyway."}`;
-        return { ...r, say };
+        const say = setup ? `${said}\n${setup.say}` : said;
+        return { ...r, say, ...(setup?.links ? { links: setup.links } : {}) };
       } catch (e) {
         if (e instanceof toolkitsSvc.ToolkitUnavailableError) return { notAvailable: true, reason: e.code, message: e.message };
         throw e;
