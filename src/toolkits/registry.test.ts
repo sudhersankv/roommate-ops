@@ -73,7 +73,7 @@ describe("the manifest contract", () => {
     assert.deepEqual([lease.dashboard?.nav?.label, lease.dashboard?.nav?.href("g1"), lease.dashboard?.nav?.order], ["Inbox", "/g/g1/inbox", 35]);
     assert.deepEqual(lease.dashboard?.pages, ["inbox"]);
     assert.equal(lease.postOrder, 20);
-    for (const id of ["report_issue", "send_to_landlord", "work_order_status", "trust_sender", "send_intro", "ask_lease", "notice_status", "inbox_status", "release_inbox"]) assert.ok(id in lease.tools, id);
+    for (const id of ["report_issue", "send_to_landlord", "follow_up_work_order", "work_order_status", "trust_sender", "send_intro", "ask_lease", "notice_status", "inbox_status", "release_inbox"]) assert.ok(id in lease.tools, id);
     assert.deepEqual(Object.keys(lease.adminOnly ?? {}).sort(), ["release_inbox", "send_intro", "trust_sender"]);
     assert.ok(lease.bundle && lease.report && lease.onEnable && lease.dashboard?.settings, "it speaks in the Bundle and the report, sets itself up, and has a Settings section");
   });

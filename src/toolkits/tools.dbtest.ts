@@ -2049,6 +2049,16 @@ describe("Lease Inbox tools (#27, FakeMail)", () => {
     assert.equal(mail.sent.at(-1)!.threadId, reply.threadId);
   });
 
+  test("follow_up_work_order: nothing without a yes or an ask; a yes sends one on the work order's thread", async () => {
+    const before = mail.sent.length;
+    const no = await run("follow_up_work_order", { what: "the sink" }, rc("Sam", "lol"));
+    assert.equal(no.sent, false);
+    assert.equal(mail.sent.length, before);
+    const yes = await run("follow_up_work_order", { what: "the sink" }, rc("Sam", "roomie follow up on the sink"));
+    assert.deepEqual(yes, { sent: true, say: "Followed up on the leaking kitchen sink." });
+    assert.match(mail.sent.at(-1)!.text, /^Hi,\n\nJust following up on our work order/);
+  });
+
   test("send_to_landlord: not renewing asks first; asking again without a yes still asks; the Member's own yes sends", async () => {
     const before = mail.sent.length;
     const input = { intent: "new" as const, body: "We will not be renewing our lease.", summary: "told them we're not renewing" };
