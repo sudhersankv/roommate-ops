@@ -70,17 +70,18 @@ export function dayWord(d: Date, now: Date, tz: string): string {
 
 /**
  * The window as people say it: "9 to 11" (both in the morning), "1 to 3 PM", "11 AM to 1 PM", "9 to noon", "from 9"
- * (no end), "10 PM to Wed 6 AM" (ends another day). Null without a start time.
+ * (no end), "10 PM to Wed 6 AM" (ends another day). Null without a start time. With `am`, a morning says so ("9 to 11
+ * AM", "from 9 AM"): the chat line for a notice days ahead, where "9" alone could be the evening.
  */
-export function windowText(facts: Pick<NoticeFacts, "start" | "end">, tz: string): string | null {
+export function windowText(facts: Pick<NoticeFacts, "start" | "end">, tz: string, opts: { am?: boolean } = {}): string | null {
   const start = windowInstant(facts.start, tz);
   if (!start) return null;
   const s = clockOf(start, tz);
   const end = windowInstant(facts.end, tz);
-  if (!end || end <= start) return `from ${s.hour < 12 ? bareClock(s) : withMeridiem(s)}`;
+  if (!end || end <= start) return `from ${s.hour < 12 && !opts.am ? bareClock(s) : withMeridiem(s)}`;
   const e = clockOf(end, tz);
   if (dayInZone(tz, end) !== dayInZone(tz, start)) return `${withMeridiem(s)} to ${WEEKDAYS_SHORT[zonedParts(tz, end).weekday]} ${withMeridiem(e)}`;
-  if (s.hour < 12 && (e.hour < 12 || isNamed(e))) return `${bareClock(s)} to ${bareClock(e)}`;
+  if (s.hour < 12 && (e.hour < 12 || isNamed(e))) return `${bareClock(s)} to ${opts.am ? withMeridiem(e) : bareClock(e)}`;
   if (s.hour >= 12 && e.hour >= 12 && !isNamed(s)) return `${bareClock(s)} to ${withMeridiem(e)}`;
   return `${withMeridiem(s)} to ${withMeridiem(e)}`;
 }
@@ -115,6 +116,22 @@ export function noticeReminderText(facts: NoticeFacts, summary: string, tz: stri
   const when = window ? (window.startsWith("from ") ? ` ${window}` : `, ${window}`) : "";
   const tip = noticeTip(facts);
   return `Reminder: ${whatPhrase(facts)} tomorrow${when}.${tip ? ` ${tip}` : ""}`;
+}
+
+/**
+ * What a notice's chat line says after the sender (#74): built from its facts when it has a thing and a day ("water's
+ * off Tue, 9 to 11 AM.", "smoke detector inspection tomorrow, 9 to noon.", "pest control Nov 12."), else the
+ * classifier's summary as it is. `date` is the notice's day when the facts have no start (mail_messages.notice_date).
+ */
+export function noticeLineText(n: { facts: NoticeFacts | null; date?: string | null; summary: string }, now: Date, tz: string): string {
+  const facts = n.facts ?? {};
+  const day = /^(\d{4}-\d{2}-\d{2})/.exec((facts.start ?? n.date ?? "").trim())?.[1];
+  if (!facts.what?.trim() || !day) return n.summary;
+  const at = parseInZone(`${day}T12:00`, tz);
+  if (Number.isNaN(at.getTime())) return n.summary;
+  const window = windowText(facts, tz, { am: true });
+  const when = window ? (window.startsWith("from ") ? ` ${window}` : `, ${window}`) : "";
+  return `${whatPhrase(facts)} ${dayWord(at, now, tz)}${when}.`;
 }
 
 /** The notice's Reminder: 20:00 local the evening before its day (a start, else its date). */

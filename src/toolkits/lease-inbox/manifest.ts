@@ -19,12 +19,13 @@ export const leaseInbox = defineManifest({
   status: "stable",
   gate: {
     criterion: "The landlord or leasing office and its emails: notices, inspections, shut-offs, rent or lease changes, reporting something broken for the landlord to fix (a work order: the sink, the heat, a leak) and asking how that's going, replying to them, the group's email address, what the lease says.",
-    examples: ["the sink's leaking, tell them", "what's up with the sink?", "did the landlord email about the inspection?", "ask them to move the inspection to Thursday", "what's the notice period in our lease?", "is the water back on?"],
+    examples: ["the sink's leaking, tell them", "what's up with the sink?", "follow up on the sink", "did the landlord email about the inspection?", "ask them to move the inspection to Thursday", "what's the notice period in our lease?", "is the water back on?"],
   },
   abilities: {
     report_issue: "Email the landlord a repair request with your name on it, and follow it",
     send_to_landlord: "Reply to the landlord or email them, asking first when it's about money, dates or the lease",
     work_order_status: "Say where a repair request is and what the landlord last said",
+    follow_up_work_order: "Follow up with the landlord on a repair request that has no reply yet",
     trust_sender: "Admins: treat a sender as the landlord from now on",
     send_intro: "Send the landlord a one-time intro email from everyone",
     ask_lease: "Answer a question from the lease Roomie has on file",

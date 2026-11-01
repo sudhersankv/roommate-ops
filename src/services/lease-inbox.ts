@@ -19,7 +19,7 @@ import { recordFor } from "./activity";
 import { NotAllowedError, requireActive, requireAdmin } from "./authz";
 import { isUrgent, mailLine, nextStatus, pickWorkOrder, saysYes, senderName, type WorkOrderReply, type WorkOrderState } from "./lease-inbox-rules";
 import { keywordClassifier, smallModelClassifier } from "./mail-classifier";
-import { eveningBefore, noticeReminderText, type NoticeFacts } from "./notice-window";
+import { eveningBefore, noticeLineText, noticeReminderText, type NoticeFacts } from "./notice-window";
 import { CONFLICT_WINDOW_MS, sendRule, signature, type OtherInstruction, type SendIntent } from "./send-rule";
 import type { Ctx, GroupCtx } from "./types";
 
@@ -364,10 +364,10 @@ export async function classifyInbound(groupId: string, mailId: string, opts: { n
   await hooks.fileDocuments?.(groupId, m.id);
   if (c.utility && c.amountCents !== undefined) await hooks.prefillUtility?.(groupId, c.utility, c.amountCents);
 
-  // A forward's From is the Member who forwarded it, so it reads as the landlord.
-  const sender = senderName(m.originalFrom ? null : m.fromHeader);
+  // A forward's From is the Member who forwarded it: the name is the quoted From's (or "Leasing office").
+  const sender = m.originalFrom ? senderName(null, parseForwarded(m.text, m.html)?.name ?? null) : senderName(m.fromHeader);
   if (c.class === "notice") {
-    const line = mailLine({ class: "notice", sender, summary: c.summary });
+    const line = mailLine({ class: "notice", sender, summary: noticeLineText({ facts: noticeFactsOf(c), date: c.date ?? null, summary: c.summary }, now, timezone) });
     const day = c.start ?? c.date;
     const reminderAt = day ? eveningBefore(day, timezone) : null;
     if (reminderAt && reminderAt > now) await hooks.remind?.(groupId, reminderAt, noticeReminderText(noticeFactsOf(c) ?? {}, c.summary, timezone));

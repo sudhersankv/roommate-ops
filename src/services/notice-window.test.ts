@@ -1,6 +1,6 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { clockText, dayWord, eveningBefore, noticeReminderText, noticeStatus, noticeTip, windowText, type Notice } from "./notice-window";
+import { clockText, dayWord, eveningBefore, noticeLineText, noticeReminderText, noticeStatus, noticeTip, windowText, type Notice } from "./notice-window";
 
 const CHI = "America/Chicago";
 // Tue Nov 3 2026 in Chicago is CST (UTC-6), two days after fall back.
@@ -129,5 +129,25 @@ describe('noticeStatus: "is the water back on?"', () => {
   test("no end given: during says so", () => {
     const open: Notice = { ...water, end: undefined };
     assert.equal(noticeStatus([open], chi(3, 10), CHI, "water")?.line, "Not yet. It went off at 9:00 and the notice didn't say until when.");
+  });
+});
+
+describe("noticeLineText: the chat line after the sender (#74)", () => {
+  const SUN = chi(1, 10); // Sun Nov 1, 10:00
+  test("a shut-off with its window, the morning saying AM", () => {
+    assert.equal(noticeLineText({ facts: water, summary: water.summary }, SUN, CHI), "water's off Tue, 9 to 11 AM.");
+    assert.equal(windowText(water, CHI, { am: true }), "9 to 11 AM");
+    assert.equal(windowText({ start: "2026-11-03T09:00" }, CHI, { am: true }), "from 9 AM");
+    assert.equal(windowText({ start: "2026-11-03T13:00", end: "2026-11-03T15:00" }, CHI, { am: true }), "1 to 3 PM");
+  });
+  test("tomorrow, a visit, a bare day", () => {
+    assert.equal(noticeLineText({ facts: water, summary: "x" }, chi(2, 12), CHI), "water's off tomorrow, 9 to 11 AM.");
+    assert.equal(noticeLineText({ facts: { what: "smoke detector inspection", start: "2026-11-03T09:00", end: "2026-11-03T12:00" }, summary: "x" }, SUN, CHI), "smoke detector inspection Tue, 9 to noon.");
+    assert.equal(noticeLineText({ facts: { what: "pest control" }, date: "2026-11-12", summary: "x" }, SUN, CHI), "pest control Nov 12.");
+  });
+  test("without a thing or a day: the summary as it is", () => {
+    assert.equal(noticeLineText({ facts: null, summary: "community mixer Friday" }, SUN, CHI), "community mixer Friday");
+    assert.equal(noticeLineText({ facts: { start: "2026-11-03T09:00" }, summary: "hallway painting" }, SUN, CHI), "hallway painting");
+    assert.equal(noticeLineText({ facts: { what: "water", off: true }, summary: "water off soon" }, SUN, CHI), "water off soon");
   });
 });

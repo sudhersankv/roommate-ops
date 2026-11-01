@@ -55,39 +55,69 @@ export function isUrgent(noticeDate: string, now: Date, timezone: string): boole
 
 export type QuietOrder = { title: string; status: WorkOrderStatus; scheduledFor: string | null; lastActivityAt: Date };
 
-export const FOLLOW_UP_DAYS = 5;
+/** Local days without a word from the landlord before Roomie asks the group whether to follow up (#74). */
+export const FOLLOW_UP_AFTER_DAYS = 2;
+
+/** The leasing office, as a landlord email's line says it when the sender gave no name. */
+export const LANDLORD_LABEL = "Leasing office";
 
 const visitTime = (when: string) => {
   const t = /T(\d{2}):(\d{2})/.exec(when);
   if (!t) return "";
   const h = Number(t[1]);
-  return ` (${h % 12 || 12}${t[2] === "00" ? "" : `:${t[2]}`}${h < 12 ? "am" : "pm"})`;
+  return ` at ${h === 12 && t[2] === "00" ? "noon" : `${h % 12 || 12}${t[2] === "00" ? "" : `:${t[2]}`} ${h < 12 ? "AM" : "PM"}`}`;
 };
 
 /**
- * The Lease Inbox's line in the morning Bundle: a visit tomorrow (someone be home), and the oldest work order the
- * landlord hasn't answered for 5, 10, 15... local days (the offer to follow up, not every morning). Null when neither.
+ * The work orders Roomie may ask about following up: sent and still unanswered (no reply moved them on) for 2 or more
+ * local days, oldest quiet first. Whether one was already asked about is the caller's (scheduled_posts
+ * "lease.followup", once per work order).
  */
-export function leaseBundleText(orders: readonly QuietOrder[], tz: string, now: Date): string | null {
+export function followUpCandidates<T extends QuietOrder>(orders: readonly T[], tz: string, now: Date): T[] {
   const today = dayInZone(tz, now);
-  const tomorrow = addDaysToDay(today, 1);
+  return orders
+    .filter((o) => o.status === "sent" && daysBetweenDays(dayInZone(tz, o.lastActivityAt), today) >= FOLLOW_UP_AFTER_DAYS)
+    .sort((a, b) => a.lastActivityAt.getTime() - b.lastActivityAt.getTime());
+}
+
+/** The question, asked once per work order: "No reply from the leasing office about the sink yet. Want me to follow up?" */
+export const followUpAsk = (title: string) => `No reply from the leasing office about ${title} yet. Want me to follow up?`;
+
+/**
+ * The Lease Inbox's line in the morning Bundle: a visit tomorrow (someone be home), then `ask`, the one work order
+ * Roomie asks about following up today (the caller picks it from followUpCandidates and claims it). Null when neither.
+ */
+export function leaseBundleText(orders: readonly QuietOrder[], tz: string, now: Date, ask: Pick<QuietOrder, "title"> | null = null): string | null {
+  const tomorrow = addDaysToDay(dayInZone(tz, now), 1);
   const lines: string[] = [];
   const visits = orders.filter((o) => o.status === "scheduled" && o.scheduledFor?.slice(0, 10) === tomorrow);
-  for (const v of visits.slice(0, 2)) lines.push(`🔧 The landlord's coming tomorrow${visitTime(v.scheduledFor!)} about ${v.title}. Someone be home?`);
-  const quiet = orders
-    .filter((o) => (o.status === "sent" || o.status === "acknowledged") && !visits.includes(o))
-    .map((o) => ({ o, days: daysBetweenDays(dayInZone(tz, o.lastActivityAt), today) }))
-    .filter(({ days }) => days >= FOLLOW_UP_DAYS && days % FOLLOW_UP_DAYS === 0)
-    .sort((a, b) => b.days - a.days)[0];
-  if (quiet) lines.push(`📭 Nothing from the landlord about ${quiet.o.title} in ${quiet.days} days. Want me to follow up?`);
+  for (const v of visits.slice(0, 2)) lines.push(`The leasing office is coming tomorrow${visitTime(v.scheduledFor!)} about ${v.title}. Someone be home?`);
+  if (ask) lines.push(followUpAsk(ask.title));
   return lines.length ? lines.join(" ") : null;
 }
 
-/** The weekly report's part: "Lease inbox: 1 notice, 2 other emails". Null for a quiet week. */
+/** The polite follow-up on a work order's thread: no date, amount or lease term, so the send rule finds it simple. */
+export function followUpBody(groupName: string, title: string): string {
+  return `Hi,\n\nJust following up on our work order for ${groupName}: ${title}. Is there any update on when someone can take a look?\n\nThanks.`;
+}
+
+/**
+ * A Member's own message asks for a follow-up: a yes to Roomie's question, or "follow up on the sink" / "chase them"
+ * / "ping the landlord". Anything else sends nothing (no yes, no email).
+ */
+export function asksFollowUp(latest: string | undefined | null): boolean {
+  if (!latest) return false;
+  if (saysYes(latest)) return true;
+  const text = latest.toLowerCase();
+  if (/\b(?:no|don'?t|do not|no need|never mind|not yet)\b/.test(text)) return false;
+  return /\bfollow(?:\s|-)?up\b|\bchase\b|\bnudge (?:them|the)\b|\bping (?:them|the)\b|\bcheck in with\b|\bremind them\b/.test(text);
+}
+
+/** The weekly report's part: "From the leasing office: 1 notice, 2 other emails". Null for a quiet week. */
 export function leaseReportText(notices: number, others: number): string | null {
   if (!notices && !others) return null;
   const n = (k: number, one: string, many: string) => `${k} ${k === 1 ? one : many}`;
-  return `Lease inbox: ${[notices ? n(notices, "notice", "notices") : null, others ? n(others, "other email", "other emails") : null].filter(Boolean).join(", ")}`;
+  return `From the leasing office: ${[notices ? n(notices, "notice", "notices") : null, others ? n(others, "other email", "other emails") : null].filter(Boolean).join(", ")}`;
 }
 
 /**
@@ -146,33 +176,42 @@ export function attachmentKind(mailClass: string | null, utility: string | null,
   return "email";
 }
 
-/* ---------- the chat line for a landlord email (#45) ---------- */
+/* ---------- the chat line for a landlord email (#45, #74) ---------- */
 
 /** The longest sender label the chat shows. */
 const SENDER_MAX = 40;
 
 /**
- * Who an email is from, as the chat says it: the From header's display name, else "The landlord". The name is the
- * sender's own text, so it's made one short plain line: control, formatting and bidirectional characters and line
- * breaks go, spaces collapse, at most 40 characters; nothing usable left (or an address) is "The landlord".
+ * A sender's display name made one short plain line: control, formatting and bidirectional characters and line
+ * breaks go, spaces collapse, at most 40 characters. Null when nothing usable is left (or it's an address).
  */
-export function senderName(fromHeader: string | null | undefined): string {
-  const raw = /^\s*"?([^"<]+?)"?\s*</.exec(fromHeader ?? "")?.[1] ?? "";
-  const name = raw
+export function plainName(raw: string | null | undefined): string | null {
+  const name = (raw ?? "")
     .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, " ")
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, SENDER_MAX)
     .trim();
-  return name && !name.includes("@") && /\p{L}/u.test(name) ? name : "The landlord";
+  return name && !name.includes("@") && /\p{L}/u.test(name) ? name : null;
 }
 
 /**
- * One line in the chat for a trusted landlord email, like a notification: who and what. A work-order reply names
- * the work order; a rent or lease email only says it came (the details go to the Admins privately).
+ * Who a trusted landlord email is from, as the chat says it: the display name it was sent under (the From header's,
+ * or for a forward the quoted From's, `forwardedName`), else "Leasing office". The name is the sender's own text, so
+ * it goes through plainName.
+ */
+export function senderName(fromHeader: string | null | undefined, forwardedName?: string | null): string {
+  if (forwardedName !== undefined) return plainName(forwardedName) ?? LANDLORD_LABEL;
+  return plainName(/^\s*"?([^"<]+?)"?\s*</.exec(fromHeader ?? "")?.[1]) ?? LANDLORD_LABEL;
+}
+
+/**
+ * One line in the chat for a trusted landlord email, like a notification: who, then what, no emoji. A notice's
+ * `summary` is noticeLineText's (its thing and window when the classifier kept them), a work-order reply names the
+ * work order, and a rent or lease email only says it came (the details go to the Admins privately).
  */
 export function mailLine(m: { class: "notice" | "rent-lease" | "work-order" | "other"; sender: string; summary: string; title?: string }): string {
-  if (m.class === "rent-lease") return `📬 ${m.sender} emailed about the rent or the lease. An admin has the details.`;
-  if (m.class === "work-order" && m.title) return `📬 ${m.sender} on ${m.title}: ${m.summary}`;
-  return `📬 ${m.sender}: ${m.summary}`;
+  if (m.class === "rent-lease") return `${m.sender} emailed about the rent or the lease. An admin has the details.`;
+  if (m.class === "work-order" && m.title) return `${m.sender} on ${m.title}: ${m.summary}`;
+  return `${m.sender}: ${m.summary}`;
 }

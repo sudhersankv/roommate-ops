@@ -2,21 +2,23 @@
 // address and the trusted senders as people see and manage them, sending for a Member with the thread found from
 // what they said, the Bundle and report lines, the dashboard inbox, and forget me. Thin over the core and the pure
 // rules (lease-inbox-rules.ts).
-import { and, asc, desc, eq, gte, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, like } from "drizzle-orm";
 import { deliver } from "@/channels";
 import { db, schema } from "@/db";
 import type { MailClass } from "@/db/enums";
 import { mailClient } from "@/integrations/mail";
-import { formatInZone } from "@/lib/time";
+import { roomiePaused } from "@/lib/kill-switch";
+import { daytimeHour } from "@/lib/quiet-hours";
+import { dayInZone, formatInZone } from "@/lib/time";
 import { recordFor } from "./activity";
 import { requireAdmin } from "./authz";
 import { logMessage } from "./chatlog";
 import { askedSender, ensureInbox, inboxOf, knownSenders, NO_INBOX, sendToLandlord, trustSender, workOrderStatus, type SendApproval, type SendResult } from "./lease-inbox";
-import { leaseBundleText, leaseReportText, type QuietOrder } from "./lease-inbox-rules";
+import { asksFollowUp, followUpBody, followUpCandidates, leaseBundleText, leaseReportText, type QuietOrder } from "./lease-inbox-rules";
 import { admins } from "./members";
 import { noticeStatus, type Notice, type NoticeState } from "./notice-window";
 import type { ReportPart } from "./report";
-import { groupTimezone } from "./schedule";
+import { bundleWindow, claimPost, getSchedule, groupTimezone, releasePost } from "./schedule";
 import type { Ctx, GroupCtx } from "./types";
 
 const { groupInboxes, landlordSenders, mailMessages, workOrders, sentMail, members } = schema;
@@ -25,7 +27,7 @@ const { groupInboxes, landlordSenders, mailMessages, workOrders, sentMail, membe
 
 /** What Roomie says with the address (ADR 0016 decision 2): three ways to connect, not a flow. */
 export const connectLine = (address: string) =>
-  `📬 Our email address is ${address}. To connect the landlord: forward me the lease or their last email, CC this address next time you email them, or give it to the leasing office.`;
+  `Our email address is ${address}. To connect the landlord: forward me the lease or their last email, CC this address next time you email them, or give it to the leasing office.`;
 
 /** The Trick's onEnable: the address (made once) and the connect line in the Chat. Teaching it twice adds nothing new. */
 export async function startLeaseInbox(ctx: { groupId: string; memberId: string | null }): Promise<{ address: string } | null> {
@@ -130,7 +132,7 @@ export async function sendForMember(ctx: Ctx, input: MemberSend, now = new Date(
     },
     now,
   );
-  // A follow-up counts as activity on the work order: the 5-day offer starts again.
+  // A reply on a work order's thread counts as activity on it.
   if (r.sent && order) await db.update(workOrders).set({ lastActivityAt: now }).where(eq(workOrders.id, order));
   return r;
 }
@@ -173,19 +175,109 @@ export async function noticeLine(ctx: GroupCtx, about?: string, now = new Date()
 
 /* ---------- Bundle and report ---------- */
 
-async function openOrders(groupId: string): Promise<QuietOrder[]> {
+async function openOrders(groupId: string): Promise<(QuietOrder & { id: string })[]> {
   return db
-    .select({ title: workOrders.title, status: workOrders.status, scheduledFor: workOrders.scheduledFor, lastActivityAt: workOrders.lastActivityAt })
+    .select({ id: workOrders.id, title: workOrders.title, status: workOrders.status, scheduledFor: workOrders.scheduledFor, lastActivityAt: workOrders.lastActivityAt })
     .from(workOrders)
     .where(and(eq(workOrders.groupId, groupId), inArray(workOrders.status, ["sent", "acknowledged", "scheduled"])))
     .orderBy(asc(workOrders.createdAt));
 }
 
-/** The Trick's morning Bundle line: a visit tomorrow, or a work order quiet for 5 days (offer to follow up). */
+const FOLLOW_UP_KIND = "lease.followup" as const;
+
+/** Roomie may post to the Group on its own: not paused by the kill switch or an operator. */
+async function mayPost(groupId: string): Promise<boolean> {
+  if (roomiePaused()) return false;
+  const [g] = await db.select({ pausedAt: schema.groups.pausedAt }).from(schema.groups).where(eq(schema.groups.id, groupId));
+  return !!g && !g.pausedAt;
+}
+
+/**
+ * The work order Roomie asks about following up today, once per work order (#74): only in the Bundle's own hour (the
+ * nudge hour, 08:00 when it's inside quiet hours) and when the Group may be posted to, so Home's Today at other
+ * times never spends the question. The first unanswered one (followUpCandidates) not asked on an earlier day: the
+ * claim is scheduled_posts "lease.followup", period "<workOrderId>:<local day>", and today's claim still counts, so
+ * the scheduler's later ticks in that hour and Home in that hour say the same Bundle.
+ */
+async function followUpToAsk(groupId: string, orders: (QuietOrder & { id: string })[], tz: string, now: Date): Promise<QuietOrder | null> {
+  const candidates = followUpCandidates(orders, tz, now);
+  if (!candidates.length) return null;
+  const { nudgeHour } = await getSchedule({ groupId });
+  if (!bundleWindow(now, tz, nudgeHour === null ? null : daytimeHour(nudgeHour)).open || !(await mayPost(groupId))) return null;
+  const today = dayInZone(tz, now);
+  for (const o of candidates) {
+    const claims = await db
+      .select({ period: schema.scheduledPosts.period })
+      .from(schema.scheduledPosts)
+      .where(and(eq(schema.scheduledPosts.groupId, groupId), eq(schema.scheduledPosts.kind, FOLLOW_UP_KIND), like(schema.scheduledPosts.period, `${o.id}:%`)));
+    if (claims.some((c) => c.period === `${o.id}:${today}`)) return o;
+    if (claims.length) continue; // asked on an earlier day
+    // A false claim here is another tick or page claiming it this same day: asked today all the same.
+    await claimPost(groupId, FOLLOW_UP_KIND, `${o.id}:${today}`);
+    return o;
+  }
+  return null;
+}
+
+/**
+ * The Trick's morning Bundle line: a visit tomorrow, and a work order with no reply for 2 local days ("Want me to
+ * follow up?", asked once per work order). The Bundle is logged as Roomie's chat line, so a yes right after it is in
+ * the follow-up window and reaches follow_up_work_order.
+ */
 export async function leaseBundleLine(ctx: GroupCtx, now = new Date()): Promise<string | null> {
   const [orders, tz] = await Promise.all([openOrders(ctx.groupId), groupTimezone(ctx.groupId)]);
-  return leaseBundleText(orders, tz, now);
+  const ask = await followUpToAsk(ctx.groupId, orders, tz, now).catch((e) => (console.error("[lease-inbox] follow-up question failed", e), null));
+  return leaseBundleText(orders, tz, now, ask);
 }
+
+export type FollowUpResult = { sent: true; say: string } | { sent: false; say: string; ask?: string[]; choices?: string[] };
+
+/**
+ * "Want me to follow up?" -> "yes" (any active Member), or "follow up on the sink" any time: one polite email on the
+ * work order's thread through sendToLandlord (the send rule: a follow-up on our own work order is simple). Only when
+ * the Member's own message asks for it (asksFollowUp: no yes, no email), and at most one a day per work order
+ * (scheduled_posts "lease.followup.sent"), so two yeses at once send one.
+ */
+export async function followUpWorkOrder(ctx: Ctx, input: { what?: string; latest: string | undefined }, now = new Date()): Promise<FollowUpResult> {
+  if (!asksFollowUp(input.latest)) return { sent: false, say: "Nothing was sent: ask whether they want you to follow up." };
+  const s = await workOrderStatus(ctx, { what: input.what });
+  if (!s) return { sent: false, say: input.what ? `I haven't reported anything about ${input.what}.` : "No work orders yet." };
+  if ("choices" in s) return { sent: false, choices: s.choices, say: `Which one: ${s.choices.length <= 1 ? s.choices.join("") : `${s.choices.slice(0, -1).join(", ")} or ${s.choices.at(-1)}`}?` };
+  if (s.status === "done") return { sent: false, say: `${capitalized(s.title)} is done already.` };
+  const [order] = await db.select({ threadId: workOrders.threadId }).from(workOrders).where(eq(workOrders.id, s.id));
+  const [group] = await db.select({ name: schema.groups.name }).from(schema.groups).where(eq(schema.groups.id, ctx.groupId));
+  const tz = await groupTimezone(ctx.groupId);
+  const period = `${s.id}:${dayInZone(tz, now)}`;
+  if (!(await claimPost(ctx.groupId, "lease.followup.sent", period))) return { sent: false, say: `Already followed up on ${s.title} today.` };
+  let r: SendResult;
+  try {
+    r = await sendToLandlord(
+      ctx,
+      {
+        intent: "reply",
+        threadId: order.threadId,
+        body: followUpBody(group?.name ?? "our apartment", s.title),
+        // A fixed instruction: two Members' yeses are the same ask, not a conflict for the send rule.
+        instruction: `follow up on ${s.title}`,
+        summary: `followed up on ${s.title}`,
+        workOrderId: s.id,
+        ...(input.latest ? { approval: { latest: input.latest } } : {}),
+      },
+      now,
+    );
+  } catch (e) {
+    await releasePost(ctx.groupId, "lease.followup.sent", period).catch(() => {});
+    throw e;
+  }
+  if (!r.sent) {
+    await releasePost(ctx.groupId, "lease.followup.sent", period).catch(() => {});
+    return { sent: false, ask: r.ask, say: "Nothing was sent. Ask these in one message; when they say yes, call this again." };
+  }
+  await db.update(workOrders).set({ lastActivityAt: now }).where(eq(workOrders.id, s.id));
+  return { sent: true, say: `Followed up on ${s.title}.` };
+}
+
+const capitalized = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
 
 /** The weekly report's part: notices and other emails that came in during the last 7 days. */
 export async function leaseReportParts(ctx: GroupCtx, now = new Date()): Promise<ReportPart[]> {

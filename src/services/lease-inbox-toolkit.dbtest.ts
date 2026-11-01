@@ -18,7 +18,7 @@ import { onGroupJoined } from "@/onboarding";
 import { deleteGroup } from "./groups";
 import * as core from "./lease-inbox";
 import { handleMailEvent, processInbound } from "./lease-inbox-inbound";
-import { anonymizeMailMember, inboxData, leaseBundleLine, leaseReportParts, releaseInbox, sendForMember, trustAsked } from "./lease-inbox-toolkit";
+import { anonymizeMailMember, followUpWorkOrder, inboxData, leaseBundleLine, leaseReportParts, releaseInbox, sendForMember, trustAsked } from "./lease-inbox-toolkit";
 import { askLease, setLeaseAnswerer, setTextReader } from "./lease-text";
 import { forgetMe } from "./members";
 import { setVariableExpense } from "./recurring";
@@ -164,7 +164,7 @@ describe("the Lease Inbox Trick against the dev DB", () => {
     assert.equal(r.urgent, false);
     assert.equal(await core.isTrusted(groupId, "workorders@brookfieldresidential.com"), true, "the whole domain");
     const o = take();
-    assert.deepEqual(chatLines(o), ["📬 The landlord: smoke detector inspection Thursday Nov 12, 9am-noon"]);
+    assert.deepEqual(chatLines(o), ["Brookfield Residential Leasing: smoke detector inspection Thursday Nov 12, 9am-noon"]);
     // The forward taught the landlord: Maya (the Admin) is offered the intro, privately.
     assert.match(dmsTo(o, maya.memberId).join("\n"), /Got it: brookfieldresidential\.com is the landlord now\. Want me to send them a short intro/);
     const [rem] = await db.select().from(schema.reminders).where(eq(schema.reminders.groupId, groupId));
@@ -185,7 +185,7 @@ describe("the Lease Inbox Trick against the dev DB", () => {
     assert.ok(!r.duplicate && r.urgent && r.posted === "urgent");
     const [claim] = await db.select().from(schema.scheduledPosts).where(and(eq(schema.scheduledPosts.groupId, groupId), eq(schema.scheduledPosts.kind, "urgent")));
     assert.equal(claim?.period, "2026-11-02");
-    assert.deepEqual(chatLines(take()), ["📬 Brookfield Residential Leasing: water off Tuesday Nov 3, 9am-1pm"]);
+    assert.deepEqual(chatLines(take()), ["Brookfield Residential Leasing: water off Tuesday Nov 3, 9am-1pm"]);
   });
 
   test("a rent change: the Admin gets the proposal privately; the group one line; the rent Expense unchanged", async () => {
@@ -196,7 +196,7 @@ describe("the Lease Inbox Trick against the dev DB", () => {
     const r = await processInbound(groupId, m, { now: MONDAY });
     assert.ok(!r.duplicate && r.class === "rent-lease");
     const o = take();
-    assert.deepEqual(chatLines(o), ["📬 Brookfield Residential Leasing emailed about the rent or the lease. An admin has the details."]);
+    assert.deepEqual(chatLines(o), ["Brookfield Residential Leasing emailed about the rent or the lease. An admin has the details."]);
     const dm = dmsTo(o, maya.memberId).join("\n");
     assert.match(dm, /rent goes to \$2,550 a month from Jan 1, 2027/);
     assert.match(dm, /say "roomie, update the rent to \$2,550"/);
@@ -250,10 +250,10 @@ describe("the Lease Inbox Trick against the dev DB", () => {
     queue.push({ class: "work-order", reply: "scheduled", date: "2026-11-03T10:00", summary: "plumber Tuesday at 10" });
     const r = await processInbound(groupId, m, { now: local(11, 1, 15) });
     assert.ok(!r.duplicate && r.class === "work-order");
-    assert.deepEqual(chatLines(take()), ["📬 Brookfield Work Orders on the leaking kitchen sink: plumber Tuesday at 10"]);
+    assert.deepEqual(chatLines(take()), ["Brookfield Work Orders on the leaking kitchen sink: plumber Tuesday at 10"]);
     const [wo] = await db.select().from(schema.workOrders).where(eq(schema.workOrders.threadId, sinkThread));
     assert.deepEqual([wo.status, wo.scheduledFor], ["scheduled", "2026-11-03T10:00"]);
-    assert.equal(await leaseBundleLine({ groupId }, MONDAY), "🔧 The landlord's coming tomorrow (10am) about the leaking kitchen sink. Someone be home?");
+    assert.equal(await leaseBundleLine({ groupId }, MONDAY), "The leasing office is coming tomorrow at 10 AM about the leaking kitchen sink. Someone be home?");
   });
 
   test("a reply in the landlord's thread goes at once; \"tell them we're not renewing\" asks and sends nothing", async () => {
@@ -266,6 +266,37 @@ describe("the Lease Inbox Trick against the dev DB", () => {
     if (no.sent) return;
     assert.ok(no.ask.some((q) => /lease/.test(q)), no.ask.join(" | "));
     assert.equal(mail.sent.length, before + 1, "only the reply went");
+  });
+
+  test("no reply for 2 local days: the Bundle asks once (only in its hour); a yes sends one follow-up on the thread", async () => {
+    const r = await core.reportIssue(dev, { what: "the broken blinds", instruction: "roomie the blinds are broken, tell them" });
+    assert.ok(r.sent);
+    if (!r.sent) return;
+    // Reported Friday noon: Monday is 3 local days later.
+    await db.update(schema.workOrders).set({ lastActivityAt: local(10, 30, 12) }).where(eq(schema.workOrders.id, r.workOrderId!));
+    const visit = "The leasing office is coming tomorrow at 10 AM about the leaking kitchen sink. Someone be home?";
+    const ask = "No reply from the leasing office about the broken blinds yet. Want me to follow up?";
+    assert.equal(await leaseBundleLine({ groupId }, MONDAY), visit, "10:00 isn't the Bundle's hour (9): Home's Today doesn't spend the question");
+    assert.equal(await leaseBundleLine({ groupId }, local(11, 2, 9, 5)), `${visit} ${ask}`);
+    assert.equal(await leaseBundleLine({ groupId }, local(11, 2, 9, 40)), `${visit} ${ask}`, "a later tick the same hour says the same Bundle");
+    assert.equal(await leaseBundleLine({ groupId }, local(11, 3, 9, 5)), null, "asked once: not the next morning");
+
+    const before = mail.sent.length;
+    const nothing = await followUpWorkOrder(dev, { what: "the blinds", latest: "lol those blinds" }, local(11, 3, 9, 10));
+    assert.equal(nothing.sent, false, "no yes, no email");
+    assert.equal(mail.sent.length, before);
+    const yes = await followUpWorkOrder(dev, { what: "the blinds", latest: "yeah go for it" }, local(11, 3, 9, 10));
+    assert.deepEqual(yes, { sent: true, say: "Followed up on the broken blinds." });
+    assert.equal(mail.sent.length, before + 1);
+    const email = mail.sent.at(-1)!;
+    assert.equal(email.threadId, r.threadId, "on the work order's own thread");
+    assert.match(email.text, /^Hi,\n\nJust following up on our work order for .+: the broken blinds\./);
+    assert.match(email.text, /at Dev's request\./);
+    const again = await followUpWorkOrder(sam, { what: "blinds", latest: "yes" }, local(11, 3, 9, 11));
+    assert.deepEqual(again, { sent: false, say: "Already followed up on the broken blinds today." }, "two yeses send one");
+    assert.equal(mail.sent.length, before + 1);
+    const [wo] = await db.select().from(schema.workOrders).where(eq(schema.workOrders.id, r.workOrderId!));
+    assert.equal(wo.lastActivityAt.getTime(), local(11, 3, 9, 10).getTime(), "the follow-up counts as activity");
   });
 
   test("ask_lease: none filed -> says so; a forwarded lease PDF is read and answers with the clause", async () => {
@@ -291,7 +322,7 @@ describe("the Lease Inbox Trick against the dev DB", () => {
   test("the weekly report counts what came in; the dashboard sees it all", async () => {
     // FakeMail stamps mail with the real clock. Notices: the inspection and the water; the rest but the rent email and
     // the work-order reply: the newsletter, the bill, two parking emails, the lease.
-    assert.deepEqual(await leaseReportParts({ groupId }, new Date()), [{ icon: "📬", text: "Lease inbox: 2 notices, 5 other emails" }]);
+    assert.deepEqual(await leaseReportParts({ groupId }, new Date()), [{ icon: "📬", text: "From the leasing office: 2 notices, 5 other emails" }]);
     const data = await inboxData(dev);
     assert.ok(data.address);
     assert.ok(data.mail.some((m) => m.documentIds.includes(noticeDoc)));
@@ -311,7 +342,7 @@ describe("the Lease Inbox Trick against the dev DB", () => {
     classify();
     const r = await processInbound(groupId, m, { eventId, now: new Date(MONDAY.getTime() + 11 * 60_000) });
     assert.ok(!r.duplicate && r.posted === "posted");
-    assert.deepEqual(chatLines(take()), ["📬 Brookfield Residential Leasing: hallway painting Wednesday Nov 18"]);
+    assert.deepEqual(chatLines(take()), ["Brookfield Residential Leasing: hallway painting Wednesday Nov 18"]);
     const reminders = await db.select().from(schema.reminders).where(and(eq(schema.reminders.groupId, groupId), eq(schema.reminders.text, "Tomorrow: hallway painting Wednesday Nov 18")));
     assert.equal(reminders.length, 1, "the first run's Reminder isn't set twice");
     assert.ok((await processInbound(groupId, m, { eventId, now: new Date(MONDAY.getTime() + 30 * 60_000) })).duplicate, "processed: done");

@@ -1369,6 +1369,39 @@ export const SCENARIOS: Scenario[] = [
     expect: { tools: ["work_order_status"], noTools: "actions", replyIncludes: [/sink/i], maxLines: 2 },
   },
   {
+    // #74: the Bundle asked once about a work order with no reply; Sam (not who reported it) says yes.
+    id: "lease-follow-up-yes",
+    area: "lease",
+    seed: async (e) => {
+      await landlordKnown(e);
+      const { reportIssue } = await import("@/services/lease-inbox");
+      const { followUpAsk } = await import("@/services/lease-inbox-rules");
+      await reportIssue(e.as("Dev"), { what: "the leaking kitchen sink", instruction: "roomie the sink's leaking, tell them" });
+      await chatlog.logMessage(e.ctx.groupId, null, followUpAsk("the leaking kitchen sink"));
+    },
+    turn: { text: "yeah go for it", from: "Sam" },
+    expect: {
+      tools: ["follow_up_work_order"],
+      replyIncludes: [/follow/i],
+      maxLines: 2,
+      check: async (e) => {
+        const rows = await db.select().from(schema.sentMail).where(eq(schema.sentMail.groupId, e.ctx.groupId));
+        return fail(rows.filter((r) => /^followed up/.test(r.summary)).length === 1, `one follow-up email, got ${rows.map((r) => r.summary).join(", ")}`);
+      },
+    },
+  },
+  {
+    id: "lease-follow-up-asked",
+    area: "lease",
+    seed: async (e) => {
+      await landlordKnown(e);
+      const { reportIssue } = await import("@/services/lease-inbox");
+      await reportIssue(e.as("Dev"), { what: "the leaking kitchen sink", instruction: "roomie the sink's leaking, tell them" });
+    },
+    turn: { text: "roomie can you follow up on the sink", from: "Maya" },
+    expect: { tools: ["follow_up_work_order"], replyIncludes: [/sink/i], maxLines: 2 },
+  },
+  {
     id: "lease-notice-period",
     area: "lease",
     seed: async (e) => {

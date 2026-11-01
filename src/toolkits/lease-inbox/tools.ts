@@ -1,7 +1,7 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { reportIssue, sendIntro, type SendApproval } from "@/services/lease-inbox";
-import { inboxStatus, noticeLine, releaseInbox, sendForMember, trustAsked, workOrderLine } from "@/services/lease-inbox-toolkit";
+import { followUpWorkOrder, inboxStatus, noticeLine, releaseInbox, sendForMember, trustAsked, workOrderLine } from "@/services/lease-inbox-toolkit";
 import { askLease } from "@/services/lease-text";
 import { ctxOf } from "../util";
 
@@ -16,10 +16,14 @@ const latestOf = (context: unknown): string | undefined => {
  * Without a message (test:tools, Studio) a held send can be released only with ROOMIE_ADMIN_ASK_OFF=1 outside
  * production, as the admin-only gate does.
  */
-const approvalOf = (context: unknown): SendApproval | undefined => {
+const yesOf = (context: unknown): string | undefined => {
   const latest = latestOf(context);
-  if (latest !== undefined) return { latest };
-  return process.env.ROOMIE_ADMIN_ASK_OFF === "1" && process.env.NODE_ENV !== "production" ? { latest: "yes" } : undefined;
+  if (latest !== undefined) return latest;
+  return process.env.ROOMIE_ADMIN_ASK_OFF === "1" && process.env.NODE_ENV !== "production" ? "yes" : undefined;
+};
+const approvalOf = (context: unknown): SendApproval | undefined => {
+  const latest = yesOf(context);
+  return latest === undefined ? undefined : { latest };
 };
 
 const sendOut = (r: Awaited<ReturnType<typeof sendForMember>>) =>
@@ -43,7 +47,7 @@ export const leaseInboxTools = {
   send_to_landlord: createTool({
     id: "send_to_landlord",
     description:
-      "Email the landlord for the sender: intent 'reply' answers in the landlord's thread about `about` (\"move the inspection to Thursday\", \"tell them Tuesday works\", a follow-up on a work order); 'new' is a new email. `body` is the email in the sender's words, short and polite, no sign-off (the signature is added). Never add an amount, a date or a lease term they didn't say. Returns `say` (post it as it is) or `ask` (nothing was sent: ask those questions; when they say yes, call it again with the same body).",
+      "Email the landlord for the sender: intent 'reply' answers in the landlord's thread about `about` (\"move the inspection to Thursday\", \"tell them Tuesday works\"; a follow-up on a work order is follow_up_work_order); 'new' is a new email. `body` is the email in the sender's words, short and polite, no sign-off (the signature is added). Never add an amount, a date or a lease term they didn't say. Returns `say` (post it as it is) or `ask` (nothing was sent: ask those questions; when they say yes, call it again with the same body).",
     inputSchema: z.object({
       intent: z.enum(["reply", "new"]),
       about: z.string().optional().describe("What the thread is about: 'the inspection', 'the sink'"),
@@ -55,6 +59,13 @@ export const leaseInboxTools = {
       const r = await sendForMember(ctxOf(context), { intent: input.intent, about: input.about, body: input.body, summary: input.summary, instruction, approval: approvalOf(context) });
       return sendOut(r);
     },
+  }),
+  follow_up_work_order: createTool({
+    id: "follow_up_work_order",
+    description:
+      "\"Want me to follow up?\" answered yes (by anyone), or \"follow up on the sink\" any time: one polite follow-up email on that work order's thread. `what` = the work order ('the sink'), the one Roomie asked about when it is a yes to that question. Say `say` as it is; with `ask`, nothing was sent: ask those questions; with `choices`, ask which one.",
+    inputSchema: z.object({ what: z.string().optional().describe("Which work order: 'the sink'") }),
+    execute: async ({ what }, context) => followUpWorkOrder(ctxOf(context), { what, latest: yesOf(context) }),
   }),
   work_order_status: createTool({
     id: "work_order_status",
