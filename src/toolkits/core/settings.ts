@@ -3,7 +3,7 @@ import { z } from "zod";
 import { GROUP_PURPOSES } from "@/db/schema";
 import { WEEKDAY_NAMES } from "@/lib/time";
 import { groups, joins, schedule, toolkits as toolkitsSvc } from "@/services";
-import { learnedLine } from "@/onboarding";
+import { setupLine } from "@/onboarding";
 import { CATALOG, CORE_MANIFEST, TOOLKIT_IDS } from "../manifests";
 import type { ToolkitManifest } from "../types";
 import { ctxOf } from "../util";
@@ -27,7 +27,7 @@ export const settingsTools = {
   set_group_settings: createTool({
     id: "set_group_settings",
     description:
-      "Admin only: change the group's settings, including the Onboarding answers ('roommates, USD, Chicago'). Only pass what changed. The first purpose picks the Tricks you learn unless you pass toolkits (each Trick sets itself up: a chore chart, a Pantry). When setup finishes the result has `say`: two ready lines (the Tricks you learned, then the group's Join link for everyone's dashboard); post `say` exactly as it is, the link included, nothing else about links. With postedInGroup (they answered in a DM) it's already in the group chat: say it here too. Also the hour of Roomie's morning post and the weekly report's day and hour.",
+      "Admin only: change the group's settings, including the Onboarding answers ('roommates, USD, Chicago'). Only pass what changed. The first purpose picks the Tricks you learn unless you pass toolkits (each Trick sets itself up: a chore chart, a Pantry). When setup finishes the result has `say`: two ready lines (a plain 'got it' for what you'll handle, then the group's Join link for everyone's dashboard); post `say` exactly as it is, the link included, and add nothing: no Trick names, no list of what you learned, no phrase to try. With postedInGroup (they answered in a DM) it's already in the group chat: say it here too. Also the hour of Roomie's morning post and the weekly report's day and hour.",
     inputSchema: z.object({
       name: z.string().optional().describe("The group's name"),
       purpose: z.enum(GROUP_PURPOSES).optional(),
@@ -58,10 +58,10 @@ export const settingsTools = {
       const finishedSetup = !before?.onboardedAt && !!group.onboardedAt;
       let setup = {};
       if (finishedSetup) {
-        // The setup's last word (ADR 0014): the Tricks learned and the Group's Join link, one line each. Answered in a
-        // DM, it goes to the group chat too, since that's where everyone needs the link.
-        const learned = learnedLine(toolkits, { defaulted: !group.purpose && !input.toolkits });
-        const say = `${learned}\n${joins.joinLine(await joins.joinLink(ctx.groupId))}`;
+        // The setup's last word (ADR 0014, #68): one plain line for what Roomie has from here (no Trick names) and the
+        // Group's Join link. Answered in a DM, it goes to the group chat too, since that's where everyone needs the link.
+        const line = setupLine(group.purpose, toolkits, { defaulted: !group.purpose && !input.toolkits, seed: ctx.groupId });
+        const say = `${line}\n${joins.joinLine(await joins.joinLink(ctx.groupId))}`;
         const inDm = (context?.requestContext as { get(k: string): unknown } | undefined)?.get("isPrivate") === true;
         const posted = inDm
           ? await joins.postInChat(ctx.groupId, say).then(
@@ -70,7 +70,6 @@ export const settingsTools = {
             )
           : undefined;
         setup = {
-          learned,
           say,
           ...(posted === true ? { postedInGroup: true } : {}),
           ...(posted === false ? { postedInGroup: false, tellThem: "It didn't reach the group chat: ask them to post the Join link line there (it's in `say`)." } : {}),

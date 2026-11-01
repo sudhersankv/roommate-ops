@@ -466,11 +466,11 @@ describe("private messages", () => {
 
   test("/start from the Admin of a Group still waiting for setup: the setup DM (with their Claim link button) instead", async () => {
     const asked: string[] = [];
-    const dm = { text: "Hi Maya 👋 You added me to Apt 4B, so you're its admin.\nAnswer the setup here or in the group: what's the group for, currency, city.", buttons: [{ text: "Open dashboard", url: "https://roomie.example/claim/abc" }] };
+    const dm = { text: "Hi Maya! You added me to Apt 4B, so you're its admin.\nWhat's this chat for? Answer here or in the group.", buttons: [{ text: "Open dashboard", url: "https://roomie.example/claim/abc" }] };
     const h = harness({ deps: { setupDmFor: async (id) => (asked.push(id), id === "11" ? dm : null) } });
     await h.feed(message(MAYA, { text: "/start" }, { id: 11, type: "private", first_name: "Maya" }));
     assert.deepEqual(asked, ["11"]);
-    assert.match(String(h.sent()[0].payload.text), /Answer the setup here or in the group/);
+    assert.match(String(h.sent()[0].payload.text), /What's this chat for\? Answer here or in the group/);
     assert.ok(JSON.stringify(h.sent()[0].payload.reply_markup).includes("/claim/abc"));
     await h.feed(message(SAM, { text: "/start" }, PRIVATE));
     assert.match(String(h.sent().at(-1)!.payload.text), /^Hey Sam 👋 Now I can DM you/, "anyone else: the usual line");

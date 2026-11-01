@@ -83,7 +83,7 @@ export const groceries = defineToolkit(manifest, {
 - **Agent:** its tools are in `toolsFor()` when it's on; its `skill.md` is in the instructions (in full when the Gate picks it, or when there's no pick); "Off here: X" when it's off.
 - **Gate:** its `gate.criterion` is offered to Jev only while it's on (`gate/jev.ts questionsFor`).
 - **Chat:** `toggle_toolkit` finds it by id or name and checks `requires`; `list_toolkits` describes it.
-- **Chat copy:** its line in `/help` (`channels/text.ts`) and in the setup's "Learned ..." line (`onboarding.ts learnedLine`).
+- **Chat copy:** its line in `/help` (`channels/text.ts`). The setup's last line (`onboarding.ts setupLine`) names no Trick (#68).
 - **Dashboard:** the card and sheet on the Tricks page, the dock tab and More drawer tile, Home and Settings sections, the off state of its pages, and one line from Roomie in the Chat when an Admin teaches it from the dashboard (10 minute cooldown). The Group's own pages (Reminders, Members, Settings) are the dock's, not a manifest's.
 - **Roomie's own posts:** its `bundle()` line in the morning Bundle and its `report()` sections in the weekly report, in `postOrder`.
 - **Presets:** add it to `src/toolkits/presets.ts` if a Group purpose should get it at Onboarding.

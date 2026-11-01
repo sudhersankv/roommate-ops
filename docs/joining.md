@@ -6,20 +6,22 @@ How people get from the group chat to the dashboard ([ADR 0014](./adr/0014-joini
 
 ## The flow
 
-1. **Roomie is added.** The adder is the first Admin. Besides the intro in the group, they get a private **setup DM**:
+1. **Roomie is added.** The adder is the first Admin. The intro in the group is one line, "Hey all! I'm Roomie. What's
+   this chat for?" (#68), and they get a private **setup DM**:
 
-   > Hi Maya 👋 You added me to Apt 4B, so you're its admin. Your own dashboard link is below (just for you, it works once).
-   > Answer the setup here or in the group: what's the group for, currency, city, vibe.
+   > Hi Maya! You added me to Apt 4B, so you're its admin. Your own dashboard link is below (just for you, it works once).
+   > What's this chat for? Answer here or in the group.
 
    with their Claim link as a button (on WhatsApp a last line `Open dashboard — https://...`).
    - **WhatsApp** sends it at once (Roomie can message anyone).
-   - **Telegram** can't message first: Roomie tries (it works if they pressed Start for Roomie before), else the intro
-     keeps "tap @bot and press Start, so I can DM you the setup and your dashboard link", and `/start` sends the setup
-     DM to an Admin of a Group that hasn't finished setup (`setupDmFor`). Anyone else gets the usual `/start` line.
+   - **Telegram** can't message first: Roomie tries (it works if they pressed Start for Roomie before), else it waits
+     for their `/start`, which sends the setup DM to an Admin of a Group that hasn't finished setup (`setupDmFor`). The
+     one-line intro no longer asks them to press Start: the Join link at the end of setup covers everyone's dashboard.
+     Anyone else gets the usual `/start` line.
 2. **Setup is answered**, in the DM or in the group (`set_group_settings`). The result's `say` is two lines, posted as
    they are:
 
-   > Learned Splitting, Groceries, Chores and Upkeep. Say "roomie, what can you do?" any time.
+   > Got it. I've got the house stuff from here.
    > Everyone: your dashboard is at https://tryroomie.me/j/qk3dcb5btz. Sign in with Google and pick your name.
 
    Answered in a DM, the same two lines also go to the group chat (`postedInGroup: true`), since that's where everyone

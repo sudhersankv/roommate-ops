@@ -1,66 +1,54 @@
 // Onboarding copy and defaults, no DB. Run: npx tsx --test src/onboarding.test.ts
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { approvalPrompt, introMessage, learnedLine, rosterStillOpen, setupDmText } from "./onboarding";
+import { approvalPrompt, introMessage, rosterStillOpen, setupDmText, setupLine } from "./onboarding";
+import { MANIFESTS } from "./toolkits/manifests";
 import { defaultToolkitsFor, validateSettings } from "./services/groups";
-import type { ToolkitManifest } from "./toolkits/types";
 
 const BANNED = /toolkit|capabilit|module|plugin|enable|feature|\bpet\b|slang|how you (all )?talk|adapt|\bvibe\b|\bAI\b|\bbot\b|assistant|brain|smart/i;
 
-test("intro: who Roomie is, 'tell me what this group is for and I'll learn the right Tricks', the Admin; no list of Tricks, no vibe offer", () => {
-  const text = introMessage("Maya");
-  const lines = text.split("\n");
-  assert.equal(lines.length, 3, "three short lines");
-  assert.equal(lines[0], "Hey all, I'm Roomie 🦖 the roommate who actually keeps track: rent, splits, groceries, chores, the landlord.");
-  assert.match(lines[1], /^Tell me what this group is for \(roommates, a trip, friends, family, work…\) and I'll learn the right Tricks\./);
+test("intro (#68): one line, one question; no admin line, no list of Tricks, no vibe offer, no link", () => {
+  const text = introMessage();
+  assert.equal(text, "Hey all! I'm Roomie. What's this chat for?");
+  assert.ok(!text.includes("\n"), "one line");
   assert.ok(!/chill|hype|deadpan|gremlin|butler/.test(text), "one voice (ADR 0020): setup offers no vibe");
-  assert.equal(lines[2], "Maya added me, so Maya's my admin.");
-  assert.ok(!/Splitting|Groceries|Chores|Upkeep|split costs|Cart/.test(text), "no list of Tricks");
-  assert.ok(!BANNED.test(text), "Tricks vocabulary; the adaptation stays implicit");
-  for (const unknown of ["+16235550123", "Someone"]) {
-    const t = introMessage(unknown);
-    assert.match(t, /Whoever added me is my admin\./, "no name yet (WhatsApp before anyone has spoken)");
-    assert.ok(!t.includes(unknown), "never reads a phone number out in the group");
-  }
+  assert.ok(!/Money|Groceries|House|Chores|Upkeep|Tricks?\b|Cart/.test(text), "no list of Tricks");
+  assert.ok(!BANNED.test(text));
   assert.ok(!/https?:\/\//.test(text), "no links at join time (ADR 0001)");
 });
 
-test("intro on Telegram: the press-Start nudge rides on the admin line, still three lines and no URL", () => {
-  const text = introMessage("Maya", { dmHandle: "roomie_house_bot" });
-  assert.match(text, /Maya's my admin\. Tap @roomie_house_bot and press Start/);
-  assert.equal(text.split("\n").length, 3);
-  assert.ok(!/https?:\/\//.test(text));
-});
-
-test("intro on Telegram: Start is for the setup DM and the dashboard link", () => {
-  assert.match(introMessage("Maya", { dmHandle: "roomie_house_bot" }), /press Start, so I can DM you the setup and your dashboard link\.$/);
-});
-
-test("the Admin's setup DM (ADR 0014): who they are to the group, then the setup question, answerable right there", () => {
+test("the Admin's setup DM (ADR 0014): who they are to the group, then the same question, answerable right there", () => {
   const text = setupDmText("Maya Lee", "Apt 4B");
   const lines = text.split("\n");
   assert.equal(lines.length, 2);
-  assert.equal(lines[0], "Hi Maya 👋 You added me to Apt 4B, so you're its admin. Your own dashboard link is below (just for you, it works once).");
-  assert.equal(lines[1], "Answer the setup here or in the group: what's the group for, currency, city.");
+  assert.equal(lines[0], "Hi Maya! You added me to Apt 4B, so you're its admin. Your own dashboard link is below (just for you, it works once).");
+  assert.equal(lines[1], "What's this chat for? Answer here or in the group.");
+  assert.doesNotMatch(text, /currency|city/i, "no currency or city unless needed (#68)");
   assert.ok(!/https?:\/\//.test(text), "the Claim link rides as a button, never in the text");
   assert.ok(!BANNED.test(text));
-  assert.match(setupDmText("+15551110001", "Apt 4B"), /^Hi 👋 You added me/, "never reads a number out as a name");
+  assert.match(setupDmText("+15551110001", "Apt 4B"), /^Hi! You added me/, "never reads a number out as a name");
 });
 
-test("the setup line says which Tricks Roomie learned, as a fact: no 'say roomie, learn …' tip, no offer (#44)", () => {
-  assert.equal(learnedLine(defaultToolkitsFor("trip")), "Learned Money and Groceries.");
-  assert.equal(learnedLine(defaultToolkitsFor("friends")), "Learned Money.");
-  assert.equal(learnedLine(defaultToolkitsFor("roommates")), "Learned Money, Groceries and House.");
-  assert.equal(learnedLine(defaultToolkitsFor(null), { defaulted: true }), "You didn't say what this group is for, so I kept the roommates set: learned Money, Groceries and House.");
-  assert.equal(learnedLine([]), "No Tricks yet.");
-  for (const p of ["roommates", "trip", "friends", "family", "work", "other"] as const) {
-    const line = learnedLine(defaultToolkitsFor(p));
-    assert.ok(!line.includes(String.fromCharCode(10)));
-    assert.ok(!BANNED.test(line));
-    assert.doesNotMatch(line, /roomie, learn|any time|want me to/i);
+test("the setup line (#68): one plain line that fits the purpose; never names a Trick, never 'Learned X', never a tip", () => {
+  const all = ["splitting", "groceries", "house"];
+  const household = ["Got it. I've got the house stuff from here.", "Got it. I'll keep track of the house stuff from here.", "Sorted. I've got the house stuff from here."];
+  const seeds = ["a", "b", "c", "d", "e", "f", "g", "h"];
+  for (const seed of seeds) assert.ok(household.includes(setupLine("roommates", all, { seed })), "roommates: the house stuff");
+  assert.ok(new Set(seeds.map((seed) => setupLine("roommates", all, { seed }))).size > 1, "varied across Groups");
+  assert.equal(setupLine("roommates", all, { seed: "g1" }), setupLine("roommates", all, { seed: "g1" }), "stable for one Group");
+  for (const seed of seeds) assert.doesNotMatch(setupLine("trip", ["splitting", "groceries"], { seed }), /house/i, "a trip never hears house");
+  assert.equal(setupLine(null, all, { defaulted: true }), "Got it. You didn't say what this chat is for, so I set it up like a shared apartment.");
+  assert.match(setupLine("roommates", []), /^Got it\. Just reminders for now/);
+  const names = new RegExp([...MANIFESTS.map((m) => m.name), "Learned", "roomie, learn", "any time", "want me to"].join("|"));
+  for (const p of ["roommates", "trip", "friends", "family", "work", "other", null] as const) {
+    for (const seed of seeds) {
+      const line = setupLine(p, defaultToolkitsFor(p), { seed, defaulted: p === null });
+      assert.ok(!line.includes("\n"), "one line");
+      assert.ok(!BANNED.test(line), line);
+      assert.doesNotMatch(line, names, line);
+    }
   }
 });
-
 
 test("roster grace (ADR 0010): Telegram first-time senders count as already there for 24 hours; other Channels never", () => {
   const joined = new Date("2026-10-28T12:00:00Z");
