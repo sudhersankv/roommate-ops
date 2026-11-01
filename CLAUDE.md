@@ -51,7 +51,8 @@ src/
                         starter chores and Pantry are theirs, Onboarding names no Toolkit)
     toolkits.ts         setToolkit (Admins; by id or name; coming soon / unmet requires refused, and a Toolkit another
                         enabled one requires can't go off; hooks once per change; a dashboard switch-on posts ONE line
-                        in the Chat, 10 min cooldown), catalogFor, checkRequirements, enabledToolkitEntries (the
+                        in the Chat, 10 min cooldown: announcementFor), setupFor (a manifest's `setup`: "That needs a
+                        quick setup. Here:" + a button to its page, for toggle_toolkit and that post, #69), catalogFor, checkRequirements, enabledToolkitEntries (the
                         enabled server entries in post order, lazy), byPostOrder
     members.ts          list (active / active+pending), approve, decline, promote, payment handles, forgetMe, Member
                         facts (rememberAboutMe, knownAbout: your own or an Admin, peopleFacts for the instructions),
@@ -202,7 +203,7 @@ src/
                         lists below, the landing's Trick files and tests
     types.ts            the contract: ToolkitManifest (summary, longDescription, icon, category, tags, defaultOn,
                         requires, worksWith, status, gate { criterion, examples }, abilities, adminOnly, postOrder,
-                        dashboard { nav, pages }) and Toolkit (+ tools, dashboard { home, settings, mood } lazy refs,
+                        setup { path, line? } (#69), dashboard { nav, pages }) and Toolkit (+ tools, dashboard { home, settings, mood } lazy refs,
                         onEnable/onDisable, bundle(ctx, now) = its line in the morning Bundle, report(ctx, now) = its
                         sections of the weekly report, tick(ctx, now) = every scheduler pass, its own timed DMs)
     define.ts           defineManifest (keeps the id literal), defineToolkit (manifest + server parts)
@@ -225,7 +226,7 @@ src/
     splitting/ groceries/ house/   manifest.ts + server.ts + the tools (+ dashboard.tsx: Home/Settings sections;
                         groceries: cart.ts + recipes.ts, requires splitting; house: chores.ts + upkeep.ts, the chores and
                         upkeep Tricks as one, nav "House" at /house). splitting's manifest name is "Money" (id unchanged)
-    lease-inbox/        manifest.ts (off by default, requires integrations agentmail, offerLine, nav "Inbox" at /inbox 35,
+    lease-inbox/        manifest.ts (off by default, requires integrations agentmail, setup at /inbox, nav "Inbox" at /inbox 35,
                         postOrder 20, adminOnly trust_sender / release_inbox / send_intro), tools.ts (report_issue,
                         send_to_landlord, work_order_status, trust_sender, send_intro, ask_lease, inbox_status,
                         release_inbox), server.ts (onEnable = the address in the Chat, bundle, report), dashboard.tsx (Settings)

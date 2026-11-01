@@ -3,7 +3,7 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { CATALOG, manifestOf, MANIFESTS } from "@/toolkits/manifests";
-import { announcement, byPostOrder, checkRequirements, learnedSay, resolveToolkitSet, unmet, type RequirementFacts } from "./toolkits";
+import { announcement, announcementFor, byPostOrder, checkRequirements, learnedSay, resolveToolkitSet, setupFor, unmet, type RequirementFacts } from "./toolkits";
 
 const facts = (over: Partial<RequirementFacts> = {}): RequirementFacts => ({ hasEnv: () => false, enabled: [], integrations: {}, ...over });
 
@@ -69,4 +69,28 @@ test("byPostOrder: money, the landlord, the house, then groceries (ADR 0017), wh
 test("announcement: one line saying what Roomie can do now, no phrase to type (#44)", () => {
   assert.equal(announcement(manifestOf("groceries")!), "Learned Groceries: one shared Cart, recipes for the group, and an Instacart list.", "what it does now, no phrase to type");
   assert.equal(learnedSay({ name: "Lease Inbox", summary: "Your group's own email address for the landlord." }), "Learned Lease Inbox: your group's own email address for the landlord.");
+});
+
+describe("a Trick that needs setup (#69)", () => {
+  const url = (p: string) => `https://tryroomie.me${p}`;
+  test("only the Lease Inbox has setup today, pointing at its Inbox page", () => {
+    assert.deepEqual(MANIFESTS.filter((m) => m.setup).map((m) => m.id), ["lease-inbox"]);
+    assert.deepEqual(setupFor(manifestOf("lease-inbox")!, "g1", url), {
+      say: "That needs a quick setup. Here:",
+      links: [{ text: "Set up Lease Inbox", url: "https://tryroomie.me/g/g1/inbox" }],
+    });
+  });
+  test("no setup: nothing; a manifest's own line wins; no absolute APP_URL: the line without a link", () => {
+    assert.equal(setupFor(manifestOf("groceries")!, "g1", url), null);
+    const m = { ...manifestOf("lease-inbox")!, setup: { path: "/settings", line: "Give it a minute on the dashboard. Here:" } };
+    assert.deepEqual(setupFor(m, "g1", url), { say: "Give it a minute on the dashboard. Here:", links: [{ text: "Set up Lease Inbox", url: "https://tryroomie.me/g/g1/settings" }] });
+    assert.deepEqual(setupFor(manifestOf("lease-inbox")!, "g1", () => null), { say: "That needs a quick setup on the dashboard." });
+  });
+  test("the dashboard switch-on post: the learned line, then the setup line with its button", () => {
+    assert.deepEqual(announcementFor(manifestOf("lease-inbox")!, "g1", url), {
+      text: "Learned Lease Inbox: your group's own email address for the landlord.\nThat needs a quick setup. Here:",
+      buttons: [{ text: "Set up Lease Inbox", url: "https://tryroomie.me/g/g1/inbox" }],
+    });
+    assert.deepEqual(announcementFor(manifestOf("groceries")!, "g1", url), { text: announcement(manifestOf("groceries")!) });
+  });
 });

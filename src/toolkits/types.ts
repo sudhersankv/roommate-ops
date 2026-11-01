@@ -92,6 +92,12 @@ export type ToolkitManifest<Id extends string = string> = {
    * landlord 20, the house 30, groceries 40). Default: its nav order, then last.
    */
   postOrder?: number;
+  /**
+   * A Trick that needs a quick setup on the dashboard once it's on (#69): `path` is the page under /g/<id>/ ("inbox"),
+   * `line` replaces "That needs a quick setup. Here:". Whoever taught it gets the line with a button to that page
+   * (toggle_toolkit, and the dashboard switch-on post). It still goes on.
+   */
+  setup?: { path: string; line?: string };
   dashboard?: {
     nav?: NavEntry;
     /** Route prefixes under /g/<id>/ it owns ("money"); they show the off state while it's off. */
