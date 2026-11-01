@@ -1,7 +1,7 @@
 // Pure upkeep helpers: schedule in the Group's zone + fuzzy name picker. No DB. Run: npx tsx --test src/services/upkeep.test.ts
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { compareByDue, DEFAULT_ITEMS, pickByName, upkeepSchedule } from "./upkeep";
+import { compareByDue, DEFAULT_ITEMS, isQuickUpkeep, pickByName, upkeepLabel, upkeepSchedule, upkeepTurn } from "./upkeep";
 
 const DAY = 24 * 60 * 60 * 1000;
 const CHI = "America/Chicago";
@@ -55,4 +55,51 @@ test("pickByName: exact > startsWith > includes (either direction) > a shared wo
 test("pickByName prefers exact over a startsWith on an earlier item; ambiguous words pick nothing", () => {
   assert.equal(pickByName([{ item: "Filter check" }, { item: "Filter" }], "filter")?.item, "Filter");
   assert.equal(pickByName([{ item: "Water filter" }, { item: "Air filter" }], "changed the filter"), undefined);
+});
+
+// ---------- whose turn (#73): the chores' turnFor over the whole group ----------
+
+const people = [
+  { id: "m", name: "Maya" },
+  { id: "d", name: "Dev" },
+  { id: "s", name: "Sam" },
+];
+const entry = (memberId: string, ago: number, skipped = false) => ({ memberId, at: daysAgo(ago), skipped });
+
+test("upkeepTurn: never done -> the first by name; then whoever did it least recently", () => {
+  assert.equal(upkeepTurn(people, [])?.name, "Dev");
+  // Maya did it 90 days ago: Dev and Sam never have, Dev first by name.
+  assert.equal(upkeepTurn(people, [entry("m", 90)])?.name, "Dev");
+  // Dev did it today, Maya 90 days ago: Sam (never) is up.
+  assert.equal(upkeepTurn(people, [entry("d", 0), entry("m", 90)])?.name, "Sam");
+  // Everyone has: the least recent (Maya) is up again.
+  assert.equal(upkeepTurn(people, [entry("s", 0), entry("d", 90), entry("m", 180)])?.name, "Maya");
+});
+
+test("upkeepTurn: marking it done moves the turn on", () => {
+  const history = [entry("m", 90)];
+  const up = upkeepTurn(people, history)!;
+  assert.equal(up.name, "Dev");
+  assert.equal(upkeepTurn(people, [{ memberId: up.id, at: now, skipped: false }, ...history])?.name, "Sam");
+});
+
+test("upkeepTurn: a pass moves the turn on like a done", () => {
+  assert.equal(upkeepTurn(people, [{ memberId: "d", at: now, skipped: true }, entry("m", 90)])?.name, "Sam");
+});
+
+test("upkeepTurn: people who left drop out; nobody active -> null", () => {
+  assert.equal(upkeepTurn(people.slice(0, 2), [entry("s", 400), entry("d", 0), entry("m", 90)])?.name, "Maya");
+  assert.equal(upkeepTurn([], [entry("m", 1)]), null);
+});
+
+test("upkeepLabel: the item as people say it", () => {
+  assert.equal(upkeepLabel("Replace HVAC / air filter"), "Air filter");
+  assert.equal(upkeepLabel("Test smoke alarms"), "Smoke alarm test");
+  assert.equal(upkeepLabel("Clean dryer vent"), "Dryer vent");
+  assert.equal(upkeepLabel("Descale coffee maker"), "Coffee maker");
+  assert.equal(upkeepLabel("Check fire extinguisher"), "Fire extinguisher check");
+  assert.equal(upkeepLabel("Clean the gutters"), "Gutters");
+  assert.equal(upkeepLabel("Water filter"), "Water filter");
+  assert.equal(isQuickUpkeep("Test smoke alarms"), true);
+  assert.equal(isQuickUpkeep("Replace HVAC / air filter"), false);
 });

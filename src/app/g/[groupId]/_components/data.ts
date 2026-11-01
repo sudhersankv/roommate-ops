@@ -446,6 +446,7 @@ export const choresView = cache(async (s: GroupSession): Promise<{ chores: Chore
       due: m.dueDay,
       status: m.status,
       lastDone: m.lastDone ? localDay(m.lastDone, tz) : undefined,
+      turn: m.whoseTurnId,
     })),
   }
 })

@@ -1,5 +1,6 @@
 // The House Trick as one thing (ADR 0015): the chore chart (chores.ts) and upkeep (upkeep.ts) together. What House
-// says on its own: its line in the morning Bundle (the chores nudge, only when something is due or late) and its
+// says on its own: its line in the morning Bundle (the chores nudge, only when something is due or late, and upkeep
+// coming up with whoever's turn it is: upkeepBundleText) and its
 // sections of the weekly Group Report; and what a Group starts with when it's taught (the three starter chores and
 // the usual five upkeep items, once). The text builders are pure (house.test.ts).
 import { and, eq, gt, like } from "drizzle-orm";
@@ -13,7 +14,7 @@ import { mayPost, sendDms, type DmOutcome } from "./rent";
 import { claimPost, getSchedule, groupTimezone, releasePost, weeklyReportWindow } from "./schedule";
 import { dueWord, joinNames, type ReportPart } from "./report";
 import type { Ctx, GroupCtx } from "./types";
-import { addDefaults, dueMaintenance, type MaintenanceItem } from "./upkeep";
+import { addDefaults, dueMaintenance, isQuickUpkeep, listMaintenance, upkeepLabel, type MaintenanceItem } from "./upkeep";
 
 /* ---------- pure ---------- */
 
@@ -55,11 +56,68 @@ export function choresReportParts(chores: readonly ChoreStatus[], shame: readonl
   return parts;
 }
 
-/** Upkeep due soon or late, at most three named. Nothing when the house is fine. */
-export function upkeepReportParts(due: readonly Pick<MaintenanceItem, "item" | "dueIn" | "dueDay">[]): ReportPart[] {
+/** Upkeep due soon or late, at most three named, each with whoever's up. Nothing when the house is fine. */
+export function upkeepReportParts(due: readonly (Pick<MaintenanceItem, "item" | "dueIn" | "dueDay"> & { whoseTurn?: string | null })[]): ReportPart[] {
   if (!due.length) return [];
-  const list = due.slice(0, 3).map((m) => `${m.item} (${dueWord(m.dueIn, m.dueDay)})`);
+  const list = due.slice(0, 3).map((m) => `${upkeepLabel(m.item)} (${m.whoseTurn ? `${firstName(m.whoseTurn)}, ` : ""}${dueWord(m.dueIn, m.dueDay)})`);
   return [{ icon: "🔧", text: `Upkeep due soon: ${list.join(", ")}${due.length > 3 ? `, +${due.length - 3} more` : ""}.` }];
+}
+
+type BundleUpkeep = Pick<MaintenanceItem, "item" | "dueIn" | "dueDay" | "lastDone"> & { whoseTurn: string | null };
+
+/** At most this many upkeep items in one morning's Bundle. */
+const BUNDLE_UPKEEP_MAX = 2;
+
+const firstName = (name: string) => name.trim().split(/\s+/)[0] || name;
+const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
+const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+/**
+ * Which upkeep items the morning Bundle mentions: one that has been done before, two local days ahead ("due Sunday"),
+ * on the day, and once a week while it's late. Never-done items (the usual five on day one) stay in the weekly report,
+ * or the Bundle would list them every morning.
+ */
+export function upkeepForBundle<T extends Pick<MaintenanceItem, "dueIn" | "lastDone">>(items: readonly T[]): T[] {
+  return items.filter((m) => m.lastDone && (m.dueIn === 2 || m.dueIn === 0 || (m.dueIn < 0 && -m.dueIn % 7 === 0)));
+}
+
+/** "today", "tomorrow", else the weekday ("Sunday"). */
+function whenWord(dueIn: number, dueDay: string): string {
+  if (dueIn === 0) return "today";
+  if (dueIn === 1) return "tomorrow";
+  return WEEKDAYS[new Date(`${dueDay}T12:00:00Z`).getUTCDay()];
+}
+
+/** "a week", "2 weeks", "3 days". */
+const lateBy = (days: number) => (days % 7 === 0 ? (days === 7 ? "a week" : `${days / 7} weeks`) : days === 1 ? "a day" : `${days} days`);
+
+/** A small stable pick per item and due day, so the same morning reads the same and the next item differs. */
+const pick = (seed: string, n: number) => [...seed].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) % n;
+
+/** One sentence per item, varied: "Air filter's due Sunday. Dev, you're up." / "Smoke alarm test Saturday. Takes a minute, Sam." */
+export function upkeepSentence(m: BundleUpkeep, variant: number): string {
+  const label = upkeepLabel(m.item);
+  const who = m.whoseTurn ? firstName(m.whoseTurn) : null;
+  if (m.dueIn < 0) {
+    const late = lateBy(-m.dueIn);
+    if (!who) return `${label}'s ${late} late.`;
+    return [`${label}'s ${late} late. ${who}, you're up.`, `${who}, ${lowerFirst(label)} is ${late} late; it's yours.`][variant % 2];
+  }
+  const when = whenWord(m.dueIn, m.dueDay);
+  if (!who) return `${label}'s due ${when}.`;
+  if (isQuickUpkeep(m.item)) return [`${label} ${when}. Takes a minute, ${who}.`, `${label} ${when}, ${who}. Takes a minute.`][variant % 2];
+  return [`${label}'s due ${when}. ${who}, you're up.`, `${label} ${when}. ${who}'s turn.`, `${who}, ${lowerFirst(label)}'s on you ${when}.`][variant % 3];
+}
+
+/** House's upkeep sentences for the morning Bundle, or null when nothing's worth a mention today. */
+export function upkeepBundleText(items: readonly BundleUpkeep[]): string | null {
+  const due = upkeepForBundle(items);
+  if (!due.length) return null;
+  // The next item takes the next wording, so two in one morning never open the same way.
+  const base = pick(`${due[0].item}:${due[0].dueDay}`, 6);
+  const out = due.slice(0, BUNDLE_UPKEEP_MAX).map((m, i) => upkeepSentence(m, base + i));
+  if (due.length > BUNDLE_UPKEEP_MAX) out.push(`${due.length - BUNDLE_UPKEEP_MAX} more upkeep on the list.`);
+  return out.join(" ");
 }
 
 /* ---------- DB ---------- */
@@ -70,12 +128,13 @@ export function upkeepReportParts(due: readonly Pick<MaintenanceItem, "item" | "
  * no DM path yet (Telegram before Start), stays on the group line. Null when that leaves nothing.
  */
 export async function houseBundleLine(ctx: GroupCtx, now = new Date()): Promise<string | null> {
-  const due = await choresDue(ctx, now);
+  const [due, upkeep] = await Promise.all([choresDue(ctx, now), listMaintenance(ctx, now)]);
   const reach = new Map<string, Promise<boolean>>();
   const privately = (id: string) => reach.get(id) ?? (reach.set(id, canNudge(id)), reach.get(id)!);
   const kept: typeof due = [];
   for (const c of due) if (!c.lastDoneAt || !c.whoseTurnId || !(await privately(c.whoseTurnId))) kept.push(c);
-  return choresNudgeText(kept);
+  const lines = [choresNudgeText(kept), upkeepBundleText(upkeep)].filter((l): l is string => !!l);
+  return lines.length ? lines.join("\n") : null;
 }
 
 /** Groups with nothing left to DM in this local hour (an in-process shortcut: the scheduler asks every minute). */

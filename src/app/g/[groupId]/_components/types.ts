@@ -177,7 +177,7 @@ export type ChoreView = {
   lastDone?: { by: string; date: string }
 }
 
-export type UpkeepView = { id: string; name: string; every: string; everyDays: number; due: string; status: "overdue" | "due-soon" | "ok"; lastDone?: string }
+export type UpkeepView = { id: string; name: string; every: string; everyDays: number; due: string; status: "overdue" | "due-soon" | "ok"; lastDone?: string; /** Whose turn it is next (a member id), null when nobody's active. */ turn: string | null }
 
 export type ReminderView = {
   id: string

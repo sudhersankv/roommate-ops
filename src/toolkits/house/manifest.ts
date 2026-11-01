@@ -28,8 +28,9 @@ export const house = defineManifest({
     chore_skip: "Pass your turn to the next person",
     hall_of_shame: "The chart: who's done the fewest this week, kept friendly",
     upkeep_add: "Track a recurring upkeep item",
-    upkeep_done: "Mark an upkeep item done",
-    upkeep_status: "Say what's overdue or due soon",
+    upkeep_done: "Mark an upkeep item done; the turn moves on",
+    upkeep_skip: "Pass your turn on an upkeep item to the next person",
+    upkeep_status: "Say what's overdue or due soon, and whose turn it is",
     upkeep_remove: "Stop tracking an upkeep item",
   },
   adminOnly: {

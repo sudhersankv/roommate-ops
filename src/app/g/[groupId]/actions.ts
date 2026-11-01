@@ -184,6 +184,10 @@ export async function markUpkeepDone(groupId: string, itemId: string) {
   return act(groupId, (ctx) => upkeep.markDone(ctx, { id: itemId }))
 }
 
+export async function skipUpkeep(groupId: string, itemId: string) {
+  return act(groupId, (ctx) => upkeep.skipUpkeep(ctx, { id: itemId }))
+}
+
 export async function addUpkeep(groupId: string, input: { item: string; everyDays: number }) {
   return act(groupId, (ctx) => upkeep.addMaintenance(ctx, input))
 }
