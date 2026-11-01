@@ -162,6 +162,10 @@ src/
     trick-votes.ts      voteForTrick (coming-soon ids only, 1 per Trick per IP-hash a day, 12 an hour) + trickVoteCounts
     operator-groups.ts  /admin/groups (operators only): listGroupsForOperator (members, last message, runs today),
                         setGroupPaused, leaveGroupChat (Channel.leaveChat + pause), pausedGroupIds (the scheduler skips them)
+    stats.ts            /admin/stats (#83, operators only, counts only): loadStats (waitlist per ISO week / purpose / size,
+                        Soon votes, Groups added per Channel and week, weekly active Groups and Members + chat lines from
+                        chat_messages (last 5 weeks: 30-day retention), agent runs per day from rate_counters); pure
+                        summarizeStats / weekKey / isoWeek / statsCsv
     whatsapp-access.ts  the WhatsApp beta allowlist: WHATSAPP_ALLOWED_ADDERS + onboarded beta_requests.phone; whatsappAdmission
                         (empty list = anyone, as before)
   onboarding.ts         onGroupJoined (Group + Chat + Members + Join code, adder = Admin, intro + setup questions, and the
@@ -377,6 +381,8 @@ src/
                         api/admin/whatsapp = status JSON + start / request-pairing-code / logout (operators, else 404)
     admin/whatsapp/     the operator page: state, QR (refreshes every 5 s), pairing-code form, the linked number, Log out
     admin/beta/         operators: the beta requests, newest first, status new / contacted / onboarded / declined
+    admin/stats/        operators: the numbers (services/stats.ts) as cards and tables; stats/csv = the same as a CSV
+                        (route handler, 404 for anyone else)
     admin/groups/       operators: every Group (channel, members, created, last message, runs today), Pause / Resume /
                         Leave chat, a banner while ROOMIE_PAUSED=1; actions log "[admin] <email>: <action> <groupId>"
 drizzle/                generated migrations (0000 baseline drops the pre-step-4 tables; 0012 is hand-written SQL: the
