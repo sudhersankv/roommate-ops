@@ -2,7 +2,8 @@
 // "Ask Roomie" calls askRoomie(). Both end in respond():
 //   resolve Group + Member (unknown Chat -> Onboarding; unknown sender -> Pending member) -> log the chat line
 //   -> Gate (hard trigger / follow-up window / Jev) -> roomie.generate(text, { requestContext, memory })
-//   -> reply text + links from tool results.
+//   -> reply text + links from tool results, or a reaction on the message when the run only recorded what it
+//      reported ("trash done" -> ✅; services/reactions.ts, Outgoing.react).
 // Each message is one trace: "roomie message" -> "gate" span (+ the agent run, its model calls and tools).
 // Roomie's chat replies are logged (memberId null) and open the follow-up window; "[silent]" replies are not.
 // Stops before the Gate: ROOMIE_PAUSED=1 (nothing at all), a paused Group (logged, quiet), a photo or voice note nobody
@@ -33,6 +34,7 @@ import { mediaWanted, replyText as finalText, staleReply, type GateDecision } fr
 import type { MediaQuestion } from "@/channels/types";
 import { allSquare } from "@/services/personality";
 import { claimWins, dayGreeting, dbMoments } from "@/services/pet";
+import { answerFor, reactedLine, reactionOffer } from "@/services/reactions";
 
 /** How many earlier chat lines Jev sees; the agent sees up to 30 as context. */
 const GATE_RECENT = 6;
@@ -200,7 +202,10 @@ export async function askRoomie(ctx: Ctx, text: string): Promise<Outgoing> {
   if (me.status !== "active" && !me.channelUserId) throw new NotAllowedError("An Admin needs to approve you before Roomie can help here.", "pending");
   const { out, capped } = await respond({ groupId: ctx.groupId, member: me, text, source: "ui", channel: "dashboard" });
   if (capped) throw new CappedError();
-  return out ?? { text: ACK };
+  if (!out) return { text: ACK };
+  // The dashboard can't react: a reaction is its emoji as the answer.
+  const { react, ...rest } = out;
+  return react && !rest.text.trim() ? { ...rest, text: react } : rest;
 }
 
 /**
@@ -415,10 +420,13 @@ export async function respond(input: RespondInput): Promise<PipelineResult> {
     if (since) await echoAfterPrivateRun(groupId, member.id, since).catch((e) => console.error("[pipeline] echo failed", e));
 
     // "[silent]" (or nothing, with nothing done) is only honoured in the follow-up window. Otherwise never post the
-    // literal token or an empty message: acknowledge instead.
+    // literal token or an empty message: "" here becomes the reaction the run may answer with, else the 👍 line
+    // (answerFor below).
     let replyText = parseSilent(finalText(steps, res.text ?? ""));
-    if (replyText === null) replyText = gate.mayStaySilent ? null : ACK;
-    else if (!replyText) replyText = gate.mayStaySilent && !toolCalls.some(isActionTool) ? null : ACK;
+    if (replyText === null) replyText = gate.mayStaySilent ? null : "";
+    else if (!replyText) replyText = gate.mayStaySilent && !toolCalls.some(isActionTool) ? null : "";
+    // The reaction this run may answer with (#77): every write offered one and none failed (services/reactions.ts).
+    const offer = reactionOffer(results.map((r) => ({ tool: r.toolName, result: r.result })));
 
     if (replyText === null) {
       root?.end({ output: { replied: false, silent: true }, metadata: gateMeta });
@@ -440,12 +448,16 @@ export async function respond(input: RespondInput): Promise<PipelineResult> {
       console.warn("[pipeline] win check failed", e);
       return null;
     });
-    if (cheer) replyText = `${replyText} ${cheer}`;
+    // A report that only needed recording gets the reaction instead of a line ("[react]", nothing, or a bare "Done."):
+    // the cheer, if any, is the line next to it. Anything else Roomie wrote is sent as written.
+    const answer = answerFor({ reply: replyText, offer, cheer, ack: ACK });
+    // Logged as Roomie's line ("(reacted ✅)"), so the chat log, the follow-up window and its last replies see it.
+    const said = [answer.react ? reactedLine(answer.react) : "", answer.text].filter(Boolean).join(" ");
     if (chat) {
-      await logMessage(groupId, null, replyText);
-      noteReplyTo(groupId, member.id, replyText);
+      await logMessage(groupId, null, said);
+      noteReplyTo(groupId, member.id, said);
     }
-    const out: Outgoing = { text: replyText, ...(buttons.length ? { buttons } : {}) };
+    const out: Outgoing = { text: answer.text, ...(answer.react ? { react: answer.react } : {}), ...(buttons.length ? { buttons } : {}) };
     root?.end({ output: out, metadata: gateMeta });
     return { out, gate, toolCalls, traceId: root?.traceId };
   } catch (err) {

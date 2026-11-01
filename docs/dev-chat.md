@@ -27,6 +27,8 @@ Get-Content walk.txt | npm run dev-chat -- --chat walk-1
 
 Polls (ADR 0018): the dev Channel has no native polls, so a Poll prints as `(poll n)` with numbered options. Votes come in two ways: the `vote` command (what a tap on Telegram or WhatsApp sends) or a bare number with `say` ("say Sam 2"), which answers the newest open poll in the Chat and runs no agent. A who's-in poll resolves when a majority of active Members voted (2 of 3 in Apt 4B) or after 2 hours, then posts one line ("Logged $60.00 pizza, split 3 ways: Maya, Dev and Sam."). DMs: dev people are in every dev Group ever made, so a `dm` stays in the Chat dev-chat is attached to; a shared Expense logged in a DM posts its one Echo line in the group, a Settlement only a private line to the other person.
 
+Reactions (#77): a message that only reports something Roomie recorded ("say Sam roomie trash done", "say Dev roomie paid Maya back $20") prints `(reacted ✅)` / `(reacted 👍)` under it instead of a line; WhatsApp and Telegram put the emoji on the message (Telegram shows ✅ as 👌). A streak milestone or everyone square still prints its line next to the reaction.
+
 Claim links point at `APP_URL`; open one in the browser while `npm run dev` runs to connect your Google account to that Member.
 
 Splitwise: when `COMPOSIO_API_KEY` is missing or Composio rejects it, dev-chat says so once and uses the in-memory Splitwise (`FakeSplitwise`: groups "Apt 4B (Splitwise)" with Maya, Dev, Sam and Jordan, and "Tahoe weekend"). The fake connects instantly.

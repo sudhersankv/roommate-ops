@@ -22,6 +22,7 @@ export * as splitwise from "./splitwise";
 export * as leaseInbox from "./lease-inbox";
 export * as personality from "./personality";
 export * as pet from "./pet";
+export * as reactions from "./reactions";
 export * as beta from "./beta";
 export { isNotAllowed, NotAllowedError } from "./authz";
 export type { Ctx, GroupCtx } from "./types";

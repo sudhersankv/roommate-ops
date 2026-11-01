@@ -32,12 +32,18 @@ export type IncomingMessage = {
   receivedAt?: Date;
   /** How many quick consecutive texts from this sender `text` joins (channels/coalesce.ts); absent = one. */
   merged?: number;
+  /** The message's id on its Channel (Telegram message_id, WhatsApp key id; a merged run: the last text's), so Roomie
+   * can react to it (Outgoing.react). Absent: the Channel can't point at it (dashboard, tests). */
+  messageExternalId?: string;
 };
 
 export type Button = { text: string; url: string };
 /** A Poll (ADR 0018): a who-question with up to four options. `text` still goes with it as the fallback line. */
 export type OutgoingPoll = { question: string; options: string[]; multi: boolean };
-export type Outgoing = { text: string; buttons?: Button[]; poll?: OutgoingPoll };
+/** `react` (pipeline answers only, #77): an emoji on the message being answered (services/reactions.ts). `text` may be
+ * empty then: the reaction is the whole answer. A Channel that can't react sends the emoji as text instead
+ * (channels/answer.ts). */
+export type Outgoing = { text: string; buttons?: Button[]; poll?: OutgoingPoll; react?: string };
 
 /** What a send returns: the sent message's id when the Channel knows it (a Poll's votes point at it) and, on
  * WhatsApp, the Poll's messageSecret (votes are encrypted with it). */
@@ -79,6 +85,9 @@ export interface Channel {
   /** A private 1:1 message (Claim links go out this way, ADR 0003). Throws CantMessagePrivatelyError when the
    * Channel needs the person to message Roomie first. */
   sendPrivate(userExternalId: string, msg: Outgoing): Promise<Sent>;
+  /** React with `emoji` on a message in a Chat (a group, or a person's 1:1 chat with Roomie): WhatsApp's react message,
+   * Telegram's setMessageReaction, a printed "(reacted ✅)" on dev. Throws when the Channel refuses it. */
+  react?(chatExternalId: string, messageExternalId: string, emoji: string): Promise<void>;
   /** Roomie leaves the Chat (an operator's "Leave chat", too many new Groups from one person). */
   leaveChat(chatExternalId: string): Promise<void>;
   /** Forget an intro still waiting to go out (the Group was paused). */

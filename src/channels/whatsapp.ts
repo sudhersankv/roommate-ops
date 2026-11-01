@@ -51,6 +51,7 @@ import makeWASocket, {
 import QRCode from "qrcode";
 import type { ChatRef } from "@/onboarding";
 import { KeyedQueue } from "./queue";
+import { sendAnswer } from "./answer";
 import { Coalescer, mergeableText, withMerged, type Merged } from "./coalesce";
 import { planDelivery } from "./humanize";
 import { envMs, SendLimiter, sleep as realSleep } from "./rate-limit";
@@ -117,7 +118,10 @@ export type WhatsAppDeps = {
 export type WaSocket = {
   ev: { on<E extends keyof BaileysEventMap>(event: E, listener: (arg: BaileysEventMap[E]) => void): void };
   user?: { id: string; lid?: string; name?: string };
-  sendMessage(jid: string, content: { text: string } | { poll: { name: string; values: string[]; selectableCount: number } }): Promise<WAMessage | undefined>;
+  sendMessage(
+    jid: string,
+    content: { text: string } | { poll: { name: string; values: string[]; selectableCount: number } } | { react: { text: string; key: WAMessageKey } },
+  ): Promise<WAMessage | undefined>;
   sendPresenceUpdate(type: "composing" | "paused" | "available" | "unavailable", jid?: string): Promise<void>;
   readMessages(keys: WAMessageKey[]): Promise<void>;
   groupMetadata(jid: string): Promise<GroupMetadata>;
@@ -308,6 +312,8 @@ export type WhatsAppChannelOptions = {
   recipientOf?: (jid: string) => Promise<string>;
   /** Every message we sent (kept for Baileys' retry requests). */
   onSent?: (m: WAMessage) => void;
+  /** The full key of a message Roomie received (a reaction in a group needs its sender, `participant`). */
+  keyOf?: (chatJid: string, messageId: string) => WAMessageKey | undefined;
 };
 
 export class WhatsAppChannel implements Channel {
@@ -339,6 +345,17 @@ export class WhatsAppChannel implements Channel {
   async sendPrivate(userExternalId: string, msg: Outgoing): Promise<Sent> {
     const to = isLidUser(userExternalId) && this.opts.recipientOf ? await this.opts.recipientOf(userExternalId) : userExternalId;
     return this.send(to, msg);
+  }
+
+  /** A reaction on a message (#77): WhatsApp's react message, pointing at the original message's key (in a group it
+   * names the sender too; keyOf has it for what Roomie received lately). No "composing" first: nobody types a reaction. */
+  async react(chatExternalId: string, messageExternalId: string, emoji: string): Promise<void> {
+    const sock = this.socket();
+    if (!sock) throw new WhatsAppNotConnectedError();
+    const key = this.opts.keyOf?.(chatExternalId, messageExternalId) ?? { remoteJid: chatExternalId, id: messageExternalId, fromMe: false };
+    await this.limiter.acquire(chatExternalId);
+    const sent = await sock.sendMessage(chatExternalId, { react: { text: emoji, key } });
+    if (sent) this.opts.onSent?.(sent);
   }
 
   /** A native poll (single choice = selectableCount 1, multi = 0). Its id and messageSecret come back so the polls row
@@ -535,6 +552,8 @@ export function createWhatsApp(opts: WhatsAppOptions): WhatsApp {
   const book = new ContactBook();
   const handled = new BoundedSet(2_000);
   const sent = new Map<string, proto.IMessage>();
+  /** Keys of the messages Roomie received lately, by "<chat jid>:<id>" (what a reaction points at). */
+  const received = new Map<string, WAMessageKey>();
   const metaCache = new Map<string, GroupMetadata>();
   const joining = new Set<string>();
   /** Groups Roomie said no to (the beta allowlist, the new-Groups cap) and left, until when (ms): messages that arrive
@@ -567,6 +586,7 @@ export function createWhatsApp(opts: WhatsAppOptions): WhatsApp {
       sent.set(m.key.id, m.message);
       if (sent.size > 500) sent.delete(sent.keys().next().value!);
     },
+    keyOf: (jid, id) => received.get(`${jid}:${id}`),
   });
 
   function setStatus(next: Omit<WhatsAppStatus, "since">) {
@@ -805,9 +825,13 @@ export function createWhatsApp(opts: WhatsAppOptions): WhatsApp {
       if (addressed) await reply({ text: OOPS }).catch(() => {});
       return;
     } finally {
-      if (addressed && !out) await sock?.sendPresenceUpdate("paused", presenceJid).catch(() => {});
+      // A reaction alone types nothing: "composing" stops here too.
+      if (addressed && (!out || !out.text.trim())) await sock?.sendPresenceUpdate("paused", presenceJid).catch(() => {});
     }
-    if (out) await reply(out);
+    if (!out) return;
+    // A reaction lands on the message itself (a merged run's last text) in the chat it came from; the text as before.
+    const messageId = msg.messageExternalId;
+    await sendAnswer(out, { ...(messageId ? { react: (emoji: string) => channel.react(presenceJid, messageId, emoji) } : {}), send: reply });
   }
 
   const helpFor = async (jid: string) =>
@@ -893,7 +917,16 @@ export function createWhatsApp(opts: WhatsAppOptions): WhatsApp {
     const got = await content(m, read, say, jid, jid, from);
     if (!got) return;
     const title = (await metadata(jid))?.subject || undefined;
-    await pipeline({ channel: "whatsapp", chatExternalId: jid, ...(title ? { chatTitle: title } : {}), userExternalId: from.userExternalId, userName: from.name, ...withMerged(got, merged) }, jid, say);
+    await pipeline({ channel: "whatsapp", chatExternalId: jid, ...(title ? { chatTitle: title } : {}), userExternalId: from.userExternalId, userName: from.name, ...withMerged(got, merged), ...idOf(m) }, jid, say);
+  }
+
+  /** The message's id for a reaction (#77), its key noted so the react message can point at it. */
+  function idOf(m: WAMessage): { messageExternalId?: string } {
+    const jid = m.key.remoteJid;
+    if (!jid || !m.key.id) return {};
+    received.set(`${jid}:${m.key.id}`, m.key);
+    if (received.size > 500) received.delete(received.keys().next().value!);
+    return { messageExternalId: m.key.id };
   }
 
   async function privateMessage(m: WAMessage, read: ReadMessage, merged: Merged) {
@@ -926,7 +959,7 @@ export function createWhatsApp(opts: WhatsAppOptions): WhatsApp {
     }
     const got = await content(m, read, say, `dm:${from.userExternalId}`, chats[0], from, true);
     if (!got) return;
-    await pipeline({ channel: "whatsapp", chatExternalId: chats[0], userExternalId: from.userExternalId, userName: from.name, ...withMerged(got, merged), isPrivate: true }, jid, say);
+    await pipeline({ channel: "whatsapp", chatExternalId: chats[0], userExternalId: from.userExternalId, userName: from.name, ...withMerged(got, merged), isPrivate: true, ...idOf(m) }, jid, say);
   }
 
   /**

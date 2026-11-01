@@ -35,7 +35,7 @@ type Call = { method: string; payload: Record<string, unknown> };
 let updateId = 1;
 let messageId = 1;
 
-function harness(opts: { deps?: Partial<TelegramDeps>; joinDelayMs?: number; failSend?: { error_code: number; description: string }; coalescer?: Coalescer } = {}) {
+function harness(opts: { deps?: Partial<TelegramDeps>; joinDelayMs?: number; failSend?: { error_code: number; description: string }; failReaction?: boolean; coalescer?: Coalescer } = {}) {
   const calls: Call[] = [];
   const seen = { incoming: [] as IncomingMessage[], joined: [] as unknown[][], participants: [] as unknown[][], moved: [] as string[][], saved: [] as string[] };
   const deps: TelegramDeps = {
@@ -77,6 +77,7 @@ function harness(opts: { deps?: Partial<TelegramDeps>; joinDelayMs?: number; fai
   tg.bot.api.config.use(async (_prev, method, payload) => {
     calls.push({ method, payload: payload as Record<string, unknown> });
     if (method === "sendMessage" && opts.failSend) return { ok: false, ...opts.failSend } as never;
+    if (method === "setMessageReaction" && opts.failReaction) return { ok: false, error_code: 400, description: "Bad Request: REACTION_INVALID" } as never;
     const result =
       method === "getChatAdministrators"
         ? [
@@ -197,9 +198,21 @@ describe("group join", () => {
 describe("incoming messages", () => {
   test("text -> IncomingMessage: name, @mention read as Roomie", async () => {
     const h = harness();
-    await h.feed(message(MAYA, { text: "@roomie_test_bot who's here", entities: [{ type: "mention", offset: 0, length: 16 }] }));
+    const m = message(MAYA, { text: "@roomie_test_bot who's here", entities: [{ type: "mention", offset: 0, length: 16 }] });
+    await h.feed(m);
     assert.deepEqual(h.seen.incoming, [
-      { channel: "telegram", chatExternalId: "-1001", chatTitle: "Apt 4B", userExternalId: "11", userName: "Maya Lee", text: "Roomie who's here", mentionsRoomie: true, isReplyToRoomie: false, receivedAt: new Date(0) },
+      {
+        channel: "telegram",
+        chatExternalId: "-1001",
+        chatTitle: "Apt 4B",
+        userExternalId: "11",
+        userName: "Maya Lee",
+        text: "Roomie who's here",
+        mentionsRoomie: true,
+        isReplyToRoomie: false,
+        receivedAt: new Date(0),
+        messageExternalId: String(m.message.message_id),
+      },
     ]);
     assert.equal(h.sent().at(-1)?.payload.text, "ok Roomie who's here");
   });
@@ -615,6 +628,53 @@ describe("outgoing", () => {
   test("a group send that fails is not dressed up as a DM problem", async () => {
     const h = harness({ failSend: { error_code: 403, description: "Forbidden: bot was kicked from the supergroup chat" } });
     await assert.rejects(() => h.tg.channel.sendToChat("-1001", { text: "hi" }), (err: unknown) => !(err instanceof CantMessagePrivatelyError));
+  });
+});
+
+describe("reactions (#77)", () => {
+  const reactWith = (out: { text: string; react?: string }) => ({ handleIncoming: async () => out });
+
+  test("a reaction alone: setMessageReaction on that message (✅ as 👌, Telegram has no ✅), no message sent", async () => {
+    const h = harness({ deps: reactWith({ text: "", react: "✅" }) });
+    const m = message(MAYA, { text: "roomie trash done" });
+    await h.feed(m);
+    const reactions = h.calls.filter((c) => c.method === "setMessageReaction");
+    assert.equal(reactions.length, 1);
+    assert.equal(String(reactions[0].payload.chat_id), "-1001");
+    assert.equal(reactions[0].payload.message_id, m.message.message_id);
+    assert.deepEqual(reactions[0].payload.reaction, [{ type: "emoji", emoji: "👌" }]);
+    assert.equal(h.sent().length, 0);
+  });
+
+  test("a reaction with a line (a streak): both", async () => {
+    const h = harness({ deps: reactWith({ text: "Three in a row, Maya.", react: "✅" }) });
+    await h.feed(message(MAYA, { text: "roomie trash done" }));
+    assert.equal(h.calls.filter((c) => c.method === "setMessageReaction").length, 1);
+    assert.deepEqual(h.sent().map((c) => c.payload.text), ["Three in a row, Maya."]);
+  });
+
+  test("in a DM: the reaction goes on the DM itself", async () => {
+    const h = harness({ deps: reactWith({ text: "", react: "👍" }) });
+    const m = message(SAM, { text: "paid Maya" }, { id: 12, type: "private" as const, first_name: "Sam" });
+    await h.feed(m);
+    const [r] = h.calls.filter((c) => c.method === "setMessageReaction");
+    assert.equal(String(r.payload.chat_id), "12");
+    assert.equal(r.payload.message_id, m.message.message_id);
+    assert.deepEqual(r.payload.reaction, [{ type: "emoji", emoji: "👍" }]);
+  });
+
+  test("a group that refuses reactions: the emoji goes as text instead", async () => {
+    const h = harness({ deps: reactWith({ text: "", react: "👍" }), failReaction: true });
+    await h.feed(message(MAYA, { text: "roomie paid Dev back" }));
+    assert.deepEqual(h.sent().map((c) => c.payload.text), ["👍"]);
+  });
+
+  test("telegramReaction: its own emoji as they are, ✅ as 👌, anything else 👍", async () => {
+    const { telegramReaction } = await import("./telegram");
+    assert.equal(telegramReaction("👍"), "👍");
+    assert.equal(telegramReaction("✅"), "👌");
+    assert.equal(telegramReaction("🎉"), "🎉");
+    assert.equal(telegramReaction("🧹"), "👍");
   });
 });
 

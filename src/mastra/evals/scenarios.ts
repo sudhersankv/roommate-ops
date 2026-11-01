@@ -44,6 +44,12 @@ export type Expect = {
   excludes?: (string | RegExp)[];
   /** No buttons on the reply. */
   noButtons?: boolean;
+  /** Roomie reacts on the message (#77): this emoji, or any with true. */
+  reacts?: string | true;
+  /** The reaction is the whole answer: no line with it. */
+  reactionOnly?: boolean;
+  /** Roomie must answer in words, not with a reaction. */
+  noReaction?: boolean;
   /** The Gate's reason, e.g. "hard-trigger". */
   gateReason?: string;
   /** State check after the turn (with Roomie's reply); return an error message or null. */
@@ -275,6 +281,22 @@ export const SCENARIOS: Scenario[] = [
     seed: async (e) => void (await internet(e)),
     turn: { text: "roomie I paid Maya back $20", from: "Dev" },
     expect: { tools: ["settle_up"], check: async (e) => fail((await balanceOf(e, "Dev")) === 0, "Dev should be square") },
+  },
+  {
+    // #77: square between the two, Sam still owes (not all square): the 👍 says it all.
+    id: "react-paid-back",
+    area: "splitting",
+    seed: async (e) => void (await internet(e)),
+    turn: { text: "roomie paid her back, $20 to Maya", from: "Dev" },
+    expect: { tools: ["settle_up"], reacts: "👍", reactionOnly: true, check: async (e) => fail((await balanceOf(e, "Dev")) === 0, "the Settlement is recorded") },
+  },
+  {
+    // #77: money still owed after the payment is something to say.
+    id: "paid-part-must-reply",
+    area: "splitting",
+    seed: async (e) => void (await internet(e)),
+    turn: { text: "roomie I paid Maya $5", from: "Dev" },
+    expect: { tools: ["settle_up"], noReaction: true, replyIncludes: ["15"], check: async (e) => fail((await balanceOf(e, "Dev")) === -1500, "$15 still owed") },
   },
   {
     id: "list-expenses",
@@ -609,6 +631,25 @@ export const SCENARIOS: Scenario[] = [
     seed: async (e) => void (await chores.addChore(e.ctx, { name: "Dishes", everyDays: 1 })),
     turn: { text: "roomie I did the dishes", from: "Dev" },
     expect: { tools: ["log_chore"], check: async (e) => fail((await chores.choreStatus(e.ctx)).find((c) => c.name === "Dishes")?.lastDoneBy === "Dev", "Dishes done by Dev") },
+  },
+  {
+    // #77: a plain done on a chore on the chart: ✅ on the message, no line, the done recorded.
+    id: "react-trash-done",
+    area: "house",
+    seed: async (e) => void (await chores.addChore(e.ctx, { name: "Take out trash", everyDays: 3 })),
+    turn: { text: "roomie trash done", from: "Sam" },
+    expect: { tools: ["log_chore"], reacts: "✅", reactionOnly: true, check: async (e) => fail((await chores.choreStatus(e.ctx)).find((c) => /trash/i.test(c.name))?.lastDoneBy === "Sam", "trash done by Sam") },
+  },
+  {
+    // #77: a done with a question in it gets an answer, not a reaction.
+    id: "done-and-question-must-reply",
+    area: "house",
+    seed: async (e) => {
+      await chores.addChore(e.ctx, { name: "Dishes", everyDays: 1 });
+      await chores.addChore(e.ctx, { name: "Take out trash", everyDays: 3, rotation: [e.member.Maya, e.member.Dev, e.member.Sam] });
+    },
+    turn: { text: "roomie I did the dishes. whose turn is trash?", from: "Dev" },
+    expect: { tools: ["log_chore", "chore_status"], noReaction: true, replyIncludes: [/maya|dev|sam/i] },
   },
   {
     id: "did-dishes-unprompted-asks",

@@ -84,6 +84,12 @@ async function failures(x: Expect, r: PipelineResult, env: EvalEnv): Promise<str
   if (x.emoji?.min !== undefined && emoji < x.emoji.min) out.push(`${emoji} emoji < ${x.emoji.min}`);
   if (x.emoji?.max !== undefined && emoji > x.emoji.max) out.push(`${emoji} emoji > ${x.emoji.max}`);
   if (x.noButtons && r.out?.buttons?.length) out.push("has buttons");
+  if (x.reacts !== undefined) {
+    const want = x.reacts === true ? !!r.out?.react : r.out?.react === x.reacts;
+    if (!want) out.push(r.out?.react ? `reacted ${r.out.react}` : "no reaction");
+  }
+  if (x.reactionOnly && r.out?.text.trim()) out.push("a line next to the reaction");
+  if (x.noReaction && r.out?.react) out.push(`reacted ${r.out.react} instead of replying`);
   if (x.gateReason && r.gate.reason !== x.gateReason) out.push(`gate ${r.gate.reason}`);
   if (shape.bullets || shape.headers) out.push("bullets/headers");
   if (x.check) {
@@ -127,7 +133,7 @@ async function runOne(s: Scenario): Promise<Row> {
         why: pass ? "" : main.join("; ") + (alt ? ` | alt: ${alt.join("; ")}` : ""),
         gate: `${r.gate.decision}/${r.gate.reason}${r.gate.toolkit ? `/${r.gate.toolkit}` : ""}`,
         tools: r.toolCalls.filter((t) => t !== "updateWorkingMemory").join(",") || "-",
-        reply: (r.out?.text ?? "(quiet)").replace(/\s+/g, " "),
+        reply: (r.out ? [r.out.react ? `(reacted ${r.out.react})` : "", r.out.text].filter(Boolean).join(" ") : "(quiet)").replace(/\s+/g, " "),
         ms,
       };
     } finally {
