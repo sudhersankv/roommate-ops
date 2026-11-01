@@ -18,7 +18,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { Roomie } from "@/components/roomie/mascot"
 import { useCheer } from "@/components/roomie/use-cheer"
 import { MemberAvatar } from "@/components/app/member-avatar"
-import { addChore, addUpkeep, addUpkeepDefaults, markChoreDone, markUpkeepDone, removeChore, removeUpkeep, skipChore } from "../../actions"
+import { addChore, addUpkeep, addUpkeepDefaults, markChoreDone, markUpkeepDone, removeChore, removeUpkeep, skipChore, skipUpkeep } from "../../actions"
 import { useGroup } from "../group-context"
 import { PageHeader, TopBar } from "../shell"
 import type { ChoreView, UpkeepView } from "../types"
@@ -333,7 +333,7 @@ function AddChore({ onDone }: { onDone: () => void }) {
 /* ---------- Upkeep ---------- */
 
 function UpkeepTabView({ upkeep, onAdd }: { upkeep: UpkeepView[]; onAdd: () => void }) {
-  const { group, dates, isAdmin, cheer } = useGroup()
+  const { group, me, name, dates, isAdmin, cheer } = useGroup()
   const [pending, start] = useTransition()
 
   const usual = () =>
@@ -347,7 +347,13 @@ function UpkeepTabView({ upkeep, onAdd }: { upkeep: UpkeepView[]; onAdd: () => v
       const res = await markUpkeepDone(group.id, u.id)
       if (!res.ok) return void toast.add({ title: "Couldn't mark it done", description: res.error, type: "error" })
       cheer()
-      toast.add({ title: `${u.name}: done`, description: res.data ? `Next one ${dates.dueLabel(res.data.nextDueDay)}.` : undefined, type: "success" })
+      toast.add({ title: `${u.name}: done`, description: res.data ? `Next one ${dates.dueLabel(res.data.nextDueDay)}${res.data.nextUp ? `, ${res.data.nextUp}'s turn` : ""}.` : undefined, type: "success" })
+    })
+  const pass = (u: UpkeepView) =>
+    start(async () => {
+      const res = await skipUpkeep(group.id, u.id)
+      if (!res.ok) return void toast.add({ title: "Couldn't pass it", description: res.error, type: "error" })
+      toast.add({ title: `Passed ${u.name.toLowerCase()}`, description: res.data?.nextUp ? `${res.data.nextUp}'s up now.` : undefined })
     })
   const remove = (u: UpkeepView) =>
     start(async () => {
@@ -385,7 +391,7 @@ function UpkeepTabView({ upkeep, onAdd }: { upkeep: UpkeepView[]; onAdd: () => v
         <h2 id="upkeep" className="type-heading">
           Upkeep
         </h2>
-        <p className="type-caption text-muted-foreground">House care that comes around every few months. Due-soon ones show up in the weekly report.</p>
+        <p className="type-caption text-muted-foreground">House care that comes around every few months, taken in turns. Due-soon ones show up in the weekly report.</p>
       </div>
       <ItemGroup className="gap-0 rounded-3xl bg-card py-1">
         {upkeep.map((u) => {
@@ -400,6 +406,7 @@ function UpkeepTabView({ upkeep, onAdd }: { upkeep: UpkeepView[]; onAdd: () => v
                 <ItemDescription className="line-clamp-none">
                   {u.every}. {due ? "" : `Next ${dates.dueLabel(u.due)}. `}
                   {u.lastDone ? `Last done ${dates.ago(u.lastDone)}.` : "Not marked done yet."}
+                  {u.turn ? (u.turn === me.id ? " Your turn." : ` ${name(u.turn)}'s turn.`) : ""}
                 </ItemDescription>
               </ItemContent>
               <ItemActions>
@@ -415,6 +422,7 @@ function UpkeepTabView({ upkeep, onAdd }: { upkeep: UpkeepView[]; onAdd: () => v
                   <DropdownMenuContent align="end" className="min-w-44">
                     <DropdownMenuGroup>
                       {!due ? <DropdownMenuItem onClick={() => markDone(u)}>Mark done today</DropdownMenuItem> : null}
+                      {u.turn === me.id ? <DropdownMenuItem onClick={() => pass(u)}>Pass my turn</DropdownMenuItem> : null}
                       {isAdmin ? (
                         <DropdownMenuItem variant="destructive" onClick={() => remove(u)}>
                           Stop tracking

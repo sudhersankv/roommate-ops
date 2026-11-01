@@ -10,6 +10,7 @@ const brief = (m: MaintenanceItem) => ({
   status: m.status,
   due: m.dueIn < 0 ? report.dueWord(m.dueIn, m.dueDay) : m.dueIn === 0 ? "due today" : `due ${m.dueDay} (in ${m.dueIn} days)`,
   lastDone: m.lastDone ? "yes" : "never marked done",
+  whoseTurn: m.whoseTurn,
 });
 
 export const upkeepTools = {
@@ -31,13 +32,21 @@ export const upkeepTools = {
   }),
   upkeep_done: createTool({
     id: "upkeep_done",
-    description: "Mark an upkeep item done today ('changed the air filter', 'tested the smoke alarms'). Fuzzy name match; returns when it's due next.",
+    description:
+      "Mark an upkeep item done today by the sender ('changed the air filter', 'tested the smoke alarms'). Fuzzy name match; returns when it's due next and nextUp, whose turn it is next time.",
     inputSchema: z.object({ item: z.string().min(1) }),
     execute: async ({ item }, context) => upkeep.markDone(ctxOf(context), { item }),
   }),
+  upkeep_skip: createTool({
+    id: "upkeep_skip",
+    description: "The sender passes their turn on an upkeep item ('can someone else do the air filter', 'pass on the smoke alarms'). Only whoever's turn it is can pass; returns nextUp.",
+    inputSchema: z.object({ item: z.string().min(1) }),
+    execute: async ({ item }, context) => upkeep.skipUpkeep(ctxOf(context), { item }),
+  }),
   upkeep_status: createTool({
     id: "upkeep_status",
-    description: "Upkeep items with when they're due (overdue / due soon = within 7 days / ok), soonest first. For 'what's due this week' use dueOnly.",
+    description:
+      "Upkeep items with when they're due (overdue / due soon = within 7 days / ok) and whoseTurn, soonest first. For 'what's due this week' use dueOnly; 'whose turn is the air filter' is this too.",
     inputSchema: z.object({ dueOnly: z.boolean().optional().describe("true = only overdue or due within 7 days") }),
     execute: async ({ dueOnly }, context) => {
       const ctx = ctxOf(context);

@@ -763,6 +763,35 @@ export const SCENARIOS: Scenario[] = [
     expect: { tools: ["upkeep_status"], replyIncludes: [/smoke|filter|dryer|extinguisher|coffee/i] },
     alt: { tools: ["chore_status"], replyIncludes: [/dishes/i] },
   },
+  {
+    // #73: upkeep takes turns like chores (the whole group, least recent first): Dev and Maya never have, Dev by name.
+    id: "upkeep-done-says-whos-next",
+    area: "house",
+    seed: async (e) => void (await upkeep.addDefaults(e.ctx)),
+    turn: { text: "roomie changed the air filter", from: "Sam" },
+    expect: { tools: ["upkeep_done"], replyIncludes: ["Dev"], excludes: [/Maya/] },
+  },
+  {
+    id: "upkeep-whose-turn",
+    area: "house",
+    seed: async (e) => {
+      await upkeep.addDefaults(e.ctx);
+      await upkeep.markDone(e.as("Dev"), { item: "air filter" });
+    },
+    turn: { text: "roomie whose turn is the air filter next?", from: "Sam" },
+    expect: { tools: ["upkeep_status"], replyIncludes: ["Maya"] },
+  },
+  {
+    id: "upkeep-pass-turn",
+    area: "house",
+    seed: async (e) => void (await upkeep.addDefaults(e.ctx)),
+    turn: { text: "roomie can someone else do the smoke alarm test? I'm away all week", from: "Dev" },
+    expect: {
+      tools: ["upkeep_skip"],
+      replyIncludes: ["Maya"],
+      check: async (e) => fail((await upkeep.listMaintenance(e.ctx)).find((m) => /smoke/i.test(m.item))?.whoseTurn === "Maya", "Maya is up on the smoke alarms"),
+    },
+  },
 
   /* ---------- reminders + core ---------- */
   {

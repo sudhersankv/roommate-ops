@@ -1,10 +1,18 @@
 // Upkeep: house care that comes around every few weeks or months (filters, smoke alarms, the dryer vent). Due days
-// are the Group's local days. "Due soon" = within 7 days; the weekly Group Report carries them (no separate post).
-import { and, eq } from "drizzle-orm";
+// are the Group's local days. "Due soon" = within 7 days; the weekly Group Report carries them, and House's Bundle line
+// names whoever's up (house.ts).
+//
+// Whose turn (#73): the chores' rule (turnFor) over the whole group, no Rotation: whichever active Member did or passed
+// the item least recently (never first, ties by name). The history is the item's own Activity rows ("upkeep.done" and
+// "upkeep.skipped" with ref maintenance/<id>), so it needs no table of its own: a done moves the turn on, a pass too
+// (only whoever's turn it is can pass), and a pass isn't a done (the due day stays).
+import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { addDaysToDay, dayInZone, daysBetweenDays } from "@/lib/time";
 import { recordFor } from "./activity";
-import { requireActive, requireAdmin } from "./authz";
+import { NotAllowedError, requireActive, requireAdmin } from "./authz";
+import { turnFor, type TurnEntry } from "./chores";
+import { listMembers } from "./members";
 import { groupTimezone } from "./schedule";
 import type { Ctx, GroupCtx } from "./types";
 
@@ -22,7 +30,14 @@ export type MaintenanceItem = {
   /** Days until due (negative = late). */
   dueIn: number;
   status: MaintenanceStatus;
+  /** Whoever's up next (active Members, least recent first), null when nobody's active. */
+  whoseTurn: string | null;
+  whoseTurnId: string | null;
 };
+
+/** Activity kinds that make an item's turn history. */
+export const UPKEEP_DONE = "upkeep.done";
+export const UPKEEP_SKIPPED = "upkeep.skipped";
 
 /** "Due soon" window in days. */
 export const DUE_SOON_DAYS = 7;
@@ -78,11 +93,55 @@ export function pickByName<T extends { item: string }>(items: readonly T[], quer
   return scored[0].m;
 }
 
+/**
+ * The item as people say it: "Replace HVAC / air filter" -> "Air filter", "Test smoke alarms" -> "Smoke alarm test",
+ * "Clean dryer vent" -> "Dryer vent", "Check fire extinguisher" -> "Fire extinguisher check". Else the name as tracked.
+ */
+export function upkeepLabel(item: string): string {
+  let s = item.trim().replace(/\s+/g, " ");
+  if (s.includes("/")) s = s.slice(s.lastIndexOf("/") + 1).trim() || s;
+  const m = /^(test|check|replace|change|clean|descale|service|flush|inspect)\s+(?:the\s+)?(.+)$/i.exec(s);
+  if (m) {
+    const verb = m[1].toLowerCase();
+    s = verb === "test" || verb === "check" ? `${m[2].replace(/([^s])s$/i, "$1")} ${verb}` : m[2];
+  }
+  s = s.replace(/^(?:the|our|my)\s+/i, "");
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+/** Quick jobs (a test or a check) get "Takes a minute." in the Bundle. */
+export const isQuickUpkeep = (item: string) => /\b(test|check)$/i.test(upkeepLabel(item));
+
+/** Whose turn on one item: the chores' turnFor over the active Members, no Rotation. `entries` newest first. */
+export function upkeepTurn<T extends { id: string; name: string }>(people: T[], entries: TurnEntry[]): T | null {
+  return turnFor(null, people, entries);
+}
+
 // ---------- DB-backed services ----------
 
 async function rows(groupId: string) {
   return db.select().from(maintenance).where(eq(maintenance.groupId, groupId));
 }
+
+/** itemId -> its dones and passes, newest first, from the Group's Activity (rows with a Member only). */
+async function turnHistory(groupId: string): Promise<Map<string, TurnEntry[]>> {
+  const { activity } = schema;
+  const logs = await db
+    .select({ refId: activity.refId, memberId: activity.actorMemberId, at: activity.createdAt, kind: activity.kind })
+    .from(activity)
+    .where(and(eq(activity.groupId, groupId), eq(activity.refTable, "maintenance"), inArray(activity.kind, [UPKEEP_DONE, UPKEEP_SKIPPED]), isNotNull(activity.actorMemberId)))
+    .orderBy(desc(activity.createdAt));
+  const out = new Map<string, TurnEntry[]>();
+  for (const l of logs) {
+    if (!l.refId || !l.memberId || !l.at) continue;
+    const list = out.get(l.refId) ?? [];
+    list.push({ memberId: l.memberId, at: l.at, skipped: l.kind === UPKEEP_SKIPPED });
+    out.set(l.refId, list);
+  }
+  return out;
+}
+
+const named = (people: { id: string; displayName: string }[]) => people.map((m) => ({ id: m.id, name: m.displayName }));
 
 /** Track an upkeep item. Same name (case-insensitive) already tracked -> just update its cadence. */
 export async function addMaintenance(ctx: Ctx, input: { item: string; everyDays: number }): Promise<{ id: string; item: string; everyDays: number; created: boolean }> {
@@ -115,8 +174,11 @@ async function find(ctx: GroupCtx, input: { item?: string; id?: string }) {
   return match;
 }
 
-/** Mark an item done now. Fuzzy name match; unknown names throw with the list of known items so Roomie can ask. */
-export async function markDone(ctx: Ctx, input: { item?: string; id?: string }): Promise<{ item: string; nextDueDay: string; everyDays: number }> {
+/**
+ * Mark an item done now, by the sender; the turn moves on. Fuzzy name match; unknown names throw with the list of
+ * known items so Roomie can ask. `nextUp` is whoever's up next time.
+ */
+export async function markDone(ctx: Ctx, input: { item?: string; id?: string }): Promise<{ item: string; nextDueDay: string; everyDays: number; nextUp: string | null }> {
   await requireActive(ctx);
   const match = await find(ctx, input);
   const now = new Date();
@@ -124,9 +186,24 @@ export async function markDone(ctx: Ctx, input: { item?: string; id?: string }):
     .update(maintenance)
     .set({ lastDone: now })
     .where(and(eq(maintenance.id, match.id), eq(maintenance.groupId, ctx.groupId)));
-  await recordFor(ctx, "upkeep.done", `did ${match.item}`, { table: "maintenance", id: match.id });
-  const tz = await groupTimezone(ctx.groupId);
-  return { item: match.item, everyDays: match.everyDays, nextDueDay: upkeepSchedule(now, match.everyDays, tz, now).dueDay };
+  await recordFor(ctx, UPKEEP_DONE, `did ${match.item}`, { table: "maintenance", id: match.id });
+  const [tz, history, people] = await Promise.all([groupTimezone(ctx.groupId), turnHistory(ctx.groupId), listMembers(ctx)]);
+  const next = upkeepTurn(named(people), history.get(match.id) ?? []);
+  return { item: match.item, everyDays: match.everyDays, nextDueDay: upkeepSchedule(now, match.everyDays, tz, now).dueDay, nextUp: next?.name ?? null };
+}
+
+/** The sender passes their turn on an item: whoever's next is up. Only whoever's turn it is can pass; the due day stays. */
+export async function skipUpkeep(ctx: Ctx, input: { item?: string; id?: string }): Promise<{ item: string; nextUp: string | null }> {
+  await requireActive(ctx);
+  const match = await find(ctx, input);
+  const [history, people] = await Promise.all([turnHistory(ctx.groupId), listMembers(ctx)]);
+  const everyone = named(people);
+  const entries = history.get(match.id) ?? [];
+  const up = upkeepTurn(everyone, entries);
+  if (up?.id !== ctx.memberId) throw new NotAllowedError(`It's ${up?.name ?? "nobody"}'s turn on ${match.item}, not yours, so there's nothing to pass.`, "not-yours");
+  const next = upkeepTurn(everyone, [{ memberId: ctx.memberId, at: new Date(), skipped: true }, ...entries]);
+  await recordFor(ctx, UPKEEP_SKIPPED, `passed their turn on ${match.item}${next && next.id !== ctx.memberId ? ` to ${next.name}` : ""}`, { table: "maintenance", id: match.id });
+  return { item: match.item, nextUp: next?.name ?? null };
 }
 
 /** Admin: stop tracking an item. */
@@ -140,9 +217,13 @@ export async function removeMaintenance(ctx: Ctx, input: { item?: string; id?: s
 
 /** Every item with its due day and status, soonest first. */
 export async function listMaintenance(ctx: GroupCtx, now = new Date()): Promise<MaintenanceItem[]> {
-  const [all, tz] = await Promise.all([rows(ctx.groupId), groupTimezone(ctx.groupId)]);
+  const [all, tz, history, people] = await Promise.all([rows(ctx.groupId), groupTimezone(ctx.groupId), turnHistory(ctx.groupId), listMembers(ctx)]);
+  const everyone = named(people);
   return all
-    .map((r) => ({ id: r.id, item: r.item, everyDays: r.everyDays, lastDone: r.lastDone, ...upkeepSchedule(r.lastDone, r.everyDays, tz, now) }))
+    .map((r) => {
+      const up = upkeepTurn(everyone, history.get(r.id) ?? []);
+      return { id: r.id, item: r.item, everyDays: r.everyDays, lastDone: r.lastDone, ...upkeepSchedule(r.lastDone, r.everyDays, tz, now), whoseTurn: up?.name ?? null, whoseTurnId: up?.id ?? null };
+    })
     .sort(compareByDue);
 }
 

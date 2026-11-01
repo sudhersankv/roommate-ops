@@ -50,8 +50,8 @@ const shame = [
 ];
 const streaks = [{ name: "Dev", streak: 4, chore: "Dishes" }];
 const upkeep = [
-  { item: "Replace HVAC / air filter", dueDay: "2026-11-05", dueIn: 4 },
-  { item: "Test smoke alarms", dueDay: "2026-10-30", dueIn: -2 },
+  { item: "Replace HVAC / air filter", dueDay: "2026-11-05", dueIn: 4, whoseTurn: "Dev" },
+  { item: "Test smoke alarms", dueDay: "2026-10-30", dueIn: -2, whoseTurn: "Sam" },
 ];
 const upcoming = [{ text: "Rent is due", dueAt: new Date("2026-11-02T15:00:00Z") }];
 
@@ -76,7 +76,7 @@ test("formatGroupReport: every section in post order, deterministic, at most 12 
     "🔥 Dev's on a 4-turn streak (dishes).",
     "⏳ Up now: Take out the trash (Maya, 2 days late), Dishes (Dev, today).",
     "📉 The chart says Sam has some catching up to do.",
-    "🔧 Upkeep due soon: Replace HVAC / air filter (Thu), Test smoke alarms (2 days late).",
+    "🔧 Upkeep due soon: Air filter (Dev, Thu), Smoke alarm test (Sam, 2 days late).",
     "🛒 7 things in the Cart.",
     "⏰ Coming up: Rent is due (Mon 9 AM).",
   ]);

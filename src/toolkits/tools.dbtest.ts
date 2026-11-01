@@ -24,7 +24,7 @@ import { bundleJob, sendDueReminders, weeklyReportJob } from "@/jobs/scheduler";
 import { addDaysInZone, addDaysToDay, dayInZone, nextWeekday, zonedParts, zonedTimeToUtc } from "@/lib/time";
 import { onGroupJoined, onParticipantJoined } from "@/onboarding";
 import { deleteGroup, groupsWithChat } from "@/services/groups";
-import { activity, cart, chatlog, chores, groups, members, money, personality as personalitySvc, receipts, recipes, recurring, schedule, splitwise, toolkits as toolkitsSvc } from "@/services";
+import { activity, cart, chatlog, chores, groups, members, money, personality as personalitySvc, receipts, recipes, recurring, schedule, splitwise, toolkits as toolkitsSvc, upkeep } from "@/services";
 import { composioHealth } from "@/integrations/composio";
 import { FakeSplitwise, setSplitwiseClient } from "@/integrations/splitwise";
 import { ComposioInstacart, FakeInstacart, setInstacartClient } from "@/integrations/instacart";
@@ -664,11 +664,29 @@ describe("Roomie tools against the dev DB", () => {
     const d = await run("upkeep_done", { item: "changed the air filter" });
     assert.equal(d.item, "Replace HVAC / air filter");
     assert.equal(d.nextDueDay, addDaysToDay(dayInZone(CHI, new Date()), 90));
+    assert.equal(d.nextUp, "Alex", "the turn moves on");
     const all: { items: UpkeepBrief[] } = await run("upkeep_status", {});
     assert.equal(all.items.find((m) => m.item === "Replace HVAC / air filter")?.status, "ok");
     const due: { items: UpkeepBrief[] } = await run("upkeep_status", { dueOnly: true });
     assert.equal(due.items.length, 4);
     await assert.rejects(run("upkeep_done", { item: "gutters" }), /No upkeep item matches "gutters".*Replace HVAC/);
+  });
+
+  test("upkeep turns (#73): a done moves the filter to whoever did it least recently; only they can pass it on", async () => {
+    // Sudhersan just did it; Alex and Ryan never have, so Alex (by name) is up.
+    const status = async () => ((await run("upkeep_status", {})) as { items: (UpkeepBrief & { whoseTurn: string | null })[] }).items.find((m) => m.item === "Replace HVAC / air filter")!;
+    assert.equal((await status()).whoseTurn, "Alex");
+    const ryan = contextFor(member.Ryan, "Ryan", "member", "active");
+    const alex = contextFor(member.Alex, "Alex", "member", "active");
+    const refused = await run("upkeep_skip", { item: "air filter" }, ryan);
+    assert.equal(refused.reason, "not-yours");
+    assert.match(refused.message, /Alex's turn/);
+    assert.deepEqual(await run("upkeep_skip", { item: "air filter" }, alex), { item: "Replace HVAC / air filter", nextUp: "Ryan" });
+    const after = await status();
+    assert.equal(after.whoseTurn, "Ryan");
+    assert.equal(after.status, "ok", "a pass isn't a done: the due day stays");
+    const done = await run("upkeep_done", { item: "air filter" }, ryan);
+    assert.equal(done.nextUp, "Sudhersan", "Ryan did it, Alex passed after Sudhersan's done: Sudhersan's is the oldest");
   });
 
   test("upkeep_remove: Admins only", async () => {
@@ -687,7 +705,7 @@ describe("Roomie tools against the dev DB", () => {
     assert.doesNotMatch(r.text, /\$16\.00/);
     assert.match(r.text, /Chores this week: Sudhersan 2, Alex 1, Ryan 0\./);
     assert.match(r.text, /The chart says Ryan has some catching up to do\./);
-    assert.match(r.text, /Upkeep due soon: .*Test smoke alarms \(today\)/);
+    assert.match(r.text, /Upkeep due soon: .*Smoke alarm test \(Alex, today\)/, "with whoever's up (#73)");
     assert.doesNotMatch(r.text, /air filter/);
     assert.match(r.text, /The Cart's empty\./);
     assert.ok(r.text.split("\n").length <= 12, "stays short");
@@ -2160,6 +2178,18 @@ describe("House: chore nudges and the learned rhythm", () => {
     await members.setNudges(as("Sam"), { on: false });
     assert.match((await house.houseBundleLine({ groupId: gid }, local(9, 6))) ?? "", /take out the trash \(Sam\)/, "nudges off: back on the group line");
     await members.setNudges(as("Sam"), { on: true });
+  });
+
+  test("the Bundle names whoever's up on upkeep (#73): two days ahead, never for never-done items", async () => {
+    const water = await upkeep.addMaintenance(as("Maya"), { item: "Water filter", everyDays: 30 });
+    await upkeep.markDone(as("Maya"), { id: water.id });
+    const lineOn = async (dayOffset: number) => ((await house.houseBundleLine({ groupId: gid }, local(9, 5, dayOffset))) ?? "").split("\n").filter((l) => /water filter/i.test(l));
+    const [ahead] = await lineOn(28);
+    assert.ok(ahead, "two days before it's due");
+    assert.match(ahead, /\bDev\b/, "Maya did it, so Dev (least recent, by name) is up");
+    assert.doesNotMatch(ahead, /Maya/);
+    assert.deepEqual(await lineOn(27), [], "three days ahead: nothing yet");
+    assert.deepEqual(await lineOn(5), [], "not due: nothing");
   });
 
   test("choreDmJob: Sam, privately, once the usual hour (7 PM) comes; once a day", async () => {
