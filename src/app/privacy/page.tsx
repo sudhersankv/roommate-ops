@@ -32,17 +32,17 @@ export default function PrivacyPage() {
       <Part title="Where your messages go">
         <ul>
           <li>
-            <strong>Every message</strong> in the group, with the 6 before it, goes to a small AI model (TypeSafe&apos;s Jev, through Neon&apos;s AI Gateway) that
+            <strong>Every message</strong> in the group, with the 6 before it, goes to a small AI model (through our AI Gateway) that
             decides whether Roomie should answer. That&apos;s how it knows when it&apos;s being talked to.
           </li>
           <li>
-            Messages for Roomie (addressed to it, or ones it decides to chime in on) go to Anthropic&apos;s Claude, also through Neon&apos;s AI Gateway, with up to 30
+            Messages for Roomie (addressed to it, or ones it decides to chime in on) go to a larger AI model, also through the AI Gateway, with up to 30
             recent lines of the chat, what it remembers about the group and what Members asked it to remember. Photos it&apos;s asked to read, like receipts, go there
             too. So do private messages to Roomie and questions from the dashboard.
           </li>
-          <li>Voice notes addressed to it are sent to Google&apos;s Gemini (through the Neon AI Gateway) to turn them into text.</li>
-          <li>About every 50 messages, a batch goes to a small Claude model that picks out how the group talks (phrases, emoji), and about 1 in 10 replies is checked by it for quality.</li>
-          <li>The messages it passes to Claude, and its replies, are turned into search vectors on Neon&apos;s AI Gateway, so it can recall earlier conversations.</li>
+          <li>Voice notes addressed to it go to a speech AI model (through the AI Gateway) to turn them into text.</li>
+          <li>About every 50 messages, a batch goes to a small AI model that picks out how the group talks (phrases, emoji), and about 1 in 10 replies is checked by it for quality.</li>
+          <li>The messages it answers, and its replies, are turned into search vectors on the AI Gateway, so it can recall earlier conversations.</li>
           <li>Splitwise and Instacart only get what you ask Roomie to send them.</li>
         </ul>
         <p>We don&apos;t sell your data, show ads, or use your group&apos;s messages for anything but your group.</p>
@@ -55,12 +55,12 @@ export default function PrivacyPage() {
             <strong>Chat messages: 30 days.</strong> Every message in the group is saved so Roomie can follow the conversation. A job deletes older ones every day.
           </li>
           <li>
-            <strong>Its memory of conversations: 30 days.</strong> The messages it passed to Claude and its replies, deleted the same way.
+            <strong>Its memory of conversations: 30 days.</strong> The messages it answered and its replies, deleted the same way.
           </li>
           <li>
-            <strong>Debug records (traces): 30 days.</strong> For each message: who sent it, what Roomie decided, and, when it went to Claude, what the AI models were
-            given and said back. A message that didn&apos;t go to Claude keeps no text in its own record, but it can appear as recent chat in the record of a later
-            message that did.
+            <strong>Debug records (traces): 30 days.</strong> For each message: who sent it, what Roomie decided, and, when it answered, what the AI models were
+            given and said back. A message it didn&apos;t answer keeps no text in its own record, but it can appear as recent chat in the record of a later
+            message it did answer.
           </li>
           <li>
             <strong>Until you delete them:</strong> Expenses, Settlements, the Cart and Recipes, Chores, upkeep and Reminders, the Activity of who changed what, what a
