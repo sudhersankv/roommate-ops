@@ -12,6 +12,7 @@
 | `/signin` | Google button, paste a Claim link, the "Sign-in didn't complete" alert. `?next=` is where to go afterwards. Signed in: straight to `next` (default `/app`; `/` is never a `next`). "New here?" links `/` and `/help`. | `src/app/signin/page.tsx` |
 | `/privacy` | What Roomie keeps, per Group, "forget me", who else sees it. Static. The one page allowed to say "AI model" and "AI Gateway", because it names what the code calls (audit B4). | `src/app/privacy/page.tsx` |
 | `/admin/beta` | Operators only (`ROOMIE_OPERATOR_EMAILS`, 404 for everyone else, `noindex`): the beta requests, newest first, with a status. | `src/app/admin/beta/` |
+| `/admin/stats` | Operators only (404 for everyone else, signed out included, `noindex`): counts only, no people. Waitlist sign-ups (total, per ISO week, by group type and size), Soon votes per Trick or chat app, Groups added per Channel (total and per week), weekly active Groups and Members (sent at least one chat line that week; chat lines live 30 days, so the last 5 weeks), Members' and Roomie's chat lines per week, agent runs per day (the caps' counters, kept two days). `/admin/stats/csv` is the same as a CSV. The sign-ups' details stay on `/admin/beta`. | `src/app/admin/stats/`, `src/services/stats.ts` |
 
 ## Sign-in paths
 
