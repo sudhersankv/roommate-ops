@@ -21,6 +21,7 @@ import "../src/lib/env";
 import { createInterface } from "node:readline";
 import { registerChannel } from "../src/channels";
 import { DevChannel, devUserId, type DevOutput } from "../src/channels/dev";
+import { sendAnswer } from "../src/channels/answer";
 import { db } from "../src/db";
 import { mastra } from "../src/mastra";
 import { onGroupJoined, onParticipantJoined } from "../src/onboarding";
@@ -38,6 +39,7 @@ const cleanup = args.includes("--cleanup");
 const interactive = process.stdin.isTTY;
 
 const names = new Map<string, string>(); // dev user id -> display name
+let lineNo = 0; // dev message ids, for reactions
 const nameOf = (userId: string) => names.get(userId) ?? userId;
 const user = (name: string) => {
   const id = devUserId(name);
@@ -75,8 +77,15 @@ async function send(name: string, text: string, imageUrl?: string, isPrivate = f
   const r = await respondToIncoming({ channel: "dev", chatExternalId: chatId, userExternalId: u.userExternalId, userName: u.name, text, imageUrl, ...(isPrivate ? { isPrivate: true } : {}) });
   const tools = r.toolCalls.filter((t) => t !== "updateWorkingMemory");
   console.log(`         (gate ${r.gate.decision}/${r.gate.reason}${tools.length ? `, tools ${tools.join(",")}` : ""}, ${((Date.now() - started) / 1000).toFixed(1)}s)`);
-  if (r.out) show(isPrivate ? { to: "private", userExternalId: u.userExternalId, msg: r.out } : { to: "chat", chatExternalId: chatId, msg: r.out });
-  else console.log("         (Roomie stays quiet)");
+  const out = r.out;
+  if (out) {
+    // The same path the real adapters take (channels/answer.ts): the reaction on this line, then any text.
+    const messageId = `dev-${++lineNo}`;
+    await sendAnswer(out, {
+      react: (emoji) => devChannel.react(chatId, messageId, emoji),
+      send: async (msg) => show(isPrivate ? { to: "private", userExternalId: u.userExternalId, msg } : { to: "chat", chatExternalId: chatId, msg }),
+    });
+  } else console.log("         (Roomie stays quiet)");
 }
 
 async function run(line: string) {

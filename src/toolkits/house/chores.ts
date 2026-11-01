@@ -1,6 +1,6 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
-import { chores, report } from "@/services";
+import { chores, reactions, report } from "@/services";
 import type { ChoreStatus } from "@/services/chores";
 import { ctxOf, memberIdByName } from "../util";
 
@@ -22,14 +22,16 @@ export const choreTools = {
   log_chore: createTool({
     id: "log_chore",
     description:
-      "Record a chore someone did: 'I did the dishes' (the sender), 'Dev took out the trash' (who: Dev). Free-text chore name, fuzzy-matched to the chart and added if new. Returns whose turn is next.",
+      "Record a chore someone did: 'I did the dishes' (the sender), 'Dev took out the trash' (who: Dev). Free-text chore name, fuzzy-matched to the chart and added if new. Returns whose turn is next, and react when a reaction is answer enough.",
     inputSchema: z.object({
       chore: z.string().min(1).describe("Free text, e.g. 'the dishes', 'trash'"),
       who: z.string().optional().describe("Member name when someone else did it; omit for the sender"),
     }),
     execute: async ({ chore, who }, context) => {
       const ctx = ctxOf(context);
-      return chores.logChore(ctx, { chore, memberId: who ? await memberIdByName(ctx, who) : undefined });
+      const done = await chores.logChore(ctx, { chore, memberId: who ? await memberIdByName(ctx, who) : undefined });
+      const react = reactions.choreDoneReaction(done);
+      return { ...done, ...(react ? { react } : {}) };
     },
   }),
   chore_add: createTool({

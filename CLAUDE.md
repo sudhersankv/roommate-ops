@@ -156,6 +156,9 @@ src/
     personality.ts      groups.personality: getPersonality, updatePersonality (Admin), saveLearned (style job), resetLearned
                         (Admin), groupMood (worried / sleepy / happy / calm), allSquare
     pet.ts              say-once pet moments on pet_moments (MomentStore): dayGreeting, claimWins
+    reactions.ts        pure (#77, see "Reactions" below): the tools' offers (choreDoneReaction ✅, settledReaction 👍),
+                        reactionOffer (the guard: every write offered `react`, none failed / refused / linked), readReply
+                        ("[react]", empty, a bare "Done." or only emoji restates the write), answerFor, reactedLine
     beta.ts             Beta requests (docs/landing.md): submitBetaRequest (honeypot, zod, 3 per IP-hash per hour, store,
                         then notifyOperator: an email from notify@ to OPERATOR_EMAIL (operator-mail.ts), else a Telegram DM to the first ROOMIE_OPERATOR_EMAILS Account's Telegram Member, else
                         a "[beta]" log line); list / setBetaStatus / delete take the operator (NotAllowedError otherwise)
@@ -170,8 +173,10 @@ src/
                         Channel's roster grace, ADR 0010). Called by Channel adapters (ADR 0008)
   pipeline.ts           the message flow, channel-agnostic: handleIncoming(msg) resolves Group/Member itself (unknown
                         Chat -> Onboarding, unknown sender -> onUnknownSender), logs the line, runs the Gate, calls the
-                        agent, collects links. isPrivate (a Member's DM): addressed, not logged. askRoomie(ctx, text)
-                        for the dashboard (CappedError -> 429). One trace per message. Stops early for ROOMIE_PAUSED,
+                        agent, collects links; a run that only recorded what was reported answers with Outgoing.react
+                        (services/reactions.ts answerFor: text "" = the reaction alone, a win cheer is the line next to
+                        it; logged as "(reacted ✅)"). isPrivate (a Member's DM): addressed, not logged. askRoomie(ctx,
+                        text) for the dashboard (CappedError -> 429; a reaction comes back as its emoji as text). One trace per message. Stops early for ROOMIE_PAUSED,
                         a paused Group, unaddressed media and the caps (see "Abuse limits" below); mediaWantedFor is the
                         adapters' "fetch this photo / voice note?" question
   mastra/
@@ -235,19 +240,27 @@ src/
                         blobStore(), setBlobStore() for tests), mail.ts (MailClient: AgentMailClient over the `agentmail`
                         SDK and FakeMail; mailClient(), setMailClient(), mailAvailability(): a key, or MAIL_FAKE=1)
   channels/types.ts     IncomingMessage { channel, chatExternalId, userExternalId, userName, text, imageUrl?, isPrivate?,
-                        ... }, Outgoing (+ poll { question, options, multi }), Sent { externalId?, secret? }, PollVote,
-                        Channel (sends return Sent; nativePolls), CantMessagePrivatelyError, ROSTER_GRACE_MS
+                        messageExternalId? (what a reaction points at), ... }, Outgoing (+ poll { question, options, multi },
+                        react? = an emoji on the answered message), Sent { externalId?, secret? }, PollVote, Channel (sends
+                        return Sent; nativePolls; react?(chatExternalId, messageExternalId, emoji)),
+                        CantMessagePrivatelyError, ROSTER_GRACE_MS
+  channels/answer.ts    sendAnswer(out, { react?, send }): the adapters' (and dev-chat's) way to send a pipeline answer:
+                        the reaction on the message, then any text; a reaction that can't be made (no id, refused) goes
+                        as its emoji, as text, only when there's no text
   channels/index.ts     registry: registerChannel(); deliver(groupId, out) and deliverPrivate(memberId, out, { groupId?,
                         kind? }) go through the Chat's adapter (only log when none is registered) and return Sent;
                         deliverPrivate notes dm_context ("nudge") so the reply lands in that Group
-  channels/dev.ts       the dev adapter used by scripts/dev-chat.ts (a Poll prints as numbered text, "(poll n)")
+  channels/dev.ts       the dev adapter used by scripts/dev-chat.ts (a Poll prints as numbered text, "(poll n)"; a
+                        reaction prints "(reacted ✅)")
   channels/telegram.ts  grammY adapter: TelegramChannel (outbound: typing, pause, rate limits, chunks, URL buttons, 403 ->
-                        CantMessagePrivatelyError) + createTelegramBot(deps) (inbound: joins, new members, text/photo/
+                        CantMessagePrivatelyError, react = setMessageReaction with telegramReaction: ✅ is 👌, Telegram's
+                        list has no ✅) + createTelegramBot(deps) (inbound: joins, new members, text/photo/
                         voice/DMs -> IncomingMessage, queued per Chat). Never imports the app: deps come in
   channels/telegram-boot.ts  real deps (pipeline, onboarding, services); telegramChannel() for instrumentation,
                         telegramBot() for the polling script and the webhook
   channels/whatsapp.ts  Baileys adapter (docs/whatsapp.md, ADR 0013): WhatsAppChannel (outbound: composing, pause, rate
-                        limits, chunks, links as trailing "text — url" lines, LID recipients -> phone JID) +
+                        limits, chunks, links as trailing "text — url" lines, LID recipients -> phone JID, react = a react
+                        message with the received message's full key, kept for the last 500 in `received`) +
                         createWhatsApp(opts) (connection: QR / pairing code, status(), reconnect with backoff, loggedOut
                         clears the session, connectionReplaced stops; inbound: notify-only messages deduped, joins with the
                         full roster, later joiners, subject changes, text/photo/voice/DMs -> IncomingMessage, queued per
@@ -459,6 +472,7 @@ scripts/studio-presets.ts  writes .mastra-presets.json for Studio (run by mastra
 - **Onboarding copy:** the intro is three lines and no feature list (who Roomie is, "tell me what this group is for ... and I'll learn the right Tricks", the Admin); when setup finishes `set_group_settings` returns `learned` (`learnedLine`: "Learned Money and Groceries. Say "roomie, learn house" any time.", or "You didn't say what this group is for, so I kept the roommates set: ..."; while an off-by-default Trick with an `offerLine` is off, its sentence follows: "Want me to handle the landlord's emails too? Say "roomie, learn lease inbox"."), and `say` (that line + the Join link line), which Roomie posts as it is.
 - **House's `onEnable`** (teaching it, and Onboarding presets that include it) adds the three starter chores (no Rotation, so new people join in; only on an empty chart) and the usual five upkeep items (only the missing ones), so twice adds nothing. Onboarding itself names no Toolkit.
 - **Groceries requires Money:** "I paid 84" ends in an Expense, so teaching Groceries with Money off is refused ("it needs Money first") and forgetting Money while Groceries is on is refused ("Groceries needs Money, so I'm keeping it"); `cart_from_photo` no longer checks and a receipt always points at `expense_from_receipt`.
+- **Reactions** (#77, `services/reactions.ts`): a message that only reports something Roomie has now recorded gets an emoji on it instead of a line: ✅ on "trash done", 👍 on "paid her back". The record is made either way. Three steps, all in code: (1) the tool offers it on its result (`react`): `log_chore` for a chore already on the chart (a new one is news), `settle_up` paid=true when the two are square after it (money still owed is a line); (2) the guard `reactionOffer`: EVERY write in the run offered one and none failed, was refused, asked or carried a link (a read in the run = they asked something); (3) the reply: "[react]" (the skills: core, house, splitting), nothing, a bare "Done." / "Got it." or only emoji becomes the reaction; anything else is sent as written. A win cheer (a streak milestone, everyone square) is the line next to the reaction. Without an offer, "[react]" or nothing is the plain 👍 line, as before. Adapters send it with `channels/answer.ts`; a Channel or group that refuses a reaction gets the emoji as text. Evals: `react-trash-done`, `react-paid-back` (react), `done-and-question-must-reply`, `paid-part-must-reply` (must reply).
 - **First contact** (`channels/text.ts`, shared by both adapters): `/help` (group or DM) is at most 8 lines naming the Group's Tricks (`helpText`), `/start` in a DM is one line and never a link (on WhatsApp nobody needs either; they work when typed, and other text starting with "/" goes through as text there), on Telegram other slash commands are ignored, a failure while Roomie was addressed gets one friendly line (`OOPS`) and the stack goes to the log. `npm run telegram` prints a `[roomie]` line per message (gate, tools, time, trace id) and per reply.
 
 ## Personality (one voice)

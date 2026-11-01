@@ -9,9 +9,10 @@
 // send shows "typing", waits a short human-like moment (REPLY_DELAY_MS overrides) and goes through token buckets
 // (1/s per Chat, 20/min per group, 25/s overall). Links go as buttons, never previews.
 import { Api, Bot, GrammyError, InlineKeyboard } from "grammy";
-import type { ChatMember, Message, User, UserFromGetMe } from "grammy/types";
+import type { ChatMember, Message, ReactionTypeEmoji, User, UserFromGetMe } from "grammy/types";
 import type { ChatRef } from "@/onboarding";
 import { KeyedQueue } from "./queue";
+import { sendAnswer, type AnswerTarget } from "./answer";
 import { Coalescer, mergeableText, withMerged, type Merged } from "./coalesce";
 import { planDelivery } from "./humanize";
 import { envMs, SendLimiter, sleep as realSleep } from "./rate-limit";
@@ -182,6 +183,14 @@ export class TelegramChannel implements Channel {
     }
   }
 
+  /** A reaction on a message (#77). Telegram only takes emoji from its own list, which has no ✅ (telegramReaction). A
+   * group whose admins turned reactions off refuses it: the caller sends the emoji as text then (channels/answer.ts). */
+  async react(chatExternalId: string, messageExternalId: string, emoji: string): Promise<void> {
+    const messageId = Number(messageExternalId);
+    if (!Number.isSafeInteger(messageId)) throw new Error(`not a Telegram message id: ${messageExternalId}`);
+    await this.retryOn429(() => this.api.setMessageReaction(chatExternalId, messageId, [{ type: "emoji", emoji: telegramReaction(emoji) }]));
+  }
+
   /** People in the Chat besides Roomie (Telegram counts bots too; Roomie is one). */
   async participantCount(chatExternalId: string): Promise<number | null> {
     try {
@@ -277,6 +286,13 @@ export class TelegramChannel implements Channel {
     }
   }
 }
+
+type TelegramEmoji = ReactionTypeEmoji["emoji"];
+/** Roomie's reactions that Telegram's list lacks, mapped to the nearest it has: ✅ is 👌 ("done"). */
+const TELEGRAM_REACTIONS: Record<string, TelegramEmoji> = { "✅": "👌", "✔️": "👌", "☑️": "👌" };
+const TELEGRAM_OWN = new Set<string>(["👍", "👌", "👏", "🎉", "🔥", "❤", "🙏", "💯", "🤝", "🫡", "👀", "😁"]);
+/** The emoji Telegram will take for a reaction: its own as it is, ✅ as 👌, anything else 👍. */
+export const telegramReaction = (emoji: string): TelegramEmoji => TELEGRAM_REACTIONS[emoji] ?? (TELEGRAM_OWN.has(emoji) ? (emoji as TelegramEmoji) : "👍");
 
 /* ---------- the bot (inbound) ---------- */
 
@@ -413,17 +429,24 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
   }
 
   /** The pipeline, with failures logged and, when Roomie was clearly being talked to, one friendly line instead. */
-  async function pipeline(msg: IncomingMessage, reply: (out: Outgoing) => Promise<unknown>) {
+  async function pipeline(msg: IncomingMessage, to: AnswerTarget) {
     let out: Outgoing | null;
     try {
       out = await deps.handleIncoming(msg);
     } catch (err) {
       console.error(`[roomie] couldn't handle a message from ${msg.userName} in ${msg.isPrivate ? "a DM" : `chat ${msg.chatExternalId}`}:`, err);
-      if (wasAddressed(msg)) await reply({ text: OOPS }).catch(() => {});
+      if (wasAddressed(msg)) await to.send({ text: OOPS }).catch(() => {});
       return;
     }
-    if (out) await reply(out);
+    // A reaction lands on the message itself (a merged run's last text), the text where it came from.
+    if (out) await sendAnswer(out, to);
   }
+
+  /** Where an answer to message `m` goes: a reaction on it in `chatId`, text through `send`. */
+  const answerTo = (chatId: string, m: Message, send: (out: Outgoing) => Promise<unknown>): AnswerTarget => ({
+    react: (emoji) => channel.react(chatId, String(m.message_id), emoji),
+    send,
+  });
 
   async function groupMessage(me: UserFromGetMe, m: Message, from: User, merged: Merged) {
     const chatId = String(m.chat.id);
@@ -434,8 +457,8 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
     const content = await readContent(me, m, from, chatId, chatId);
     if (!content) return;
     await pipeline(
-      { channel: "telegram", chatExternalId: chatId, chatTitle: "title" in m.chat ? m.chat.title : undefined, userExternalId: String(from.id), userName: userName(from), ...withMerged(content, merged) },
-      (out) => channel.sendToChat(chatId, out),
+      { channel: "telegram", chatExternalId: chatId, chatTitle: "title" in m.chat ? m.chat.title : undefined, userExternalId: String(from.id), userName: userName(from), ...withMerged(content, merged), messageExternalId: String(m.message_id) },
+      answerTo(chatId, m, (out) => channel.sendToChat(chatId, out)),
     );
   }
 
@@ -457,7 +480,10 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
     if (!chats.length) return channel.sendPrivate(userId, { text: NO_GROUP });
     const content = await readContent(me, m, from, userId, chats[0], true);
     if (!content) return;
-    await pipeline({ channel: "telegram", chatExternalId: chats[0], userExternalId: userId, userName: userName(from), ...withMerged(content, merged), isPrivate: true }, async (out) => void (await channel.sendPrivate(userId, out)));
+    await pipeline(
+      { channel: "telegram", chatExternalId: chats[0], userExternalId: userId, userName: userName(from), ...withMerged(content, merged), isPrivate: true, messageExternalId: String(m.message_id) },
+      answerTo(userId, m, async (out) => void (await channel.sendPrivate(userId, out))),
+    );
   }
 
   bot.use(async (ctx, next) => {

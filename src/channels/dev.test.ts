@@ -18,6 +18,13 @@ test("a Poll on the dev Channel: printed with numbered options, an id per poll, 
   assert.deepEqual(await dev.sendToChat("dev-apt-4b", { text: "hi" }), {}, "plain text has no id to keep");
 });
 
+test("a reaction on the dev Channel: goes to its own callback (dev-chat prints it)", async () => {
+  const reacted: { chatExternalId: string; messageExternalId: string; emoji: string }[] = [];
+  const dev = new DevChannel(() => {}, (r) => reacted.push(r));
+  await dev.react("dev-apt-4b", "dev-3", "✅");
+  assert.deepEqual(reacted, [{ chatExternalId: "dev-apt-4b", messageExternalId: "dev-3", emoji: "✅" }]);
+});
+
 test("renderPollAsText: question, numbered options, how to answer", () => {
   assert.equal(renderPollAsText({ question: "Who had pizza?", options: ["Maya", "Dev"], multi: true }), "Who had pizza?\n1. Maya\n2. Dev\nReply with the numbers (e.g. 1 3).");
 });

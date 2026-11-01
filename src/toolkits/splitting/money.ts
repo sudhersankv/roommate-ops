@@ -4,7 +4,7 @@ import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { EXPENSE_CATEGORIES, RECURRENCES, SPLIT_METHODS } from "@/db/enums";
 import { payLinks } from "@/lib/pay-links";
-import { groups, members, money } from "@/services";
+import { groups, members, money, reactions } from "@/services";
 import { expenseSummary, type Transfer } from "@/services/money";
 import { moneyIn, type Ctx, type GroupCtx } from "@/services/types";
 import { ctxOf, memberIdByName, toCents } from "../util";
@@ -175,7 +175,8 @@ export const moneyTools = {
         if (!cents) throw new Error("How much was it? The settle plan doesn't have that one owing the other anything.");
         const s = await money.settleUp(ctx, { fromId, toId, cents });
         const after = await money.debtBetween(ctx, fromId, toId);
-        return { recorded: true, amount: amount(s.cents), stillOwed: after ? transferText(after, amount) : "square now" };
+        const react = reactions.settledReaction({ square: !after });
+        return { recorded: true, amount: amount(s.cents), stillOwed: after ? transferText(after, amount) : "square now", ...(react ? { react } : {}) };
       }
       if (!owed) return { recorded: false, square: true, message: "Nothing to settle: they're square." };
       const cents = input.amount !== undefined ? toCents(input.amount) : owed.cents;

@@ -4,7 +4,7 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { aesEncryptGCM, hmacSign, proto, sha256, type GroupMetadata, type WAMessage } from "baileys";
+import { aesEncryptGCM, hmacSign, proto, sha256, type GroupMetadata, type WAMessage, type WAMessageKey } from "baileys";
 import type { IncomingMessage } from "./types";
 import { Coalescer } from "./coalesce";
 import { helpText, NO_GROUP, NO_VOICE } from "./text";
@@ -55,7 +55,14 @@ class FakeSocket implements WaSocket {
     this.emitter.emit(event, arg);
   }
   polls: { jid: string; name: string; values: string[]; selectableCount: number }[] = [];
-  async sendMessage(jid: string, content: { text: string } | { poll: { name: string; values: string[]; selectableCount: number } }) {
+  reactions: { jid: string; text: string; key: WAMessageKey }[] = [];
+  failReactions = false;
+  async sendMessage(jid: string, content: Parameters<WaSocket["sendMessage"]>[1]) {
+    if ("react" in content) {
+      if (this.failReactions) throw new Error("not-acceptable");
+      this.reactions.push({ jid, ...content.react });
+      return { key: { id: `react${this.reactions.length}`, remoteJid: jid, fromMe: true }, message: { reactionMessage: { text: content.react.text, key: content.react.key } } } as WAMessage;
+    }
     if ("poll" in content) {
       // What Baileys' generateWAMessageContent does: a random 32-byte messageSecret rides on the poll.
       this.polls.push({ jid, ...content.poll });
@@ -278,9 +285,21 @@ describe("incoming messages", () => {
     const h = harness();
     h.markKnown();
     await h.open();
-    await h.feed([msg()]);
+    const first = msg();
+    await h.feed([first]);
     assert.deepEqual(h.seen.incoming, [
-      { channel: "whatsapp", chatExternalId: GROUP, chatTitle: "Apt 4B", userExternalId: MAYA.pn, userName: "Maya", text: "roomie hi", mentionsRoomie: false, isReplyToRoomie: false, receivedAt: new Date(NOW) },
+      {
+        channel: "whatsapp",
+        chatExternalId: GROUP,
+        chatTitle: "Apt 4B",
+        userExternalId: MAYA.pn,
+        userName: "Maya",
+        text: "roomie hi",
+        mentionsRoomie: false,
+        isReplyToRoomie: false,
+        receivedAt: new Date(NOW),
+        messageExternalId: first.key.id!,
+      },
     ]);
     assert.deepEqual(h.sock().sent, [{ jid: GROUP, text: "ok roomie hi" }]);
     assert.equal(h.sock().read.length, 1);
@@ -457,9 +476,21 @@ describe("incoming messages", () => {
     const h = harness();
     h.markKnown();
     await h.open();
-    await h.feed([msg({ key: { remoteJid: SAM.lid, remoteJidAlt: SAM.pn, participant: undefined, participantAlt: undefined }, pushName: "Sam", message: { conversation: "send me the dashboard" } })]);
+    const dm = msg({ key: { remoteJid: SAM.lid, remoteJidAlt: SAM.pn, participant: undefined, participantAlt: undefined }, pushName: "Sam", message: { conversation: "send me the dashboard" } });
+    await h.feed([dm]);
     assert.deepEqual(h.seen.incoming, [
-      { channel: "whatsapp", chatExternalId: GROUP, userExternalId: SAM.pn, userName: "Sam", text: "send me the dashboard", mentionsRoomie: false, isReplyToRoomie: false, receivedAt: new Date(NOW), isPrivate: true },
+      {
+        channel: "whatsapp",
+        chatExternalId: GROUP,
+        userExternalId: SAM.pn,
+        userName: "Sam",
+        text: "send me the dashboard",
+        mentionsRoomie: false,
+        isReplyToRoomie: false,
+        receivedAt: new Date(NOW),
+        isPrivate: true,
+        messageExternalId: dm.key.id!,
+      },
     ]);
     assert.deepEqual(h.sock().sent, [{ jid: SAM.pn, text: "ok send me the dashboard" }], "a LID chat is answered at the phone JID");
   });
@@ -494,6 +525,48 @@ describe("incoming messages", () => {
     }
     assert.equal(h.sock().sent.length, 1);
     assert.match(h.sock().sent[0].text, /went sideways/);
+  });
+});
+
+describe("reactions (#77)", () => {
+  const reactWith = (out: { text: string; react?: string }) => ({ handleIncoming: async () => out });
+
+  test("a reaction alone: a react message pointing at the original's full key (sender included), no text", async () => {
+    const h = harness({ deps: reactWith({ text: "", react: "✅" }) });
+    h.markKnown();
+    await h.open();
+    const m = msg({ message: { conversation: "roomie trash done" } });
+    await h.feed([m]);
+    assert.equal(h.sock().reactions.length, 1);
+    const [r] = h.sock().reactions;
+    assert.equal(r.jid, GROUP);
+    assert.equal(r.text, "✅");
+    assert.equal(r.key.id, m.key.id);
+    assert.equal(r.key.participant, MAYA.lid, "a group reaction names whose message it is");
+    assert.deepEqual(h.sock().sent, []);
+    assert.equal(h.sock().presence.at(-1)?.[0], "paused", "composing stops: nothing is typed");
+  });
+
+  test("a reaction with a line: both; in a DM the reaction goes in that chat", async () => {
+    const h = harness({ deps: reactWith({ text: "Everyone's square!", react: "👍" }) });
+    h.markKnown();
+    await h.open();
+    const dm = msg({ key: { remoteJid: SAM.lid, remoteJidAlt: SAM.pn, participant: undefined, participantAlt: undefined }, pushName: "Sam", message: { conversation: "paid Maya" } });
+    await h.feed([dm]);
+    assert.deepEqual(
+      h.sock().reactions.map((r) => [r.jid, r.text, r.key.id]),
+      [[SAM.lid, "👍", dm.key.id]],
+    );
+    assert.deepEqual(h.sock().sent, [{ jid: SAM.pn, text: "Everyone's square!" }]);
+  });
+
+  test("a reaction WhatsApp refuses: the emoji goes as text", async () => {
+    const h = harness({ deps: reactWith({ text: "", react: "👍" }) });
+    h.markKnown();
+    await h.open();
+    h.sock().failReactions = true;
+    await h.feed([msg({ message: { conversation: "roomie paid Dev back" } })]);
+    assert.deepEqual(h.sock().sent, [{ jid: GROUP, text: "👍" }]);
   });
 });
 
