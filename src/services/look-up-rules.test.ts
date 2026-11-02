@@ -40,6 +40,7 @@ describe("shortAnswer", () => {
   test("two sentences, no links or markdown", () => {
     assert.equal(shortAnswer("**Costco** closes at 8:30 PM. It opens at 10 AM. Gas is open later."), "Costco closes at 8:30 PM. It opens at 10 AM.");
     assert.equal(shortAnswer("See [their site](https://x.com/a) or https://y.com now."), "See their site or now.");
+    assert.equal(shortAnswer("Pipe Pros is 0.6 miles away. Eggs are $4.99 there. Third."), "Pipe Pros is 0.6 miles away. Eggs are $4.99 there.");
   });
   test("long text is cut on a word", () => {
     const out = shortAnswer("word ".repeat(100), 50);

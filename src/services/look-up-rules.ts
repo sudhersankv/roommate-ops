@@ -45,7 +45,8 @@ export function shortAnswer(text: string, maxChars = 280): string {
     .replace(/[*_`#]+/g, "")
     .replace(/\s+/g, " ")
     .trim();
-  const sentences = plain.match(/[^.!?]+(?:[.!?]+(?=\s|$)|$)/g)?.map((s) => s.trim()).filter(Boolean) ?? [plain];
+  // A sentence ends at . ! or ? followed by a space: "0.6 miles" and "$4.99" stay whole.
+  const sentences = plain.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean);
   let out = sentences.slice(0, 2).join(" ");
   if (out.length > maxChars) {
     const cut = out.slice(0, maxChars - 1);
