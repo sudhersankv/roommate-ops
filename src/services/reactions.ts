@@ -27,8 +27,17 @@ const BOOKKEEPING = new Set(["updateWorkingMemory"]);
 /** A result that failed, was refused, or wants something from the person: never a reaction. */
 const FAILED_KEYS = ["error", "notAllowed", "refused", "needsClarification", "askFirst", "questions"];
 
-/** log_chore: a done on a chore that was already on the chart needs no line (a new one is news: "Added trash."). */
-export const choreDoneReaction = (r: { added: boolean }): string | undefined => (r.added ? undefined : DONE);
+/**
+ * log_chore (#70): who's next is worth a line ("Sam's up next.") when it's someone other than whoever just did it.
+ * Null when it's the same person (a one-person Rotation) or nobody.
+ */
+export const nextUpWorthSaying = (r: { nextUp: string | null; doneBy: string }): string | null => (r.nextUp && r.nextUp !== r.doneBy ? r.nextUp : null);
+
+/**
+ * log_chore: a done on a chore that was already on the chart needs no line, unless who's next is worth saying (#70:
+ * then Roomie replies with it instead of ✅). A new chore is news too ("Added trash.").
+ */
+export const choreDoneReaction = (r: { added: boolean; nextUp: string | null; doneBy: string }): string | undefined => (r.added || nextUpWorthSaying(r) ? undefined : DONE);
 
 /** settle_up with paid=true: the two are square now. Money still owed after it is worth a line. */
 export const settledReaction = (r: { square: boolean }): string | undefined => (r.square ? OK : undefined);

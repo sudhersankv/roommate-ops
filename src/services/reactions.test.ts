@@ -2,17 +2,26 @@
 // Run: npx tsx --test src/services/reactions.test.ts
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { answerFor, choreDoneReaction, DONE, OK, reactedLine, reactionOffer, readReply, settledReaction } from "./reactions";
+import { answerFor, choreDoneReaction, DONE, nextUpWorthSaying, OK, reactedLine, reactionOffer, readReply, settledReaction } from "./reactions";
 
 const ACK = "👍";
-const done = { tool: "log_chore", result: { chore: "Trash", doneBy: "Dev", streak: 1, nextUp: "Sam", added: false, react: DONE } };
+// A one-person Rotation: Dev is next again, so nothing is worth saying (#70) and the done offers ✅.
+const done = { tool: "log_chore", result: { chore: "Trash", doneBy: "Dev", streak: 1, added: false, react: DONE } };
 const paid = { tool: "settle_up", result: { recorded: true, amount: "$20.00", stillOwed: "square now", react: OK } };
 
 test("the tools' offers: a done on a chore already on the chart, a payment that leaves the two square", () => {
-  assert.equal(choreDoneReaction({ added: false }), DONE);
-  assert.equal(choreDoneReaction({ added: true }), undefined, "a new chore on the chart is news");
+  assert.equal(choreDoneReaction({ added: false, nextUp: "Dev", doneBy: "Dev" }), DONE, "next is the same person: nothing to say");
+  assert.equal(choreDoneReaction({ added: false, nextUp: null, doneBy: "Dev" }), DONE);
+  assert.equal(choreDoneReaction({ added: true, nextUp: null, doneBy: "Dev" }), undefined, "a new chore on the chart is news");
+  assert.equal(choreDoneReaction({ added: false, nextUp: "Sam", doneBy: "Dev" }), undefined, "#70: who's next is worth a line, so a reply instead of ✅");
   assert.equal(settledReaction({ square: true }), OK);
   assert.equal(settledReaction({ square: false }), undefined, "money still owed is worth a line");
+});
+
+test("nextUpWorthSaying (#70): someone other than whoever just did it", () => {
+  assert.equal(nextUpWorthSaying({ nextUp: "Sam", doneBy: "Dev" }), "Sam");
+  assert.equal(nextUpWorthSaying({ nextUp: "Dev", doneBy: "Dev" }), null);
+  assert.equal(nextUpWorthSaying({ nextUp: null, doneBy: "Dev" }), null);
 });
 
 test("reactionOffer: every write offers one and nothing failed", () => {

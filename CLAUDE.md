@@ -77,7 +77,8 @@ src/
     categories.ts       guessCategory (fallback when nobody picked one)
     recurring.ts        latestOccurrence + runRecurring; variable bills: variableAsk, setVariableExpense, answerAmount,
                         prefillAmount (#25)
-    rent.ts             the rent (#25): getRent / setRent, rentWindows, rentBundleLine, rentDms / rentDmJob, the offer
+    rent.ts             the rent (#25): getRent / setRent, rentWindows, rentBundleLine, rentDms / rentDmJob, the offer;
+                        rentDueSoon / rentDueSoonLine ("Rent's due Friday." within 7 local days: get_balances' extra line, #70)
     settle-nudge.ts     the private Settle nudge per debt (ADR 0021): episodeOf, nudgeDue, nudgeText (pure), settleNudgeJob, get/updateNudgeSettings
     receipts.ts         photo -> parsed receipt (vision on the gateway, sums recomputed), receiptSplits, saveUpload (an
                         unfiled photo Document; folder "tg/<chat>" / "wa/<user>" / "g-<id>" or { groupId } -> /api/docs/<id>),
@@ -143,7 +144,8 @@ src/
                         signature, sent_mail), reportIssue, sendIntro;
                         pure: send-rule.ts (sendRule, signature), lease-inbox-rules.ts (nextStatus, isUrgent, the Bundle /
                         report lines, followUpCandidates / followUpBody / asksFollowUp, senderName / mailLine (no emoji),
-                        saysYes, topicWords / pickWorkOrder, attachmentKind), lib/forwarded.ts (parseForwarded)
+                        saysYes, topicWords / pickWorkOrder, attachmentKind, visitPhrase / visitLine: work_order_status's
+                        `visit`, #70), lib/forwarded.ts (parseForwarded)
     lease-inbox-inbound.ts  the webhook's event (parseMailEvent, pure) -> handleMailEvent -> processInbound: store, file the
                         attachments as Documents, classify with every hook wired (Reminder, urgent, Admin DMs, rent proposal,
                         utility prefill, intro offer), the one line (postLine: paused nothing, quiet hours held as "line")
@@ -163,7 +165,8 @@ src/
     personality.ts      groups.personality: getPersonality, updatePersonality (Admin), saveLearned (style job), resetLearned
                         (Admin), groupMood (worried / sleepy / happy / calm), allSquare
     pet.ts              say-once pet moments on pet_moments (MomentStore): dayGreeting, claimWins
-    reactions.ts        pure (#77, see "Reactions" below): the tools' offers (choreDoneReaction ✅, settledReaction 👍),
+    reactions.ts        pure (#77, see "Reactions" below): the tools' offers (choreDoneReaction ✅ only when nobody else is
+                        next: nextUpWorthSaying, #70; settledReaction 👍),
                         reactionOffer (the guard: every write offered `react`, none failed / refused / linked), readReply
                         ("[react]", empty, a bare "Done." or only emoji restates the write), answerFor, reactedLine
     beta.ts             Beta requests (docs/landing.md): submitBetaRequest (honeypot, zod, 3 per IP-hash per hour, store,
@@ -201,7 +204,8 @@ src/
                         manifests (what's on/off) + core's skill + the Gate-picked Trick's skill.md (all of them with no pick) + members + time zone + Pending /
                         Onboarding (vibe + presets) / /pet / greeting / Gate blocks
     persona.ts          pure: core rules + house style + archetype voice + sliders as sentences + quirks + learned
-                        style (gated by confidence) + /* TOOLKIT_PERSONA */ + mood + people (ADR 0012)
+                        style (gated by confidence) + /* TOOLKIT_PERSONA */ + mood + people (ADR 0012) + HOW YOU SOUND
+                        (2-4 examples per situation) + varietyBlock (#70: "don't open with these", from lib/variety.ts)
     memory.ts           Memory: thread group-<id>, resource <groupId>; a DM: thread group-<id>-dm-<member>, resource
                         <groupId>:dm:<member> (the group's recall never finds it); last 30, semantic recall, working memory
     forget.ts           memory + trace cleanup: "forget me" (a Member's lines under every name they had, matched by text too,
@@ -312,6 +316,8 @@ src/
   lib/personality.ts    pure, client-safe: ARCHETYPES, Personality (normalize / validate / apply patch), confidenceFor,
                         slangBudget, usableNicknames, saysName, isPetCommand, moodFrom, greeting / win / preview lines
   lib/style-stats.ts    pure: the Learned style's counts (countPhrase, countNickname, mergeLearned, activeHours)
+  lib/variety.ts        pure (#70): openerOf / shortLineOf / recentPhrasing: the openers and stock lines of Roomie's last 4
+                        replies (a name, an amount or a date leads with the answer and doesn't count)
   lib/pay-links.ts      Venmo / PayPal / Cash App links with the amount (settle_up and the settle drawer)
   jobs/scheduler.ts     60 s tick: due reminders (deliver for the Group, deliverPrivate for a Member), held posts and DMs
                         (flushPendingPosts), the morning Bundle (bundleJob: the enabled Toolkits' bundle() lines + core's
@@ -486,7 +492,7 @@ scripts/studio-presets.ts  writes .mastra-presets.json for Studio (run by mastra
 - **Onboarding copy** (#68): the intro is one line, "Hey all! I'm Roomie. What's this chat for?" (`INTRO`; no admin line, no Start nudge, no feature list); the Admin's setup DM asks the same ("What's this chat for? Answer here or in the group.") with their Claim link. An unclear answer gets short questions, one per reply (roommates? split rent? a landlord or leasing office that emails?), never currency or city unless needed (`ONBOARDING` in `agents/instructions.ts`, the core skill). When setup finishes `set_group_settings` returns `say` = `setupLine` (one plain line fitting the purpose, picked stably per Group from a few wordings: "Got it. I've got the house stuff from here."; a trip "Got it. I've got the trip from here."; nobody said: "Got it. You didn't say what this chat is for, so I set it up like a shared apartment.") + the Join link line, which Roomie posts as it is. It never names a Trick, never says "Learned X", never a "say roomie, learn X" tip or an offer.
 - **House's `onEnable`** (teaching it, and Onboarding presets that include it) adds the three starter chores (no Rotation, so new people join in; only on an empty chart) and the usual five upkeep items (only the missing ones), so twice adds nothing. Onboarding itself names no Toolkit.
 - **Groceries requires Money:** "I paid 84" ends in an Expense, so teaching Groceries with Money off is refused ("it needs Money first") and forgetting Money while Groceries is on is refused ("Groceries needs Money, so I'm keeping it"); `cart_from_photo` no longer checks and a receipt always points at `expense_from_receipt`.
-- **Reactions** (#77, `services/reactions.ts`): a message that only reports something Roomie has now recorded gets an emoji on it instead of a line: ✅ on "trash done", 👍 on "paid her back". The record is made either way. Three steps, all in code: (1) the tool offers it on its result (`react`): `log_chore` for a chore already on the chart (a new one is news), `settle_up` paid=true when the two are square after it (money still owed is a line); (2) the guard `reactionOffer`: EVERY write in the run offered one and none failed, was refused, asked or carried a link (a read in the run = they asked something); (3) the reply: "[react]" (the skills: core, house, splitting), nothing, a bare "Done." / "Got it." or only emoji becomes the reaction; anything else is sent as written. A win cheer (a streak milestone, everyone square) is the line next to the reaction. Without an offer, "[react]" or nothing is the plain 👍 line, as before. Adapters send it with `channels/answer.ts`; a Channel or group that refuses a reaction gets the emoji as text. Evals: `react-trash-done`, `react-paid-back` (react), `done-and-question-must-reply`, `paid-part-must-reply` (must reply).
+- **Reactions** (#77, `services/reactions.ts`): a message that only reports something Roomie has now recorded gets an emoji on it instead of a line: ✅ on "trash done", 👍 on "paid her back". The record is made either way. Three steps, all in code: (1) the tool offers it on its result (`react`): `log_chore` for a chore already on the chart when nobody else is next (a new one is news, and #70: when someone else is next it returns `nextUp` and Roomie says it instead), `settle_up` paid=true when the two are square after it (money still owed is a line); (2) the guard `reactionOffer`: EVERY write in the run offered one and none failed, was refused, asked or carried a link (a read in the run = they asked something); (3) the reply: "[react]" (the skills: core, house, splitting), nothing, a bare "Done." / "Got it." or only emoji becomes the reaction; anything else is sent as written. A win cheer (a streak milestone, everyone square) is the line next to the reaction. Without an offer, "[react]" or nothing is the plain 👍 line, as before. Adapters send it with `channels/answer.ts`; a Channel or group that refuses a reaction gets the emoji as text. Evals: `react-plants-done`, `react-paid-back` (react), `trash-done-says-next`, `done-and-question-must-reply`, `paid-part-must-reply` (must reply).
 - **First contact** (`channels/text.ts`, shared by both adapters): `/help` (group or DM) is at most 8 lines naming the Group's Tricks (`helpText`), `/start` in a DM is one line and never a link (on WhatsApp nobody needs either; they work when typed, and other text starting with "/" goes through as text there), on Telegram other slash commands are ignored, a failure while Roomie was addressed gets one friendly line (`OOPS`) and the stack goes to the log. `npm run telegram` prints a `[roomie]` line per message (gate, tools, time, trace id) and per reply.
 
 ## Personality (one voice)
@@ -498,6 +504,7 @@ How Roomie should talk and act, and its boundaries: [ADR 0022](docs/adr/0022-a-r
 - **Instructions are composed in code** (`mastra/persona.ts`), never one free-text prompt: core rules (facts from tools, no math, brevity) first, then the voice, sliders as sentences, quirks, learned style, `/* TOOLKIT_PERSONA */` (enabled manifests' optional `persona: string`), mood, what Roomie knows about people. Jokes are a trait, not a Toolkit.
 - **Adaptation is bounded by code:** confidence comes from messages seen (`confidenceFor`); below 0.3 no slang, 0.3-0.6 one phrase per 5 replies (checked against Roomie's last 4 chat lines), above 0.6 free but never more than the group; nicknames only after 3 sightings by others. Counts come from the messages (`lib/style-stats.ts`); the model only proposes candidates. Change the rules there, with a test.
 - **Say-once behaviours** claim a `pet_moments` row (group, kind, key): the day's greeting (not when quiet, not after Roomie already posted that day, one line, no link) and win cheers (square after a Settlement, chore streak 3/7/30, a Checkout), appended as one short line in the archetype's voice. `/pet` (and "pet roomie") is a hard trigger with a 1-2 line in-character reply.
+- **Varied, not scripted** (#70): HOW YOU SOUND gives 2-4 examples per situation, framed as a feel. `varietyBlock` lists the openers and short stock lines of Roomie's last 4 replies (`lib/variety.ts`, counted in code like the slang budget) as "don't open with these". One extra line only from a tool: `log_chore`'s `nextUp`, `get_balances`' `rentDueSoon`, `work_order_status`'s `visit`.
 - **Brief and current**: the house style says answer first, one or two lines, no recap, links only when asked. The instructions carry SINCE YOU LAST SPOKE (`activity.changesSinceRoomieSpoke`, read in `agents/roomie.ts`): what changed since Roomie last spoke, with where ("(dashboard, 2 min ago)"); when it differs from what Roomie said, Roomie says the fact in one line.
 - **Mood** (`groupMood`): worried if anyone owes > $100, sleepy after 5 quiet days, happy when everyone's square, calm otherwise; the Home dino and one line of the instructions.
 - **Member facts** (`remember`, `what_do_you_know_about_me`) live in `member_notes.note` next to the handles; only your own, or an Admin for anyone; "forget me" wipes them.

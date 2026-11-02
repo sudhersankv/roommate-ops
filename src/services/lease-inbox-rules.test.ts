@@ -1,6 +1,6 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { isUrgent, mailLine, nextStatus, pickWorkOrder, senderName, topicWords, type WorkOrderState } from "./lease-inbox-rules";
+import { isUrgent, mailLine, nextStatus, pickWorkOrder, senderName, topicWords, visitLine, visitPhrase, type WorkOrderState } from "./lease-inbox-rules";
 
 const at = (status: WorkOrderState["status"], scheduledFor: string | null = null): WorkOrderState => ({ status, scheduledFor });
 
@@ -146,4 +146,14 @@ test("senderName is one short plain line: no line breaks, control or bidi charac
   assert.equal(senderName('"Oak\u202Ewood" <a@oakwood.com>'), "Oak wood");
   assert.equal(senderName(`"${"A".repeat(80)}" <a@oakwood.com>`).length, 40);
   assert.equal(senderName('"\u200B\u200B" <a@oakwood.com>'), "Leasing office", "nothing usable left");
+});
+
+test("visitPhrase / visitLine (#70): today, tomorrow, a weekday this week, else the date; with the time when given", () => {
+  const tz = "America/Chicago";
+  const now = new Date("2026-11-02T15:00:00Z"); // Mon Nov 2, 9 AM in Chicago
+  assert.equal(visitPhrase("2026-11-02T14:00", tz, now), "today at 2 PM");
+  assert.equal(visitPhrase("2026-11-03T10:00", tz, now), "tomorrow at 10 AM");
+  assert.equal(visitPhrase("2026-11-05", tz, now), "on Thursday");
+  assert.equal(visitPhrase("2026-11-12T12:00", tz, now), "on Nov 12 at noon");
+  assert.equal(visitLine("the leaking kitchen sink", "2026-11-03T10:30", tz, now), "They're coming tomorrow at 10:30 AM about the leaking kitchen sink.");
 });

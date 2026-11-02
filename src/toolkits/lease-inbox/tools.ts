@@ -69,7 +69,7 @@ export const leaseInboxTools = {
   }),
   work_order_status: createTool({
     id: "work_order_status",
-    description: "\"What's up with the sink?\": the work order's status (sent, they've seen it, scheduled, done) and the landlord's last reply. `what` = what they asked about ('the sink'); leave it out for the newest. Say `line` as it is (with `choices` it asks which one).",
+    description: "\"What's up with the sink?\": the work order's status (sent, they've seen it, scheduled, done) and the landlord's last reply. `what` = what they asked about ('the sink'); leave it out for the newest. Say `line` as it is (with `choices` it asks which one); `visit`, when there, is when they're coming: say it.",
     inputSchema: z.object({ what: z.string().optional() }),
     execute: async ({ what }, context) => workOrderLine(ctxOf(context), what),
   }),

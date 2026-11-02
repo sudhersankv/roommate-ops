@@ -16,7 +16,7 @@ import { deleteGroup } from "./groups";
 import { setPaymentHandles } from "./members";
 import { getExpense, logExpense, settleUp } from "./money";
 import { answerAmount, prefillAmount, runRecurring, setVariableExpense } from "./recurring";
-import { getRent, rentBundleLine, rentDmJob, rentStatus, setRent, type DmOutcome } from "./rent";
+import { getRent, rentBundleLine, rentDmJob, rentDueSoon, rentStatus, setRent, type DmOutcome } from "./rent";
 import { groupReport } from "./report";
 import { getNudgeSettings, settleNudgeJob, updateNudgeSettings } from "./settle-nudge";
 import { updateSchedule } from "./schedule";
@@ -103,6 +103,10 @@ describe("rent, utilities and the Settle nudge against the dev DB", () => {
     assert.equal(await rentBundleLine(A, local(10, 29, 9, 5)), line);
     assert.ok((await groupBundle(A, local(10, 29, 9, 5)))?.includes(line), "Money's line is in the Bundle");
     assert.equal(await rentBundleLine(A, local(10, 30, 9)), null, "nothing on the days between");
+    // #70: "what do I owe?" mentions it all week, never a share.
+    assert.equal(await rentDueSoon(A, local(10, 30, 9)), "Rent's due Sunday.");
+    assert.equal(await rentDueSoon(A, local(10, 31, 9)), "Rent's due tomorrow.");
+    assert.equal(await rentDueSoon(A, local(10, 20, 9)), null, "12 days out isn't soon");
   });
 
   test("a Member who said \"stop nudging me\" gets no rent DM (sendNudge says off)", async () => {
