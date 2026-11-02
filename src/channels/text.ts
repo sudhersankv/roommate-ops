@@ -39,7 +39,7 @@ export const startReply = (name: string, inGroups: number, channel: ChannelName 
     ? channel === "telegram"
       ? `Hey ${name} 👋 Now I can DM you: ask for "the dashboard" here or in the group and your link lands here (/help for the rest).`
       : `Hey ${name} 👋 Ask for "the dashboard" here or in the group and your link lands here ("/help" for the rest).`
-    : `Hey ${name} 👋 I'm Roomie. Add me to a group chat, tell me what it's for, and I'll learn the right Tricks.`;
+    : `Hey ${name}, I'm Roomie. Add me to your group chat and tell me what it's for.`;
 
 const joinNames = (n: string[]) => (n.length <= 1 ? n.join("") : `${n.slice(0, -1).join(", ")} and ${n[n.length - 1]}`);
 

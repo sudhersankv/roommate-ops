@@ -460,7 +460,7 @@ describe("private messages", () => {
     assert.equal(h.sent()[0].payload.reply_markup, undefined, "no buttons either");
     const stranger = harness({ deps: { chatsOfUser: async () => [] } });
     await stranger.feed(message(SAM, { text: "/start" }, PRIVATE));
-    assert.equal(String(stranger.sent()[0].payload.text), `Hey Sam 👋 I'm Roomie. Add me to a group chat, tell me what it's for, and I'll learn the right Tricks.`);
+    assert.equal(String(stranger.sent()[0].payload.text), `Hey Sam, I'm Roomie. Add me to your group chat and tell me what it's for.`);
     assert.equal(h.seen.incoming.length + stranger.seen.incoming.length, 0);
   });
 

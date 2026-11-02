@@ -38,6 +38,6 @@ test("/help with nothing learned, and without a group (a DM): still short and in
 });
 
 test("/start for someone in no group: add me, say what it's for, I learn Tricks", () => {
-  assert.equal(startReply("Sam", 0), `Hey Sam 👋 I'm Roomie. Add me to a group chat, tell me what it's for, and I'll learn the right Tricks.`);
+  assert.equal(startReply("Sam", 0), `Hey Sam, I'm Roomie. Add me to your group chat and tell me what it's for.`);
   assert.equal(startReply("Sam", 1).split("\n").length, 1);
 });

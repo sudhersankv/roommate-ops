@@ -29,7 +29,7 @@ export function BetaList({ rows }: { rows: Row[] }) {
       <Empty className="rounded-3xl bg-card">
         <EmptyHeader>
           <EmptyTitle>No requests yet</EmptyTitle>
-          <EmptyDescription>When someone fills in the WhatsApp beta form on the landing page, it shows up here and you get a DM from Roomie on Telegram.</EmptyDescription>
+          <EmptyDescription>When someone fills in the WhatsApp beta form on the landing page, it shows up here and you get an email about it.</EmptyDescription>
         </EmptyHeader>
       </Empty>
     )
