@@ -193,7 +193,8 @@ const DATA_TABLES = [schema.outboxJobs, schema.splitwiseLinks, schema.cartChecko
 /**
  * Admin "delete group data" (ADR 0006): every Expense, Settlement, Cart item, chore, reminder, upkeep item, chat
  * line, Activity row, Member note, Splitwise link, Document (and its file), held quiet-hours post, trace and score,
- * purchase event, grocery usual, the Lease Inbox's mail and its address (released), and Roomie's memory for the Group.
+ * purchase event, grocery usual, the Lease Inbox's mail and its address (released), the group's saved place, and
+ * Roomie's memory for the Group.
  * The Group, its Chat, Members and settings stay, so Roomie keeps working from the next message.
  */
 export async function deleteGroupData(ctx: Ctx): Promise<void> {
@@ -228,6 +229,11 @@ async function wipeGroupRows(groupId: string) {
     await tx.delete(schema.claimTokens).where(inArray(schema.claimTokens.memberId, ids));
     // What Roomie learned about how the Group talks is memory too; the Admin's personality choices stay.
     await tx.update(groups).set({ personality: sql`${groups.personality} - 'learned'` }).where(eq(groups.id, groupId));
+    // The group's saved place (#78, services/place.ts) is where people live: it goes too; the report's schedule stays.
+    await tx
+      .update(groupToolkits)
+      .set({ settings: sql`${groupToolkits.settings} - 'place'` })
+      .where(and(eq(groupToolkits.groupId, groupId), eq(groupToolkits.toolkit, "core")));
   });
 }
 

@@ -25,5 +25,5 @@ export async function sendAnswer(out: Outgoing, to: AnswerTarget): Promise<void>
     }
     if (!reacted && !text.trim()) text = react;
   }
-  if (text.trim() || rest.poll || rest.buttons?.length) await to.send({ ...rest, text });
+  if (text.trim() || rest.poll || rest.buttons?.length || rest.location) await to.send({ ...rest, text });
 }

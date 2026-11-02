@@ -25,6 +25,17 @@ test("a reaction on the dev Channel: goes to its own callback (dev-chat prints i
   assert.deepEqual(reacted, [{ chatExternalId: "dev-apt-4b", messageExternalId: "dev-3", emoji: "✅" }]);
 });
 
+test("a pin on the dev Channel (#78): the text, then its name and a maps link", async () => {
+  const out: DevOutput[] = [];
+  const dev = new DevChannel((o) => out.push(o));
+  const location = { lat: 41.8625, lng: -87.6664, name: "Costco Wholesale", address: "1430 S Ashland Ave" };
+  await dev.sendToChat("dev-apt-4b", { text: "Closes at 8:30.", location });
+  assert.equal(out[0].msg.text, "Closes at 8:30.\nCostco Wholesale, 1430 S Ashland Ave: https://www.google.com/maps/search/?api=1&query=41.8625,-87.6664");
+  assert.equal(out[0].msg.location, undefined);
+  await dev.sendPrivate("dev:maya", { text: "", location: { lat: 1, lng: 2, name: "Home" } });
+  assert.equal(out[1].msg.text, "Home: https://www.google.com/maps/search/?api=1&query=1,2");
+});
+
 test("renderPollAsText: question, numbered options, how to answer", () => {
   assert.equal(renderPollAsText({ question: "Who had pizza?", options: ["Maya", "Dev"], multi: true }), "Who had pizza?\n1. Maya\n2. Dev\nReply with the numbers (e.g. 1 3).");
 });

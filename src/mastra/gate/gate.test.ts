@@ -381,6 +381,15 @@ describe("mediaWanted (photos and voice notes are only fetched when Roomie is ta
     assert.equal(mediaWanted({ kind: "photo", setupPending: true }), false, "setup answers are words, not pictures");
   });
 
+  test("pins (#78): the photo rule; a pin nobody addressed isn't read", () => {
+    assert.equal(mediaWanted({ kind: "location" }), false);
+    assert.equal(mediaWanted({ kind: "location", setupPending: true }), false);
+    assert.equal(mediaWanted({ kind: "location", isReplyToRoomie: true }), true);
+    assert.equal(mediaWanted({ kind: "location", mentionsRoomie: true }), true);
+    assert.equal(mediaWanted({ kind: "location", inWindow: true }), true);
+    assert.equal(mediaWanted({ kind: "location", isPrivate: true }), true);
+  });
+
   test("a skipped photo whose caption the Gate answers is wanted; one nobody acts on stays unfetched (#40)", () => {
     const bill = { kind: "photo" as const, caption: "Your bill sreyas, you owe" };
     assert.equal(mediaWanted(bill), false, "first ask: nobody addressed Roomie");

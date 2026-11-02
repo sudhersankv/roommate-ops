@@ -6,14 +6,15 @@
 //      reported ("trash done" -> ✅; services/reactions.ts, Outgoing.react).
 // Each message is one trace: "roomie message" -> "gate" span (+ the agent run, its model calls and tools).
 // Roomie's chat replies are logged (memberId null) and open the follow-up window; "[silent]" replies are not.
-// Stops before the Gate: ROOMIE_PAUSED=1 (nothing at all), a paused Group (logged, quiet), a photo or voice note nobody
-// addressed (logged as "(photo)" / "(voice note)"). Text is cut to 2,000 characters; Jev and agent runs are capped
+// Stops before the Gate: ROOMIE_PAUSED=1 (nothing at all), a paused Group (logged, quiet), a photo, voice note or pin
+// nobody addressed (logged as "(photo)" / "(voice note)" / "(location)"). Text is cut to 2,000 characters; Jev and agent runs are capped
 // per Group and Member (lib/caps.ts).
 import "@/lib/env";
 import { RequestContext } from "@mastra/core/request-context";
 import { SpanType, type AnySpan } from "@mastra/core/observability";
 import { deliver, deliverPrivate } from "@/channels";
-import type { Button, IncomingMessage, Outgoing, PollVote } from "@/channels/types";
+import type { Button, IncomingMessage, Outgoing, OutgoingLocation, PollVote, SharedPin } from "@/channels/types";
+import { cleanPin, mapsUrl, pinTag } from "@/lib/place";
 import { closePollsFor, numberVote, openTextPoll, recordVote, voteOnPoll } from "@/services/polls";
 import { echoAfterPrivateRun, resolveDmGroup, runMark } from "@/services/dm";
 import { chatFor, enabledToolkits, getGroup } from "@/services/groups";
@@ -54,8 +55,10 @@ export type RespondInput = {
   mentionsRoomie?: boolean;
   /** A 1:1 chat with Roomie: addressed, and kept out of the group chat log (no follow-up window). */
   isPrivate?: boolean;
-  /** A photo or voice note nobody addressed to Roomie (IncomingMessage.skippedMedia). */
-  skippedMedia?: "photo" | "voice";
+  /** A shared pin, passed on because Roomie was addressed or in the window (IncomingMessage.location). */
+  location?: SharedPin;
+  /** A photo, voice note or pin nobody addressed to Roomie (IncomingMessage.skippedMedia). */
+  skippedMedia?: "photo" | "voice" | "location";
   /** The adapter's late fetch of that skipped photo (IncomingMessage.fetchSkippedPhoto). */
   fetchSkippedPhoto?: () => Promise<string | null>;
   /** When the message reached the adapter (IncomingMessage.receivedAt): the stale-reply rule looks at what Roomie said
@@ -183,6 +186,7 @@ export async function respondToIncoming(msg: IncomingMessage): Promise<PipelineR
     channel: msg.channel,
     isVoice: msg.isVoice,
     imageUrl: msg.imageUrl,
+    ...(msg.location ? { location: msg.location } : {}),
     isReplyToRoomie: msg.isReplyToRoomie,
     mentionsRoomie: msg.mentionsRoomie,
     isPrivate: msg.isPrivate,
@@ -203,9 +207,10 @@ export async function askRoomie(ctx: Ctx, text: string): Promise<Outgoing> {
   const { out, capped } = await respond({ groupId: ctx.groupId, member: me, text, source: "ui", channel: "dashboard" });
   if (capped) throw new CappedError();
   if (!out) return { text: ACK };
-  // The dashboard can't react: a reaction is its emoji as the answer.
-  const { react, ...rest } = out;
-  return react && !rest.text.trim() ? { ...rest, text: react } : rest;
+  // The dashboard can't react: a reaction is its emoji as the answer. A pin is a maps button there.
+  const { react, location, ...rest } = out;
+  const withPin = location ? { ...rest, buttons: [...(rest.buttons ?? []), { text: location.name, url: mapsUrl(location) }] } : rest;
+  return react && !withPin.text.trim() ? { ...withPin, text: react } : withPin;
 }
 
 /**
@@ -263,10 +268,25 @@ export async function respond(input: RespondInput): Promise<PipelineResult> {
   // Cut before anything sees it; the chat log keeps the cut text too (lib/caps.ts).
   const text = clipInput(input.text);
   const chat = source === "chat" && !input.isPrivate;
-  // A photo's link stays on its chat line, so a follow-up ("I paid for that") can still pass it to a tool.
-  const lineWith = (imageUrl?: string) => `${input.isVoice ? `[voice note from ${member.displayName}]` : `[${member.displayName}]`} ${imageUrl ? `[photo: ${imageUrl}] ` : ""}${text}`;
+  // A photo's link stays on its chat line, so a follow-up ("I paid for that") can still pass it to a tool. So does a
+  // pin Roomie was shown ("this is our place" right after it); a pin nobody addressed is only "(location)".
+  const pin = input.location ? cleanPin(input.location) : null;
+  const pinPart = pin ? `${pinTag(pin)} ` : "";
+  const lineWith = (imageUrl?: string) => `${input.isVoice ? `[voice note from ${member.displayName}]` : `[${member.displayName}]`} ${imageUrl ? `[photo: ${imageUrl}] ` : ""}${pinPart}${text}`;
   const loggedWith = (imageUrl?: string) =>
-    input.skippedMedia === "voice" ? "(voice note)" : input.isVoice ? `(voice) ${text}` : imageUrl ? `(photo) [photo: ${imageUrl}] ${text}`.trim() : input.skippedMedia === "photo" ? `(photo) ${text}`.trim() : text;
+    input.skippedMedia === "voice"
+      ? "(voice note)"
+      : input.isVoice
+        ? `(voice) ${text}`
+        : imageUrl
+          ? `(photo) [photo: ${imageUrl}] ${text}`.trim()
+          : input.skippedMedia === "photo"
+            ? `(photo) ${text}`.trim()
+            : input.skippedMedia === "location"
+              ? `(location) ${text}`.trim()
+              : pin
+                ? `(location) ${pinPart}${text}`.trim()
+                : text;
   let line = lineWith(input.imageUrl);
   const loggedId = chat ? await logMessage(groupId, member.id, loggedWith(input.imageUrl)) : undefined;
   // A photo or voice note nobody addressed to Roomie: logged as context, and that's all (a caption goes on as text).
@@ -415,6 +435,7 @@ export async function respond(input: RespondInput): Promise<PipelineResult> {
     const toolCalls = steps.flatMap((s) => (s.toolCalls ?? []).map((c) => c.payload.toolName));
     const results = steps.flatMap((s) => (s.toolResults ?? []).map((r) => r.payload));
     const buttons = collectLinks(results.map((r) => r.result));
+    const location = collectLocation(results.map((r) => r.result));
     // The asker's own text wins over their open who's-in Poll ("just me and Dev"): it's closed, nothing double-logged.
     if (toolCalls.includes("log_expense")) await closePollsFor(groupId, "who-in", { by: member.id }).catch((e) => console.warn("[pipeline] closing polls failed", e));
     if (since) await echoAfterPrivateRun(groupId, member.id, since).catch((e) => console.error("[pipeline] echo failed", e));
@@ -457,7 +478,7 @@ export async function respond(input: RespondInput): Promise<PipelineResult> {
       await logMessage(groupId, null, said);
       noteReplyTo(groupId, member.id, said);
     }
-    const out: Outgoing = { text: answer.text, ...(answer.react ? { react: answer.react } : {}), ...(buttons.length ? { buttons } : {}) };
+    const out: Outgoing = { text: answer.text, ...(answer.react ? { react: answer.react } : {}), ...(buttons.length ? { buttons } : {}), ...(location ? { location } : {}) };
     root?.end({ output: out, metadata: gateMeta });
     return { out, gate, toolCalls, traceId: root?.traceId };
   } catch (err) {
@@ -504,6 +525,16 @@ export function collectLinks(results: unknown[]): Button[] {
     }
   }
   return out;
+}
+
+/** The pin to send after the text (#78): the last tool result's `location` that reads as one (look_up's one place). */
+export function collectLocation(results: unknown[]): OutgoingLocation | undefined {
+  for (const r of [...results].reverse()) {
+    const loc = (r as { location?: { name?: unknown } } | null)?.location;
+    const pin = loc ? cleanPin(loc) : null;
+    if (pin?.name) return { ...pin, name: pin.name };
+  }
+  return undefined;
 }
 
 function startSpan(name: string, input: unknown, metadata: Record<string, unknown>): AnySpan | undefined {

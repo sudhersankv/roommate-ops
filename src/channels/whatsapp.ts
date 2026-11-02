@@ -58,7 +58,7 @@ import { envMs, SendLimiter, sleep as realSleep } from "./rate-limit";
 import { BAD_VOICE, chunkText, commandOf, helpText, MANY_GROUPS, NO_GROUP, NO_VOICE, OOPS, startReply, wasAddressed } from "./text";
 import { logPaused, roomiePaused } from "@/lib/kill-switch";
 import { mediaWanted } from "@/mastra/gate/policy";
-import type { Channel, ChannelUser, IncomingMessage, MediaQuestion, Outgoing, PollVote, Sent } from "./types";
+import type { Channel, ChannelUser, IncomingMessage, MediaQuestion, Outgoing, PollVote, Sent, SharedPin } from "./types";
 import type { StoredAuth } from "./whatsapp-auth";
 import type { WaContact } from "./whatsapp-store";
 
@@ -120,7 +120,11 @@ export type WaSocket = {
   user?: { id: string; lid?: string; name?: string };
   sendMessage(
     jid: string,
-    content: { text: string } | { poll: { name: string; values: string[]; selectableCount: number } } | { react: { text: string; key: WAMessageKey } },
+    content:
+      | { text: string }
+      | { poll: { name: string; values: string[]; selectableCount: number } }
+      | { react: { text: string; key: WAMessageKey } }
+      | { location: { degreesLatitude: number; degreesLongitude: number; name?: string; address?: string } },
   ): Promise<WAMessage | undefined>;
   sendPresenceUpdate(type: "composing" | "paused" | "available" | "unavailable", jid?: string): Promise<void>;
   readMessages(keys: WAMessageKey[]): Promise<void>;
@@ -206,11 +210,21 @@ const isMeIn = (me: Me) => (jid?: string | null) => {
 
 export type ReadMessage = {
   text: string;
-  kind: "text" | "voice" | "image";
+  kind: "text" | "voice" | "image" | "location";
   mime?: string;
   mentionsRoomie: boolean;
   isReplyToRoomie: boolean;
+  /** kind "location": the shared pin (#78). */
+  pin?: SharedPin;
+  /** A text replying to a shared pin: that pin (passed on only when the text is for Roomie). */
+  quotedPin?: SharedPin;
 };
+
+/** A locationMessage as a pin (live location is a liveLocationMessage, never read). */
+export function waPin(loc: proto.Message.ILocationMessage | null | undefined): SharedPin | null {
+  if (!loc || typeof loc.degreesLatitude !== "number" || typeof loc.degreesLongitude !== "number" || loc.isLive) return null;
+  return { lat: loc.degreesLatitude, lng: loc.degreesLongitude, ...(loc.name?.trim() ? { name: loc.name.trim() } : {}), ...(loc.address?.trim() ? { address: loc.address.trim() } : {}) };
+}
 
 /**
  * A message's content, as Roomie reads it: the text (conversation, extended text or a caption) with "@<Roomie's
@@ -230,7 +244,14 @@ export function readWaMessage(message: proto.IMessage | null | undefined, me: Me
   const base = { text, mentionsRoomie: (ctx?.mentionedJid ?? []).some((j) => isMe(j)), isReplyToRoomie: isMe(ctx?.participant) };
   if (type === "audioMessage") return content.audioMessage?.ptt ? { ...base, kind: "voice", mime: content.audioMessage.mimetype ?? undefined } : null;
   if (type === "imageMessage") return { ...base, kind: "image", mime: content.imageMessage?.mimetype?.split(";")[0] ?? "image/jpeg" };
-  return text ? { ...base, kind: "text" } : null;
+  // A shared pin (#78); live location (liveLocationMessage, or a pin marked live) is never read.
+  if (type === "locationMessage") {
+    const pin = waPin(content.locationMessage);
+    return pin ? { ...base, kind: "location", pin } : null;
+  }
+  if (!text) return null;
+  const quotedPin = waPin(ctx?.quotedMessage?.locationMessage);
+  return { ...base, kind: "text", ...(quotedPin ? { quotedPin } : {}) };
 }
 
 /** A WhatsApp vote names options by SHA-256 of their text (as Baileys' getAggregateVotesInPollMessage hashes them). */
@@ -438,7 +459,8 @@ export class WhatsAppChannel implements Channel {
     if (msg.poll) return this.sendPoll(jid, msg.poll);
     const sock = this.socket();
     if (!sock) throw new WhatsAppNotConnectedError();
-    for (const bubble of planDelivery(withButtonLines(msg))) {
+    const text = withButtonLines(msg);
+    for (const bubble of text.trim() ? planDelivery(text) : []) {
       await sock.sendPresenceUpdate("composing", jid).catch(() => {});
       await this.sleep(this.replyDelayMs ?? bubble.typingMs);
       for (const chunk of chunkText(bubble.text, WHATSAPP_MAX_TEXT)) {
@@ -448,6 +470,15 @@ export class WhatsAppChannel implements Channel {
         const sent = await live.sendMessage(jid, { text: chunk });
         if (sent) this.opts.onSent?.(sent);
       }
+    }
+    // A pin (#78) after the text: WhatsApp's location message, with the place's name and address.
+    if (msg.location) {
+      const l = msg.location;
+      await this.limiter.acquire(jid);
+      const live = this.socket();
+      if (!live) throw new WhatsAppNotConnectedError();
+      const sent = await live.sendMessage(jid, { location: { degreesLatitude: l.lat, degreesLongitude: l.lng, name: l.name, ...(l.address ? { address: l.address } : {}) } });
+      if (sent) this.opts.onSent?.(sent);
     }
     await sock.sendPresenceUpdate("paused", jid).catch(() => {});
     return {};
@@ -848,19 +879,26 @@ export function createWhatsApp(opts: WhatsAppOptions): WhatsApp {
   async function content(m: WAMessage, read: ReadMessage, replyTo: (out: Outgoing) => Promise<unknown>, toldKey: string, folderChat: string, from: ChannelUser, isPrivate = false) {
     const base = { text: read.text, mentionsRoomie: read.mentionsRoomie, isReplyToRoomie: read.isReplyToRoomie };
     const savePhoto = async () => deps.saveImage(folderChat, m.key.id ?? String(clock()), await download(m, sock!), read.mime ?? "image/jpeg");
+    // The pipeline's answer wins when it's wired in: it also knows about paused Groups.
+    const askFor = async (kind: MediaQuestion["kind"], gateActed?: boolean) => {
+      const q = { kind, isPrivate, mentionsRoomie: read.mentionsRoomie, isReplyToRoomie: read.isReplyToRoomie, caption: read.text, ...(gateActed ? { gateActed } : {}) };
+      return deps.mediaWanted
+        ? deps.mediaWanted({ channel: "whatsapp", chatExternalId: folderChat, userExternalId: from.userExternalId, ...q }).catch((err) => {
+            console.error("[whatsapp] media check failed", err);
+            return false;
+          })
+        : mediaWanted(q);
+    };
+    // A shared pin (#78): read only when Roomie is being talked to (the photo rule), else logged as "(location)".
+    if (read.kind === "location" && read.pin) {
+      if (!(await askFor("location"))) return { ...base, text: "", skippedMedia: "location" as const };
+      return { ...base, text: "", location: read.pin };
+    }
+    // "roomie this is our place" replying to a pin: the pin comes along when the text is for Roomie.
+    if (read.kind === "text" && read.quotedPin && (await askFor("location"))) return { ...base, location: read.quotedPin };
     if (read.kind === "voice" || read.kind === "image") {
       const kind: "voice" | "photo" = read.kind === "voice" ? "voice" : "photo";
-      const flags = { kind, isPrivate, mentionsRoomie: read.mentionsRoomie, isReplyToRoomie: read.isReplyToRoomie, caption: read.text };
-      // The pipeline's answer wins when it's wired in: it also knows about paused Groups.
-      const ask = async (gateActed?: boolean) => {
-        const q = { ...flags, ...(gateActed ? { gateActed } : {}) };
-        return deps.mediaWanted
-          ? deps.mediaWanted({ channel: "whatsapp", chatExternalId: folderChat, userExternalId: from.userExternalId, ...q }).catch((err) => {
-              console.error("[whatsapp] media check failed", err);
-              return false;
-            })
-          : mediaWanted(q);
-      };
+      const ask = (gateActed?: boolean) => askFor(kind, gateActed);
       // Not for Roomie: logged as "(voice note)" / "(photo) caption", never downloaded, stored or transcribed; a photo
       // is fetched after all only if the Gate answers its caption.
       if (!(await ask())) {

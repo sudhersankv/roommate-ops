@@ -15,9 +15,14 @@ export type IncomingMessage = {
   isVoice?: boolean;
   /** A photo sent with the message (stored by the adapter where the server can read it), e.g. a receipt. */
   imageUrl?: string;
-  /** A photo or voice note nobody addressed to Roomie: not downloaded, not transcribed (`text` is the caption, or
-   * empty). The pipeline logs "(photo) ..." / "(voice note)" and, with no caption, goes no further. */
-  skippedMedia?: "photo" | "voice";
+  /** A pin someone shared (#78; never live location: adapters drop those), or the pin an addressed message replies to.
+   * Only passed on when Roomie is addressed or in the follow-up window (the photo rule); otherwise `skippedMedia` is
+   * "location" and the pipeline logs "(location)" with no coordinates. */
+  location?: SharedPin;
+  /** A photo, voice note or pin nobody addressed to Roomie: not downloaded, not transcribed, not read (`text` is the
+   * caption, or empty). The pipeline logs "(photo) ..." / "(voice note)" / "(location)" and, with no caption, goes no
+   * further. */
+  skippedMedia?: "photo" | "voice" | "location";
   /** With a skipped photo: the adapter fetches and stores it after all (asking mediaWanted again with `gateActed`),
    * returning its link, or null when it's still not wanted or the download failed. The pipeline calls it only when the
    * Gate decided to answer the caption. */
@@ -43,7 +48,13 @@ export type OutgoingPoll = { question: string; options: string[]; multi: boolean
 /** `react` (pipeline answers only, #77): an emoji on the message being answered (services/reactions.ts). `text` may be
  * empty then: the reaction is the whole answer. A Channel that can't react sends the emoji as text instead
  * (channels/answer.ts). */
-export type Outgoing = { text: string; buttons?: Button[]; poll?: OutgoingPoll; react?: string };
+export type Outgoing = { text: string; buttons?: Button[]; poll?: OutgoingPoll; react?: string; location?: OutgoingLocation };
+
+/** A pin (#78): a shared location as an adapter read it (lib/place.ts cleans it). */
+export type SharedPin = { lat: number; lng: number; name?: string; address?: string };
+/** A pin Roomie sends after the text (look_up's answer is one place): WhatsApp's location message, a Telegram venue,
+ * the name and a maps link as text on dev. */
+export type OutgoingLocation = { lat: number; lng: number; name: string; address?: string };
 
 /** What a send returns: the sent message's id when the Channel knows it (a Poll's votes point at it) and, on
  * WhatsApp, the Poll's messageSecret (votes are encrypted with it). */
@@ -103,7 +114,7 @@ export type MediaQuestion = {
   channel: ChannelName;
   chatExternalId: string;
   userExternalId: string;
-  kind: "photo" | "voice";
+  kind: "photo" | "voice" | "location";
   caption?: string;
   /** What the adapter could see itself: a DM, an @mention, a reply to Roomie. */
   isPrivate?: boolean;

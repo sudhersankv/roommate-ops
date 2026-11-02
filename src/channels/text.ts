@@ -2,7 +2,18 @@
 // failure line and the "which group?" answers for 1:1 messages. Pure, no SDK imports (text.test.ts,
 // telegram.test.ts, whatsapp.test.ts); the Tricks in /help come from the manifests.
 import { COMING_SOON, MANIFESTS } from "@/toolkits/manifests";
-import type { ChannelName } from "./types";
+import { mapsUrl, pinLabel } from "@/lib/place";
+import type { ChannelName, Outgoing, OutgoingLocation } from "./types";
+
+/** A pin as a text line (#78), for a Channel that can't send one (dev): "Costco Wholesale, 1430 S Ashland Ave: <maps link>". */
+export const pinLine = (p: OutgoingLocation) => `${pinLabel(p)}: ${mapsUrl(p)}`;
+
+/** The message with its pin folded into the text as a line, and no `location` left. */
+export function withPinAsText(msg: Outgoing): Outgoing {
+  if (!msg.location) return msg;
+  const { location, ...rest } = msg;
+  return { ...rest, text: [rest.text, pinLine(location)].filter((t) => t.trim()).join("\n") };
+}
 
 /** Telegram's limit; WhatsApp takes far more, but long walls of text read badly there too. */
 export const MAX_TEXT = 4096;

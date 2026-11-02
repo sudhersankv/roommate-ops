@@ -3,6 +3,7 @@
 //   - agent runs (a message that reaches the model): 60 a day per Member, 30 per 10 minutes and 200 a day per Group
 //   - Jev (the Gate's classifier, one call per Chat message): 2,000 a day per Group; past that, hard triggers only
 //   - new Groups: 3 a day per person who adds Roomie (onboarding.ts)
+//   - look-ups (services/look-up.ts, a web search each): 30 a day per Group
 //   - input: 2,000 characters per message (longer is cut before the Gate, and stored cut)
 // Over a daily run cap Roomie says BREATHER once per Group per day (only when it was addressed), over the 10-minute one
 // BREATHER_SHORT once per window, then stays quiet.
@@ -18,6 +19,7 @@ export const CAPS = {
   groupDay: { max: 200, windowMs: DAY },
   jevDay: { max: 2_000, windowMs: DAY },
   adderDay: { max: 3, windowMs: DAY },
+  lookUpDay: { max: 30, windowMs: DAY },
 } as const;
 
 export const MAX_INPUT_CHARS = 2_000;
@@ -36,6 +38,7 @@ export const capKeys = {
   /** The dashboard's Asks have their own Jev budget, so they never push the Chat into hard-triggers-only. */
   jevUi: (groupId: string) => `jev:ui:group:${groupId}:day`,
   adder: (channel: string, userExternalId: string) => `adder:${channel}:${userExternalId}:day`,
+  lookUp: (groupId: string) => `lookup:group:${groupId}:day`,
   notice: (groupId: string) => `notice:group:${groupId}:day`,
   noticeBurst: (groupId: string) => `notice:group:${groupId}:10m`,
   noticeMember: (memberId: string) => `notice:member:${memberId}:day`,
@@ -55,6 +58,8 @@ export type Caps = {
   run(groupId: string, memberId: string): Promise<RunCap | null>;
   /** Counts one Jev call for the Group (the Chat's and the dashboard's budgets apart); false past the daily cap. */
   jev(groupId: string, source?: "chat" | "ui"): Promise<boolean>;
+  /** Counts one look-up (a web search) for the Group; false past the daily cap. */
+  lookUp(groupId: string): Promise<boolean>;
   /** Counts one new Group for this adder; false past the daily cap. */
   newGroup(channel: string, userExternalId: string): Promise<boolean>;
   /** True the first time in the window: "day" once a day per Group (BREATHER), "burst" once per 10 minutes per Group,
@@ -71,6 +76,7 @@ export function makeCaps(store: CounterStore, clock: () => number = Date.now): C
   const groupDay = lim(CAPS.groupDay);
   const jev = lim(CAPS.jevDay);
   const adder = lim(CAPS.adderDay);
+  const lookUp = lim(CAPS.lookUpDay);
   const notice = lim({ max: 1, windowMs: DAY });
   const noticeBurst = lim({ max: 1, windowMs: CAPS.groupBurst.windowMs });
   return {
@@ -87,6 +93,7 @@ export function makeCaps(store: CounterStore, clock: () => number = Date.now): C
       return null;
     },
     jev: (groupId, source = "chat") => jev.hit(source === "ui" ? capKeys.jevUi(groupId) : capKeys.jev(groupId)),
+    lookUp: (groupId) => lookUp.hit(capKeys.lookUp(groupId)),
     newGroup: (channel, userExternalId) => adder.hit(capKeys.adder(channel, userExternalId)),
     noticeOnce: (id, kind = "day") =>
       kind === "burst" ? noticeBurst.hit(capKeys.noticeBurst(id)) : kind === "member" ? notice.hit(capKeys.noticeMember(id)) : notice.hit(capKeys.notice(id)),

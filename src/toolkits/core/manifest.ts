@@ -4,7 +4,7 @@ import { defineManifest } from "../define";
 export const core = defineManifest({
   id: "core",
   name: "Core",
-  description: "Members and approvals, settings, what Roomie knows about you, the dashboard link, reminders, polls, DMs, the Group Report and the group's documents. Always on.",
+  description: "Members and approvals, settings, what Roomie knows about you, the dashboard link, reminders, polls, DMs, the Group Report, the group's documents, looking things up and the group's place. Always on.",
   summary: "Members, approvals, settings, reminders and the weekly report.",
   longDescription: "What Roomie always does: knows who's in the group, asks Admins to approve newcomers, sets reminders, posts the Group Report and sends your dashboard link.",
   icon: "Sparkles",
@@ -14,8 +14,8 @@ export const core = defineManifest({
   status: "stable",
   gate: {
     criterion:
-      "Reminders at a time or date, the group's documents ('roomie keep this' on a photo or file, 'find the lease', 'the March internet bill'), and the group itself: members and approvals, settings, what Roomie can do and which Tricks it knows, teaching Roomie a Trick or making it learn or forget one ('roomie learn trips', 'roomie forget groceries', 'turn on chores'), lasting facts about a member ('remember I'm vegetarian', 'what do you know about me'), the dashboard link (for me, or for everyone: the group's Join link, rotating it, who may join, disconnecting someone's dashboard seat), the weekly report, turning a member's private nudges off or on ('roomie stop nudging me', 'nudge me again').",
-    examples: ["remind everyone trash goes out tuesday 8pm", "roomie keep this, it's the lease", "roomie find the lease", "what can you do?", "learn house", "approve Priya", "send me the dashboard", "send us the dashboard"],
+      "Reminders at a time or date, the group's documents ('roomie keep this' on a photo or file, 'find the lease', 'the March internet bill'), and the group itself: members and approvals, settings, what Roomie can do and which Tricks it knows, teaching Roomie a Trick or making it learn or forget one ('roomie learn trips', 'roomie forget groceries', 'turn on chores'), lasting facts about a member ('remember I'm vegetarian', 'what do you know about me'), the dashboard link (for me, or for everyone: the group's Join link, rotating it, who may join, disconnecting someone's dashboard seat), the weekly report, turning a member's private nudges off or on ('roomie stop nudging me', 'nudge me again'), a question to look up on the web ('is Costco open till 9?', 'find a plumber near us', 'when's recycling pickup?'), and a shared location pin or 'this is our place'.",
+    examples: ["remind everyone trash goes out tuesday 8pm", "roomie is costco open till 9?", "roomie find a plumber near us", "roomie this is our place", "roomie keep this, it's the lease", "roomie find the lease", "what can you do?", "learn house", "approve Priya", "send me the dashboard", "send us the dashboard"],
   },
   abilities: {
     keep_document: "Keep a photo or file someone sent: the lease, a bill, a notice",
@@ -23,6 +23,8 @@ export const core = defineManifest({
     ask_poll: "Ask the chat a quick poll for who-questions (who was in, who's shopping)",
     group_decision: "Put a decision the whole group cares about to the chat as a ✅ / ❌ poll",
     set_nudges: "Stop or restart your private nudges",
+    look_up: "Look something up when you ask: store hours, a plumber near you",
+    save_place: "Save a shared pin as the group's place, so 'near us' means near you",
   },
   groupDecisions: ["set_reminder"],
   adminOnly: {

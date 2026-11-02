@@ -8,6 +8,7 @@
 //   vote <n> <name> <options>  <name> answers poll <n> as printed, options by number ("vote 1 Dev 1", "vote 1 Sam 1,3";
 //                              "vote 1 Sam -" takes it back). A bare number with `say` votes on the newest poll too
 //   photo <name> <path|url> [caption]  a photo (e.g. a receipt), stored under public/uploads/dev/ and sent with the caption
+//   pin <name> <lat>,<lng> [place]   a shared location (read only in the follow-up window, like the real adapters)
 //   ledger [n]                 the last n Expenses (cents, method, Payers, Shares) and Balances, straight from services
 //   cart [total]               open Cart items; with a total, the split "Maya paid <total>" would save
 //   approve <name> [by <admin>] approve a Pending member directly (no LLM)
@@ -25,12 +26,20 @@ import { sendAnswer } from "../src/channels/answer";
 import { db } from "../src/db";
 import { mastra } from "../src/mastra";
 import { onGroupJoined, onParticipantJoined } from "../src/onboarding";
-import { handlePollVote, respondToIncoming } from "../src/pipeline";
+import { handlePollVote, mediaWantedFor, respondToIncoming } from "../src/pipeline";
+import { withPinAsText } from "../src/channels/text";
+import type { IncomingMessage } from "../src/channels/types";
 import { cart, claims, groups, members, money, receipts } from "../src/services";
 import { useFakeSplitwiseIfUnavailable } from "../src/integrations/splitwise";
 import { useFakeInstacartIfUnavailable } from "../src/integrations/instacart";
 import { assertNotProdDb } from "./lib/prod-guard";
 import { readFile } from "node:fs/promises";
+
+// Look-ups (#78): without EXA_API_KEY, dev-chat answers them from FakeSearch's table (and says so once).
+if (!process.env.EXA_API_KEY?.trim() && process.env.SEARCH_FAKE !== "1") {
+  process.env.SEARCH_FAKE = "1";
+  console.log("(no EXA_API_KEY: look-ups answer from the fake search table)");
+}
 
 const args = process.argv.slice(2);
 const flag = (name: string) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);
@@ -70,11 +79,12 @@ async function memberNamed(name: string) {
   return { gid, m };
 }
 
-async function send(name: string, text: string, imageUrl?: string, isPrivate = false) {
+async function send(name: string, text: string, imageUrl?: string, isPrivate = false, extra: Pick<IncomingMessage, "location" | "skippedMedia"> = {}) {
   const u = user(name);
-  console.log(`[${u.name}${isPrivate ? " -> Roomie, private" : ""}] ${imageUrl ? `(photo ${imageUrl}) ` : ""}${text}`);
+  const pinNote = extra.location ? `(pin ${extra.location.lat},${extra.location.lng}${extra.location.name ? ` ${extra.location.name}` : ""}) ` : extra.skippedMedia === "location" ? "(pin, not for Roomie) " : "";
+  console.log(`[${u.name}${isPrivate ? " -> Roomie, private" : ""}] ${imageUrl ? `(photo ${imageUrl}) ` : ""}${pinNote}${text}`);
   const started = Date.now();
-  const r = await respondToIncoming({ channel: "dev", chatExternalId: chatId, userExternalId: u.userExternalId, userName: u.name, text, imageUrl, ...(isPrivate ? { isPrivate: true } : {}) });
+  const r = await respondToIncoming({ channel: "dev", chatExternalId: chatId, userExternalId: u.userExternalId, userName: u.name, text, imageUrl, ...(isPrivate ? { isPrivate: true } : {}), ...extra });
   const tools = r.toolCalls.filter((t) => t !== "updateWorkingMemory");
   console.log(`         (gate ${r.gate.decision}/${r.gate.reason}${tools.length ? `, tools ${tools.join(",")}` : ""}, ${((Date.now() - started) / 1000).toFixed(1)}s)`);
   const out = r.out;
@@ -83,7 +93,11 @@ async function send(name: string, text: string, imageUrl?: string, isPrivate = f
     const messageId = `dev-${++lineNo}`;
     await sendAnswer(out, {
       react: (emoji) => devChannel.react(chatId, messageId, emoji),
-      send: async (msg) => show(isPrivate ? { to: "private", userExternalId: u.userExternalId, msg } : { to: "chat", chatExternalId: chatId, msg }),
+      // A pin prints as its name and a maps link, as the dev Channel sends it.
+      send: async (raw) => {
+        const msg = withPinAsText(raw);
+        show(isPrivate ? { to: "private", userExternalId: u.userExternalId, msg } : { to: "chat", chatExternalId: chatId, msg });
+      },
     });
   } else console.log("         (Roomie stays quiet)");
 }
@@ -138,6 +152,16 @@ async function run(line: string) {
       const imageUrl = saved.url || saved.path;
       return send(name, unquote(words.join(" ")), imageUrl);
     }
+    case "pin": {
+      // pin <name> <lat>,<lng> [place name]: a shared location. Like the real adapters, it's read only when Roomie is
+      // being talked to (the follow-up window; there's no caption to address it), else logged as "(location)".
+      const [name, coords, ...words] = rest.map(unquote);
+      const [lat, lng] = (coords ?? "").split(",").map(Number);
+      if (!name || !Number.isFinite(lat) || !Number.isFinite(lng)) throw new Error("pin <name> <lat>,<lng> [place name]");
+      const wanted = await mediaWantedFor({ channel: "dev", chatExternalId: chatId, userExternalId: user(name).userExternalId, kind: "location" });
+      const place = words.join(" ").trim();
+      return send(name, "", undefined, false, wanted ? { location: { lat, lng, ...(place ? { name: place } : {}) } } : { skippedMedia: "location" });
+    }
     case "approve": {
       const byAt = rest.findIndex((x) => x.toLowerCase() === "by");
       const name = unquote((byAt === -1 ? rest : rest.slice(0, byAt)).join(" "));
@@ -191,14 +215,14 @@ async function run(line: string) {
       return;
     default:
       if (cmd.startsWith("#")) return; // comments in piped scripts
-      throw new Error(`Unknown command "${cmd}". Try: join, add, say, dm, vote, photo, approve, link, ledger, cart, who, quit`);
+      throw new Error(`Unknown command "${cmd}". Try: join, add, say, dm, vote, photo, pin, approve, link, ledger, cart, who, quit`);
   }
 }
 
 await assertNotProdDb(db, "dev-chat");
 await useFakeSplitwiseIfUnavailable();
 await useFakeInstacartIfUnavailable();
-console.log(`dev-chat on Chat "${chatId}". Commands: join, add, say, dm, vote, photo, approve, link, ledger, cart, who, quit`);
+console.log(`dev-chat on Chat "${chatId}". Commands: join, add, say, dm, vote, photo, pin, approve, link, ledger, cart, who, quit`);
 const rl = createInterface({ input: process.stdin, output: process.stdout, prompt: "> ", terminal: interactive });
 if (interactive) rl.prompt();
 for await (const line of rl) {

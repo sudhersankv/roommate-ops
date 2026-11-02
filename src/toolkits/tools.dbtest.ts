@@ -35,6 +35,9 @@ import { expenseSummary } from "@/services/money";
 import * as restock from "@/services/restock";
 import * as house from "@/services/house";
 import { FakeMail, setMailClient } from "@/integrations/mail";
+import { FakeSearch, setSearchClient } from "@/integrations/search";
+import { makeCaps, setCaps } from "@/lib/caps";
+import { MemoryCounters } from "@/lib/window-limit";
 import * as leaseInbox from "@/services/lease-inbox";
 import { processInbound } from "@/services/lease-inbox-inbound";
 import { allTools } from "./registry";
@@ -1151,6 +1154,32 @@ describe("Roomie tools against the dev DB", () => {
     if (process.env.APP_URL?.startsWith("http")) assert.ok(open.links[0].url.endsWith(`/api/docs/${photo.id}`));
     await assert.rejects(run("keep_document", {}), /Send the photo or file/);
     assert.equal((await lastActivity()).summary, "kept Lease 2026-27");
+  });
+
+  test("look_up / save_place (#78): an answer with one source and a pin, never about a Member; a pin saved makes 'near us' local", async () => {
+    const search = new FakeSearch();
+    setSearchClient(search);
+    setCaps(makeCaps(new MemoryCounters()));
+    try {
+      const costco = await run("look_up", { query: "is costco open till 9?" });
+      assert.match(costco.say, /8:30 PM/);
+      assert.equal(costco.links.length, 1);
+      assert.equal(costco.location.name, "Costco Wholesale");
+      assert.deepEqual(await run("look_up", { query: "look up Ryan's linkedin" }), { refused: "member", say: "I don't look up people in the group." });
+      assert.equal(search.queries.length, 1, "a Member's name never goes out");
+      const before = await run("look_up", { query: "find a plumber", nearUs: true });
+      assert.equal(before.noPlace, true);
+      assert.deepEqual(await run("save_place", { lat: 41.943, lng: -87.6826, address: "2140 W Roscoe St, Chicago" }), { saved: "2140 W Roscoe St, Chicago" });
+      const near = await run("look_up", { query: "find a plumber near us" });
+      assert.equal(near.usedPlace, true);
+      assert.equal(search.queries.at(-1), "find a plumber near 2140 W Roscoe St, Chicago");
+      assert.deepEqual(await run("save_place", { lat: 41.95, lng: -87.68, name: "Home" }), { saved: "Home", replaced: "2140 W Roscoe St, Chicago" });
+      assert.deepEqual(await run("save_place", { lat: 99, lng: 0 }), { error: "That pin didn't come through with a location. Share it again?" });
+      assert.equal((await lastActivity()).summary, "saved the group's place: Home");
+    } finally {
+      setSearchClient(null);
+      setCaps(undefined);
+    }
   });
 
   // ---------- identity: Pending members, Admins, settings, Claim links, forget me ----------

@@ -130,7 +130,7 @@ export function inFollowUpWindow({
 /* ---------- photos and voice notes (audit H2) ---------- */
 
 export type MediaFacts = {
-  kind: "photo" | "voice";
+  kind: "photo" | "voice" | "location";
   /** A DM to Roomie: always addressed. */
   isPrivate?: boolean;
   mentionsRoomie?: boolean;
@@ -149,12 +149,13 @@ export type MediaFacts = {
  * Whether Roomie downloads a photo or transcribes a voice note at all. A photo: when its caption or reply addresses
  * Roomie (@mention, reply, "roomie"), in the follow-up window, or when the Gate decided to answer its caption (the
  * pipeline asks again then). A voice note: when it replies to Roomie or @mentions it, in the follow-up window, or when
- * setup is waiting on this Admin. Anything else is logged as "(photo)" / "(voice note)" and goes no further: nothing
- * is stored and nothing goes to the transcriber.
+ * setup is waiting on this Admin. A shared pin (#78): the photo rule (it has no caption, so addressed or the window).
+ * Anything else is logged as "(photo)" / "(voice note)" / "(location)" and goes no further: nothing is stored and
+ * nothing goes to the transcriber.
  */
 export function mediaWanted(f: MediaFacts): boolean {
   if (f.isPrivate || f.mentionsRoomie || f.isReplyToRoomie || f.inWindow) return true;
-  if (f.kind === "photo") return !!f.gateActed || (!!f.caption && callsPet(f.caption));
+  if (f.kind === "photo" || f.kind === "location") return !!f.gateActed || (!!f.caption && callsPet(f.caption));
   return !!f.setupPending;
 }
 
