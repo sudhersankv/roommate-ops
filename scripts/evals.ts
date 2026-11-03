@@ -15,6 +15,8 @@ process.env.INSTACART_FAKE = "1";
 // Lease Inbox: FakeMail (no AgentMail inbox per scenario), keyword classification and lease answers (no small model).
 process.env.MAIL_FAKE = "1";
 process.env.MAIL_CLASSIFIER_FAKE = "1";
+// Look-ups answer from FakeSearch's table (no web search per scenario).
+process.env.SEARCH_FAKE = "1";
 
 import { db, schema } from "../src/db";
 import { respond, type PipelineResult } from "../src/pipeline";
@@ -57,6 +59,7 @@ const say = (env: EvalEnv, t: Turn) => {
     isReplyToRoomie: t.isReplyToRoomie,
     ...(t.private ? { isPrivate: true } : {}),
     ...(t.photo && env.photo ? { imageUrl: env.photo } : {}),
+    ...(t.location ? { location: t.location } : {}),
   });
 };
 async function failures(x: Expect, r: PipelineResult, env: EvalEnv): Promise<string[]> {

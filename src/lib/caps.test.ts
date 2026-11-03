@@ -40,6 +40,17 @@ describe("caps", () => {
     assert.doesNotMatch(BREATHER_SHORT, /tomorrow/, "the 10-minute cap says a few minutes");
   });
 
+  test("look-ups: 30 a day per Group, a new day starts over, other Groups untouched", async () => {
+    let now = Date.UTC(2026, 9, 29, 1);
+    const c = makeCaps(new MemoryCounters(), () => now);
+    assert.equal(CAPS.lookUpDay.max, 30);
+    for (let i = 0; i < 30; i++) assert.equal(await c.lookUp("g"), true, `look-up ${i + 1}`);
+    assert.equal(await c.lookUp("g"), false);
+    assert.equal(await c.lookUp("other"), true);
+    now = Date.UTC(2026, 9, 30, 1);
+    assert.equal(await c.lookUp("g"), true);
+  });
+
   test("a Member over 60 a day is stopped without using the Group's budget", async () => {
     const store = new MemoryCounters();
     const c = makeCaps(store, () => Date.UTC(2026, 9, 29, 12));

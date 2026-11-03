@@ -10,6 +10,8 @@ dm <name> <text>            a private message to Roomie ("dm Dev paid Maya"); th
 vote <n> <name> <options>   <name> answers poll <n> (the number printed as "(poll n)"), options by their printed
                             numbers: "vote 1 Dev 1", "vote 1 Sam 1,3"; "vote 1 Sam -" takes the vote back
 photo <name> <path|url> [caption]   a photo (a receipt): saved under public/uploads/dev/, sent with the caption
+pin <name> <lat>,<lng> [place]      a shared location pin: read only in the follow-up window (like the real adapters),
+                            else logged as "(location)"
 approve <name> [by <admin>] approve directly, without the agent
 link <name>                 mint a Claim link and print it
 ledger [n]                  the last n Expenses in cents (method, Payers, Shares) and the Balances, from the services
@@ -28,6 +30,8 @@ Get-Content walk.txt | npm run dev-chat -- --chat walk-1
 Polls (ADR 0018): the dev Channel has no native polls, so a Poll prints as `(poll n)` with numbered options. Votes come in two ways: the `vote` command (what a tap on Telegram or WhatsApp sends) or a bare number with `say` ("say Sam 2"), which answers the newest open poll in the Chat and runs no agent. A who's-in poll resolves when a majority of active Members voted (2 of 3 in Apt 4B) or after 2 hours, then posts one line ("Logged $60.00 pizza, split 3 ways: Maya, Dev and Sam."). DMs: dev people are in every dev Group ever made, so a `dm` stays in the Chat dev-chat is attached to; a shared Expense logged in a DM posts its one Echo line in the group, a Settlement only a private line to the other person.
 
 Reactions (#77): a message that only reports something Roomie recorded ("say Sam roomie trash done", "say Dev roomie paid Maya back $20") prints `(reacted ✅)` / `(reacted 👍)` under it instead of a line; WhatsApp and Telegram put the emoji on the message (Telegram shows ✅ as 👌). A streak milestone or everyone square still prints its line next to the reaction.
+
+Look-ups and pins (#78): "say Dev roomie is costco open till 9?" runs `look_up`; without `EXA_API_KEY` dev-chat says so once and answers from FakeSearch's table (Costco, a plumber, recycling; anything else gets a generic line). The source prints as a `[button]`, and a one-place answer prints its pin as a line with the name and a maps link (WhatsApp sends a location message, Telegram a venue). To save the Group's place: "say Maya roomie I'll send our place", then "pin Maya 41.943,-87.6826 Home" (inside the follow-up window, so it's read), then "say Maya this is our place"; "find a plumber near us" then searches near it. A pin outside the window is logged as "(location)" and Roomie never sees its coordinates. "say Sam roomie look up Dev's instagram" is refused: Roomie doesn't look up the group's own people.
 
 Claim links point at `APP_URL`; open one in the browser while `npm run dev` runs to connect your Google account to that Member.
 

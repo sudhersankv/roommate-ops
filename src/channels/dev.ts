@@ -1,8 +1,8 @@
 // The dev Channel: a pretend WhatsApp for scripts/dev-chat.ts. Group posts and private messages go to a callback
 // (the REPL prints them), so the whole flow can be exercised without a phone. A Poll is printed with numbered options
 // and a number ("poll 1"): a bare number from a Member votes (the pipeline), and so does dev-chat's `vote` command.
-// A reaction prints as "(reacted ✅)".
-import { renderPollAsText } from "./text";
+// A reaction prints as "(reacted ✅)", a pin (#78) as a line with its name and a maps link.
+import { renderPollAsText, withPinAsText } from "./text";
 import type { Channel, Outgoing, Sent } from "./types";
 
 export type DevOutput = { to: "chat"; chatExternalId: string; msg: Outgoing } | { to: "private"; userExternalId: string; msg: Outgoing };
@@ -22,7 +22,8 @@ export class DevChannel implements Channel {
     private readonly onReact: (r: DevReaction) => void = (r) => console.log(`         (reacted ${r.emoji})`),
   ) {}
 
-  async sendToChat(chatExternalId: string, msg: Outgoing): Promise<Sent> {
+  async sendToChat(chatExternalId: string, original: Outgoing): Promise<Sent> {
+    const msg = withPinAsText(original);
     if (msg.poll) {
       const n = ++this.polls;
       this.onSend({ to: "chat", chatExternalId, msg: { ...msg, text: `(poll ${n}) ${renderPollAsText(msg.poll)}` } });
@@ -35,7 +36,8 @@ export class DevChannel implements Channel {
   /** "poll 3" as printed -> its external id (dev-chat's `vote` command). */
   pollExternalId = (n: number) => `dev-poll-${this.boot}-${n}`;
 
-  async sendPrivate(userExternalId: string, msg: Outgoing): Promise<Sent> {
+  async sendPrivate(userExternalId: string, original: Outgoing): Promise<Sent> {
+    const msg = withPinAsText(original);
     this.onSend({ to: "private", userExternalId, msg: msg.poll ? { ...msg, text: renderPollAsText(msg.poll) } : msg });
     return {};
   }

@@ -1,6 +1,7 @@
 import { defineToolkit } from "../define";
 import { dashboardTools } from "./dashboard";
 import { documentTools } from "./documents";
+import { lookUpTools } from "./look-up";
 import { core as manifest } from "./manifest";
 import { memberTools } from "./members";
 import { peopleTools } from "./people";
@@ -12,5 +13,5 @@ import { skill } from "./skill";
 
 export const core = defineToolkit(manifest, {
   skill,
-  tools: { ...memberTools, ...peopleTools, ...settingsTools, ...dashboardTools, ...reminderTools, ...reportTools, ...documentTools, ...pollTools },
+  tools: { ...memberTools, ...peopleTools, ...settingsTools, ...dashboardTools, ...reminderTools, ...reportTools, ...documentTools, ...pollTools, ...lookUpTools },
 });

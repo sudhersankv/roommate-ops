@@ -56,6 +56,7 @@ class FakeSocket implements WaSocket {
   }
   polls: { jid: string; name: string; values: string[]; selectableCount: number }[] = [];
   reactions: { jid: string; text: string; key: WAMessageKey }[] = [];
+  locations: { jid: string; degreesLatitude: number; degreesLongitude: number; name?: string; address?: string }[] = [];
   failReactions = false;
   async sendMessage(jid: string, content: Parameters<WaSocket["sendMessage"]>[1]) {
     if ("react" in content) {
@@ -68,6 +69,10 @@ class FakeSocket implements WaSocket {
       this.polls.push({ jid, ...content.poll });
       const id = `poll${this.polls.length}`;
       return { key: { id, remoteJid: jid, fromMe: true }, message: { pollCreationMessageV3: { name: content.poll.name, options: content.poll.values.map((optionName) => ({ optionName })) }, messageContextInfo: { messageSecret: POLL_SECRET } } } as WAMessage;
+    }
+    if ("location" in content) {
+      this.locations.push({ jid, ...content.location });
+      return { key: { id: `loc${this.locations.length}`, remoteJid: jid, fromMe: true }, message: { locationMessage: content.location } } as WAMessage;
     }
     this.sent.push({ jid, text: content.text });
     return { key: { id: `out${this.sent.length}`, remoteJid: jid, fromMe: true }, message: { conversation: content.text } } as WAMessage;
@@ -271,6 +276,21 @@ describe("reading a message", () => {
     assert.equal(readWaMessage(null, me), null);
   });
 
+  test("pins (#78): a locationMessage is kind location; live location is nothing; a reply to a pin carries it", () => {
+    assert.deepEqual(readWaMessage({ locationMessage: { degreesLatitude: 41.9, degreesLongitude: -87.6, name: " Home " } }, me), {
+      text: "",
+      kind: "location",
+      mentionsRoomie: false,
+      isReplyToRoomie: false,
+      pin: { lat: 41.9, lng: -87.6, name: "Home" },
+    });
+    assert.equal(readWaMessage({ liveLocationMessage: { degreesLatitude: 1, degreesLongitude: 2 } }, me), null);
+    assert.equal(readWaMessage({ locationMessage: { degreesLatitude: 1, degreesLongitude: 2, isLive: true } }, me), null);
+    assert.equal(readWaMessage({ locationMessage: {} }, me), null);
+    const reply = readWaMessage({ extendedTextMessage: { text: "this is our place", contextInfo: { quotedMessage: { locationMessage: { degreesLatitude: 1, degreesLongitude: 2 } } } } }, me);
+    assert.deepEqual(reply?.quotedPin, { lat: 1, lng: 2 });
+  });
+
   test("links become trailing 'text — url' lines; placeholders; backoff", () => {
     assert.equal(withButtonLines({ text: "Here you go", buttons: [{ text: "Open dashboard", url: "https://tryroomie.me/claim/abc" }] }), "Here you go\nOpen dashboard — https://tryroomie.me/claim/abc");
     assert.equal(withButtonLines({ text: "plain" }), "plain");
@@ -341,6 +361,34 @@ describe("incoming messages", () => {
     await deaf.feed([voice()]);
     assert.deepEqual(deaf.sock().sent.map((s) => s.text), [NO_VOICE]);
     assert.equal(deaf.seen.incoming.length, 0);
+  });
+
+  test("a pin nobody addressed: '(location)' only, no coordinates; in the window: lat/lng, name and address (#78)", async () => {
+    const pin = { locationMessage: { degreesLatitude: 41.94, degreesLongitude: -87.68, name: "Home", address: "2140 W Roscoe St" } };
+    const no = harness({ deps: { mediaWanted: async () => false } });
+    no.markKnown();
+    await no.open();
+    await no.feed([msg({ message: pin })]);
+    assert.deepEqual(no.seen.incoming.map((m) => [m.text, m.skippedMedia, m.location]), [["", "location", undefined]]);
+    const yes = harness({ deps: { mediaWanted: async () => true } });
+    yes.markKnown();
+    await yes.open();
+    await yes.feed([msg({ message: pin })]);
+    assert.deepEqual(yes.seen.incoming[0].location, { lat: 41.94, lng: -87.68, name: "Home", address: "2140 W Roscoe St" });
+  });
+
+  test("live location is never read; a reply to a pin carries it only when the reply is for Roomie", async () => {
+    const h = harness();
+    h.markKnown();
+    await h.open();
+    await h.feed([msg({ message: { liveLocationMessage: { degreesLatitude: 1, degreesLongitude: 2 } } })]);
+    await h.feed([msg({ message: { locationMessage: { degreesLatitude: 1, degreesLongitude: 2, isLive: true } } })]);
+    assert.equal(h.seen.incoming.length, 0, "live location goes nowhere");
+    const quoted = { locationMessage: { degreesLatitude: 41.94, degreesLongitude: -87.68 } };
+    await h.feed([msg({ message: { extendedTextMessage: { text: "roomie this is our place", contextInfo: { participant: SAM.pn, stanzaId: "p1", quotedMessage: quoted } } } })]);
+    await h.feed([msg({ message: { extendedTextMessage: { text: "cute spot", contextInfo: { participant: SAM.pn, stanzaId: "p1", quotedMessage: quoted } } } })]);
+    assert.deepEqual(h.seen.incoming[0].location, { lat: 41.94, lng: -87.68 });
+    assert.equal(h.seen.incoming[1].location, undefined);
   });
 
   test("a voice note or photo nobody addressed is never downloaded, stored or transcribed", async () => {
@@ -606,6 +654,17 @@ describe("who is who (LIDs)", () => {
 });
 
 describe("sending", () => {
+  test("a pin (#78): the text, then a location message with the name and address; a pin alone sends no empty text", async () => {
+    const h = harness();
+    await h.open();
+    await h.wa.channel.sendToChat(GROUP, { text: "Closes at 8:30.", location: { lat: 41.86, lng: -87.66, name: "Costco", address: "1430 S Ashland Ave" } });
+    assert.deepEqual(h.sock().sent, [{ jid: GROUP, text: "Closes at 8:30." }]);
+    assert.deepEqual(h.sock().locations, [{ jid: GROUP, degreesLatitude: 41.86, degreesLongitude: -87.66, name: "Costco", address: "1430 S Ashland Ave" }]);
+    await h.wa.channel.sendToChat(GROUP, { text: "", location: { lat: 1, lng: 2, name: "Home" } });
+    assert.equal(h.sock().sent.length, 1);
+    assert.deepEqual(h.sock().locations[1], { jid: GROUP, degreesLatitude: 1, degreesLongitude: 2, name: "Home" });
+  });
+
   test("buttons as trailing lines, long text in 4096-character chunks, composing then paused", async () => {
     const h = harness();
     await h.open();

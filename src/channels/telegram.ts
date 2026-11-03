@@ -19,7 +19,7 @@ import { envMs, SendLimiter, sleep as realSleep } from "./rate-limit";
 import { BAD_VOICE, chunkText, commandOf, helpText, MANY_GROUPS, MAX_TEXT, NO_GROUP, NO_VOICE, OOPS, startReply, wasAddressed } from "./text";
 import { logPaused, roomiePaused } from "@/lib/kill-switch";
 import { mediaWanted } from "@/mastra/gate/policy";
-import { CantMessagePrivatelyError, type Button, type Channel, type ChannelUser, type IncomingMessage, type MediaQuestion, type Outgoing, type PollVote, type Sent } from "./types";
+import { CantMessagePrivatelyError, type Button, type Channel, type ChannelUser, type IncomingMessage, type MediaQuestion, type Outgoing, type PollVote, type Sent, type SharedPin } from "./types";
 
 export const TELEGRAM_MAX_TEXT = MAX_TEXT;
 export { chunkText, commandOf, helpText, OOPS, startReply };
@@ -262,7 +262,7 @@ export class TelegramChannel implements Channel {
     }
     const text = [msg.text, ...asText.map((b) => `${b.text}: ${b.url}`)].join("\n");
     // Typed like a person (humanize.ts): "typing…" sized to the text, then the bubble; the buttons ride on the last one.
-    const bubbles = planDelivery(text);
+    const bubbles = text.trim() ? planDelivery(text) : [];
     for (const [bi, bubble] of bubbles.entries()) {
       await this.api.sendChatAction(chatId, "typing").catch(() => {});
       await this.sleep(this.replyDelayMs ?? bubble.typingMs);
@@ -272,6 +272,12 @@ export class TelegramChannel implements Channel {
         await this.limiter.acquire(chatId);
         await this.retryOn429(() => this.api.sendMessage(chatId, chunk, { link_preview_options: { is_disabled: true }, ...(markup ? { reply_markup: markup } : {}) }));
       }
+    }
+    // A pin (#78) after the text: a venue (name + address; with no address, the coordinates stand in for it).
+    if (msg.location) {
+      const l = msg.location;
+      await this.limiter.acquire(chatId);
+      await this.retryOn429(() => this.api.sendVenue(chatId, l.lat, l.lng, l.name, l.address ?? `${l.lat}, ${l.lng}`));
     }
     return {};
   }
@@ -293,6 +299,13 @@ const TELEGRAM_REACTIONS: Record<string, TelegramEmoji> = { "✅": "👌", "✔�
 const TELEGRAM_OWN = new Set<string>(["👍", "👌", "👏", "🎉", "🔥", "❤", "🙏", "💯", "🤝", "🫡", "👀", "😁"]);
 /** The emoji Telegram will take for a reaction: its own as it is, ✅ as 👌, anything else 👍. */
 export const telegramReaction = (emoji: string): TelegramEmoji => TELEGRAM_REACTIONS[emoji] ?? (TELEGRAM_OWN.has(emoji) ? (emoji as TelegramEmoji) : "👍");
+
+/** A message's pin (a venue or a plain location), or null: none, or live location (never read, #78). */
+export function telegramPin(m: Pick<Message, "location" | "venue">): SharedPin | null {
+  const loc = m.venue?.location ?? m.location;
+  if (!loc || loc.live_period !== undefined || m.location?.live_period !== undefined) return null;
+  return { lat: loc.latitude, lng: loc.longitude, ...(m.venue?.title ? { name: m.venue.title } : {}), ...(m.venue?.address ? { address: m.venue.address } : {}) };
+}
 
 /* ---------- the bot (inbound) ---------- */
 
@@ -373,7 +386,7 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
     }) ?? Promise.resolve(false);
 
   /** Photos and voice notes are only fetched when Roomie is being talked to (policy.ts mediaWanted). */
-  async function wanted(kind: "photo" | "voice", addressed: ReturnType<typeof readAddress>, from: User, chatId: string, isPrivate: boolean, gateActed?: boolean) {
+  async function wanted(kind: MediaQuestion["kind"], addressed: ReturnType<typeof readAddress>, from: User, chatId: string, isPrivate: boolean, gateActed?: boolean) {
     const flags = { kind, isPrivate, mentionsRoomie: addressed.mentionsRoomie, isReplyToRoomie: addressed.isReplyToRoomie, caption: addressed.text, ...(gateActed ? { gateActed } : {}) };
     // The pipeline's answer wins when it's wired in: it also knows about paused Groups.
     if (!deps.mediaWanted) return mediaWanted(flags);
@@ -423,8 +436,18 @@ export function createTelegramBot(opts: TelegramBotOptions): TelegramBot {
       }
       return { ...addressed, imageUrl: await save() };
     }
+    // A shared pin (#78): read only when Roomie is being talked to (the photo rule); live location never.
+    if (m.location || m.venue) {
+      const pin = telegramPin(m);
+      if (!pin) return null;
+      if (!(await wanted("location", addressed, from, folderChat, isPrivate))) return { ...addressed, text: "", skippedMedia: "location" as const };
+      return { ...addressed, text: "", location: pin };
+    }
     if (m.text === undefined && m.caption === undefined) return null;
     if (/^\/\w+(@\w+)?/.test(m.text ?? "")) return null; // other commands (the "add to group" deep link posts /start)
+    // "roomie this is our place" as a reply to a pin: the pin comes along, when the reply is for Roomie.
+    const quoted = m.reply_to_message ? telegramPin(m.reply_to_message) : null;
+    if (quoted && (await wanted("location", addressed, from, folderChat, isPrivate))) return { ...addressed, location: quoted };
     return addressed;
   }
 

@@ -338,6 +338,45 @@ describe("incoming messages", () => {
     assert.equal(r.seen.saved.length, 2);
   });
 
+  test("a pin nobody addressed: passed on as a skipped location, without its coordinates (#78)", async () => {
+    const h = harness();
+    await h.feed(message(SAM, { location: { latitude: 41.94, longitude: -87.68 } }));
+    assert.deepEqual(h.seen.incoming.map((m) => [m.text, m.skippedMedia, m.location]), [["", "location", undefined]]);
+  });
+
+  test("a pin in the window or a DM: lat/lng (a venue's name and address too) go through", async () => {
+    const h = harness({ deps: { mediaWanted: async () => true } });
+    await h.feed(message(SAM, { location: { latitude: 41.94, longitude: -87.68 } }));
+    await h.feed(message(SAM, { venue: { location: { latitude: 41.86, longitude: -87.66 }, title: "Costco", address: "1430 S Ashland Ave" }, location: { latitude: 41.86, longitude: -87.66 } }));
+    assert.deepEqual(
+      h.seen.incoming.map((m) => m.location),
+      [
+        { lat: 41.94, lng: -87.68 },
+        { lat: 41.86, lng: -87.66, name: "Costco", address: "1430 S Ashland Ave" },
+      ],
+    );
+    const dm = harness();
+    await dm.feed(message(SAM, { location: { latitude: 1, longitude: 2 } }, { id: SAM.id, type: "private", first_name: "Sam" }));
+    assert.deepEqual(dm.seen.incoming[0].location, { lat: 1, lng: 2 });
+  });
+
+  test("live location is never read, even when Roomie is addressed", async () => {
+    const h = harness({ deps: { mediaWanted: async () => true } });
+    await h.feed(message(SAM, { location: { latitude: 41.94, longitude: -87.68, live_period: 900 } }));
+    assert.equal(h.seen.incoming.length, 0);
+    await h.feed(message(SAM, { text: "roomie this is our place", reply_to_message: { message_id: 1, date: 0, chat: GROUP, from: DEV, location: { latitude: 1, longitude: 2, live_period: 60 } } }));
+    assert.equal(h.seen.incoming[0].location, undefined);
+  });
+
+  test("'roomie this is our place' replying to a pin: the pin comes along; chatter replying to one doesn't carry it", async () => {
+    const pinMsg = { message_id: 1, date: 0, chat: GROUP, from: DEV, location: { latitude: 41.94, longitude: -87.68 } };
+    const h = harness();
+    await h.feed(message(SAM, { text: "roomie this is our place", reply_to_message: pinMsg }));
+    await h.feed(message(SAM, { text: "nice spot", reply_to_message: pinMsg }));
+    assert.deepEqual(h.seen.incoming[0].location, { lat: 41.94, lng: -87.68 });
+    assert.equal(h.seen.incoming[1].location, undefined);
+  });
+
   test("voice nobody addressed: never downloaded or transcribed, passed on as a skipped voice note", async () => {
     let transcribed = 0;
     const h = harness({ deps: { transcribe: async () => `t${++transcribed}` } });
@@ -554,6 +593,19 @@ describe("commands and failures in a group", () => {
 });
 
 describe("outgoing", () => {
+  test("a pin (#78): the text, then a venue; with no address the coordinates stand in; a pin alone sends no empty text", async () => {
+    const h = harness();
+    await h.tg.channel.sendToChat("-1001", { text: "Closes at 8:30.", buttons: [{ text: "Source: costco.com", url: "https://www.costco.com/x" }], location: { lat: 41.86, lng: -87.66, name: "Costco", address: "1430 S Ashland Ave" } });
+    const order = h.calls.filter((c) => c.method === "sendMessage" || c.method === "sendVenue");
+    assert.deepEqual(order.map((c) => c.method), ["sendMessage", "sendVenue"]);
+    assert.deepEqual([order[1].payload.latitude, order[1].payload.longitude, order[1].payload.title, order[1].payload.address], [41.86, -87.66, "Costco", "1430 S Ashland Ave"]);
+    const alone = harness();
+    await alone.tg.channel.sendToChat("-1001", { text: "", location: { lat: 1, lng: 2, name: "Home" } });
+    assert.equal(alone.sent().length, 0);
+    const venue = alone.calls.find((c) => c.method === "sendVenue");
+    assert.equal(venue?.payload.address, "1, 2");
+  });
+
   test("buttons become an inline keyboard of URL buttons on the message", async () => {
     const h = harness();
     await h.tg.channel.sendToChat("-1001", {

@@ -43,6 +43,14 @@ export default function PrivacyPage() {
           <li>Voice notes addressed to it go to a speech AI model (through the AI Gateway) to turn them into text.</li>
           <li>About every 50 messages, a batch goes to a small AI model that picks out how the group talks (phrases, emoji), and about 1 in 10 replies is checked by it for quality.</li>
           <li>The messages it answers, and its replies, are turned into search vectors on the AI Gateway, so it can recall earlier conversations.</li>
+          <li>
+            Questions you ask Roomie to look up (&ldquo;is Costco open till 9?&rdquo;) are sent to a web search service, without your names. For &ldquo;near us&rdquo;, the
+            group&apos;s saved place goes with the question. Roomie won&apos;t look up the people in your group.
+          </li>
+          <li>
+            A location pin is only read when it&apos;s shared with Roomie (in reply to it, or right after it spoke); any other pin is noted as &ldquo;(location)&rdquo;
+            with no coordinates. Live location is never read.
+          </li>
           <li>Splitwise and Instacart only get what you ask Roomie to send them.</li>
         </ul>
         <p>We don&apos;t sell your data, show ads, or use your group&apos;s messages for anything but your group.</p>
@@ -66,7 +74,8 @@ export default function PrivacyPage() {
             <strong>Until you delete them:</strong> Expenses, Settlements, the Cart and Recipes, Chores, upkeep and Reminders, the Activity of who changed what, what a
             Member asked it to remember (a diet, a Venmo handle), the grocery usuals Members told it, their own or the house&apos;s (&ldquo;Pepsi, 12 cans&rdquo;; other usuals are
             worked out from what was added to the Cart, and both are shown and editable on the Cart page), what the group bought and when, counts of how the group
-            talks, and photos sent to it. Usuals aren&apos;t chat: they stay after the 30 days.
+            talks, photos sent to it, and the group&apos;s place if someone saved a pin as it (&ldquo;this is our place&rdquo;). Usuals aren&apos;t chat: they stay after the 30
+            days.
           </li>
           <li>
             <strong>With Lease Inbox, until you delete them:</strong> the emails that reach the group&apos;s address (sender, subject, text and what Roomie made of
