@@ -18,7 +18,7 @@ import { onGroupJoined } from "@/onboarding";
 import { deleteGroup } from "./groups";
 import * as core from "./lease-inbox";
 import { handleMailEvent, processInbound } from "./lease-inbox-inbound";
-import { anonymizeMailMember, followUpWorkOrder, inboxData, leaseBundleLine, leaseReportParts, releaseInbox, sendForMember, trustAsked } from "./lease-inbox-toolkit";
+import { anonymizeMailMember, followUpWorkOrder, inboxData, leaseBundleLine, leaseReportParts, releaseInbox, workOrderLine, sendForMember, trustAsked } from "./lease-inbox-toolkit";
 import { askLease, setLeaseAnswerer, setTextReader } from "./lease-text";
 import { forgetMe } from "./members";
 import { setVariableExpense } from "./recurring";
@@ -254,6 +254,10 @@ describe("the Lease Inbox Trick against the dev DB", () => {
     const [wo] = await db.select().from(schema.workOrders).where(eq(schema.workOrders.threadId, sinkThread));
     assert.deepEqual([wo.status, wo.scheduledFor], ["scheduled", "2026-11-03T10:00"]);
     assert.equal(await leaseBundleLine({ groupId }, MONDAY), "The leasing office is coming tomorrow at 10 AM about the leaking kitchen sink. Someone be home?");
+    // #70: "what's up with the sink?" says the visit, ready to say.
+    const s = await workOrderLine({ groupId }, "sink", MONDAY);
+    assert.equal(s.visit, "They're coming tomorrow at 10 AM about the leaking kitchen sink.");
+    assert.match(s.line, /^the leaking kitchen sink: scheduled for tomorrow at 10 AM\./);
   });
 
   test("a reply in the landlord's thread goes at once; \"tell them we're not renewing\" asks and sends nothing", async () => {

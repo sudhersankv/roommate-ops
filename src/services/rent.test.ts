@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { zonedTimeToUtc } from "@/lib/time";
-import { owingRent, rentDmsFor, rentGroupLine, rentWindows, shortMoney } from "./rent";
+import { owingRent, rentDmsFor, rentDueSoonLine, rentGroupLine, rentWindows, shortMoney } from "./rent";
 
 const TZ = "America/Chicago";
 const at = (month: number, day: number, hour: number, minute = 0) => zonedTimeToUtc(TZ, { year: 2026, month, day, hour, minute });
@@ -75,4 +75,15 @@ test("owingRent: only this month's Shares against what was paid the Payer since 
   // Sam paying Dev (the Settle plan routing a debt elsewhere) doesn't pay Maya's rent.
   assert.deepEqual(owingRent("maya", rent.shares, [{ fromId: "sam", toId: "dev", cents: 60000, day: "2026-11-01" }], since), ["Dev", "Sam"]);
   assert.deepEqual(owingRent("maya", rent.shares, [], since), ["Dev", "Sam"], "never the Payer");
+});
+
+test("rentDueSoonLine (#70): within 7 local days, by weekday, today / tomorrow when that close; never a share", () => {
+  const rent = { dueDay: 6, startsOn: "2026-10-06" };
+  assert.equal(rentDueSoonLine(rent, TZ, at(11, 2, 9)), "Rent's due Friday.", "Mon Nov 2 -> Fri Nov 6");
+  assert.equal(rentDueSoonLine(rent, TZ, at(11, 5, 9)), "Rent's due tomorrow.");
+  assert.equal(rentDueSoonLine(rent, TZ, at(11, 6, 23, 30)), "Rent's due today.", "late on the due day, still local today");
+  assert.equal(rentDueSoonLine(rent, TZ, at(10, 30, 9)), "Rent's due Friday.", "Oct 30 -> Nov 6 is 7 days, across the DST change");
+  assert.equal(rentDueSoonLine(rent, TZ, at(10, 29, 9)), null, "8 days out isn't soon");
+  assert.equal(rentDueSoonLine(rent, TZ, at(11, 7, 9)), null, "just past: next month's is a month away");
+  assert.equal(rentDueSoonLine({ dueDay: 6, startsOn: "2026-12-06" }, TZ, at(11, 2, 9)), null, "not started yet: December is far");
 });

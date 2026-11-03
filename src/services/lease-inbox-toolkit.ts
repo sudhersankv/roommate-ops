@@ -14,7 +14,7 @@ import { recordFor } from "./activity";
 import { requireAdmin } from "./authz";
 import { logMessage } from "./chatlog";
 import { askedSender, ensureInbox, inboxOf, knownSenders, NO_INBOX, sendToLandlord, trustSender, workOrderStatus, type SendApproval, type SendResult } from "./lease-inbox";
-import { asksFollowUp, followUpBody, followUpCandidates, leaseBundleText, leaseReportText, type QuietOrder } from "./lease-inbox-rules";
+import { asksFollowUp, followUpBody, followUpCandidates, leaseBundleText, leaseReportText, visitLine, visitPhrase, type QuietOrder } from "./lease-inbox-rules";
 import { admins } from "./members";
 import { noticeStatus, type Notice, type NoticeState } from "./notice-window";
 import type { ReportPart } from "./report";
@@ -138,7 +138,7 @@ export async function sendForMember(ctx: Ctx, input: MemberSend, now = new Date(
 }
 
 /** "What's up with the sink?" as one line. */
-export async function workOrderLine(ctx: GroupCtx, what?: string): Promise<{ found: boolean; line: string; choices?: string[]; status?: string; lastReply?: string | null; scheduledFor?: string | null }> {
+export async function workOrderLine(ctx: GroupCtx, what?: string, now = new Date()): Promise<{ found: boolean; line: string; choices?: string[]; status?: string; lastReply?: string | null; scheduledFor?: string | null; visit?: string }> {
   const s = await workOrderStatus(ctx, { what });
   if (!s) return { found: false, line: what ? `I haven't reported anything about ${what}.` : "No work orders yet." };
   if ("choices" in s) {
@@ -148,8 +148,18 @@ export async function workOrderLine(ctx: GroupCtx, what?: string): Promise<{ fou
   const tz = await groupTimezone(ctx.groupId);
   const when = formatInZone(s.lastActivityAt, tz, { weekday: "short", month: "short", day: "numeric" });
   const state =
-    s.status === "sent" ? `sent, no answer yet (since ${when})` : s.status === "acknowledged" ? `they've seen it (${when})` : s.status === "scheduled" ? `scheduled for ${s.scheduledFor}` : "done";
-  return { found: true, status: s.status, lastReply: s.lastReply, scheduledFor: s.scheduledFor, line: `${s.title}: ${state}.${s.lastReply ? ` Last word from them: ${s.lastReply}` : ""}` };
+    s.status === "sent"
+      ? `sent, no answer yet (since ${when})`
+      : s.status === "acknowledged"
+        ? `they've seen it (${when})`
+        : s.status === "scheduled"
+          ? s.scheduledFor
+            ? `scheduled for ${visitPhrase(s.scheduledFor, tz, now).replace(/^on /, "")}`
+            : "scheduled"
+          : "done";
+  // #70: a scheduled visit is the one extra line worth saying when someone asks about the repair.
+  const visit = s.status === "scheduled" && s.scheduledFor ? visitLine(s.title, s.scheduledFor, tz, now) : undefined;
+  return { found: true, status: s.status, lastReply: s.lastReply, scheduledFor: s.scheduledFor, ...(visit ? { visit } : {}), line: `${s.title}: ${state}.${s.lastReply ? ` Last word from them: ${s.lastReply}` : ""}` };
 }
 
 /* ---------- notices ---------- */

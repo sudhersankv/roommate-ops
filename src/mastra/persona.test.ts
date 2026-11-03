@@ -68,3 +68,24 @@ test("house style: answer first, short, links only when asked, facts over what w
   assert.match(text, /don't offer a page or a link unless someone asks for one/);
   assert.match(text, /say the fact in one line; don't explain or apologize/);
 });
+
+test("variety (#70): the last replies' openers and stock lines go in as a don't-open-with list; nothing to avoid, no block", () => {
+  const recent = ["Logged. $40 pizza, split 3 ways.", "Dev.", "$20.72 to Maya. That's it.", "Done. I'll ping him at 9."];
+  const text = composePersona({ personality: defaultPersonality(), recentReplies: recent, memberNames: ["Maya", "Dev", "Sam"] });
+  assert.match(text, /VARIETY \(from your last 4 replies\)/);
+  assert.match(text, /Don't open with these: "Logged\.", "Done\."/);
+  assert.match(text, /Don't reuse these lines: "That's it\."/);
+  assert.ok(!/Don't open with these:[^\n]*"Dev/.test(text), "a name is the answer, never an opener to avoid");
+  assert.ok(!/VARIETY/.test(composePersona({ personality: defaultPersonality(), recentReplies: ["Dev.", "(reacted ✅)"], memberNames: ["Dev"] })));
+  assert.ok(text.indexOf("VARIETY") > text.indexOf("HOW YOU SOUND"), "right after the examples");
+});
+
+test("how you sound (#70): several examples per situation, framed as a feel, and the useful extra lines named", () => {
+  const text = composePersona({ personality: defaultPersonality() });
+  assert.match(text, /HOW YOU SOUND \(sounds like this, not a script/);
+  const owes = /- What someone owes: (.*)/.exec(text)?.[1] ?? "";
+  assert.ok((owes.match(/" \/ "/g) ?? []).length >= 2, "2-4 examples for one situation");
+  assert.match(text, /log_chore's nextUp/);
+  assert.match(text, /get_balances' rentDueSoon/);
+  assert.match(text, /work_order_status's visit/);
+});

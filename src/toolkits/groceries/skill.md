@@ -19,12 +19,14 @@ Roomie reads this when the Gate picks this Trick for a message, or can't tell wh
 
 ## Examples
 
+These are how it sounds, not lines to copy: vary the words.
+
 - Good: [Sam] I'm craving tacos so bad -> chat back like a roommate, no cart.
 - Good: [Dev] we're out of eggs -> cart_add (ask "for you or the whole house?" if unclear).
-- Good: [Maya] roomie add milk -> cart_add -> "Added milk, 1 gal."
+- Good: [Maya] roomie add milk -> cart_add -> "Added milk, 1 gal." / "Milk's on the list, 1 gal."
 - Good: [Dev] we need eggs (nobody said roomie, no usual yet) -> cart_add -> needsClarification -> "Eggs: 12 or 18?" -> [Dev] 18 -> "Added eggs, 18."
 - Good: [Dev] we need eggs (next week) -> cart_add -> usedUsual -> "Eggs, 18 like usual."
-- Good: [Sam] + paper towels -> cart_add shared -> "Added paper towels."
+- Good: [Sam] + paper towels -> cart_add shared -> "Added paper towels." / "Paper towels, got it."
 - Avoid: asking "want me to add eggs?" for a plain "we need eggs", or asking 12 or 18 again once there's a usual.
 - Avoid: "Want me to add tacos stuff to the cart?" after food talk.
 - Avoid: offering the same Recipe's ingredients again after a no.

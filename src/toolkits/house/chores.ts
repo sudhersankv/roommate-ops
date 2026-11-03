@@ -22,7 +22,7 @@ export const choreTools = {
   log_chore: createTool({
     id: "log_chore",
     description:
-      "Record a chore someone did: 'I did the dishes' (the sender), 'Dev took out the trash' (who: Dev). Free-text chore name, fuzzy-matched to the chart and added if new. Returns whose turn is next, and react when a reaction is answer enough.",
+      "Record a chore someone did: 'I did the dishes' (the sender), 'Dev took out the trash' (who: Dev). Free-text chore name, fuzzy-matched to the chart and added if new. Returns nextUp (who's next, when it's someone else: say it in a few words) or react when a reaction is answer enough.",
     inputSchema: z.object({
       chore: z.string().min(1).describe("Free text, e.g. 'the dishes', 'trash'"),
       who: z.string().optional().describe("Member name when someone else did it; omit for the sender"),
@@ -30,8 +30,11 @@ export const choreTools = {
     execute: async ({ chore, who }, context) => {
       const ctx = ctxOf(context);
       const done = await chores.logChore(ctx, { chore, memberId: who ? await memberIdByName(ctx, who) : undefined });
+      // #70: who's next is the useful extra line; with it there's something to say, so no reaction.
+      const { nextUp: _next, ...rest } = done;
+      const nextUp = reactions.nextUpWorthSaying(done);
       const react = reactions.choreDoneReaction(done);
-      return { ...done, ...(react ? { react } : {}) };
+      return { ...rest, ...(nextUp ? { nextUp } : {}), ...(react ? { react } : {}) };
     },
   }),
   chore_add: createTool({

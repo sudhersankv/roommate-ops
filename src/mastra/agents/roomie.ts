@@ -47,6 +47,7 @@ export const roomie = new Agent({
       mood,
       people: facts,
       recentReplies,
+      memberNames: people.map((p) => p.displayName),
       changes,
     });
   },

@@ -490,6 +490,7 @@ describe("Roomie tools against the dev DB", () => {
     assert.equal(r3.chore, "Take out trash");
     assert.equal(r3.doneBy, "Alex");
     assert.equal(r3.nextUp, "Sudhersan", "after Alex in Ryan, Alex, Sudhersan");
+    assert.equal(r3.react, undefined, "#70: someone else is next, so a line instead of ✅");
     const logs = await db
       .select({ memberId: schema.choreLogs.memberId, name: schema.chores.name })
       .from(schema.choreLogs)

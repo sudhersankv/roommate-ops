@@ -11,7 +11,7 @@ import { roomiePaused } from "@/lib/kill-switch";
 import { daytimeHour } from "@/lib/quiet-hours";
 import { formatMoney } from "@/lib/money";
 import { payLinks } from "@/lib/pay-links";
-import { addDaysToDay, dayInZone, zonedTimeToUtc } from "@/lib/time";
+import { addDaysToDay, dayInZone, daysBetweenDays, zonedTimeToUtc } from "@/lib/time";
 import { NotAllowedError, requireActive } from "./authz";
 import { listMembersWithHandles } from "./members";
 import { getExpense, logExpense, updateExpense, type ExpenseInput } from "./money";
@@ -70,6 +70,22 @@ export function rentWindows(dueDay: number, tz: string, now: Date): { aheadDay: 
 /** The group's line three days before. Who pays the landlord, never anyone's share. */
 export function rentGroupLine(rent: Pick<Rent, "cents" | "payerName" | "currency">, dueOn: string): string {
   return `🏠 Rent ${shortMoney(rent.cents, rent.currency)} is due ${weekdayOf(dueOn)}. ${rent.payerName} pays the landlord.`;
+}
+
+/** How many local days ahead "what do I owe?" mentions the rent (#70). */
+export const RENT_SOON_DAYS = 7;
+
+/**
+ * "What do I owe?"'s extra line (#70): "Rent's due Friday." while the next due day is within RENT_SOON_DAYS local days
+ * ("today", "tomorrow" when that close), else null. Never anyone's share: it can be said in the group.
+ */
+export function rentDueSoonLine(rent: Pick<Rent, "dueDay" | "startsOn">, tz: string, now: Date): string | null {
+  const today = dayInZone(tz, now);
+  const w = rentWindows(rent.dueDay, tz, now);
+  const next = rent.startsOn > w.dueDay ? rent.startsOn : w.dueDay;
+  const days = daysBetweenDays(today, next);
+  if (days < 0 || days > RENT_SOON_DAYS) return null;
+  return `Rent's due ${days === 0 ? "today" : days === 1 ? "tomorrow" : weekdayOf(next)}.`;
 }
 
 /** The due day's line, only while someone still owes the Payer: names, never amounts. */
@@ -248,6 +264,12 @@ export async function rentStatus(ctx: GroupCtx, now = new Date()): Promise<{ ren
   const rent = await getRent(ctx);
   if (rent) return { rent: rentSummary(rent, await groupTimezone(ctx.groupId), now), offer: false };
   return { rent: null, offer: await claimRentOffer(ctx.groupId) };
+}
+
+/** get_balances' rentDueSoon (#70): rentDueSoonLine for the Group's rent, or null (no rent, or not soon). */
+export async function rentDueSoon(ctx: GroupCtx, now = new Date()): Promise<string | null> {
+  const rent = await getRent(ctx);
+  return rent ? rentDueSoonLine(rent, await groupTimezone(ctx.groupId), now) : null;
 }
 
 export const RENT_OFFER_LINE = `Want me to keep track of rent? Say "roomie, rent is 2400 on the 1st, I pay it" and I'll tell everyone their share before it's due.`;

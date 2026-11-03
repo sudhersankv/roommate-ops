@@ -646,12 +646,26 @@ export const SCENARIOS: Scenario[] = [
     expect: { tools: ["log_chore"], check: async (e) => fail((await chores.choreStatus(e.ctx)).find((c) => c.name === "Dishes")?.lastDoneBy === "Dev", "Dishes done by Dev") },
   },
   {
-    // #77: a plain done on a chore on the chart: ✅ on the message, no line, the done recorded.
-    id: "react-trash-done",
+    // #70: a plain done where someone else is next: a reply naming who's next instead of ✅, the done recorded.
+    id: "trash-done-says-next",
     area: "house",
-    seed: async (e) => void (await chores.addChore(e.ctx, { name: "Take out trash", everyDays: 3 })),
+    seed: async (e) => void (await chores.addChore(e.ctx, { name: "Take out trash", everyDays: 3, rotation: [e.member.Sam, e.member.Dev, e.member.Maya] })),
     turn: { text: "roomie trash done", from: "Sam" },
-    expect: { tools: ["log_chore"], reacts: "✅", reactionOnly: true, check: async (e) => fail((await chores.choreStatus(e.ctx)).find((c) => /trash/i.test(c.name))?.lastDoneBy === "Sam", "trash done by Sam") },
+    expect: {
+      tools: ["log_chore"],
+      noReaction: true,
+      replyIncludes: ["Dev"],
+      maxLines: 2,
+      check: async (e) => fail((await chores.choreStatus(e.ctx)).find((c) => /trash/i.test(c.name))?.lastDoneBy === "Sam", "trash done by Sam"),
+    },
+  },
+  {
+    // #77: a plain done with nobody else next (a one-person Rotation): ✅ on the message, no line, the done recorded.
+    id: "react-plants-done",
+    area: "house",
+    seed: async (e) => void (await chores.addChore(e.ctx, { name: "Water the plants", everyDays: 3, rotation: [e.member.Sam] })),
+    turn: { text: "roomie watered the plants", from: "Sam" },
+    expect: { tools: ["log_chore"], reacts: "✅", reactionOnly: true, check: async (e) => fail((await chores.choreStatus(e.ctx)).find((c) => /plant/i.test(c.name))?.lastDoneBy === "Sam", "plants done by Sam") },
   },
   {
     // #77: a done with a question in it gets an answer, not a reaction.
@@ -1551,7 +1565,7 @@ export const SCENARIOS: Scenario[] = [
     id: "video-log-paper-towels",
     area: "personality",
     turn: { text: "roomie paid $20 for paper towels + soap" },
-    expect: { tools: ["log_expense"], replyIncludes: [/^logged/i, "20"], maxLines: 2, emoji: { max: 1 }, excludes: [/I'll log|I have logged|I've gone ahead/i] },
+    expect: { tools: ["log_expense"], replyIncludes: ["20", /towel|soap/i], maxLines: 2, emoji: { max: 1 }, excludes: [/I'll log|I have logged|I've gone ahead/i] },
   },
   {
     id: "video-what-do-i-owe",
@@ -1575,6 +1589,48 @@ export const SCENARIOS: Scenario[] = [
     },
     turn: { text: "roomie who's on dishes tonight?", from: "Sam" },
     expect: { tools: ["chore_status"], replyIncludes: ["Dev"], maxLines: 1 },
+  },
+  /* ---------- the voice (#70): varied, plus the one useful extra line ---------- */
+  {
+    // Roomie opened its last replies with "Logged.": this one opens another way, with the same facts.
+    id: "voice-no-repeat-opener",
+    area: "personality",
+    seed: async (e) => {
+      await chatlog.logMessage(e.ctx.groupId, null, "Logged. $30.00 pizza, $10.00 each.");
+      await chatlog.logMessage(e.ctx.groupId, null, "Logged. $12.00 coffee, $4.00 each.");
+    },
+    turn: { text: "roomie I paid $60 for internet", from: "Dev" },
+    expect: { tools: ["log_expense"], replyIncludes: ["60", "20"], excludes: [/^\s*logged\b/i], maxLines: 2 },
+  },
+  {
+    // Rent is due within the week: "what do I owe?" gets the amount, plus the rent line.
+    id: "voice-owe-rent-soon",
+    area: "splitting",
+    seed: async (e) => {
+      await internet(e);
+      const { setRent } = await import("@/services/rent");
+      const tz = (await groups.getGroup(e.ctx.groupId))?.timezone ?? "America/Chicago";
+      const local = zonedParts(tz, new Date(Date.now() + 3 * 86_400_000));
+      await setRent(e.ctx, { cents: 240000, dueDay: local.day > 28 ? 1 : local.day });
+    },
+    turn: { text: "roomie what do i owe?", from: "Sam" },
+    expect: { tools: ["get_balances"], noTools: "actions", replyIncludes: ["Maya", /rent/i, /due/i], maxLines: 2 },
+  },
+  {
+    // A scheduled repair: asked about the sink, Roomie says when they're coming.
+    id: "voice-sink-visit",
+    area: "lease",
+    seed: async (e) => {
+      await landlordKnown(e);
+      const { reportIssue } = await import("@/services/lease-inbox");
+      await reportIssue(e.as("Dev"), { what: "the leaking kitchen sink", instruction: "roomie the sink's leaking, tell them" });
+      const tz = (await groups.getGroup(e.ctx.groupId))?.timezone ?? "America/Chicago";
+      const t = zonedParts(tz, new Date(Date.now() + 86_400_000));
+      const day = `${t.year}-${String(t.month).padStart(2, "0")}-${String(t.day).padStart(2, "0")}`;
+      await db.update(schema.workOrders).set({ status: "scheduled", scheduledFor: `${day}T10:00` }).where(eq(schema.workOrders.groupId, e.ctx.groupId));
+    },
+    turn: { text: "roomie what's up with the sink?", from: "Sam" },
+    expect: { tools: ["work_order_status"], noTools: "actions", replyIncludes: [/tomorrow/i, /10/], maxLines: 2 },
   },
   {
     id: "video-rate-roommates",

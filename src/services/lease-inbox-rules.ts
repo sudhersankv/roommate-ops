@@ -68,6 +68,24 @@ const visitTime = (when: string) => {
   return ` at ${h === 12 && t[2] === "00" ? "noon" : `${h % 12 || 12}${t[2] === "00" ? "" : `:${t[2]}`} ${h < 12 ? "AM" : "PM"}`}`;
 };
 
+const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/**
+ * When the landlord's visit is, ready to say (#70): "today at 2 PM", "tomorrow at 10 AM", "on Thursday" (this week),
+ * else "on Nov 12". `scheduledFor` is the local "YYYY-MM-DD[THH:mm]" the landlord gave.
+ */
+export function visitPhrase(scheduledFor: string, tz: string, now: Date): string {
+  const day = scheduledFor.slice(0, 10);
+  const days = daysBetweenDays(dayInZone(tz, now), day);
+  const d = new Date(`${day}T12:00:00Z`);
+  const when = days === 0 ? "today" : days === 1 ? "tomorrow" : days > 1 && days < 7 ? `on ${DAY_NAMES[d.getUTCDay()]}` : `on ${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}`;
+  return `${when}${visitTime(scheduledFor)}`;
+}
+
+/** work_order_status's extra line for a scheduled repair (#70): "They're coming tomorrow at 10 AM about the sink." */
+export const visitLine = (title: string, scheduledFor: string, tz: string, now: Date) => `They're coming ${visitPhrase(scheduledFor, tz, now)} about ${title}.`;
+
 /**
  * The work orders Roomie may ask about following up: sent and still unanswered (no reply moved them on) for 2 or more
  * local days, oldest quiet first. Whether one was already asked about is the caller's (scheduled_posts

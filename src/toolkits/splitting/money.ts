@@ -6,6 +6,7 @@ import { EXPENSE_CATEGORIES, RECURRENCES, SPLIT_METHODS } from "@/db/enums";
 import { payLinks } from "@/lib/pay-links";
 import { groups, members, money, reactions } from "@/services";
 import { expenseSummary, type Transfer } from "@/services/money";
+import { rentDueSoon } from "@/services/rent";
 import { moneyIn, type Ctx, type GroupCtx } from "@/services/types";
 import { ctxOf, memberIdByName, toCents } from "../util";
 
@@ -138,16 +139,17 @@ export const moneyTools = {
   get_balances: createTool({
     id: "get_balances",
     description:
-      "Who owes what: each member's balance (positive = is owed) and the settle plan. With 'simplify debts' on the plan is the fewest payments; off, it's pairwise (each pair's net from what they shared). Amounts are ready to say.",
+      "Who owes what: each member's balance (positive = is owed) and the settle plan. With 'simplify debts' on the plan is the fewest payments; off, it's pairwise (each pair's net from what they shared). Amounts are ready to say. rentDueSoon, when there, is a line worth adding for 'what do I owe?'.",
     inputSchema: z.object({}),
     execute: async (_input, context) => {
       const ctx = ctxOf(context);
-      const [balances, plan, group] = await Promise.all([money.getBalances(ctx), money.getSettlePlan(ctx), groups.getGroup(ctx.groupId)]);
+      const [balances, plan, group, rentSoon] = await Promise.all([money.getBalances(ctx), money.getSettlePlan(ctx), groups.getGroup(ctx.groupId), rentDueSoon(ctx).catch(() => null)]);
       const amount = moneyIn(group?.currency);
       return {
         simplifyDebts: group?.simplifyDebts ?? true,
         balances: balances.map((b) => ({ name: b.name, balance: `${b.cents > 0 ? "+" : b.cents < 0 ? "-" : ""}${amount(Math.abs(b.cents))}`, cents: b.cents })),
         settlePlan: plan.map((t) => transferText(t, amount)),
+        ...(rentSoon ? { rentDueSoon: rentSoon } : {}),
       };
     },
   }),
