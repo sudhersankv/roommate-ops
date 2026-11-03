@@ -73,7 +73,8 @@ src/
     money.ts            Expenses (logExpense/updateExpense take intent: method + splitAmong|splits|percents|shares,
                         payers, category, note, occurredOn, recurring), delete/restore, Balances (from expense_payers),
                         getSettlePlan (simplified or pairwiseDebts per groups.simplify_debts), settleUp, debtBetween,
-                        expenseSummary (ready-to-say), settleReportParts (Money's report section)
+                        expenseSummary (ready-to-say), settleReportParts (Money's report section); combineShares (pure) /
+                        loggedTogether: a run's Expenses as one line ("Logged both. $62.18 split 3 ways: ...", #71)
     categories.ts       guessCategory (fallback when nobody picked one)
     recurring.ts        latestOccurrence + runRecurring; variable bills: variableAsk, setVariableExpense, answerAmount,
                         prefillAmount (#25)
@@ -197,7 +198,7 @@ src/
   mastra/
     index.ts            `mastra`: the roomie agent, PostgresStore, Observability, scorers, logger
     context.ts          RequestContext schema { groupId, memberId, memberName, role, status, source, toolkits?,
-                        toolkit?, gate?, mayStaySilent?, pet? ("petted" | "greet") } + ctxOf()
+                        toolkit?, gate?, mayStaySilent?, pet? ("petted" | "greet"), runId? (one per run, #71) } + ctxOf()
     agents/roomie.ts    ONE agent, built once: fetches the facts (personality, mood, people, Roomie's last replies,
                         enabled Toolkits); tools = toolsFor(toolkit, enabled Toolkits)
     agents/instructions.ts  pure: roomieInstructions = composePersona(...) with its Toolkit slot filled from the enabled
@@ -236,7 +237,8 @@ src/
                         and a manifest's adminOnly tools only run when the Admin's own message asks (adminAskGate)
     admin-ask.ts        pure: checkAdminAsk (action words + target in `latest`, or yes + one of them after Roomie asked)
     catalog.ts          server: allToolkits, enabledFor(groupId), isEnabled, toolkitStates (React-cached per request)
-    util.ts             ctxOf, toCents, memberIdByName (opts.includePending), dashboardLinks
+    util.ts             ctxOf, toCents, memberIdByName (opts.includePending), dashboardLinks, loggedThisRun / togetherThisRun
+                        (the Expenses a run logged, by runId in memory for 10 min: the second log returns `together`, #71)
     core/               manifest.ts + server.ts; members (list, list_pending, approve/decline/promote, set_payment_handle,
                         forget_me), people (remember, what_do_you_know_about_me), settings (set_group_settings incl.
                         personality, toggle_toolkit, list_toolkits), dashboard (get_dashboard_link: forEveryone = the Join
@@ -460,6 +462,7 @@ scripts/studio-presets.ts  writes .mastra-presets.json for Studio (run by mastra
 - **Rent** (#25, ADR 0019, `services/rent.ts`) is the recurring monthly Expense with category `rent`, one Payer and any split; `set_rent` / `rent_status` (shares only in a DM). Money's `bundle()` says it 3 local days before the due day and on the due day while someone's rent is unpaid (`owingRent`, pure: their Share of this month's occurrence is more than their Settlements to the Payer since the DMs went out; other debts don't count), and DMs each Share but the Payer's (`rentDmJob`, claimed `rent.ahead` per month, only in the Bundle's hour, clamped to 08:00 like the Bundle, since Home's Today calls `bundle()` too). A change once a month was charged starts a new parent next month.
 - **Variable bills** (`expenses.variable`, `pending_amounts`): the parent has 0 cents of its own (the service allows 0 only for it) and Balances, the Settle plan and Splitwise skip it; `runRecurring` asks its Payer on the due day (one re-ask the next day), `answer_amount` logs the month split like the parent once, `prefillAmount` is the Lease Inbox's hook (the current local month's row, or a new not-yet-asked one; an old unanswered month is left alone). A failed Settle nudge send gives its `nudge.settle` claim back.
 - **The Settle nudge** (ADR 0021, `services/settle-nudge.ts`): Money's `bundle()` runs `settleNudgeJob` daily in the Bundle's hour (clamped to 08:00 like the Bundle). Per pairwise debt over `settings.nudge.thresholdCents` (default $5): the first DM once its newest contribution is 4 hours old, then every `everyDays` (default 2, Admin 1-14; an old `thresholdDays` 1-14 is read as it) while it's still over, at most 5 per episode (pure `nudgeDue`; `episodeOf` replays the pair's ledger: going over the line or a Settlement from the debtor starts one, dropping to the line ends it). Each DM claims `nudge.settle` `<day>:<from>:<to>` (the claims are the history) and is shorter than the last ("Hey Dev, quick one: $40.73 to Maya for wifi + groceries. Whenever you can." -> "Still $40.73 to Maya." -> "Friendly nudge: $40.73 to Maya."), with the payee's pay links; `note.nudges = "off"` skips the Member. The report only counts ("2 open balances; I'm nudging people privately."), never names.
+- **Two at once and no callouts** (#71): when one message logs two (or more) Expenses (`log_expense`, `expense_from_receipt`), the second result carries `together` (`money.loggedTogether`: the total and each person's combined Share, summed from their Shares in cents; amounts only when within a cent, names when they differ) and Roomie posts its `say` ("Logged both. $62.18 split 3 ways: $20.73, $20.73, $20.72."). The run is the RequestContext's `runId` (the pipeline sets one per message). Roomie never calls anyone out about money in the group, even when asked: it offers to remind them privately (a private `set_reminder` on a yes); plain balances questions get the facts (the splitting skill; evals `money-two-at-once`, `money-no-public-callout`, `money-balances-in-group`).
 - **Splitwise** (ADR 0004, 0009): `SplitwiseClient` with a Composio implementation (`composio.tools.execute(slug, { userId: accounts.id, arguments })`, `connectedAccounts.link(userId, authConfigId, { callbackUrl })` for OAuth) and `FakeSplitwise`. `splitwiseClient()` returns the fake when `SPLITWISE_FAKE=1` (tests inject one with `setSplitwiseClient`); dev-chat switches to the fake by itself when `COMPOSIO_API_KEY` is missing or rejected and says so once. A 401 / missing key / no connection is `SplitwiseNotConnectedError` ("Splitwise isn't connected yet"), relayed as text, never a crash; Settings shows the card disabled with the reason. Import maps people by email, then name, else adds them as Pending; owed_share -> exact Shares, paid_share -> Payers, payments -> Settlements, refs dedupe per Group. Export is a one-time copy of what has no ref; the live mirror queues `outbox_jobs` that the scheduler pushes (create/update/delete by ref, retried with backoff).
 
 ## Groceries (step 6)

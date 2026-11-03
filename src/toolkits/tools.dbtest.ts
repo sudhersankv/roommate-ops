@@ -223,6 +223,20 @@ describe("Roomie tools against the dev DB", () => {
     assert.deepEqual(await sharesOf(e.id), { Ryan: 501, Alex: 500 });
   });
 
+  test("log_expense twice in one run (#71): the second returns together, the run's total and combined Shares in cents", async () => {
+    const one = new RequestContext<unknown>([...(requestContext.entries() as Iterable<[string, unknown]>), ["runId", `run-${Date.now()}`]]);
+    const a: Summary = await run("log_expense", { amount: 20, description: "paper towels + soap", category: "household" }, one);
+    assert.equal((a as { together?: unknown }).together, undefined, "the first is its own line");
+    const b = await run("log_expense", { amount: 42.18, description: "Trader Joe's", category: "groceries" }, one);
+    assert.equal(b.together.say, "Logged both. $62.18 split 3 ways: $20.73, $20.73, $20.72.");
+    const people: { name: string; owes: string }[] = b.together.people;
+    assert.deepEqual(people.map((p) => p.owes), ["$20.73", "$20.73", "$20.72"]);
+    assert.equal(people.find((p) => p.name === "Sudhersan")?.owes, "$20.73", "the payer took the odd cent of the $20");
+    const other = await run("log_expense", { amount: 5, description: "gum", category: "other" });
+    assert.equal(other.together, undefined, "another run (no runId) doesn't combine");
+    for (const id of [a.id, b.id, other.id]) await money.deleteExpense(ctx, { expenseId: id });
+  });
+
   test("get_balances: who owes what + settle plan (nets to zero)", async () => {
     const { balances, settlePlan, simplifyDebts } = await run("get_balances", {});
     const by = Object.fromEntries(balances.map((b: { name: string; cents: number }) => [b.name, b.cents]));

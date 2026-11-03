@@ -10,6 +10,7 @@
 // addressed (logged as "(photo)" / "(voice note)"). Text is cut to 2,000 characters; Jev and agent runs are capped
 // per Group and Member (lib/caps.ts).
 import "@/lib/env";
+import { randomUUID } from "node:crypto";
 import { RequestContext } from "@mastra/core/request-context";
 import { SpanType, type AnySpan } from "@mastra/core/observability";
 import { deliver, deliverPrivate } from "@/channels";
@@ -394,6 +395,7 @@ export async function respond(input: RespondInput): Promise<PipelineResult> {
     ...(petted ? { pet: "petted" as const } : greeting ? { pet: "greet" as const } : {}),
     latest: text,
     ...(input.isPrivate ? { isPrivate: true } : {}),
+    runId: randomUUID(),
   };
   const requestContext = new RequestContext<RoomieContext>(Object.entries(ctx) as [keyof RoomieContext, never][]);
 

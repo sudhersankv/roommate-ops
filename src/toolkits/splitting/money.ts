@@ -8,7 +8,7 @@ import { groups, members, money, reactions } from "@/services";
 import { expenseSummary, type Transfer } from "@/services/money";
 import { rentDueSoon } from "@/services/rent";
 import { moneyIn, type Ctx, type GroupCtx } from "@/services/types";
-import { ctxOf, memberIdByName, toCents } from "../util";
+import { ctxOf, memberIdByName, toCents, togetherThisRun } from "../util";
 
 const transferText = (t: Transfer, amount: (cents: number) => string) => ({ from: t.fromName, to: t.toName, amount: amount(t.cents) });
 /** Amounts said in the Group's currency. */
@@ -59,7 +59,7 @@ export const moneyTools = {
     description:
       "Record a shared expense ('I paid $60 for internet'). Defaults: payer = sender, split equally among everyone, today. " +
       "Pass the split the way people said it and let the service do the math: percents for '50/25/25', shares for '2:2:1', exact for amounts per person, payers for 'Alex paid 60 and I paid 40'. Never pass per-person amounts you calculated yourself. " +
-      "Always set a category. Exact amounts or payers that don't add up come back as an error: ask instead of fixing them.",
+      "Always set a category. Exact amounts or payers that don't add up come back as an error: ask instead of fixing them. When this message already logged another expense, it returns together: say together.say as it is, for both.",
     inputSchema: z.object({
       amount: z.number().positive().describe("The total in the group's currency, e.g. 62.5"),
       description: z.string().min(1).describe("What it was for, e.g. 'internet'"),
@@ -80,7 +80,7 @@ export const moneyTools = {
         recurring: input.recurring ?? null,
         ...(await resolveSplit(ctx, input)),
       });
-      return expenseSummary(e, await groups.currencyOf(ctx.groupId));
+      return { ...expenseSummary(e, await groups.currencyOf(ctx.groupId)), ...(await togetherThisRun(ctx, context, e.id)) };
     },
   }),
   update_expense: createTool({

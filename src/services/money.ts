@@ -659,6 +659,57 @@ export async function getExpense(ctx: GroupCtx, expenseId: string): Promise<Expe
   return (await listExpenses(ctx, 1, { expenseId }))[0];
 }
 
+/* ---------- several Expenses logged in one run (#71) ---------- */
+
+export type CombinedShares = {
+  count: number;
+  total: string;
+  /** Each person's combined Share across the Expenses, biggest first (ties by name). */
+  people: { name: string; owes: string }[];
+  /** Ready to post: "Logged both. $62.18 split 3 ways: $20.73, $20.73, $20.72." */
+  say: string;
+};
+
+/**
+ * Two or more Expenses logged from one message as one line (pure, integer cents): the total and each person's
+ * combined Share, summed from the Expenses' own Shares, never computed by the model. Amounts only when the Shares
+ * are within a cent of each other ("$20.73, $20.73, $20.72"), "each" when they're equal, names when they differ
+ * more ("Maya $30.00, Dev $20.00, Sam $12.18"). Null for fewer than two.
+ */
+export function combineShares(expenses: readonly Pick<Expense, "cents" | "splits">[], currency = "USD"): CombinedShares | null {
+  if (expenses.length < 2) return null;
+  const amount = moneyIn(currency);
+  const total = expenses.reduce((sum, e) => sum + e.cents, 0);
+  const byMember = new Map<string, { name: string; cents: number }>();
+  for (const e of expenses)
+    for (const s of e.splits ?? []) {
+      const p = byMember.get(s.memberId) ?? { name: s.name, cents: 0 };
+      p.cents += s.cents;
+      byMember.set(s.memberId, p);
+    }
+  const people = [...byMember.values()].filter((p) => p.cents > 0).sort((a, b) => b.cents - a.cents || a.name.localeCompare(b.name));
+  const head = expenses.length === 2 ? "Logged both." : `Logged all ${expenses.length}.`;
+  const spread = people.length ? people[0].cents - people.at(-1)!.cents : 0;
+  const parts =
+    people.length <= 1
+      ? people.length
+        ? `${amount(total)}, all ${people[0].name}'s.`
+        : `${amount(total)}.`
+      : spread === 0
+        ? `${amount(total)} split ${people.length} ways, ${amount(people[0].cents)} each.`
+        : spread <= 1
+          ? `${amount(total)} split ${people.length} ways: ${people.map((p) => amount(p.cents)).join(", ")}.`
+          : `${amount(total)} split ${people.length} ways: ${people.map((p) => `${p.name} ${amount(p.cents)}`).join(", ")}.`;
+  return { count: expenses.length, total: amount(total), people: people.map((p) => ({ name: p.name, owes: amount(p.cents) })), say: `${head} ${parts}` };
+}
+
+/** combineShares for the Expenses with these ids (the ones a run logged), as they are now. */
+export async function loggedTogether(ctx: GroupCtx, expenseIds: readonly string[]): Promise<CombinedShares | null> {
+  if (expenseIds.length < 2) return null;
+  const rows = (await Promise.all(expenseIds.map((id) => getExpense(ctx, id)))).filter((e): e is Expense => !!e && !e.deletedAt);
+  return combineShares(rows, await currencyOf(ctx.groupId));
+}
+
 /** What the model reads back about an Expense (Money's tools, the Cart's "I paid"): names and ready-made amounts in the Group's currency, so it never formats or adds cents itself. */
 export function expenseSummary(e: Expense, currency = "USD") {
   const amount = moneyIn(currency);

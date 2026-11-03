@@ -5,7 +5,7 @@ import { cart, groups, members, money, receipts } from "@/services";
 import { expenseSummary } from "@/services/money";
 import { recordReceiptItems } from "@/services/restock";
 import { moneyIn } from "@/services/types";
-import { ctxOf, memberIdByName, toCents } from "../util";
+import { ctxOf, memberIdByName, toCents, togetherThisRun } from "../util";
 
 export const receiptTools = {
   expense_from_receipt: createTool({
@@ -77,7 +77,7 @@ export const receiptTools = {
           occurredOn: parsed.date && parsed.date <= (await money.todayIn(ctx.groupId)) ? parsed.date : undefined,
           note: plan.lines.map((l) => `${l.name} ${amount(l.cents)}`).join(", ").slice(0, 500),
         });
-        return { logged: true, closedCart: true, purchased: r.purchased, checkoutPaid: !!r.checkoutId, ...(r.notOnReceipt.length ? { staysInCart: r.notOnReceipt.map((i) => i.name) } : {}), ...expenseSummary(r.expense, group?.currency) };
+        return { logged: true, closedCart: true, purchased: r.purchased, checkoutPaid: !!r.checkoutId, ...(r.notOnReceipt.length ? { staysInCart: r.notOnReceipt.map((i) => i.name) } : {}), ...expenseSummary(r.expense, group?.currency), ...(await togetherThisRun(ctx, context, r.expense.id)) };
       }
 
       const { rows, items } = receipts.receiptSplits(parsed, assignments, everyone, payerId, totalCents);
@@ -105,7 +105,7 @@ export const receiptTools = {
       });
       // Restock learns from what was bought (grocery and household receipts; claimed lines are that Member's).
       await recordReceiptItems(ctx, { id: e.id, category: e.category ?? "" }, items, everyone).catch((err) => console.warn("[receipts] restock events failed", err));
-      return { logged: true, ...expenseSummary(e, group?.currency) };
+      return { logged: true, ...expenseSummary(e, group?.currency), ...(await togetherThisRun(ctx, context, e.id)) };
     },
   }),
 };
