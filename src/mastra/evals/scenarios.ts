@@ -94,6 +94,7 @@ export const READ_ONLY_TOOLS = new Set([
   "group_report",
   "splitwise_status",
   "list_toolkits",
+  "how_to",
   "work_order_status",
   "ask_lease",
   "inbox_status",
@@ -1624,6 +1625,25 @@ export const SCENARIOS: Scenario[] = [
     },
     turn: { text: "roomie who's on dishes tonight?", from: "Sam" },
     expect: { tools: ["chore_status"], replyIncludes: ["Dev"], maxLines: 1 },
+  },
+  /* ---------- teaching people how to use Roomie (#75) ---------- */
+  {
+    id: "how-to-split-rent",
+    area: "core",
+    turn: { text: "roomie how do I split rent?", from: "Sam" },
+    expect: { tools: ["how_to"], noTools: "actions", replyIncludes: [/rent/i, /"roomie,? [^"]*rent[^"]*"|\u201croomie,? [^\u201d]*rent/i], maxLines: 2, excludes: [...TOOLKIT_WORDS] },
+  },
+  {
+    id: "how-to-cart",
+    area: "core",
+    turn: { text: "roomie how does the cart work?", from: "Dev" },
+    expect: { tools: ["how_to"], noTools: "actions", replyIncludes: [/cart/i, /"roomie|\u201croomie/i], maxLines: 2, excludes: [...TOOLKIT_WORDS, ...NO_PRICE] },
+  },
+  {
+    id: "how-to-chores",
+    area: "core",
+    turn: { text: "roomie what can you do with chores?", from: "Maya" },
+    expect: { tools: ["how_to"], noTools: "actions", replyIncludes: [/chore/i, /"roomie|\u201croomie/i], maxLines: 2, excludes: [...TOOLKIT_WORDS] },
   },
   /* ---------- money (#71): two at once, nobody called out in the group ---------- */
   {

@@ -1422,6 +1422,15 @@ describe("Roomie tools against the dev DB", () => {
     assert.ok(!/toolkit|feature|enable/i.test(list.say + list.whoCanTeach), "Tricks vocabulary only");
     assert.equal(list.links, undefined, "no Browse Tricks link: links only when asked");
 
+    // #75: how to use one Trick, from its manifest, with a phrase to try; one not learned here says so.
+    const rent = await run("how_to", { question: "how do I split rent?" }, alex);
+    assert.deepEqual([rent.found, rent.learned, rent.trick], [true, true, "Money"]);
+    assert.match(rent.say, /^Track the rent.*Just say "roomie, rent is 2400 on the 1st, Maya pays"\.$/);
+    const cartQ = await run("how_to", { question: "how does the cart work?" }, alex);
+    assert.deepEqual([cartQ.found, cartQ.learned], [true, false], "Groceries is off here right now");
+    assert.equal(cartQ.say, "I haven't learned Groceries here yet; an admin can teach me.");
+    assert.deepEqual(await run("how_to", { question: "how do you work?" }, alex), { found: false });
+
     const learned = await run("toggle_toolkit", { toolkit: "groceries", enabled: true });
     assert.equal(learned.say, "Learned Groceries: one shared Cart, recipes for the group, and an Instacart list.");
     const forgot = await run("toggle_toolkit", { toolkit: "groceries", enabled: false });

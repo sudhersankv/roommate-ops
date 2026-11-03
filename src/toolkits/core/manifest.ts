@@ -25,6 +25,7 @@ export const core = defineManifest({
     set_nudges: "Stop or restart your private nudges",
     look_up: "Look something up when you ask: store hours, a plumber near you",
     save_place: "Save a shared pin as the group's place, so 'near us' means near you",
+    how_to: "Say how a Trick works, with a phrase to try",
   },
   groupDecisions: ["set_reminder"],
   adminOnly: {

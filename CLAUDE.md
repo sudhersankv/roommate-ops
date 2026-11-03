@@ -163,6 +163,9 @@ src/
                         wantsNearUs, localQuery, shortAnswer)
     place.ts            the Group's place (#78): group_toolkits["core"].settings.place (no column); getPlace, savePlace
                         (any active Member, "this is our place" on a pin; an Activity row); delete group data drops it
+    how-to.ts           pure (#75): "how do I split rent?" -> trickFor (the Trick, by name / tags / abilities / examples),
+                        howToFor (the matching ability, else the summary, + a Gate example: Just say "roomie, ..."),
+                        howToIn (the Group's catalog; not learned = "I haven't learned X here yet")
     report.ts           groupReport (the enabled Toolkits' report() parts in post order + core's Reminders line, naming no
                         Toolkit) + composeReport / formatGroupReport (one message; casual = sentences), dueWord, joinNames
     bundle.ts           the morning Bundle (ADR 0017): groupBundle = the enabled Toolkits' bundle() lines in post order,
@@ -248,7 +251,7 @@ src/
                         (the Expenses a run logged, by runId in memory for 10 min: the second log returns `together`, #71)
     core/               manifest.ts + server.ts; members (list, list_pending, approve/decline/promote, set_payment_handle,
                         forget_me), people (remember, what_do_you_know_about_me), settings (set_group_settings incl.
-                        personality, toggle_toolkit, list_toolkits), dashboard (get_dashboard_link: forEveryone = the Join
+                        personality, toggle_toolkit, list_toolkits, how_to: #75), dashboard (get_dashboard_link: forEveryone = the Join
                         link line; rotate_join_link, set_join_policy, revoke_seat: adminOnly), reminders, report,
                         documents (keep_document, find_documents: links only with open=true), look-up (look_up: the
                         answer's `say` + one source button + a pin; save_place: "this is our place" on a pin); core's

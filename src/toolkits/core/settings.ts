@@ -4,6 +4,7 @@ import { GROUP_PURPOSES } from "@/db/schema";
 import { WEEKDAY_NAMES } from "@/lib/time";
 import { groups, joins, schedule, toolkits as toolkitsSvc } from "@/services";
 import { setupLine } from "@/onboarding";
+import { howToIn } from "@/services/how-to";
 import { CATALOG, CORE_MANIFEST, manifestOf, TOOLKIT_IDS } from "../manifests";
 import type { ToolkitManifest } from "../types";
 import { ctxOf } from "../util";
@@ -110,6 +111,13 @@ export const settingsTools = {
         throw e;
       }
     },
+  }),
+  how_to: createTool({
+    id: "how_to",
+    description:
+      "How to use one Trick ('how do I split rent?', 'how does the cart work?', 'what can you do with chores?'): returns `say`, one or two lines from that Trick's abilities with a real phrase to try. Post `say` as it is (or in your own words, keeping the phrase exactly). found=false: it's not about one Trick, so answer what they asked (a general 'what can you do' is list_toolkits).",
+    inputSchema: z.object({ question: z.string().min(2).describe("Their question, as asked") }),
+    execute: async ({ question }, context) => howToIn(await toolkitsSvc.catalogFor(ctxOf(context)), question),
   }),
   list_toolkits: createTool({
     id: "list_toolkits",
