@@ -101,6 +101,7 @@ export const receiptTools = {
         payerId,
         occurredOn: parsed.date && parsed.date <= (await money.todayIn(ctx.groupId)) ? parsed.date : undefined,
         receiptUrl: input.receipt_url,
+        receiptItems: { items, taxCents: parsed.taxCents, tipCents: parsed.tipCents },
         note: items.map((i) => `${i.name} ${amount(i.cents)}`).join(", ").slice(0, 500),
       });
       // Restock learns from what was bought (grocery and household receipts; claimed lines are that Member's).

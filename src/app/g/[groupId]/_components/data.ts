@@ -250,6 +250,9 @@ export function expenseView(s: GroupSession, e: Expense): ExpenseView {
     variable: !!e.variable,
     // Only a Document's link renders from this server, whatever APP_URL says; an old /uploads path shows no receipt.
     receiptUrl: receiptHref(e.receiptUrl),
+    receiptItems: e.receiptItems?.items ?? [],
+    receiptTaxCents: e.receiptItems?.taxCents ?? 0,
+    receiptTipCents: e.receiptItems?.tipCents ?? 0,
     inSplitwise: !!e.splitwiseId,
     source: e.source ?? "chat",
     canChange: payers.some((p) => canChangeExpense(s.member, { createdBy: e.createdBy ?? null, payerId: p.memberId, participantIds })),

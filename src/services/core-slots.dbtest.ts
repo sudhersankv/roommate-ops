@@ -265,6 +265,31 @@ describe("core slots against the dev DB", () => {
     assert.equal(await blobs.get(key), null);
   });
 
+  test("a receipt photo goes 30 days after it was logged; the Expense keeps its lines and loses the link", async () => {
+    const photo = await saveUpload({ groupId }, Buffer.from("tacos receipt"), "image/jpeg");
+    const lines = { items: [{ name: "Tacos", cents: 3000, memberIds: [m.Dev] }, { name: "Chips", cents: 1200, memberIds: [m.Dev, m.Sam] }], taxCents: 300, tipCents: 0 };
+    const e = await logExpense(ctxOf(m.Dev), { cents: 4500, description: "Tacos", receiptUrl: photo.path, receiptItems: lines });
+    const row = async () => (await db.select().from(schema.expenses).where(eq(schema.expenses.id, e.id)))[0];
+    assert.deepEqual(e.receiptItems, lines);
+    await documents.purgeOldDocuments();
+    assert.equal((await row()).receiptDocumentId, photo.id, "a fresh receipt stays");
+
+    await db.update(schema.documents).set({ filedAt: new Date(Date.now() - 31 * 24 * 60 * 60 * 1000) }).where(eq(schema.documents.id, photo.id));
+    assert.ok((await documents.purgeOldDocuments()) >= 1);
+    const after = await row();
+    assert.deepEqual([after.receiptDocumentId, after.receiptUrl, after.cents], [null, null, 4500]);
+    assert.deepEqual(after.receiptItems, lines, "the lines stay");
+    assert.equal(await blobs.get(`g/${groupId}/${photo.id}`), null, "the photo is gone");
+
+    const lease = await saveUpload({ groupId }, Buffer.from("old lease"), "image/png");
+    await documents.keepDocument(ctxOf(m.Dev), { url: lease.path, title: "Lease", kind: "lease" });
+    await db.update(schema.documents).set({ filedAt: new Date(Date.now() - 400 * 24 * 60 * 60 * 1000) }).where(eq(schema.documents.id, lease.id));
+    await documents.purgeOldDocuments();
+    assert.ok(await documents.getDocument({ groupId }, lease.id), "a kept lease isn't a receipt: it stays");
+    await documents.deleteDocument(ctxOf(m.Maya), lease.id);
+    await db.delete(schema.documents).where(eq(schema.documents.id, lease.id));
+  });
+
   test("keep and find: 'roomie keep this, it's the lease' files it; find returns it newest first; another Group's link is refused", async () => {
     const pdf = await saveUpload({ groupId }, Buffer.from("lease scan"), "image/png", undefined, { uploadedBy: m.Sam });
     const kept = await documents.keepDocument(ctxOf(m.Sam), { url: pdf.url || pdf.path, title: "Lease 2026-27", kind: "lease" });

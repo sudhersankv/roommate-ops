@@ -36,7 +36,7 @@ async function act<T>(groupId: string, fn: (ctx: Ctx) => Promise<T>): Promise<Ac
 /** What the drawer sends: the intent per method (percents, shares, exact cents typed per person), never derived cents. */
 export type ExpenseForm = Pick<
   money.ExpenseInput,
-  "cents" | "description" | "method" | "splitAmong" | "splits" | "percents" | "shares" | "payers" | "category" | "note" | "occurredOn" | "recurring" | "receiptUrl"
+  "cents" | "description" | "method" | "splitAmong" | "splits" | "percents" | "shares" | "payers" | "category" | "note" | "occurredOn" | "recurring" | "receiptUrl" | "receiptItems"
 >
 
 const clean = (input: ExpenseForm): ExpenseForm => ({
@@ -54,6 +54,15 @@ const clean = (input: ExpenseForm): ExpenseForm => ({
   recurring: input.recurring ?? null,
   // Only our own Documents can be attached from the dashboard (/api/docs/<id>, ADR 0018); the service checks the Group.
   receiptUrl: input.receiptUrl && /^\/api\/docs\/[0-9a-f-]{36}$/i.test(input.receiptUrl) ? input.receiptUrl : null,
+  // A scanned receipt's lines, kept on the Expense after the photo goes. Only names and cents: who had what is the split.
+  receiptItems: input.receiptItems && Array.isArray(input.receiptItems.items) ? receiptLines(input.receiptItems) : null,
+})
+
+const whole = (n: unknown) => (Number.isInteger(n) && (n as number) >= 0 ? (n as number) : 0)
+const receiptLines = (r: NonNullable<ExpenseForm["receiptItems"]>) => ({
+  items: r.items.slice(0, 100).map((i) => ({ name: String(i?.name ?? "").slice(0, 200), cents: whole(i?.cents), memberIds: [] })),
+  taxCents: whole(r.taxCents),
+  tipCents: whole(r.tipCents),
 })
 
 export async function addExpense(groupId: string, input: ExpenseForm) {

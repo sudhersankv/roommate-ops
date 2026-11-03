@@ -30,6 +30,10 @@ export type ExpenseView = {
   /** A bill whose amount is asked of its Payer on each due day; its own cents mean nothing. */
   variable: boolean
   receiptUrl: string | null
+  /** The receipt's lines and who had each; they stay after the photo goes (30 days after it was logged). */
+  receiptItems: { name: string; cents: number; memberIds: string[] }[]
+  receiptTaxCents: number
+  receiptTipCents: number
   inSplitwise: boolean
   source: string
   canChange: boolean

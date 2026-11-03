@@ -2,6 +2,7 @@
 // everywhere (ADR 0007): the model passes intent (percents, shares, who was in), never per-person cents it worked out.
 import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
+import type { ReceiptLines } from "@/db/schema";
 import type { ExpenseCategory, ExpenseSource, Recurrence, SplitMethod } from "@/db/enums";
 import { localDay } from "@/lib/dates";
 import { recordFor } from "./activity";
@@ -44,6 +45,8 @@ export type Expense = {
   receiptUrl?: string | null;
   /** The receipt's Document (open it at receiptUrl, /api/docs/<id>). */
   receiptDocumentId?: string | null;
+  /** The receipt's lines, kept after the photo is gone. */
+  receiptItems?: ReceiptLines | null;
   splitwiseId?: string | null;
   deletedAt?: Date | null;
 };
@@ -156,6 +159,8 @@ export type ExpenseInput = {
   /** The parent this Expense is a month of (a variable parent's answered amount). */
   recurringParentId?: string;
   receiptUrl?: string | null;
+  /** A receipt's lines and who had each (expense_from_receipt); written once, when it's logged. */
+  receiptItems?: ReceiptLines | null;
   source?: ExpenseSource;
 };
 
@@ -171,6 +176,7 @@ export type BuiltExpense = {
   occurredOn: string;
   recurring: Recurrence | null;
   receiptUrl: string | null;
+  receiptItems: ReceiptLines | null;
 };
 
 function assertWholeCents(cents: number, what = "Amount") {
@@ -243,6 +249,7 @@ async function build(ctx: Ctx, input: ExpenseInput): Promise<BuiltExpense & { na
     occurredOn: input.occurredOn ? checkDay(input.occurredOn) : await todayIn(ctx.groupId),
     recurring: input.recurring ?? null,
     receiptUrl: input.receiptUrl ?? null,
+    receiptItems: input.receiptItems ?? null,
     nameOf,
     amount,
   };
@@ -262,7 +269,7 @@ async function writeShares(tx: Tx, expenseId: string, b: Pick<BuiltExpense, "pay
 export async function insertExpenseRows(
   groupId: string,
   createdBy: string | null,
-  b: Omit<BuiltExpense, "weights"> & { weights?: Map<string, number>; source: ExpenseSource; recurringParentId?: string | null; variable?: boolean; createdAt?: Date },
+  b: Omit<BuiltExpense, "weights" | "receiptItems"> & { receiptItems?: ReceiptLines | null; weights?: Map<string, number>; source: ExpenseSource; recurringParentId?: string | null; variable?: boolean; createdAt?: Date },
   tx?: Tx,
 ): Promise<string | null> {
   const run = async (t: Tx) => {
@@ -281,6 +288,7 @@ export async function insertExpenseRows(
         recurringParentId: b.recurringParentId ?? null,
         variable: b.variable ?? false,
         receiptUrl: b.receiptUrl,
+        receiptItems: b.receiptItems ?? null,
         source: b.source,
         createdBy,
         ...(b.createdAt ? { createdAt: b.createdAt } : {}),
@@ -615,6 +623,7 @@ export async function listExpenses(ctx: GroupCtx, limit = 50, opts: { expenseId?
       variable: expenses.variable,
       receiptUrl: expenses.receiptUrl,
       receiptDocumentId: expenses.receiptDocumentId,
+      receiptItems: expenses.receiptItems,
       splitwiseId: expenseExternalRefs.externalId,
       deletedAt: expenses.deletedAt,
     })

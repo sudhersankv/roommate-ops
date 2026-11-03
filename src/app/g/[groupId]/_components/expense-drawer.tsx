@@ -212,6 +212,7 @@ function ExpenseForm({ expense, onDone, onSaved }: { expense?: ExpenseView; onDo
       occurredOn: d.date,
       recurring: d.repeat === "none" ? null : d.repeat,
       receiptUrl: d.receiptUrl,
+      ...(!expense && scanned && d.receiptUrl === scanned.receiptUrl ? { receiptItems: { items: scanned.items.map((i) => ({ ...i, memberIds: [] })), taxCents: scanned.taxCents, tipCents: scanned.tipCents } } : {}),
     }
     start(async () => {
       const res = expense ? await updateExpense(group.id, expense.id, form) : await addExpense(group.id, form)

@@ -57,7 +57,7 @@ export default function PrivacyPage() {
       </Part>
 
       <Part title="What Roomie keeps, and for how long">
-        <p>Per group, in a Postgres database on Neon (photos are files on our server, on Fly.io):</p>
+        <p>Per group, in a Postgres database on Neon (photos and files in Neon&apos;s object storage):</p>
         <ul>
           <li>
             <strong>Chat messages: 30 days.</strong> Every message in the group is saved so Roomie can follow the conversation. A job deletes older ones every day.
@@ -71,10 +71,14 @@ export default function PrivacyPage() {
             message it did answer.
           </li>
           <li>
+            <strong>Photos: 30 days.</strong> A chat photo nobody kept goes after 30 days, and a receipt photo 30 days after it was logged. The Expense keeps what
+            the receipt said: each item, its price and who had it. A photo someone kept (&ldquo;roomie keep this&rdquo;) stays until it&apos;s deleted.
+          </li>
+          <li>
             <strong>Until you delete them:</strong> Expenses, Settlements, the Cart and Recipes, Chores, upkeep and Reminders, the Activity of who changed what, what a
             Member asked it to remember (a diet, a Venmo handle), the grocery usuals Members told it, their own or the house&apos;s (&ldquo;Pepsi, 12 cans&rdquo;; other usuals are
             worked out from what was added to the Cart, and both are shown and editable on the Cart page), what the group bought and when, counts of how the group
-            talks, photos sent to it, and the group&apos;s place if someone saved a pin as it (&ldquo;this is our place&rdquo;). Usuals aren&apos;t chat: they stay after the 30
+            talks, the items read off receipts, kept photos and files, and the group&apos;s place if someone saved a pin as it (&ldquo;this is our place&rdquo;). Usuals aren&apos;t chat: they stay after the 30
             days.
           </li>
           <li>
@@ -109,8 +113,8 @@ export default function PrivacyPage() {
           new member an Admin approves).
         </p>
         <p>
-          What stays: Expenses and Shares you were part of (as &ldquo;Former member&rdquo;), so everyone else&apos;s Balances still add up, with any receipt photo on
-          them; what other people said about you; the logs and backups above until they expire.
+          What stays: Expenses and Shares you were part of (as &ldquo;Former member&rdquo;), so everyone else&apos;s Balances still add up, with the items read off
+          their receipts; what other people said about you; the logs and backups above until they expire.
         </p>
         <p>
           An Admin can delete the whole group&apos;s data from the dashboard&apos;s Settings: every Expense, list, usual, chat message, note, photo, email, work order, debug record and

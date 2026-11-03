@@ -333,12 +333,18 @@ export async function deleteGroupDocuments(groupId: string): Promise<number> {
   return hardDelete(rows);
 }
 
-/** Retention: Chat photos nobody filed, and deleted Documents' rows, after 30 days. */
+/**
+ * Retention: Chat photos nobody filed, deleted Documents' rows, and receipt photos 30 days after they were logged (the
+ * Expense keeps the receipt's lines in receipt_items and loses the link), all after 30 days.
+ */
 export async function purgeOldDocuments(now = new Date(), days = UNFILED_DAYS): Promise<number> {
   const cutoff = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+  const onExpense = sql`exists (select 1 from ${expenses} where ${expenses.receiptDocumentId} = ${documents.id})`;
   const rows = await db
     .select({ id: documents.id, storageKey: documents.storageKey })
     .from(documents)
-    .where(or(and(isNull(documents.filedAt), lt(documents.createdAt, cutoff)), lt(documents.deletedAt, cutoff)));
+    .where(or(and(isNull(documents.filedAt), lt(documents.createdAt, cutoff)), lt(documents.deletedAt, cutoff), and(eq(documents.kind, "receipt"), lt(documents.filedAt, cutoff), onExpense)));
+  const ids = rows.map((r) => r.id);
+  if (ids.length) await db.update(expenses).set({ receiptUrl: null }).where(inArray(expenses.receiptDocumentId, ids));
   return hardDelete(rows);
 }

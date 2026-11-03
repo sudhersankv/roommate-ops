@@ -176,6 +176,13 @@
       "when": 1793451000000,
       "tag": "0027_member_dock",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1793452000000,
+      "tag": "0028_receipt_items",
+      "breakpoints": true
     }
   ]
 }
