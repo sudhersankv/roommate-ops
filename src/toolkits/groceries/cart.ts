@@ -6,7 +6,7 @@ import { z } from "zod";
 import { cart, groups } from "@/services";
 import { addPhotoToCart, photoSummary, readGroceryPhoto } from "@/services/grocery-photos";
 import { expenseSummary } from "@/services/money";
-import { checkoutSuggestions } from "@/services/restock";
+import { afterAddAsk, checkoutSuggestions } from "@/services/restock";
 import { checkoutAskLine } from "@/services/restock-math";
 import { ctxOf, dashboardLinks, memberIdByName, toCents } from "../util";
 
@@ -27,7 +27,7 @@ export const cartTools = {
   cart_add: createTool({
     id: "cart_add",
     description:
-      "Add grocery items to the shared cart, attributed to the sender ('add 3 bags of chips for me' -> one item, name 'chips', qty '3 bags'), or to `for` ('oat milk for Dev'). shared=true for things the whole group uses (toilet paper, dish soap, 'for the house', 'common'). If it's unclear whether it's for them or everyone, ask first. Quantities are stored as said (omit qty when they didn't say one: their usual is filled in and comes back in `usedUsual`; say it, 'Eggs, 18 like usual.'); if the result has `needsClarification`, those items were NOT added: ask that one short question (and say what was added, if anything), then call cart_add again with only those items and their answer as qty, remember=true. No prices: never say a price or total.",
+      "Add grocery items to the shared cart, attributed to the sender ('add 3 bags of chips for me' -> one item, name 'chips', qty '3 bags'), or to `for` ('oat milk for Dev'). shared=true for things the whole group uses (toilet paper, dish soap, 'for the house', 'common'). If it's unclear whether it's for them or everyone, ask first. Quantities are stored as said (omit qty when they didn't say one: their usual is filled in and comes back in `usedUsual`; say it, 'Eggs, 18 like usual.'); if the result has `needsClarification`, those items were NOT added: ask that one short question (and say what was added, if anything), then call cart_add again with only those items and their answer as qty, remember=true. `alsoLow`, when there, is a shared item that's probably low and not in the Cart: after your line, ask its `ask` once (\"Dish soap's probably low too. Add it?\"); nothing is added until someone says yes (then restock_add_listed shared with only those). No prices: never say a price or total.",
     inputSchema: z.object({
       items: z.array(itemSchema).min(1),
       shared: z.boolean().optional().describe("true when it's for the whole house, not one person"),
@@ -38,11 +38,19 @@ export const cartTools = {
       const forMemberId = input.for && !input.shared ? await memberIdByName(ctx, input.for) : undefined;
       const { added, needsClarification, usedUsual } = await cart.addAsSaid(ctx, { items: input.items, shared: input.shared, forMemberId });
       const open = await cart.listOpenItems(ctx);
+      // #72: a shared item that's probably low and not in the Cart is asked about once, right after an add.
+      const alsoLow = added.length
+        ? await afterAddAsk(
+            ctx,
+            added.map((a) => a.name),
+          ).catch((e) => (console.warn("[cart] restock ask failed", e), null))
+        : null;
       return {
         added: added.map(said),
         cartItemCount: open.length,
         ...(usedUsual.length ? { usedUsual } : {}),
         ...(needsClarification.length ? { needsClarification } : {}),
+        ...(alsoLow ? { alsoLow } : {}),
       };
     },
   }),

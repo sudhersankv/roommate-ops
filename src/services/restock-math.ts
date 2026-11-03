@@ -97,6 +97,34 @@ export function restockAddedLine(items: readonly string[], scope: "shared" | "mi
   return `Added ${andList(items)} ${scope === "shared" ? "as shared" : "for you"}.`;
 }
 
+/** How many probably-low items one ask after an add names (#72): short, never a list. */
+export const AFTER_ADD_MAX = 2;
+
+/**
+ * Right after someone adds to the Cart (#72): the shared probably-low items worth asking about, most overdue first.
+ * Never a personal one (those stay in that person's DMs), never what was just added or is already in the Cart
+ * (`inCart`), never one already asked about today (`askedToday`). At most AFTER_ADD_MAX.
+ */
+export function afterAddPick(
+  candidates: readonly RestockCandidate[],
+  opts: { justAdded?: readonly string[]; inCart?: readonly string[]; askedToday?: readonly string[] } = {},
+  max = AFTER_ADD_MAX,
+): RestockCandidate[] {
+  const skip = [...(opts.justAdded ?? []), ...(opts.inCart ?? []), ...(opts.askedToday ?? [])];
+  return candidates
+    .filter((c) => c.scope === "shared" && !skip.some((s) => sameItem(s, c.item)))
+    .sort((a, b) => b.overdueDays - a.overdueDays)
+    .slice(0, max);
+}
+
+const capitalize = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s);
+
+/** The ask after an add: "Dish soap's probably low too. Add it?" / "Dish soap and milk are probably low too. Add them?" */
+export function afterAddAskLine(items: readonly string[]): string | null {
+  if (!items.length) return null;
+  return items.length === 1 ? `${capitalize(items[0])}'s probably low too. Add it?` : `${capitalize(andList(items))} are probably low too. Add them?`;
+}
+
 /** Before the Instacart link: "Want me to add eggs and coffee? They're probably low." */
 export function checkoutAskLine(items: readonly string[]): string {
   return `Want me to add ${andList(items)}? ${items.length === 1 ? "It's" : "They're"} probably low.`;

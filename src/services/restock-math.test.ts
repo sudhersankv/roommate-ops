@@ -1,7 +1,7 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { addDaysToDay } from "@/lib/time";
-import { checkoutAskLine, lastBoughtText, restockAddedLine, restockCandidates, restockLine, type PurchaseEvent, type RestockCandidate } from "./restock-math";
+import { afterAddAskLine, afterAddPick, checkoutAskLine, lastBoughtText, restockAddedLine, restockCandidates, restockLine, type PurchaseEvent, type RestockCandidate } from "./restock-math";
 
 const SAM = "sam-member-id";
 
@@ -151,5 +151,24 @@ describe("lastBoughtText", () => {
     assert.equal(lastBoughtText("2026-10-21", "2026-10-30"), "last bought 9 days ago");
     assert.equal(lastBoughtText("2026-10-29", "2026-10-30"), "last bought yesterday");
     assert.equal(lastBoughtText("2026-10-30", "2026-10-30"), "bought today");
+  });
+});
+
+describe("after an add (#72)", () => {
+  const c = (item: string, overdueDays: number, scope = "shared"): RestockCandidate => ({ item, lastBought: "2026-10-20", expectedOn: "2026-11-01", scope, overdueDays });
+  const all = [c("milk", 1), c("dish soap", 4), c("oat milk", 9, "dev-id"), c("paper towels", 0)];
+
+  test("afterAddPick: shared only, most overdue first, at most 2, never what was just added or asked today", () => {
+    assert.deepEqual(afterAddPick(all).map((x) => x.item), ["dish soap", "milk"], "Dev's oat milk stays in his DMs");
+    assert.deepEqual(afterAddPick(all, { justAdded: ["Dish Soap"] }).map((x) => x.item), ["milk", "paper towels"]);
+    assert.deepEqual(afterAddPick(all, { askedToday: ["dish soap", "milk"] }).map((x) => x.item), ["paper towels"]);
+    assert.deepEqual(afterAddPick(all, { inCart: ["milk"] }, 5).map((x) => x.item), ["dish soap", "paper towels"]);
+    assert.deepEqual(afterAddPick([c("oat milk", 9, "dev-id")]), []);
+  });
+
+  test("afterAddAskLine: one line, an ask", () => {
+    assert.equal(afterAddAskLine(["dish soap"]), "Dish soap's probably low too. Add it?");
+    assert.equal(afterAddAskLine(["dish soap", "milk"]), "Dish soap and milk are probably low too. Add them?");
+    assert.equal(afterAddAskLine([]), null);
   });
 });

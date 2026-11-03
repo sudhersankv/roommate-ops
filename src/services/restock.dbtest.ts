@@ -186,6 +186,19 @@ describe("Restock against the dev DB", () => {
     assert.deepEqual([just.askFirst, just.suggested, just.itemCount, just.links?.length], [undefined, undefined, 1, 1]);
   });
 
+  test("cart_add (#72): asks about the shared probably-low items right after an add, once a day each; never Sam's own; adds nothing", async () => {
+    const r = await run(cartTools.cart_add, { items: [{ name: "bananas" }], shared: true }, dev, "Dev");
+    assert.deepEqual(r.alsoLow, { items: ["milk", "dish soap"], ask: "Milk and dish soap are probably low too. Add them?" });
+    assert.ok(!(await listOpenItems({ groupId })).some((i) => /milk|soap/.test(i.name)), "asked, not added");
+    const again = await run(cartTools.cart_add, { items: [{ name: "butter" }], shared: true }, maya, "Maya");
+    assert.equal(again.alsoLow, undefined, "each item once a day");
+    const inDm = await run(cartTools.cart_add, { items: [{ name: "granola" }] }, sam, "Sam", true);
+    assert.equal(inDm.alsoLow, undefined, "Sam's oat milk stays in his morning DM");
+    const claims = await db.select().from(schema.scheduledPosts).where(and(eq(schema.scheduledPosts.groupId, groupId), eq(schema.scheduledPosts.kind, "restock.ask")));
+    assert.deepEqual(claims.map((c) => c.period.split(":")[1]).sort(), ["dish soap", "milk"]);
+    for (const name of ["bananas", "butter", "granola"]) await cart.removeItem(maya, { name });
+  });
+
   test('restockAddListed: "just the milk" adds only that, as shared, and it stops being low', async () => {
     assert.deepEqual((await restock.restockAddListed(dev, "shared", { only: ["the milk"], now })).added, ["milk"]);
     const milk = (await listOpenItems({ groupId })).find((i) => i.name === "milk");
