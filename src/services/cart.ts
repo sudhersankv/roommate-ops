@@ -491,7 +491,7 @@ export function unmatchedQuestion(lines: readonly { name: string; cents: number 
 export async function closeCartWithReceipt(
   ctx: Ctx,
   input: {
-    receipt: Pick<ParsedReceipt, "items" | "merchant">;
+    receipt: Pick<ParsedReceipt, "items" | "merchant"> & Partial<Pick<ParsedReceipt, "taxCents" | "tipCents">>;
     totalCents: number;
     receiptUrl: string;
     assignments?: ItemAssignment[];
@@ -525,6 +525,7 @@ export async function closeCartWithReceipt(
       category: input.category ?? "groceries",
       occurredOn: input.occurredOn,
       receiptUrl: input.receiptUrl,
+      receiptItems: { items: plan.lines.map((l) => ({ name: l.name, cents: l.cents, memberIds: l.memberIds })), taxCents: input.receipt.taxCents ?? 0, tipCents: input.receipt.tipCents ?? 0 },
       note: input.note ?? null,
       source: "cart",
     });

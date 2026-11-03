@@ -106,7 +106,7 @@ function Detail({ expense: e }: { expense: ExpenseView }) {
         <p className="type-body text-muted-foreground">
           {e.category === "other" ? `On ${when}` : `${cat.label}, ${when}`}.{addedBy ? ` Added by ${addedBy}.` : ""}
         </p>
-        {e.recurring || e.repeated || e.inSplitwise || e.receiptUrl ? (
+        {e.recurring || e.repeated || e.inSplitwise || e.receiptUrl || e.receiptItems.length ? (
           <div className="flex flex-wrap gap-1.5">
             {e.recurring ? (
               <Badge variant="secondary">
@@ -121,7 +121,7 @@ function Detail({ expense: e }: { expense: ExpenseView }) {
               </Badge>
             ) : null}
             {e.inSplitwise ? <Badge variant="outline">In Splitwise</Badge> : null}
-            {e.receiptUrl ? <Badge variant="outline">Receipt</Badge> : null}
+            {e.receiptUrl || e.receiptItems.length ? <Badge variant="outline">Receipt</Badge> : null}
           </div>
         ) : null}
         {e.yourShare > 0 || e.youPaid > 0 ? (
@@ -202,15 +202,43 @@ function Detail({ expense: e }: { expense: ExpenseView }) {
         </section>
       ) : null}
 
-      {e.receiptUrl ? (
+      {e.receiptUrl || e.receiptItems.length ? (
         <section aria-labelledby="receipt" className="flex flex-col gap-2">
           <h2 id="receipt" className="type-heading">
             Receipt
           </h2>
-          <a href={e.receiptUrl} target="_blank" rel="noreferrer" className="w-fit">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={e.receiptUrl} alt={`Receipt for ${e.description}`} className="max-h-72 rounded-2xl border object-contain" />
-          </a>
+          {e.receiptItems.length ? (
+            <ul className="m-0 flex list-none flex-col gap-1.5 p-0">
+              {e.receiptItems.map((it, i) => (
+                <li key={i} className="flex items-baseline justify-between gap-3 type-body">
+                  <span className="min-w-0">
+                    {it.name}
+                    {it.memberIds.length ? <span className="text-muted-foreground"> · {it.memberIds.length <= 3 ? it.memberIds.map(name).join(", ") : "Shared"}</span> : null}
+                  </span>
+                  <span className="shrink-0 tabular-nums">{money(it.cents)}</span>
+                </li>
+              ))}
+              {e.receiptTaxCents ? (
+                <li className="flex justify-between gap-3 type-body text-muted-foreground">
+                  <span>Tax</span>
+                  <span className="tabular-nums">{money(e.receiptTaxCents)}</span>
+                </li>
+              ) : null}
+              {e.receiptTipCents ? (
+                <li className="flex justify-between gap-3 type-body text-muted-foreground">
+                  <span>Tip</span>
+                  <span className="tabular-nums">{money(e.receiptTipCents)}</span>
+                </li>
+              ) : null}
+            </ul>
+          ) : null}
+          {e.receiptUrl ? (
+            <a href={e.receiptUrl} target="_blank" rel="noreferrer" className="w-fit">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={e.receiptUrl} alt={`Receipt for ${e.description}`} className="max-h-72 rounded-2xl border object-contain" />
+            </a>
+          ) : null}
+          {e.receiptUrl && e.receiptItems.length ? <p className="type-caption text-muted-foreground">The photo is kept for 30 days; the items stay.</p> : null}
         </section>
       ) : null}
 

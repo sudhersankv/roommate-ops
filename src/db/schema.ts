@@ -229,6 +229,8 @@ export const expenses = pgTable(
     // A recurring parent whose amount is asked of its Payer on each due day (electric) instead of copied (#25).
     variable: boolean("variable").notNull().default(false),
     receiptDocumentId: uuid("receipt_document_id").references((): AnyPgColumn => documents.id, { onDelete: "set null" }),
+    // What the receipt said, line by line with who had each, kept after its photo goes (30 days after logging, migration 0028).
+    receiptItems: jsonb("receipt_items").$type<ReceiptLines>(),
     source: text("source", { enum: EXPENSE_SOURCES }).notNull().default("chat"),
     createdBy: uuid("created_by").references(() => members.id),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
@@ -573,6 +575,9 @@ export const pendingAmounts = pgTable(
 );
 
 // ---- documents (#24A) ----
+
+/** A logged receipt's lines (expenses.receipt_items): each item's cents and the Members who had it, plus tax and tip. */
+export type ReceiptLines = { items: { name: string; cents: number; memberIds: string[] }[]; taxCents: number; tipCents: number };
 
 export const DOCUMENT_KINDS = ["receipt", "lease", "notice", "bill", "email", "photo", "other"] as const;
 export type DocumentKind = (typeof DOCUMENT_KINDS)[number];
