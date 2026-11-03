@@ -38,6 +38,8 @@ export const roomieContextSchema = z.object({
   confirmedCall: z.string().optional(),
   /** A 1:1 message with Roomie (a Member's DM): what's for the whole group has to be posted there separately. */
   isPrivate: z.boolean().optional(),
+  /** One id per agent run (the pipeline's): tools that combine what the run did key on it (#71, util.loggedThisRun). */
+  runId: z.string().optional(),
 });
 
 export type RoomieContext = z.infer<typeof roomieContextSchema>;

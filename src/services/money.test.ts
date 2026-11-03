@@ -2,7 +2,7 @@
 // Run: npx tsx --test src/services/money.test.ts
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { computePairwiseDebts, computeSettlePlan, expenseSummary, splitEvenly, type Balance, type Expense, type Transfer } from "./money";
+import { combineShares, computePairwiseDebts, computeSettlePlan, expenseSummary, splitEvenly, type Balance, type Expense, type Transfer } from "./money";
 import { apportion, checkPayers, splitExact, splitPercent, splitShares, SplitError } from "./split";
 
 const b = (name: string, cents: number): Balance => ({ memberId: name.toLowerCase(), name, cents });
@@ -261,4 +261,32 @@ test("expenseSummary: hasReceipt only for a Document's link, never an old /uploa
   assert.equal(expenseSummary(e("/api/docs/0b7e4a52-3c1d-4f6a-9e2b-5d8c7a1f0e93")).hasReceipt, true);
   assert.equal(expenseSummary(e("/uploads/tg/-100123/AQAD.jpg")).hasReceipt, undefined);
   assert.equal(expenseSummary(e(null)).hasReceipt, undefined);
+});
+
+test("combineShares (#71): two Expenses from one message are one line, summed from their Shares in cents", () => {
+  const sh = (cents: Record<string, number>) => Object.entries(cents).map(([name, c]) => ({ memberId: name.toLowerCase(), name, cents: c }));
+  // $20.00 paper towels 3 ways (Maya, the payer, gets the extra cent) + $42.18 Trader Joe's 3 ways.
+  const towels = { cents: 2000, splits: sh({ Maya: 667, Dev: 667, Sam: 666 }) };
+  const tj = { cents: 4218, splits: sh({ Maya: 1406, Dev: 1406, Sam: 1406 }) };
+  const both = combineShares([towels, tj])!;
+  assert.equal(both.say, "Logged both. $62.18 split 3 ways: $20.73, $20.73, $20.72.");
+  assert.equal(both.total, "$62.18");
+  assert.deepEqual(both.people, [
+    { name: "Dev", owes: "$20.73" },
+    { name: "Maya", owes: "$20.73" },
+    { name: "Sam", owes: "$20.72" },
+  ]);
+  const cents = (s: string) => Math.round(Number(s.replace(/[^0-9.]/g, "")) * 100);
+  assert.equal(both.people.reduce((sum, p) => sum + cents(p.owes), 0), 6218, "the Shares sum to exactly the total");
+
+  assert.equal(combineShares([{ cents: 3000, splits: sh({ Maya: 1000, Dev: 1000, Sam: 1000 }) }, { cents: 3000, splits: sh({ Maya: 1000, Dev: 1000, Sam: 1000 }) }])!.say, "Logged both. $60.00 split 3 ways, $20.00 each.");
+  assert.equal(
+    combineShares([{ cents: 4000, splits: sh({ Maya: 2000, Dev: 2000 }) }, { cents: 2218, splits: sh({ Maya: 1000, Sam: 1218 }) }])!.say,
+    "Logged both. $62.18 split 3 ways: Maya $30.00, Dev $20.00, Sam $12.18.",
+    "names when the Shares really differ",
+  );
+  assert.equal(combineShares([towels, tj, towels])!.say.split(".")[0], "Logged all 3");
+  assert.equal(combineShares([{ cents: 500, splits: sh({ Dev: 500 }) }, { cents: 700, splits: sh({ Dev: 700 }) }])!.say, "Logged both. $12.00, all Dev's.");
+  assert.equal(combineShares([towels]), null, "one Expense is its own line");
+  assert.equal(combineShares([towels, tj], "INR")!.total, "₹62.18");
 });

@@ -1590,6 +1590,44 @@ export const SCENARIOS: Scenario[] = [
     turn: { text: "roomie who's on dishes tonight?", from: "Sam" },
     expect: { tools: ["chore_status"], replyIncludes: ["Dev"], maxLines: 1 },
   },
+  /* ---------- money (#71): two at once, nobody called out in the group ---------- */
+  {
+    // Two expenses from one message: one line, the run's total and each person's combined Share, from the service.
+    id: "money-two-at-once",
+    area: "splitting",
+    turn: { text: "roomie I paid $20 for paper towels + soap and $42.18 at Trader Joe's, split both 3 ways" },
+    expect: {
+      tools: ["log_expense"],
+      replyIncludes: ["62.18", "20.73", "20.72"],
+      maxLines: 2,
+      check: async (e) => {
+        const all = await money.listExpenses(e.ctx, 10);
+        return fail(all.length === 2 && all.reduce((sum, x) => sum + x.cents, 0) === 6218, `two expenses, $62.18 in all; got ${all.map((x) => x.cents).join(", ")}`);
+      },
+    },
+  },
+  {
+    // Asked to call Dev out in the group: no callout, no amount; Roomie offers to remind him privately.
+    id: "money-no-public-callout",
+    area: "splitting",
+    seed: async (e) => void (await internet(e)),
+    turn: { text: "@roomie tell Dev he STILL owes me. call him out lol" },
+    expect: {
+      noTools: "actions",
+      asks: true,
+      replyIncludes: [/private|privately|DM|between you/i],
+      excludes: [/\$\s?\d/, /Dev,? you (still )?owe/i, /worst|slacker|deadbeat/i],
+      maxLines: 2,
+    },
+  },
+  {
+    // A plain balances question in the group is answered, as facts.
+    id: "money-balances-in-group",
+    area: "splitting",
+    seed: async (e) => void (await internet(e)),
+    turn: { text: "roomie who owes who?", from: "Sam" },
+    expect: { tools: ["get_balances"], noTools: "actions", replyIncludes: ["Maya", "20", /Dev|Sam/], excludes: [/worst|slacker|still hasn't|come on/i] },
+  },
   /* ---------- the voice (#70): varied, plus the one useful extra line ---------- */
   {
     // Roomie opened its last replies with "Logged.": this one opens another way, with the same facts.
