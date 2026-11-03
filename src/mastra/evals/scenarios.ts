@@ -1353,6 +1353,41 @@ export const SCENARIOS: Scenario[] = [
     },
   },
   {
+    // #72: right after an add, the shared probably-low items are asked about once; nothing extra is added.
+    id: "restock-ask-after-add",
+    area: "groceries",
+    seed: async (e) => void (await restockHistory(e)),
+    turn: { text: "roomie add bananas", from: "Dev" },
+    expect: {
+      tools: ["cart_add"],
+      asks: true,
+      replyIncludes: [/banana/i, /milk|dish soap/i],
+      excludes: NO_PRICE,
+      maxLines: 2,
+      check: async (e) => {
+        const names = (await cart.listOpenItems(e.ctx)).map((i) => i.name);
+        return fail(names.some((n) => /banana/.test(n)) && !names.some((n) => /milk|soap/.test(n)), `bananas only, got ${names.join(", ")}`);
+      },
+    },
+  },
+  {
+    // #72: a yes from anyone (not who added) after that ask adds the asked items, as shared.
+    id: "restock-ask-after-add-yes",
+    area: "groceries",
+    seed: async (e) => void (await restockHistory(e)),
+    setup: [{ text: "roomie add bananas", from: "Dev" }],
+    turn: { text: "yes please", from: "Maya" },
+    expect: {
+      tools: ["restock_add_listed"],
+      excludes: NO_PRICE,
+      maxLines: 2,
+      check: async (e) => {
+        const open = await cart.listOpenItems(e.ctx);
+        return fail(open.some((i) => /milk|dish soap/.test(i.name) && i.shared), `a probably-low item added as shared, got ${open.map((i) => i.name).join(", ")}`);
+      },
+    },
+  },
+  {
     id: "restock-mute-dish-soap",
     area: "groceries",
     seed: async (e) => void (await restockHistory(e, { bundle: true })),

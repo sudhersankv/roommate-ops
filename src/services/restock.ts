@@ -13,7 +13,7 @@ import { requireActive } from "./authz";
 import { addItems, listOpenItems } from "./cart";
 import { listMembers } from "./members";
 import { mayPost, sendDms, type DmOutcome } from "./rent";
-import { restockAddedLine, restockCandidates, restockLine, type PurchaseEvent, type RestockCandidate } from "./restock-math";
+import { AFTER_ADD_MAX, afterAddAskLine, afterAddPick, restockAddedLine, restockCandidates, restockLine, type PurchaseEvent, type RestockCandidate } from "./restock-math";
 import { bundleWindow, claimPost, getSchedule, groupTimezone } from "./schedule";
 import type { Ctx, GroupCtx } from "./types";
 
@@ -212,6 +212,24 @@ export async function lowFor(ctx: Ctx, opts: { mine?: boolean; now?: Date } = {}
 /** At Checkout: the probably-low items not in the Cart (shared; the asker's own too with `mine`). */
 export async function checkoutSuggestions(ctx: Ctx, opts: { mine?: boolean; now?: Date } = {}): Promise<string[]> {
   return (await lowFor(ctx, opts)).map((c) => c.item);
+}
+
+/**
+ * Right after someone adds to the Cart (#72): the shared probably-low items to ask about, and the ask ("Dish soap's
+ * probably low too. Add it?"), or null. Nothing is added: a yes is restock_add_listed (shared, only those). Each item
+ * is asked about at most once a local day per Group, claimed as scheduled_posts "restock.ask" with period
+ * "<day>:<item>"; mutes and the Cart apply (candidates). Personal items never: they stay in that person's DMs.
+ */
+export async function afterAddAsk(ctx: GroupCtx, justAdded: readonly string[], now = new Date()): Promise<{ items: string[]; ask: string } | null> {
+  const [tz, all] = await Promise.all([groupTimezone(ctx.groupId), candidates(ctx, now)]);
+  const day = dayInZone(tz, now);
+  const items: string[] = [];
+  for (const c of afterAddPick(all, { justAdded }, Infinity)) {
+    if (items.length >= AFTER_ADD_MAX) break;
+    if (await claimPost(ctx.groupId, "restock.ask", `${day}:${normalizeItem(c.item)}`)) items.push(c.item);
+  }
+  const ask = afterAddAskLine(items);
+  return ask ? { items, ask } : null;
 }
 
 /** A Member's own probably-low items are added only in their DM or on their dashboard, never from the group chat. */
