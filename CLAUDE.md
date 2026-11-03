@@ -156,6 +156,9 @@ src/
                         / report lines, followUpWorkOrder (#74), inboxData (the Inbox page), anonymizeMailMember (forget me)
     mail-classifier.ts  SMALL_MODEL on the gateway, JSON in text, zod, one retry, then `other` (keywordClassifier with
                         MAIL_CLASSIFIER_FAKE=1); lease-text.ts: a Document's text (textUrl / vision) and askLease (cites the clause)
+    how-to.ts           pure (#75): "how do I split rent?" -> trickFor (the Trick, by name / tags / abilities / examples),
+                        howToFor (the matching ability, else the summary, + a Gate example: Just say "roomie, ..."),
+                        howToIn (the Group's catalog; not learned = "I haven't learned X here yet")
     report.ts           groupReport (the enabled Toolkits' report() parts in post order + core's Reminders line, naming no
                         Toolkit) + composeReport / formatGroupReport (one message; casual = sentences), dueWord, joinNames
     bundle.ts           the morning Bundle (ADR 0017): groupBundle = the enabled Toolkits' bundle() lines in post order,
@@ -241,7 +244,7 @@ src/
                         (the Expenses a run logged, by runId in memory for 10 min: the second log returns `together`, #71)
     core/               manifest.ts + server.ts; members (list, list_pending, approve/decline/promote, set_payment_handle,
                         forget_me), people (remember, what_do_you_know_about_me), settings (set_group_settings incl.
-                        personality, toggle_toolkit, list_toolkits), dashboard (get_dashboard_link: forEveryone = the Join
+                        personality, toggle_toolkit, list_toolkits, how_to: #75), dashboard (get_dashboard_link: forEveryone = the Join
                         link line; rotate_join_link, set_join_policy, revoke_seat: adminOnly), reminders, report,
                         documents (keep_document, find_documents: links only with open=true); core's persona lines
     splitting/ groceries/ house/   manifest.ts + server.ts + the tools (+ dashboard.tsx: Home/Settings sections;

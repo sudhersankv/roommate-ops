@@ -23,6 +23,7 @@ export const core = defineManifest({
     ask_poll: "Ask the chat a quick poll for who-questions (who was in, who's shopping)",
     group_decision: "Put a decision the whole group cares about to the chat as a ✅ / ❌ poll",
     set_nudges: "Stop or restart your private nudges",
+    how_to: "Say how a Trick works, with a phrase to try",
   },
   groupDecisions: ["set_reminder"],
   adminOnly: {
